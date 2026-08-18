@@ -1,4 +1,4 @@
-### 📐 Arquitectura del Sistema a Documentar
+c### 📐 Arquitectura del Sistema a Documentar
 El sistema utiliza un enfoque híbrido debido a las limitaciones de aislamiento de FeatureScript:
 1. FRONTEND NATIVO (Onshape FeatureScript): Un Custom Feature en la línea de tiempo (Feature List) que permite al usuario seleccionar geométricamente caras de anclaje, caras de carga y magnitudes. Dibuja vectores gráficos de depuración en el entorno 3D.
 2. INTERFAZ DE USUARIO (Onshape App Extension): Un panel lateral embebido en JavaScript que expone el botón de "Calcular Optimización" y se comunica bidireccionalmente entre el cliente de Onshape y nuestra API externa.

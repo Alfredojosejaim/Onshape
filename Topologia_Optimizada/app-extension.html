@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Optimización Topológica</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+        }
+        
+        .container {
+            padding: 20px;
+            max-width: 400px;
+        }
+        
+        .header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 25px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #0099ff;
+        }
+        
+        .header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            color: #0099ff;
+        }
+        
+        .icon {
+            width: 24px;
+            height: 24px;
+            background: #0099ff;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+        
+        .section {
+            margin-bottom: 25px;
+            background: white;
+            padding: 16px;
+            border-radius: 6px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+        
+        .section-title {
+            font-weight: 600;
+            font-size: 13px;
+            color: #666;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .parameter-group {
+            margin-bottom: 15px;
+        }
+        
+        .parameter-group label {
+            display: block;
+            font-size: 12px;
+            font-weight: 500;
+            margin-bottom: 5px;
+            color: #333;
+        }
+        
+        .parameter-group input,
+        .parameter-group select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 13px;
+            font-family: inherit;
+        }
+        
+        .parameter-group input:focus,
+        .parameter-group select:focus {
+            outline: none;
+            border-color: #0099ff;
+            box-shadow: 0 0 0 2px rgba(0, 153, 255, 0.1);
+        }
+        
+        .parameter-value {
+            display: block;
+            padding: 8px;
+            background: #f9f9f9;
+            border-radius: 4px;
+            font-size: 12px;
+            color: #666;
+            font-family: 'Monaco', 'Courier New', monospace;
+            word-break: break-all;
+        }
+        
+        .status {
+            margin-bottom: 15px;
+            padding: 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            display: none;
+        }
+        
+        .status.info {
+            background: #e3f2fd;
+            color: #1976d2;
+            border: 1px solid #90caf9;
+            display: block;
+        }
+        
+        .status.success {
+            background: #e8f5e9;
+            color: #388e3c;
+            border: 1px solid #81c784;
+            display: block;
+        }
+        
+        .status.error {
+            background: #ffebee;
+            color: #d32f2f;
+            border: 1px solid #ef5350;
+            display: block;
+        }
+        
+        .status.warning {
+            background: #fff3e0;
+            color: #f57c00;
+            border: 1px solid #ffb74d;
+            display: block;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 10px;
+        }
+        
+        button {
+            flex: 1;
+            padding: 10px;
+            border: none;
+            border-radius: 4px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .btn-primary {
+            background: #0099ff;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #0077cc;
+            box-shadow: 0 2px 8px rgba(0, 153, 255, 0.3);
+        }
+        
+        .btn-primary:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+        
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+            border: 1px solid #ddd;
+        }
+        
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+        
+        .spinner {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid rgba(0, 153, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: #0099ff;
+            animation: spin 0.8s linear infinite;
+            margin-right: 8px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .data-section {
+            background: #f9f9f9;
+            padding: 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .data-item {
+            margin-bottom: 8px;
+            padding: 8px;
+            background: white;
+            border-radius: 3px;
+            border-left: 3px solid #0099ff;
+            padding-left: 10px;
+        }
+        
+        .data-key {
+            font-weight: 600;
+            color: #0099ff;
+        }
+        
+        .data-value {
+            color: #666;
+            font-family: 'Monaco', 'Courier New', monospace;
+            word-break: break-all;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="icon">⚙</div>
+            <h1>Optimización Topológica</h1>
+        </div>
+        
+        <div id="statusContainer"></div>
+        
+        <!-- Sección: Datos del Feature -->
+        <div class="section">
+            <div class="section-title">📊 Estado del Feature</div>
+            <div class="parameter-group">
+                <label>Estado de la configuración:</label>
+                <span id="featureStatus" class="parameter-value">Esperando datos...</span>
+            </div>
+            <div class="parameter-group">
+                <label>Anclajes detectados:</label>
+                <span id="anchorsCount" class="parameter-value">0</span>
+            </div>
+        </div>
+        
+        <!-- Sección: Parámetros de Optimización -->
+        <div class="section">
+            <div class="section-title">🔧 Parámetros Leídos</div>
+            <div id="parametersContainer">
+                <p style="color: #999; font-size: 12px;">Ejecuta el Feature para cargar parámetros...</p>
+            </div>
+        </div>
+        
+        <!-- Sección: Configuración de Servidor -->
+        <div class="section">
+            <div class="section-title">🌐 Configuración de Servidor</div>
+            <div class="parameter-group">
+                <label for="serverUrl">URL del Backend:</label>
+                <input 
+                    type="text" 
+                    id="serverUrl" 
+                    placeholder="https://tu-api.com/api/optimize"
+                    value="http://localhost:8000/api/optimize"
+                >
+            </div>
+        </div>
+        
+        <!-- Sección: Acciones -->
+        <div class="section">
+            <div class="section-title">⚡ Acciones</div>
+            <div class="button-group">
+                <button class="btn-primary" id="optimizeBtn">
+                    Optimizar
+                </button>
+                <button class="btn-secondary" id="refreshBtn">
+                    Actualizar
+                </button>
+            </div>
+        </div>
+        
+        <!-- Sección: Log de Respuesta -->
+        <div class="section" style="display: none;" id="responseSection">
+            <div class="section-title">📡 Respuesta del Servidor</div>
+            <div id="responseContainer" class="data-section">
+                <p style="color: #999;">Sin respuestas aún...</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://d2uucjvzfp2fpe.cloudfront.net/onshape-embed-sdk.js"></script>
+    <script>
+        // Estado global
+        let featureData = null;
+        let onshapeClient = null;
+        
+        // Inicializar cliente de Onshape
+        function initOnshapeClient() {
+            const params = new URLSearchParams(window.location.search);
+            const docId = params.get('documentId');
+            const workspaceId = params.get('workspaceId');
+            const elementId = params.get('elementId');
+            
+            onshapeClient = {
+                docId,
+                workspaceId,
+                elementId
+            };
+            
+            console.log('Onshape client initialized:', onshapeClient);
+        }
+        
+        // Leer el atributo del FeatureScript
+        async function readFeatureData() {
+            try {
+                showStatus('info', '⟳ Leyendo datos del Feature...');
+                
+                if (!onshapeClient) {
+                    throw new Error('Cliente de Onshape no inicializado');
+                }
+                
+                // Usar Onshape API para obtener los features del Part Studio
+                const apiUrl = `https://cad.onshape.com/api/partstudios/d/${onshapeClient.docId}/w/${onshapeClient.workspaceId}/e/${onshapeClient.elementId}/features`;
+                
+                const response = await fetch(apiUrl, {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json',
+                    },
+                    credentials: 'include' // Incluir cookies de autenticación
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                
+                // Buscar el feature "Master Topology Input"
+                const topologyFeature = data.features?.find(f => 
+                    f.name === 'Master Topology Input' || f.type === 'custom'
+                );
+                
+                if (!topologyFeature) {
+                    showStatus('warning', '⚠ No se encontró el Feature "Master Topology Input"');
+                    document.getElementById('featureStatus').textContent = 'Feature no encontrado';
+                    return;
+                }
+                
+                // Extraer el atributo con los datos
+                if (topologyFeature.customFeature?.message) {
+                    featureData = JSON.parse(topologyFeature.customFeature.message);
+                    displayFeatureData(featureData);
+                    showStatus('success', '✓ Datos del Feature cargados correctamente');
+                } else {
+                    showStatus('warning', '⚠ El Feature no contiene datos de optimización');
+                }
+                
+            } catch (error) {
+                console.error('Error al leer datos:', error);
+                showStatus('error', `❌ Error: ${error.message}`);
+            }
+        }
+        
+        // Mostrar datos del Feature
+        function displayFeatureData(data) {
+            document.getElementById('featureStatus').textContent = '✓ Cargado';
+            document.getElementById('anchorsCount').textContent = data.anchors?.length || 0;
+            
+            let parametersHtml = '';
+            
+            if (data.optimization) {
+                parametersHtml += `
+                    <div class="data-item">
+                        <span class="data-key">Fracción de Volumen:</span>
+                        <span class="data-value">${data.optimization.volumeFraction || 'N/A'}</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="data-key">Máx. Iteraciones:</span>
+                        <span class="data-value">${data.optimization.maxIterations || 'N/A'}</span>
+                    </div>
+                `;
+            }
+            
+            if (data.loads && data.loads.length > 0) {
+                const load = data.loads[0];
+                parametersHtml += `
+                    <div class="data-item">
+                        <span class="data-key">Dirección:</span>
+                        <span class="data-value">X:${load.direction.x.toFixed(3)} Y:${load.direction.y.toFixed(3)} Z:${load.direction.z.toFixed(3)}</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="data-key">Magnitud:</span>
+                        <span class="data-value">${load.magnitude} ${load.unit}</span>
+                    </div>
+                `;
+            }
+            
+            if (parametersHtml) {
+                document.getElementById('parametersContainer').innerHTML = parametersHtml;
+            }
+        }
+        
+        // Enviar datos a optimizar
+        async function sendOptimization() {
+            try {
+                if (!featureData) {
+                    showStatus('warning', '⚠ Carga primero los datos del Feature');
+                    return;
+                }
+                
+                const serverUrl = document.getElementById('serverUrl').value.trim();
+                if (!serverUrl) {
+                    showStatus('error', '❌ Define la URL del servidor');
+                    return;
+                }
+                
+                const optimizeBtn = document.getElementById('optimizeBtn');
+                optimizeBtn.disabled = true;
+                optimizeBtn.innerHTML = '<span class="spinner"></span>Optimizando...';
+                
+                showStatus('info', '⟳ Enviando solicitud al servidor...');
+                
+                // Preparar payload
+                const payload = {
+                    documentId: onshapeClient.docId,
+                    workspaceId: onshapeClient.workspaceId,
+                    elementId: onshapeClient.elementId,
+                    topologyConfig: featureData,
+                    timestamp: new Date().toISOString()
+                };
+                
+                const response = await fetch(serverUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                });
+                
+                const responseData = await response.json();
+                
+                if (response.ok) {
+                    showStatus('success', '✓ Optimización iniciada correctamente');
+                    displayResponse(responseData);
+                } else {
+                    showStatus('error', `❌ Error del servidor: ${responseData.message || response.statusText}`);
+                }
+                
+            } catch (error) {
+                console.error('Error al enviar optimización:', error);
+                showStatus('error', `❌ Error: ${error.message}`);
+            } finally {
+                const optimizeBtn = document.getElementById('optimizeBtn');
+                optimizeBtn.disabled = false;
+                optimizeBtn.textContent = 'Optimizar';
+            }
+        }
+        
+        // Mostrar respuesta del servidor
+        function displayResponse(data) {
+            document.getElementById('responseSection').style.display = 'block';
+            
+            let html = '';
+            for (const [key, value] of Object.entries(data)) {
+                html += `
+                    <div class="data-item">
+                        <span class="data-key">${key}:</span>
+                        <span class="data-value">${JSON.stringify(value, null, 2)}</span>
+                    </div>
+                `;
+            }
+            
+            document.getElementById('responseContainer').innerHTML = html;
+        }
+        
+        // Mostrar mensaje de estado
+        function showStatus(type, message) {
+            const container = document.getElementById('statusContainer');
+            container.innerHTML = `<div class="status ${type}">${message}</div>`;
+            
+            // Auto-hide después de 5 segundos si es success
+            if (type === 'success') {
+                setTimeout(() => {
+                    container.innerHTML = '';
+                }, 5000);
+            }
+        }
+        
+        // Event listeners
+        document.getElementById('optimizeBtn').addEventListener('click', sendOptimization);
+        document.getElementById('refreshBtn').addEventListener('click', readFeatureData);
+        
+        // Inicializar en carga
+        window.addEventListener('load', () => {
+            initOnshapeClient();
+            readFeatureData();
+        });
+    </script>
+</body>
+</html>

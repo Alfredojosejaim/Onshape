@@ -116,4 +116,4 @@ if __name__ == '__main__':
     else:
         print("\n[ALERTA] No se pudo conectar. Asegúrate de:")
         print("1. Haber puesto tus llaves reales en el archivo .env")
-        print("2. Que los IDs (DID, WID, MID) en el .env coincidan con la URL de
+        print("2. Que los IDs (DID, WID, MID) en el .env coincidan con la URL de Onshape")

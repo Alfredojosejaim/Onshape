@@ -1,69 +1,76 @@
-FeatureScript 2464; // Actualizado a una versión moderna estándar
-import(path : "onshape/std/geometry.fs") as std; // Importación recomendada para manejar geometría y atributos
+FeatureScript 3044;
+// Importación estándar provista por tu entorno de Onshape
+import(path : "onshape/std/common.fs", version : "3044.0");
 
 annotation { "Feature Type Name" : "Master Topology Input" }
 export const masterTopologyInput = defineFeature(function(context is Context, id is Id, definition is map)
     precondition
     {
-        annotation { "Name" : "Anclajes", "Filter" : GeometryType.FACE, "MaxNumberOfPicks" : 10, "Item Name" : "anchor" }
+        // Parámetros de selección geométrica estándar
+        annotation { "Name" : "Anchors", "Filter" : EntityType.FACE, "MaxNumberOfPicks" : 10, "Item Name" : "anchor" }
         definition.anchors is Query;
 
-        annotation { "Name" : "Carga", "Filter" : GeometryType.FACE, "MaxNumberOfPicks" : 1, "Item Name" : "face" }
+        annotation { "Name" : "Load Face", "Filter" : EntityType.FACE, "MaxNumberOfPicks" : 1, "Item Name" : "face" }
         definition.loadFace is Query;
 
-        // En FeatureScript se usa 'is real' en lugar de 'is number'
-        annotation { "Name" : "Dirección X" }
-        definition.directionX is real;
+        // CORRECCIÓN: Declaración nativa de números reales (sin unidades) usando RealBoundSpec
+        annotation { "Name" : "Direction X" }
+        isReal(definition.directionX, { (unitless) : [-1e5, 1.0, 1e5] } as RealBoundSpec);
 
-        annotation { "Name" : "Dirección Y" }
-        definition.directionY is real;
+        annotation { "Name" : "Direction Y" }
+        isReal(definition.directionY, { (unitless) : [-1e5, 0.0, 1e5] } as RealBoundSpec);
 
-        annotation { "Name" : "Dirección Z" }
-        definition.directionZ is real;
+        annotation { "Name" : "Direction Z" }
+        isReal(definition.directionZ, { (unitless) : [-1e5, 0.0, 1e5] } as RealBoundSpec);
 
-        annotation { "Name" : "Magnitud (N)" }
-        definition.magnitude is real;
+        annotation { "Name" : "Magnitude (N)" }
+        isReal(definition.magnitude, { (unitless) : [0.0, 100.0, 1e5] } as RealBoundSpec);
 
-        annotation { "Name" : "Fracción de volumen" }
-        definition.volumeFraction is real;
+        annotation { "Name" : "Volume Fraction" }
+        isReal(definition.volumeFraction, { (unitless) : [0.0, 0.5, 1.0] } as RealBoundSpec);
 
-        annotation { "Name" : "Número máximo de iteraciones" }
-        definition.maxIterations is real;
+        // CORRECCIÓN: Para iteraciones se usa un número entero nativo mediante IntegerBoundSpec
+        annotation { "Name" : "Max Iterations" }
+        isInteger(definition.maxIterations, { (unitless) : [1, 20, 1000] } as IntegerBoundSpec);
     }
     {
-        // Validaciones
-        if (definition.volumeFraction < 0 || definition.volumeFraction > 1)
+        // En Onshape, las variables declaradas como 'unitless' se leen directamente como números puros
+        var volFract = definition.volumeFraction;
+        var maxIter = definition.maxIterations;
+        var magValue = definition.magnitude;
+
+        if (volFract < 0.0 || volFract > 1.0)
         {
-            throw error("La fracción de volumen debe estar entre 0 y 1");
+            throw "La fraccion de volumen debe estar entre 0 y 1";
         }
-        if (definition.maxIterations <= 0)
+        if (maxIter <= 0)
         {
-            throw error("El número de iteraciones debe ser mayor a 0");
+            throw "El numero de iteraciones debe ser mayor a 0";
         }
 
-        var directionX = definition.directionX;
-        var directionY = definition.directionY;
-        var directionZ = definition.directionZ;
+        var dx = definition.directionX;
+        var dy = definition.directionY;
+        var dz = definition.directionZ;
 
-        // Se usa sqrt del paquete std
-        var magnitude = std::sqrt(directionX * directionX + directionY * directionY + directionZ * directionZ);
+        // Operación matemática limpia sin interferencia de tipos de datos complejos
+        var magnitudeDir = sqrt(dx * dx + dy * dy + dz * dz);
 
-        if (magnitude == 0)
+        if (magnitudeDir == 0.0)
         {
-            throw error("La dirección no puede ser un vector cero");
+            throw "La direccion no puede ser un vector cero";
         }
 
         var loadInfo = {
-            "directionX" : directionX / magnitude,
-            "directionY" : directionY / magnitude,
-            "directionZ" : directionZ / magnitude,
-            "magnitude" : definition.magnitude,
+            "directionX" : dx / magnitudeDir,
+            "directionY" : dy / magnitudeDir,
+            "directionZ" : dz / magnitudeDir,
+            "magnitude" : magValue,
             "unit" : "newton"
         };
 
         var optimizationParams = {
-            "volumeFraction" : definition.volumeFraction,
-            "maxIterations" : definition.maxIterations
+            "volumeFraction" : volFract,
+            "maxIterations" : maxIter
         };
 
         var topologyData = {
@@ -73,9 +80,8 @@ export const masterTopologyInput = defineFeature(function(context is Context, id
             "timestamp" : "2026-01-01T00:00:00Z"
         };
 
-        // Corrección de almacenamiento: Guardamos los datos en los atributos de las caras seleccionadas
-        // Esto permite que un software externo o un exportador lea los metadatos de la carga
-        std::setAttribute(context, {
+        // Guardar atributos JSON adjuntos a la cara de carga seleccionada
+        setAttribute(context, {
             "entities" : definition.loadFace,
             "name" : "topologyData",
             "value" : topologyData

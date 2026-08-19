@@ -184,7 +184,10 @@ class TopOptSolver:
             U = np.random.rand(self.nelem, 2 if not self.is_3d else 3) * 0.1
             
             # Calcular compliance
-            compliance = np.sum(forces * U)
+            force_array = np.asarray(forces)
+            if force_array.ndim == 1:
+                force_array = force_array[:, np.newaxis]
+            compliance = np.sum(force_array * U)
             compliance_history.append(compliance)
             
             # Sensibilidades

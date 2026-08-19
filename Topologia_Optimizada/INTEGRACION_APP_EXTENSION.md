@@ -147,23 +147,11 @@ El FeatureScript genera y serializa este JSON:
 ```json
 {
   "schemaVersion": "1.0",
-  "anchors": [
-    {
-      "index": 0,
-      "area": 12.5
-    },
-    {
-      "index": 1,
-      "area": 15.3
-    }
-  ],
   "loads": [
     {
-      "direction": {
-        "x": 0.0,
-        "y": 0.0,
-        "z": -1.0
-      },
+      "directionX": 0.0,
+      "directionY": 0.0,
+      "directionZ": -1.0,
       "magnitude": 100,
       "unit": "newton"
     }
@@ -195,9 +183,10 @@ curl -X POST http://localhost:8000/api/optimize \
     "elementId": "test_elem",
     "topologyConfig": {
       "schemaVersion": "1.0",
-      "anchors": [{"index": 0}],
       "loads": [{
-        "direction": {"x": 0, "y": 0, "z": -1},
+        "directionX": 0,
+        "directionY": 0,
+        "directionZ": -1,
         "magnitude": 100,
         "unit": "newton"
       }],

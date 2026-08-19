@@ -62,13 +62,11 @@ def test_optimization():
         "elementId": "test_elem_789",
         "topologyConfig": {
             "schemaVersion": "1.0",
-            "anchors": [
-                {"index": 0, "area": 12.5},
-                {"index": 1, "area": 15.3}
-            ],
             "loads": [
                 {
-                    "direction": {"x": 0.0, "y": 0.0, "z": -1.0},
+                    "directionX": 0.0,
+                    "directionY": 0.0,
+                    "directionZ": -1.0,
                     "magnitude": 100,
                     "unit": "newton"
                 }

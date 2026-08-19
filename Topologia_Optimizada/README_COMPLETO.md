@@ -135,12 +135,11 @@ Inicia una optimización topológica.
   "elementId": "ghi789",
   "topologyConfig": {
     "schemaVersion": "1.0",
-    "anchors": [
-      {"index": 0, "area": 12.5}
-    ],
     "loads": [
       {
-        "direction": {"x": 0, "y": 0, "z": -1},
+        "directionX": 0,
+        "directionY": 0,
+        "directionZ": -1,
         "magnitude": 100,
         "unit": "newton"
       }
@@ -492,4 +491,3 @@ pyproject.toml                   ✅ ACTUALIZADO - Dependencias
 ---
 
 **¡Sistema listo para optimizar estructuras en Onshape!** 🚀
-

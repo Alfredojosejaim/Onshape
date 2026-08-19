@@ -6,7 +6,7 @@ import requests
 import asyncio
 from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv, find_dotenv
 from datetime import datetime
@@ -74,14 +74,10 @@ class JobStatus:
 
 
 # Modelos Pydantic
-class Direction(BaseModel):
-    x: float
-    y: float
-    z: float
-
-
 class Load(BaseModel):
-    direction: Direction
+    directionX: float
+    directionY: float
+    directionZ: float
     magnitude: Any  # Puede ser string o número
     unit: str
 
@@ -93,7 +89,7 @@ class Optimization(BaseModel):
 
 class TopologyConfig(BaseModel):
     schemaVersion: str
-    anchors: list
+    anchors: list = Field(default_factory=list)
     loads: list[Load]
     optimization: Optimization
     timestamp: Optional[str] = None
@@ -299,9 +295,9 @@ async def optimizar_topologia(request: OptimizationRequest, background_tasks: Ba
         logger.info(f"Elemento: {request.elementId}")
         logger.info(f"Anclajes: {len(config.anchors)}")
         logger.info(f"Carga: {config.loads[0].magnitude} {config.loads[0].unit}")
-        logger.info(f"Dirección: ({config.loads[0].direction.x:.3f}, "
-                   f"{config.loads[0].direction.y:.3f}, "
-                   f"{config.loads[0].direction.z:.3f})")
+        logger.info(f"Dirección: ({config.loads[0].directionX:.3f}, "
+                   f"{config.loads[0].directionY:.3f}, "
+                   f"{config.loads[0].directionZ:.3f})")
         logger.info(f"Fracción volumen: {config.optimization.volumeFraction}")
         logger.info(f"Máx iteraciones: {config.optimization.maxIterations}")
         logger.info(f"{'='*60}\n")

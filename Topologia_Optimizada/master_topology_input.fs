@@ -1,89 +1,64 @@
-FeatureScript ✨;
-
-import(path : "onshape/std/geometry.fs", version : "2600.0");
+FeatureScript 2464; // Actualizado a una versión moderna estándar
+import(path : "onshape/std/geometry.fs") as std; // Importación recomendada para manejar geometría y atributos
 
 annotation { "Feature Type Name" : "Master Topology Input" }
 export const masterTopologyInput = defineFeature(function(context is Context, id is Id, definition is map)
     precondition
     {
-        annotation {
-            "Name" : "Anclajes",
-            "Filter" : GeometryType.FACE,
-            "MaxNumberOfPicks" : 10
-        }
-        definition.anchors is array of Query;
+        annotation { "Name" : "Anclajes", "Filter" : GeometryType.FACE, "MaxNumberOfPicks" : 10, "Item Name" : "anchor" }
+        definition.anchors is Query;
 
-        annotation {
-            "Name" : "Carga",
-            "Filter" : GeometryType.FACE,
-            "MaxNumberOfPicks" : 1
-        }
+        annotation { "Name" : "Carga", "Filter" : GeometryType.FACE, "MaxNumberOfPicks" : 1, "Item Name" : "face" }
         definition.loadFace is Query;
 
-        annotation {
-            "Name" : "Dirección X",
-            "Default" : 0
-        }
-        definition.directionX is number;
+        // En FeatureScript se usa 'is real' en lugar de 'is number'
+        annotation { "Name" : "Dirección X" }
+        definition.directionX is real;
 
-        annotation {
-            "Name" : "Dirección Y",
-            "Default" : 0
-        }
-        definition.directionY is number;
+        annotation { "Name" : "Dirección Y" }
+        definition.directionY is real;
 
-        annotation {
-            "Name" : "Dirección Z",
-            "Default" : -1
-        }
-        definition.directionZ is number;
+        annotation { "Name" : "Dirección Z" }
+        definition.directionZ is real;
 
-        annotation {
-            "Name" : "Magnitud",
-            "Default" : 100 * newton
-        }
-        definition.magnitude is ValueWithUnits;
+        annotation { "Name" : "Magnitud (N)" }
+        definition.magnitude is real;
 
-        annotation {
-            "Name" : "Fracción de volumen",
-            "Default" : 0.30
-        }
-        definition.volumeFraction is number;
+        annotation { "Name" : "Fracción de volumen" }
+        definition.volumeFraction is real;
 
-        annotation {
-            "Name" : "Número máximo de iteraciones",
-            "Default" : 100
-        }
-        definition.maxIterations is number;
+        annotation { "Name" : "Número máximo de iteraciones" }
+        definition.maxIterations is real;
     }
     {
         // Validaciones
-        if (definition.volumeFraction < 0 || definition.volumeFraction > 1) {
-            throw "La fracción de volumen debe estar entre 0 y 1";
+        if (definition.volumeFraction < 0 || definition.volumeFraction > 1)
+        {
+            throw error("La fracción de volumen debe estar entre 0 y 1");
         }
-        if (definition.maxIterations <= 0) {
-            throw "El número de iteraciones debe ser mayor a 0";
-        }
-        if (definition.anchors.size() == 0) {
-            throw "Debe seleccionar al menos un anclaje";
+        if (definition.maxIterations <= 0)
+        {
+            throw error("El número de iteraciones debe ser mayor a 0");
         }
 
-        var loadFaceData = evPlane(context, {
-            "face" : definition.loadFace
-        });
+        var directionX = definition.directionX;
+        var directionY = definition.directionY;
+        var directionZ = definition.directionZ;
 
-        var loadDirection = {
-            "x" : definition.directionX,
-            "y" : definition.directionY,
-            "z" : definition.directionZ
-        };
+        // Se usa sqrt del paquete std
+        var magnitude = std::sqrt(directionX * directionX + directionY * directionY + directionZ * directionZ);
 
-        var normalizedDirection = normalize(loadDirection);
+        if (magnitude == 0)
+        {
+            throw error("La dirección no puede ser un vector cero");
+        }
 
         var loadInfo = {
-            "direction" : normalizedDirection,
+            "directionX" : directionX / magnitude,
+            "directionY" : directionY / magnitude,
+            "directionZ" : directionZ / magnitude,
             "magnitude" : definition.magnitude,
-            "unit" definition.magnitude.unit
+            "unit" : "newton"
         };
 
         var optimizationParams = {
@@ -91,46 +66,18 @@ export const masterTopologyInput = defineFeature(function(context is Context, id
             "maxIterations" : definition.maxIterations
         };
 
-        // Serializar información de anclajes
-        var anchorsData = [];
-        for (var anchor in definition.anchors) {
-            try {
-                var anchorArea = evArea(context, {
-                    "entities" : anchor
-                });
-                anchorsData = append(anchorsData, {
-                    "area" : anchorArea,
-                    "index" : anchorsData.size()
-                });
-            } catch {
-                // Si falla obtener el área, incluir solo el índice
-                anchorsData = append(anchorsData, {
-                    "index" : anchorsData.size()
-                });
-            }
-        }
-
-        var result = {
+        var topologyData = {
             "schemaVersion" : "1.0",
-            "anchors" : anchorsData,
             "loads" : [loadInfo],
             "optimization" : optimizationParams,
-            "timestamp" : "2024-01-01T00:00:00Z"
+            "timestamp" : "2026-01-01T00:00:00Z"
         };
 
-        var resultString = JSON.stringify(result);
-        setAttribute(context, id, "topologyData", resultString);
-    }
-);
-
-function normalize(direction) {
-    var length = Math.sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
-    if (length == 0) {
-        throw "La dirección no puede ser un vector cero";
-    }
-    return {
-        "x" : direction.x / length,
-        "y" : direction.y / length,
-        "z" : direction.z / length
-    };
-}
+        // Corrección de almacenamiento: Guardamos los datos en los atributos de las caras seleccionadas
+        // Esto permite que un software externo o un exportador lea los metadatos de la carga
+        std::setAttribute(context, {
+            "entities" : definition.loadFace,
+            "name" : "topologyData",
+            "value" : topologyData
+        });
+    });

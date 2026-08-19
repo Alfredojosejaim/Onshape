@@ -245,8 +245,8 @@
                 <span id="featureStatus" class="parameter-value">Esperando datos...</span>
             </div>
             <div class="parameter-group">
-                <label>Anclajes detectados:</label>
-                <span id="anchorsCount" class="parameter-value">0</span>
+                <label>Anclajes:</label>
+                <span id="anchorsCount" class="parameter-value">Seleccionados en el FeatureScript; no se serializan en topologyData</span>
             </div>
         </div>
         
@@ -371,7 +371,8 @@
         // Mostrar datos del Feature
         function displayFeatureData(data) {
             document.getElementById('featureStatus').textContent = '✓ Cargado';
-            document.getElementById('anchorsCount').textContent = data.anchors?.length || 0;
+            document.getElementById('anchorsCount').textContent =
+                'Seleccionados en el FeatureScript; no se serializan en topologyData';
             
             let parametersHtml = '';
             
@@ -393,7 +394,7 @@
                 parametersHtml += `
                     <div class="data-item">
                         <span class="data-key">Dirección:</span>
-                        <span class="data-value">X:${load.direction.x.toFixed(3)} Y:${load.direction.y.toFixed(3)} Z:${load.direction.z.toFixed(3)}</span>
+                        <span class="data-value">X:${load.directionX.toFixed(3)} Y:${load.directionY.toFixed(3)} Z:${load.directionZ.toFixed(3)}</span>
                     </div>
                     <div class="data-item">
                         <span class="data-key">Magnitud:</span>

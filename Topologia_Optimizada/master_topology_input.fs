@@ -1,89 +1,70 @@
 FeatureScript 3044;
-// Importación estándar provista por tu entorno de Onshape
 import(path : "onshape/std/common.fs", version : "3044.0");
 
 annotation { "Feature Type Name" : "Master Topology Input" }
 export const masterTopologyInput = defineFeature(function(context is Context, id is Id, definition is map)
     precondition
     {
-        // Parámetros de selección geométrica estándar
-        annotation { "Name" : "Anchors", "Filter" : EntityType.FACE, "MaxNumberOfPicks" : 10, "Item Name" : "anchor" }
+        annotation { "Name" : "Anchors", "Filter" : EntityType.FACE,
+            "MaxNumberOfPicks" : 10, "Item Name" : "anchor" }
         definition.anchors is Query;
 
-        annotation { "Name" : "Load Face", "Filter" : EntityType.FACE, "MaxNumberOfPicks" : 1, "Item Name" : "face" }
+        annotation { "Name" : "Load Face", "Filter" : EntityType.FACE,
+            "MaxNumberOfPicks" : 1, "Item Name" : "face" }
         definition.loadFace is Query;
 
-        // CORRECCIÓN: Declaración nativa de números reales (sin unidades) usando RealBoundSpec
         annotation { "Name" : "Direction X" }
-        isReal(definition.directionX, { (unitless) : [-1e5, 1.0, 1e5] } as RealBoundSpec);
-
+        isReal(definition.directionX, { (unitless) : [-1e5, 0.0, 1e5] } as RealBoundSpec);
         annotation { "Name" : "Direction Y" }
         isReal(definition.directionY, { (unitless) : [-1e5, 0.0, 1e5] } as RealBoundSpec);
-
         annotation { "Name" : "Direction Z" }
         isReal(definition.directionZ, { (unitless) : [-1e5, 0.0, 1e5] } as RealBoundSpec);
-
         annotation { "Name" : "Magnitude (N)" }
         isReal(definition.magnitude, { (unitless) : [0.0, 100.0, 1e5] } as RealBoundSpec);
-
         annotation { "Name" : "Volume Fraction" }
         isReal(definition.volumeFraction, { (unitless) : [0.0, 0.5, 1.0] } as RealBoundSpec);
-
-        // CORRECCIÓN: Para iteraciones se usa un número entero nativo mediante IntegerBoundSpec
         annotation { "Name" : "Max Iterations" }
         isInteger(definition.maxIterations, { (unitless) : [1, 20, 1000] } as IntegerBoundSpec);
     }
     {
-        // En Onshape, las variables declaradas como 'unitless' se leen directamente como números puros
-        var volFract = definition.volumeFraction;
-        var maxIter = definition.maxIterations;
-        var magValue = definition.magnitude;
-
-        if (volFract < 0.0 || volFract > 1.0)
-        {
-            throw "La fraccion de volumen debe estar entre 0 y 1";
-        }
-        if (maxIter <= 0)
-        {
-            throw "El numero de iteraciones debe ser mayor a 0";
-        }
-
-        var dx = definition.directionX;
-        var dy = definition.directionY;
-        var dz = definition.directionZ;
-
-        // Operación matemática limpia sin interferencia de tipos de datos complejos
-        var magnitudeDir = sqrt(dx * dx + dy * dy + dz * dz);
-
-        if (magnitudeDir == 0.0)
-        {
+        var directionLength = sqrt(definition.directionX * definition.directionX
+            + definition.directionY * definition.directionY
+            + definition.directionZ * definition.directionZ);
+        if (directionLength == 0.0)
             throw "La direccion no puede ser un vector cero";
-        }
+        if (definition.magnitude < 0.0)
+            throw "La magnitud no puede ser negativa";
 
-        var loadInfo = {
-            "directionX" : dx / magnitudeDir,
-            "directionY" : dy / magnitudeDir,
-            "directionZ" : dz / magnitudeDir,
-            "magnitude" : magValue,
-            "unit" : "newton"
-        };
-
-        var optimizationParams = {
-            "volumeFraction" : volFract,
-            "maxIterations" : maxIter
-        };
-
+        // getCurrentDateTime() is evaluated by Onshape when the feature runs.
+        // It is intentionally stored as a native attribute value, not a
+        // fabricated identifier or a hardcoded string.
         var topologyData = {
             "schemaVersion" : "1.0",
-            "loads" : [loadInfo],
-            "optimization" : optimizationParams,
-            "timestamp" : "2026-01-01T00:00:00Z"
+            "anchors" : { "count" : size(evaluateQuery(context, definition.anchors)) },
+            "loads" : [{
+                "directionX" : definition.directionX / directionLength,
+                "directionY" : definition.directionY / directionLength,
+                "directionZ" : definition.directionZ / directionLength,
+                "magnitude" : definition.magnitude,
+                "unit" : "newton"
+            }],
+            "optimization" : {
+                "volumeFraction" : definition.volumeFraction,
+                "maxIterations" : definition.maxIterations
+            },
+            "timestamp" : getCurrentDateTime()
         };
 
-        // Guardar atributos JSON adjuntos a la cara de carga seleccionada
+        // Role attributes persist with the selected faces.  The load face
+        // carries the shared configuration; anchors carry only their role.
+        setAttribute(context, {
+            "entities" : definition.anchors,
+            "name" : "topologyAnchor",
+            "attribute" : { "schemaVersion" : "1.0", "role" : "anchor" }
+        });
         setAttribute(context, {
             "entities" : definition.loadFace,
             "name" : "topologyData",
-            "value" : topologyData
+            "attribute" : topologyData
         });
     });

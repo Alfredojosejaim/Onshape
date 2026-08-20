@@ -1,5 +1,11 @@
 # 🔬 Topología Optimizada - Sistema Completo
 
+> **Estado del MVP:** la descarga de STEP/propiedades es real, pero no se
+> generan mallas, resultados FEA/TopOpt ni STEP ficticios. Sin adaptadores
+> científicos configurados, los jobs quedan `pending` y explican la etapa
+> requerida. Consulte `INTEGRACION_APP_EXTENSION.md` para la configuración
+> externa del SDK y HTTPS.
+
 ## 📋 Descripción
 
 Sistema integral de **optimización topológica 3D** para Onshape que integra:

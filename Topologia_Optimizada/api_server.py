@@ -115,7 +115,7 @@ class TopologyConfig(BaseModel):
     anchors: list[Any] = Field(default_factory=list)
     loads: list[Load] = Field(min_length=1)
     optimization: Optimization
-    timestamp: Optional[str] = None
+    timestamp: str = Field(default_factory=utc_now)
 
 
 class OptimizationRequest(BaseModel):
@@ -125,7 +125,7 @@ class OptimizationRequest(BaseModel):
     workspaceId: str = Field(min_length=1, max_length=256)
     elementId: str = Field(min_length=1, max_length=256)
     topologyConfig: TopologyConfig
-    timestamp: Optional[str] = None
+    timestamp: str = Field(default_factory=utc_now)
 
 
 class OptimizationResponse(BaseModel):

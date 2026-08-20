@@ -35,9 +35,6 @@ export const masterTopologyInput = defineFeature(function(context is Context, id
         if (definition.magnitude < 0.0)
             throw "La magnitud no puede ser negativa";
 
-        // getCurrentDateTime() is evaluated by Onshape when the feature runs.
-        // It is intentionally stored as a native attribute value, not a
-        // fabricated identifier or a hardcoded string.
         var topologyData = {
             "schemaVersion" : "1.0",
             "anchors" : { "count" : size(evaluateQuery(context, definition.anchors)) },
@@ -51,8 +48,7 @@ export const masterTopologyInput = defineFeature(function(context is Context, id
             "optimization" : {
                 "volumeFraction" : definition.volumeFraction,
                 "maxIterations" : definition.maxIterations
-            },
-            "timestamp" : getCurrentDateTime()
+            }
         };
 
         // Role attributes persist with the selected faces.  The load face

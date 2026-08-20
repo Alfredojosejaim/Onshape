@@ -246,7 +246,7 @@
             </div>
             <div class="parameter-group">
                 <label>Anclajes:</label>
-                <span id="anchorsCount" class="parameter-value">Seleccionados en el FeatureScript; no se serializan en topologyData</span>
+                <span id="anchorsCount" class="parameter-value">Esperando datos del adaptador SDK...</span>
             </div>
         </div>
         
@@ -267,7 +267,7 @@
                     type="text" 
                     id="serverUrl" 
                     placeholder="https://tu-api.com/api/optimize"
-                    value="http://localhost:8000/api/optimize"
+                    value=""
                 >
             </div>
         </div>
@@ -300,20 +300,43 @@
         let featureData = null;
         let onshapeClient = null;
         
-        // Inicializar cliente de Onshape
-        function initOnshapeClient() {
+        // The exact SDK context API depends on the externally registered
+        // Onshape App Extension. No Onshape API calls are made from this page.
+        async function initOnshapeClient() {
             const params = new URLSearchParams(window.location.search);
-            const docId = params.get('documentId');
-            const workspaceId = params.get('workspaceId');
-            const elementId = params.get('elementId');
-            
-            onshapeClient = {
-                docId,
-                workspaceId,
-                elementId
-            };
-            
-            console.log('Onshape client initialized:', onshapeClient);
+            const debug = params.get('debug') === '1';
+            const sdk = window.OnshapeClient || window.Onshape || window.onshape;
+            let context = null;
+
+            if (sdk && typeof sdk.getContext === 'function') {
+                context = await sdk.getContext();
+            } else if (sdk && sdk.context) {
+                context = sdk.context;
+            }
+
+            if (context && context.documentId && context.workspaceId && context.elementId) {
+                onshapeClient = {
+                    ...context,
+                    docId: context.documentId,
+                    workspaceId: context.workspaceId,
+                    elementId: context.elementId
+                };
+            } else if (debug) {
+                onshapeClient = {
+                    docId: params.get('documentId'),
+                    workspaceId: params.get('workspaceId'),
+                    elementId: params.get('elementId')
+                };
+            }
+
+            if (!onshapeClient || !onshapeClient.docId ||
+                !onshapeClient.workspaceId || !onshapeClient.elementId) {
+                throw new Error('REQUIERE CONFIGURACION EXTERNA: contexto SDK de Onshape');
+            }
+            if (debug && !document.getElementById('serverUrl').value) {
+                document.getElementById('serverUrl').value =
+                    'http://localhost:8000/api/optimize';
+            }
         }
         
         // Leer el atributo del FeatureScript
@@ -325,42 +348,18 @@
                     throw new Error('Cliente de Onshape no inicializado');
                 }
                 
-                // Usar Onshape API para obtener los features del Part Studio
-                const apiUrl = `https://cad.onshape.com/api/partstudios/d/${onshapeClient.docId}/w/${onshapeClient.workspaceId}/e/${onshapeClient.elementId}/features`;
-                
-                const response = await fetch(apiUrl, {
-                    method: 'GET',
-                    headers: {
-                        'Accept': 'application/json',
-                    },
-                    credentials: 'include' // Incluir cookies de autenticación
-                });
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                const sdk = window.OnshapeClient || window.Onshape || window.onshape;
+                if (!sdk || typeof sdk.getFeatureData !== 'function') {
+                    throw new Error(
+                        'REQUIERE CONFIGURACION EXTERNA: adaptador SDK para leer topologyData'
+                    );
                 }
-                
-                const data = await response.json();
-                
-                // Buscar el feature "Master Topology Input"
-                const topologyFeature = data.features?.find(f => 
-                    f.name === 'Master Topology Input' || f.type === 'custom'
-                );
-                
-                if (!topologyFeature) {
-                    showStatus('warning', '⚠ No se encontró el Feature "Master Topology Input"');
-                    document.getElementById('featureStatus').textContent = 'Feature no encontrado';
-                    return;
+                featureData = await sdk.getFeatureData(onshapeClient);
+                if (!featureData || !featureData.optimization || !featureData.loads) {
+                    throw new Error('El adaptador SDK no devolvio topologyData valido');
                 }
-                
-                // Extraer el atributo con los datos
-                if (topologyFeature.customFeature?.message) {
-                    featureData = JSON.parse(topologyFeature.customFeature.message);
-                    displayFeatureData(featureData);
-                    showStatus('success', '✓ Datos del Feature cargados correctamente');
-                } else {
-                    showStatus('warning', '⚠ El Feature no contiene datos de optimización');
-                }
+                displayFeatureData(featureData);
+                showStatus('success', '✓ Datos del Feature cargados correctamente');
                 
             } catch (error) {
                 console.error('Error al leer datos:', error);
@@ -372,7 +371,7 @@
         function displayFeatureData(data) {
             document.getElementById('featureStatus').textContent = '✓ Cargado';
             document.getElementById('anchorsCount').textContent =
-                'Seleccionados en el FeatureScript; no se serializan en topologyData';
+                data.anchors?.count ?? 'No disponible desde el adaptador SDK';
             
             let parametersHtml = '';
             
@@ -380,11 +379,11 @@
                 parametersHtml += `
                     <div class="data-item">
                         <span class="data-key">Fracción de Volumen:</span>
-                        <span class="data-value">${data.optimization.volumeFraction || 'N/A'}</span>
+                        <span class="data-value">${data.optimization.volumeFraction ?? 'N/A'}</span>
                     </div>
                     <div class="data-item">
                         <span class="data-key">Máx. Iteraciones:</span>
-                        <span class="data-value">${data.optimization.maxIterations || 'N/A'}</span>
+                        <span class="data-value">${data.optimization.maxIterations ?? 'N/A'}</span>
                     </div>
                 `;
             }
@@ -470,15 +469,11 @@
             
             let html = '';
             for (const [key, value] of Object.entries(data)) {
-                html += `
-                    <div class="data-item">
-                        <span class="data-key">${key}:</span>
-                        <span class="data-value">${JSON.stringify(value, null, 2)}</span>
-                    </div>
-                `;
+                const item = document.createElement('div');
+                item.className = 'data-item';
+                item.textContent = `${key}: ${JSON.stringify(value, null, 2)}`;
+                document.getElementById('responseContainer').appendChild(item);
             }
-            
-            document.getElementById('responseContainer').innerHTML = html;
         }
         
         // Mostrar mensaje de estado
@@ -500,8 +495,9 @@
         
         // Inicializar en carga
         window.addEventListener('load', () => {
-            initOnshapeClient();
-            readFeatureData();
+            initOnshapeClient()
+                .then(readFeatureData)
+                .catch(error => showStatus('error', `❌ ${error.message}`));
         });
     </script>
 </body>

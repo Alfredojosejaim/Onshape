@@ -254,6 +254,29 @@ Respuesta esperada:
 
 ## 🚀 Próximos Pasos
 
+## Estado real del MVP
+
+El backend conserva la descarga real de STEP y propiedades de Onshape, pero no
+presenta mallas, FEA, resultados TopOpt ni STEP reconstruidos cuando no existe
+un adaptador real configurado. En esos casos el job queda `pending` con un
+codigo explicito (`MESHER_REQUIRED`, `FEA_SOLVER_REQUIRED`, etc.).
+
+Los jobs se persisten en `jobs.sqlite3` (configurable con `JOB_DB_PATH`).
+Las API keys solo se leen en el backend desde `.env`; copia `.env.example` y
+no subas el archivo `.env`.
+
+La App Extension no llama directamente a la API de Onshape. Necesita un
+adaptador SDK registrado externamente que exponga el contexto del documento y
+`getFeatureData`; si esa capacidad no esta disponible, el panel muestra
+`REQUIERE CONFIGURACION EXTERNA`. Los parametros de URL solo son fallback de
+debug (`debug=1`). Para usarla desde Onshape, publica el panel y el backend
+por HTTPS (por ejemplo, mediante un tunel local).
+
+El timestamp se solicita al runtime de FeatureScript con
+`getCurrentDateTime()`. Debe verificarse al publicar el FeatureScript en la
+version de Onshape elegida; si ese runtime no expone la funcion, requiere un
+adaptador externo de timestamp y no debe sustituirse por una fecha fija.
+
 1. **Integrar el motor de optimización**:
    - Implementar PyTopo3D o TopOpt en `api_server.py`
    - Descargar geometría STEP desde Onshape

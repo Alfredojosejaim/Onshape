@@ -272,10 +272,11 @@ adaptador SDK registrado externamente que exponga el contexto del documento y
 debug (`debug=1`). Para usarla desde Onshape, publica el panel y el backend
 por HTTPS (por ejemplo, mediante un tunel local).
 
-El timestamp se solicita al runtime de FeatureScript con
-`getCurrentDateTime()`. Debe verificarse al publicar el FeatureScript en la
-version de Onshape elegida; si ese runtime no expone la funcion, requiere un
-adaptador externo de timestamp y no debe sustituirse por una fecha fija.
+FeatureScript no dispone de una funcion documentada para obtener la fecha y
+hora actual. Por eso el FeatureScript guarda la configuracion persistente sin
+timestamp; el frontend agrega `new Date().toISOString()` al enviar el
+payload y el backend registra su propio timestamp UTC si el cliente no lo
+proporciona. No se utiliza una fecha fija.
 
 1. **Integrar el motor de optimización**:
    - Implementar PyTopo3D o TopOpt en `api_server.py`

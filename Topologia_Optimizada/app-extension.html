@@ -1,504 +1,455 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="es">
 <head>
-    <meta charset="utf-8">
-    <title>Optimización Topológica</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background: #f5f5f5;
-            color: #333;
-        }
-        
-        .container {
-            padding: 20px;
-            max-width: 400px;
-        }
-        
-        .header {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 25px;
-            padding-bottom: 15px;
-            border-bottom: 2px solid #0099ff;
-        }
-        
-        .header h1 {
-            font-size: 18px;
-            font-weight: 600;
-            color: #0099ff;
-        }
-        
-        .icon {
-            width: 24px;
-            height: 24px;
-            background: #0099ff;
-            border-radius: 4px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-weight: bold;
-        }
-        
-        .section {
-            margin-bottom: 25px;
-            background: white;
-            padding: 16px;
-            border-radius: 6px;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-        }
-        
-        .section-title {
-            font-weight: 600;
-            font-size: 13px;
-            color: #666;
-            margin-bottom: 12px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
-        .parameter-group {
-            margin-bottom: 15px;
-        }
-        
-        .parameter-group label {
-            display: block;
-            font-size: 12px;
-            font-weight: 500;
-            margin-bottom: 5px;
-            color: #333;
-        }
-        
-        .parameter-group input,
-        .parameter-group select {
-            width: 100%;
-            padding: 8px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            font-size: 13px;
-            font-family: inherit;
-        }
-        
-        .parameter-group input:focus,
-        .parameter-group select:focus {
-            outline: none;
-            border-color: #0099ff;
-            box-shadow: 0 0 0 2px rgba(0, 153, 255, 0.1);
-        }
-        
-        .parameter-value {
-            display: block;
-            padding: 8px;
-            background: #f9f9f9;
-            border-radius: 4px;
-            font-size: 12px;
-            color: #666;
-            font-family: 'Monaco', 'Courier New', monospace;
-            word-break: break-all;
-        }
-        
-        .status {
-            margin-bottom: 15px;
-            padding: 12px;
-            border-radius: 4px;
-            font-size: 12px;
-            display: none;
-        }
-        
-        .status.info {
-            background: #e3f2fd;
-            color: #1976d2;
-            border: 1px solid #90caf9;
-            display: block;
-        }
-        
-        .status.success {
-            background: #e8f5e9;
-            color: #388e3c;
-            border: 1px solid #81c784;
-            display: block;
-        }
-        
-        .status.error {
-            background: #ffebee;
-            color: #d32f2f;
-            border: 1px solid #ef5350;
-            display: block;
-        }
-        
-        .status.warning {
-            background: #fff3e0;
-            color: #f57c00;
-            border: 1px solid #ffb74d;
-            display: block;
-        }
-        
-        .button-group {
-            display: flex;
-            gap: 10px;
-        }
-        
-        button {
-            flex: 1;
-            padding: 10px;
-            border: none;
-            border-radius: 4px;
-            font-size: 13px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        
-        .btn-primary {
-            background: #0099ff;
-            color: white;
-        }
-        
-        .btn-primary:hover {
-            background: #0077cc;
-            box-shadow: 0 2px 8px rgba(0, 153, 255, 0.3);
-        }
-        
-        .btn-primary:disabled {
-            background: #ccc;
-            cursor: not-allowed;
-            box-shadow: none;
-        }
-        
-        .btn-secondary {
-            background: #f0f0f0;
-            color: #333;
-            border: 1px solid #ddd;
-        }
-        
-        .btn-secondary:hover {
-            background: #e0e0e0;
-        }
-        
-        .spinner {
-            display: inline-block;
-            width: 12px;
-            height: 12px;
-            border: 2px solid rgba(0, 153, 255, 0.3);
-            border-radius: 50%;
-            border-top-color: #0099ff;
-            animation: spin 0.8s linear infinite;
-            margin-right: 8px;
-        }
-        
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-        
-        .data-section {
-            background: #f9f9f9;
-            padding: 12px;
-            border-radius: 4px;
-            font-size: 12px;
-            max-height: 200px;
-            overflow-y: auto;
-        }
-        
-        .data-item {
-            margin-bottom: 8px;
-            padding: 8px;
-            background: white;
-            border-radius: 3px;
-            border-left: 3px solid #0099ff;
-            padding-left: 10px;
-        }
-        
-        .data-key {
-            font-weight: 600;
-            color: #0099ff;
-        }
-        
-        .data-value {
-            color: #666;
-            font-family: 'Monaco', 'Courier New', monospace;
-            word-break: break-all;
-        }
-    </style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Optimización topológica</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f7fb;
+      --card: #fff;
+      --ink: #172033;
+      --muted: #5f6b7a;
+      --line: #dce3ec;
+      --primary: #1769e0;
+      --primary-dark: #0f4fae;
+      --success: #147d50;
+      --danger: #b42318;
+      --warning: #996b00;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .shell { width: min(1060px, 100%); margin: 0 auto; padding: 2rem 1rem 4rem; }
+    header {
+      margin-bottom: 1.5rem;
+      padding: 1.5rem;
+      border: 1px solid #cddcf2;
+      border-radius: 16px;
+      background: linear-gradient(135deg, #eaf2ff 0%, #fff 70%);
+    }
+    header::before {
+      content: "CAD / INGENIERÍA";
+      display: inline-block;
+      margin-bottom: .7rem;
+      color: var(--primary-dark);
+      font-size: .72rem;
+      font-weight: 800;
+      letter-spacing: .12em;
+    }
+    h1, h2, p { margin-top: 0; }
+    h1 { margin-bottom: .45rem; font-size: clamp(1.8rem, 4vw, 2.6rem); }
+    h2 { margin-bottom: 1rem; font-size: 1.15rem; }
+    .subtitle, .hint { color: var(--muted); }
+    .subtitle { max-width: 680px; margin-bottom: 0; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: 0 5px 18px rgba(23, 32, 51, .05);
+      padding: 1.25rem;
+    }
+    .card h2 { display: flex; align-items: center; gap: .55rem; }
+    .card h2::before {
+      content: "";
+      display: inline-block;
+      width: .3rem;
+      height: 1.15rem;
+      border-radius: 1rem;
+      background: var(--primary);
+    }
+    .wide { grid-column: 1 / -1; }
+    .account { display: flex; justify-content: space-between; gap: 1rem; align-items: center; }
+    .status { display: inline-flex; align-items: center; gap: .5rem; font-weight: 700; }
+    .status::before { content: ""; width: .65rem; height: .65rem; border-radius: 50%; background: var(--warning); }
+    .status.connected::before { background: var(--success); }
+    .status.error::before { background: var(--danger); }
+    .user { color: var(--muted); margin: .35rem 0 0; }
+    .context-fields { display: grid; gap: 1rem; }
+    .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+    .field { min-width: 0; }
+    label { display: block; margin-bottom: .4rem; font-size: .9rem; font-weight: 700; }
+    input, select, button {
+      width: 100%;
+      min-height: 2.65rem;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      font: inherit;
+    }
+    input, select { padding: .55rem .7rem; background: #fff; color: var(--ink); }
+    input:disabled, select:disabled { background: #f3f5f8; color: #8a95a5; cursor: not-allowed; }
+    input:focus, select:focus, button:focus-visible { outline: 3px solid rgba(23, 105, 224, .22); outline-offset: 1px; }
+    button { padding: .55rem .85rem; cursor: pointer; font-weight: 700; background: #fff; color: var(--primary-dark); }
+    button:hover:not(:disabled) { border-color: var(--primary); }
+    button:disabled { cursor: not-allowed; opacity: .55; }
+    .primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+    .primary:hover:not(:disabled) { background: var(--primary-dark); border-color: var(--primary-dark); }
+    .actions { display: flex; gap: .75rem; margin-top: 1rem; }
+    .actions button { width: auto; min-width: 12rem; }
+    .message { margin: 0 0 1rem; padding: .8rem .95rem; border-radius: 8px; background: #eef2f7; color: var(--ink); }
+    .message.success { background: #e8f7ef; color: var(--success); }
+    .message.error { background: #fff0ee; color: var(--danger); }
+    .message.warning { background: #fff8df; color: var(--warning); }
+    .progress-wrap { margin: 1rem 0; }
+    progress { width: 100%; height: .75rem; accent-color: var(--primary); }
+    .progress-line { display: flex; justify-content: space-between; gap: 1rem; color: var(--muted); font-size: .9rem; }
+    pre { overflow: auto; max-height: 25rem; padding: 1rem; border-radius: 8px; background: #111827; color: #d7e3f4; font-size: .82rem; }
+    .hidden { display: none !important; }
+    @media (max-width: 700px) {
+      .grid, .form-grid { grid-template-columns: 1fr; }
+      .wide { grid-column: auto; }
+      .account { align-items: stretch; flex-direction: column; }
+      .actions { flex-direction: column; }
+      .actions button { width: 100%; }
+    }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <div class="icon">⚙</div>
-            <h1>Optimización Topológica</h1>
+  <main class="shell">
+    <header>
+      <h1>Optimización topológica</h1>
+      <p class="subtitle">Configura un contexto CAD de Onshape y ejecuta el procesamiento desde una interfaz local.</p>
+    </header>
+
+    <div id="global-message" class="message hidden" role="status" aria-live="polite"></div>
+
+    <div class="grid">
+      <section class="card wide" aria-labelledby="account-title">
+        <h2 id="account-title">Cuenta de Onshape</h2>
+        <div class="account">
+          <div>
+            <div id="connection-status" class="status">Desconectado</div>
+            <p id="user" class="user">No autenticado</p>
+          </div>
+          <div class="actions">
+            <button id="login" class="primary" type="button">Conectar con Onshape</button>
+            <button id="logout" class="hidden" type="button">Desconectar</button>
+          </div>
         </div>
-        
-        <div id="statusContainer"></div>
-        
-        <!-- Sección: Datos del Feature -->
-        <div class="section">
-            <div class="section-title">📊 Estado del Feature</div>
-            <div class="parameter-group">
-                <label>Estado de la configuración:</label>
-                <span id="featureStatus" class="parameter-value">Esperando datos...</span>
+      </section>
+
+      <section class="card" aria-labelledby="context-title">
+        <h2 id="context-title">Contexto CAD</h2>
+        <form id="context-form">
+          <div class="context-fields">
+            <div class="field">
+              <label for="document">Documento (did)</label>
+              <select id="document" required disabled>
+                <option value="">Conecta para cargar documentos</option>
+              </select>
             </div>
-            <div class="parameter-group">
-                <label>Anclajes:</label>
-                <span id="anchorsCount" class="parameter-value">Esperando datos del adaptador SDK...</span>
+            <div class="field">
+              <label for="workspace">Workspace (wid)</label>
+              <input id="workspace" placeholder="Workspace ID" required>
             </div>
+            <div class="field">
+              <label for="element">Elemento / Part Studio (eid)</label>
+              <input id="element" placeholder="Element ID" required>
+            </div>
+          </div>
+          <p class="hint">Selecciona el documento y completa los identificadores del contexto que se procesará.</p>
+          <div class="actions">
+            <button id="save-context" class="primary" type="submit" disabled>Guardar contexto</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="card" aria-labelledby="config-title">
+        <h2 id="config-title">Configuración</h2>
+        <form id="optimization-form">
+          <div class="form-grid">
+            <div class="field">
+              <label for="volume">Fracción de volumen</label>
+              <input id="volume" type="number" min=".01" max="1" step=".01" value=".3" required>
+            </div>
+            <div class="field">
+              <label for="iterations">Máximo de iteraciones</label>
+              <input id="iterations" type="number" min="1" max="10000" step="1" value="100" required>
+            </div>
+            <div class="field">
+              <label for="force">Magnitud de carga</label>
+              <input id="force" type="number" min="0" step=".01" value="100" required>
+            </div>
+            <div class="field">
+              <label for="force-unit">Unidad de carga</label>
+              <input id="force-unit" value="N" maxlength="32" required>
+            </div>
+            <div class="field">
+              <label for="direction-x">Dirección X</label>
+              <input id="direction-x" type="number" step=".01" value="1" required>
+            </div>
+            <div class="field">
+              <label for="direction-y">Dirección Y</label>
+              <input id="direction-y" type="number" step=".01" value="0" required>
+            </div>
+            <div class="field">
+              <label for="direction-z">Dirección Z</label>
+              <input id="direction-z" type="number" step=".01" value="0" required>
+            </div>
+          </div>
+          <p class="hint">La geometría, el mallado y el FEA deben estar configurados en el backend para completar un cálculo real.</p>
+          <div class="actions">
+            <button id="run-optimization" class="primary" type="submit" disabled>Ejecutar optimización</button>
+          </div>
+        </form>
+      </section>
+
+      <section id="job-card" class="card wide hidden" aria-labelledby="job-title">
+        <h2 id="job-title">Ejecución</h2>
+        <div id="job-message" class="message" role="status" aria-live="polite">Sin trabajos activos.</div>
+        <div class="progress-wrap">
+          <div class="progress-line"><span>Progreso</span><strong id="job-progress-value">0%</strong></div>
+          <progress id="job-progress" max="100" value="0">0%</progress>
         </div>
-        
-        <!-- Sección: Parámetros de Optimización -->
-        <div class="section">
-            <div class="section-title">🔧 Parámetros Leídos</div>
-            <div id="parametersContainer">
-                <p style="color: #999; font-size: 12px;">Ejecuta el Feature para cargar parámetros...</p>
-            </div>
+        <div id="result-container" class="hidden">
+          <h2>Resultado</h2>
+          <pre id="result"></pre>
         </div>
-        
-        <!-- Sección: Configuración de Servidor -->
-        <div class="section">
-            <div class="section-title">🌐 Configuración de Servidor</div>
-            <div class="parameter-group">
-                <label for="serverUrl">URL del Backend:</label>
-                <input 
-                    type="text" 
-                    id="serverUrl" 
-                    placeholder="https://tu-api.com/api/optimize"
-                    value=""
-                >
-            </div>
-        </div>
-        
-        <!-- Sección: Acciones -->
-        <div class="section">
-            <div class="section-title">⚡ Acciones</div>
-            <div class="button-group">
-                <button class="btn-primary" id="optimizeBtn">
-                    Optimizar
-                </button>
-                <button class="btn-secondary" id="refreshBtn">
-                    Actualizar
-                </button>
-            </div>
-        </div>
-        
-        <!-- Sección: Log de Respuesta -->
-        <div class="section" style="display: none;" id="responseSection">
-            <div class="section-title">📡 Respuesta del Servidor</div>
-            <div id="responseContainer" class="data-section">
-                <p style="color: #999;">Sin respuestas aún...</p>
-            </div>
-        </div>
+      </section>
     </div>
+  </main>
 
-    <script src="https://d2uucjvzfp2fpe.cloudfront.net/onshape-embed-sdk.js"></script>
-    <script>
-        // Estado global
-        let featureData = null;
-        let onshapeClient = null;
-        
-        // The exact SDK context API depends on the externally registered
-        // Onshape App Extension. No Onshape API calls are made from this page.
-        async function initOnshapeClient() {
-            const params = new URLSearchParams(window.location.search);
-            const debug = params.get('debug') === '1';
-            const sdk = window.OnshapeClient || window.Onshape || window.onshape;
-            let context = null;
+  <script>
+    const state = { authenticated: false, contextSaved: false, pollTimer: null };
+    const $ = (id) => document.getElementById(id);
+    const connectionStatus = $('connection-status');
+    const globalMessage = $('global-message');
+    const documentSelect = $('document');
+    const contextForm = $('context-form');
+    const optimizationForm = $('optimization-form');
 
-            if (sdk && typeof sdk.getContext === 'function') {
-                context = await sdk.getContext();
-            } else if (sdk && sdk.context) {
-                context = sdk.context;
-            }
+    function showMessage(text, type = '') {
+      globalMessage.textContent = text;
+      globalMessage.className = `message${type ? ` ${type}` : ''}`;
+    }
 
-            if (context && context.documentId && context.workspaceId && context.elementId) {
-                onshapeClient = {
-                    ...context,
-                    docId: context.documentId,
-                    workspaceId: context.workspaceId,
-                    elementId: context.elementId
-                };
-            } else if (debug) {
-                onshapeClient = {
-                    docId: params.get('documentId'),
-                    workspaceId: params.get('workspaceId'),
-                    elementId: params.get('elementId')
-                };
-            }
+    function apiError(data, fallback) {
+      const detail = data && data.detail;
+      if (typeof detail === 'string') return detail;
+      if (detail && typeof detail.message === 'string') return detail.message;
+      return fallback;
+    }
 
-            if (!onshapeClient || !onshapeClient.docId ||
-                !onshapeClient.workspaceId || !onshapeClient.elementId) {
-                throw new Error('REQUIERE CONFIGURACION EXTERNA: contexto SDK de Onshape');
-            }
-            if (debug && !document.getElementById('serverUrl').value) {
-                document.getElementById('serverUrl').value =
-                    'http://localhost:8000/api/optimize';
-            }
+    function setAuthenticated(authenticated) {
+      state.authenticated = authenticated;
+      documentSelect.disabled = !authenticated;
+      $('workspace').disabled = !authenticated;
+      $('element').disabled = !authenticated;
+      ['volume', 'iterations', 'force', 'force-unit', 'direction-x', 'direction-y', 'direction-z']
+        .forEach((id) => { $(id).disabled = !authenticated; });
+      $('save-context').disabled = !authenticated;
+      $('run-optimization').disabled = !authenticated;
+      $('logout').classList.toggle('hidden', !authenticated);
+      $('login').classList.toggle('hidden', authenticated);
+      connectionStatus.textContent = authenticated ? 'Conectado a Onshape' : 'Desconectado';
+      connectionStatus.classList.toggle('connected', authenticated);
+      if (!authenticated) {
+        $('user').textContent = 'No autenticado';
+        documentSelect.innerHTML = '<option value="">Conecta para cargar documentos</option>';
+      }
+    }
+
+    async function loadDocuments(selectedId = '') {
+      const response = await fetch('/api/onshape/documents', { credentials: 'include' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(apiError(data, 'No se pudieron consultar los documentos'));
+      const documents = Array.isArray(data) ? data : (data.items || data.documents || []);
+      documentSelect.innerHTML = '<option value="">Selecciona un documento</option>';
+      documents.forEach((doc) => {
+        const id = doc.id || doc.documentId || '';
+        if (!id) return;
+        const option = document.createElement('option');
+        option.value = id;
+        option.textContent = doc.name || doc.description || id;
+        documentSelect.appendChild(option);
+      });
+      documentSelect.value = selectedId;
+    }
+
+    async function loadStatus() {
+      const response = await fetch('/api/auth/status', { credentials: 'include' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(apiError(data, 'No se pudo consultar el estado de autenticación'));
+      setAuthenticated(Boolean(data.authenticated));
+      if (!data.authenticated) return;
+      $('user').textContent = data.user?.name || data.user?.email || 'Usuario autenticado';
+      const context = data.context || {};
+      $('workspace').value = context.workspaceId || '';
+      $('element').value = context.elementId || '';
+      await loadDocuments(context.documentId || '');
+    }
+
+    async function loadHealth() {
+      const response = await fetch('/health', { credentials: 'include' });
+      const data = await response.json();
+      if (!response.ok || !data.oauth_configurado) {
+        showMessage('OAuth de Onshape no está configurado. Completa ONSHAPE_OAUTH_CLIENT_ID y ONSHAPE_OAUTH_CLIENT_SECRET en .env y reinicia la aplicación.', 'warning');
+      }
+    }
+
+    async function saveContext(event) {
+      event.preventDefault();
+      if (!contextForm.reportValidity()) return;
+      const response = await fetch('/api/context', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          documentId: documentSelect.value,
+          workspaceId: $('workspace').value.trim(),
+          elementId: $('element').value.trim()
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(apiError(data, 'No se pudo guardar el contexto'));
+      state.contextSaved = true;
+      showMessage('Contexto CAD guardado correctamente.', 'success');
+    }
+
+    function numberValue(id) {
+      return Number($(id).value);
+    }
+
+    function optimizationPayload() {
+      return {
+        documentId: documentSelect.value,
+        workspaceId: $('workspace').value.trim(),
+        elementId: $('element').value.trim(),
+        topologyConfig: {
+          schemaVersion: '1.0',
+          anchors: [],
+          loads: [{
+            directionX: numberValue('direction-x'),
+            directionY: numberValue('direction-y'),
+            directionZ: numberValue('direction-z'),
+            magnitude: numberValue('force'),
+            unit: $('force-unit').value.trim()
+          }],
+          optimization: {
+            volumeFraction: numberValue('volume'),
+            maxIterations: numberValue('iterations')
+          }
         }
-        
-        // Leer el atributo del FeatureScript
-        async function readFeatureData() {
-            try {
-                showStatus('info', '⟳ Leyendo datos del Feature...');
-                
-                if (!onshapeClient) {
-                    throw new Error('Cliente de Onshape no inicializado');
-                }
-                
-                const sdk = window.OnshapeClient || window.Onshape || window.onshape;
-                if (!sdk || typeof sdk.getFeatureData !== 'function') {
-                    throw new Error(
-                        'REQUIERE CONFIGURACION EXTERNA: adaptador SDK para leer topologyData'
-                    );
-                }
-                featureData = await sdk.getFeatureData(onshapeClient);
-                if (!featureData || !featureData.optimization || !featureData.loads) {
-                    throw new Error('El adaptador SDK no devolvio topologyData valido');
-                }
-                displayFeatureData(featureData);
-                showStatus('success', '✓ Datos del Feature cargados correctamente');
-                
-            } catch (error) {
-                console.error('Error al leer datos:', error);
-                showStatus('error', `❌ Error: ${error.message}`);
-            }
+      };
+    }
+
+    function validateOptimization() {
+      if (!contextForm.reportValidity() || !optimizationForm.reportValidity()) return false;
+      const payload = optimizationPayload();
+      const direction = payload.topologyConfig.loads[0];
+      if (direction.directionX === 0 && direction.directionY === 0 && direction.directionZ === 0) {
+        showMessage('La dirección de la carga no puede ser cero.', 'error');
+        return false;
+      }
+      return true;
+    }
+
+    function renderJob(data) {
+      $('job-card').classList.remove('hidden');
+      $('job-message').textContent = data.message || data.status;
+      $('job-progress').value = data.progress || 0;
+      $('job-progress-value').textContent = `${data.progress || 0}%`;
+      if (data.error) {
+        $('job-message').className = 'message error';
+        $('job-message').textContent = data.error.message || data.message;
+      } else if (data.status === 'completed') {
+        $('job-message').className = 'message success';
+      } else if (data.status === 'pending') {
+        $('job-message').className = 'message warning';
+      } else {
+        $('job-message').className = 'message';
+      }
+      if (data.result) {
+        $('result-container').classList.remove('hidden');
+        $('result').textContent = JSON.stringify(data.result, null, 2);
+      }
+    }
+
+    function stopPolling() {
+      if (state.pollTimer) window.clearTimeout(state.pollTimer);
+      state.pollTimer = null;
+    }
+
+    async function pollJob(jobId) {
+      const response = await fetch(`/api/optimize/status?jobId=${encodeURIComponent(jobId)}`, {
+        credentials: 'include'
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(apiError(data, 'No se pudo consultar el trabajo'));
+      renderJob(data);
+      if (!['completed', 'failed'].includes(data.status)) {
+        state.pollTimer = window.setTimeout(() => pollJob(jobId).catch(handleError), 1500);
+      } else {
+        $('run-optimization').disabled = false;
+      }
+    }
+
+    async function runOptimization(event) {
+      event.preventDefault();
+      if (!validateOptimization()) return;
+      stopPolling();
+      $('run-optimization').disabled = true;
+      $('result-container').classList.add('hidden');
+      $('job-card').classList.remove('hidden');
+      $('job-message').className = 'message';
+      $('job-message').textContent = 'Enviando trabajo...';
+      const response = await fetch('/api/optimize', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(optimizationPayload())
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(apiError(data, 'No se pudo iniciar la optimización'));
+      await pollJob(data.jobId);
+    }
+
+    function handleError(error) {
+      stopPolling();
+      $('run-optimization').disabled = !state.authenticated;
+      showMessage(error.message, 'error');
+      $('job-card').classList.remove('hidden');
+      $('job-message').className = 'message error';
+      $('job-message').textContent = error.message;
+    }
+
+    $('login').addEventListener('click', async () => {
+      try {
+        const response = await fetch('/health', { credentials: 'include' });
+        const data = await response.json();
+        if (!response.ok || !data.oauth_configurado) {
+          showMessage('OAuth de Onshape no está configurado en el backend.', 'warning');
+          return;
         }
-        
-        // Mostrar datos del Feature
-        function displayFeatureData(data) {
-            document.getElementById('featureStatus').textContent = '✓ Cargado';
-            document.getElementById('anchorsCount').textContent =
-                data.anchors?.count ?? 'No disponible desde el adaptador SDK';
-            
-            let parametersHtml = '';
-            
-            if (data.optimization) {
-                parametersHtml += `
-                    <div class="data-item">
-                        <span class="data-key">Fracción de Volumen:</span>
-                        <span class="data-value">${data.optimization.volumeFraction ?? 'N/A'}</span>
-                    </div>
-                    <div class="data-item">
-                        <span class="data-key">Máx. Iteraciones:</span>
-                        <span class="data-value">${data.optimization.maxIterations ?? 'N/A'}</span>
-                    </div>
-                `;
-            }
-            
-            if (data.loads && data.loads.length > 0) {
-                const load = data.loads[0];
-                parametersHtml += `
-                    <div class="data-item">
-                        <span class="data-key">Dirección:</span>
-                        <span class="data-value">X:${load.directionX.toFixed(3)} Y:${load.directionY.toFixed(3)} Z:${load.directionZ.toFixed(3)}</span>
-                    </div>
-                    <div class="data-item">
-                        <span class="data-key">Magnitud:</span>
-                        <span class="data-value">${load.magnitude} ${load.unit}</span>
-                    </div>
-                `;
-            }
-            
-            if (parametersHtml) {
-                document.getElementById('parametersContainer').innerHTML = parametersHtml;
-            }
-        }
-        
-        // Enviar datos a optimizar
-        async function sendOptimization() {
-            try {
-                if (!featureData) {
-                    showStatus('warning', '⚠ Carga primero los datos del Feature');
-                    return;
-                }
-                
-                const serverUrl = document.getElementById('serverUrl').value.trim();
-                if (!serverUrl) {
-                    showStatus('error', '❌ Define la URL del servidor');
-                    return;
-                }
-                
-                const optimizeBtn = document.getElementById('optimizeBtn');
-                optimizeBtn.disabled = true;
-                optimizeBtn.innerHTML = '<span class="spinner"></span>Optimizando...';
-                
-                showStatus('info', '⟳ Enviando solicitud al servidor...');
-                
-                // Preparar payload
-                const payload = {
-                    documentId: onshapeClient.docId,
-                    workspaceId: onshapeClient.workspaceId,
-                    elementId: onshapeClient.elementId,
-                    topologyConfig: featureData,
-                    timestamp: new Date().toISOString()
-                };
-                
-                const response = await fetch(serverUrl, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(payload)
-                });
-                
-                const responseData = await response.json();
-                
-                if (response.ok) {
-                    showStatus('success', '✓ Optimización iniciada correctamente');
-                    displayResponse(responseData);
-                } else {
-                    showStatus('error', `❌ Error del servidor: ${responseData.message || response.statusText}`);
-                }
-                
-            } catch (error) {
-                console.error('Error al enviar optimización:', error);
-                showStatus('error', `❌ Error: ${error.message}`);
-            } finally {
-                const optimizeBtn = document.getElementById('optimizeBtn');
-                optimizeBtn.disabled = false;
-                optimizeBtn.textContent = 'Optimizar';
-            }
-        }
-        
-        // Mostrar respuesta del servidor
-        function displayResponse(data) {
-            document.getElementById('responseSection').style.display = 'block';
-            
-            let html = '';
-            for (const [key, value] of Object.entries(data)) {
-                const item = document.createElement('div');
-                item.className = 'data-item';
-                item.textContent = `${key}: ${JSON.stringify(value, null, 2)}`;
-                document.getElementById('responseContainer').appendChild(item);
-            }
-        }
-        
-        // Mostrar mensaje de estado
-        function showStatus(type, message) {
-            const container = document.getElementById('statusContainer');
-            container.innerHTML = `<div class="status ${type}">${message}</div>`;
-            
-            // Auto-hide después de 5 segundos si es success
-            if (type === 'success') {
-                setTimeout(() => {
-                    container.innerHTML = '';
-                }, 5000);
-            }
-        }
-        
-        // Event listeners
-        document.getElementById('optimizeBtn').addEventListener('click', sendOptimization);
-        document.getElementById('refreshBtn').addEventListener('click', readFeatureData);
-        
-        // Inicializar en carga
-        window.addEventListener('load', () => {
-            initOnshapeClient()
-                .then(readFeatureData)
-                .catch(error => showStatus('error', `❌ ${error.message}`));
+        window.location.href = '/login';
+      } catch (error) {
+        handleError(new Error('No se pudo contactar con el backend local.'));
+      }
+    });
+    $('logout').addEventListener('click', async () => {
+      try {
+        const response = await fetch('/api/auth/logout', {
+          method: 'POST',
+          credentials: 'include'
         });
-    </script>
+        if (!response.ok) throw new Error('No se pudo cerrar la sesión de Onshape.');
+        setAuthenticated(false);
+        showMessage('Sesión desconectada.', 'success');
+      } catch (error) {
+        handleError(error);
+      }
+    });
+    contextForm.addEventListener('submit', (event) => saveContext(event).catch(handleError));
+    optimizationForm.addEventListener('submit', (event) => runOptimization(event).catch(handleError));
+    Promise.all([loadHealth(), loadStatus()]).catch(handleError);
+  </script>
 </body>
 </html>

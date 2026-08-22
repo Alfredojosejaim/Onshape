@@ -64,3 +64,73 @@ jobs y sesiones locales.
 3. UI local y eliminación del flujo FeatureScript.
 4. Geometría real, solver y escritura de resultados.
 5. Licenciamiento, tests y auditoría final.
+
+## Auditoría de implementación — 2026-08-21
+
+### Funcional
+
+- El panel principal está organizado como estudio de optimización y no solicita IDs
+  CAD manuales.
+- El payload separa `context`, `designSpace`, `loadCases`, `material`,
+  `objectives` y `solverSettings`.
+- Las selecciones se mantienen separadas para conservar, obstáculo, forma inicial,
+  restricciones y cargas.
+- El backend valida tipos, referencias, contexto, material, volumen, iteraciones
+  y tolerancia antes de aceptar un trabajo.
+- La sesión OAuth y la descarga de geometría real STEP/properties se conservan.
+
+### Parcial
+
+- La UI usa un puente `postMessage` para solicitar selecciones y recibir
+  referencias del host Onshape; falta registrar y conectar el App Extension real
+  en una cuenta de Onshape.
+- El contexto se acepta desde el host o parámetros de integración, pero todavía
+  requiere validar el contrato concreto del contenedor Onshape.
+- Los jobs muestran progreso por etapas, aunque siguen ejecutándose con
+  `BackgroundTasks`.
+
+### Pendiente
+
+- FeatureScript/App Extension nativo para producir selecciones reales sin un
+  adaptador host configurado.
+- Validación en vivo de que cada referencia resuelve a una entidad del modelo.
+- Mallado, mapeo de referencias a nodos/elementos, adaptador FEA y reconstrucción
+  CAD. El sistema continúa bloqueando estas etapas y no genera resultados falsos.
+- Escritura de la geometría optimizada y métricas estructurales reales.
+
+## Análisis de `ejemplo.txt` y puente actual
+
+El ejemplo usa un Custom Feature FeatureScript 3044 con campos `Query` para
+seleccionar caras y valores numéricos para la carga/optimización. Su
+comunicación consiste en persistir un mapa mediante `setAttribute`; no realiza
+peticiones HTTP ni recibe respuestas de una aplicación externa.
+
+`topology_bridge.fs` reutiliza conceptualmente el Custom Feature, las
+selecciones nativas y los atributos por entidad, pero separa los roles
+`preserve`, `obstacle`, `initialShape`, `constraint` y `load`. No copia el
+solver ni datos con timestamps ficticios. FeatureScript no serializa por sí
+solo `documentId`, `workspaceId` o `elementId`; esos datos deben aportarlos el
+App Extension/host que conoce el contexto.
+
+Se añadió `POST /api/integration/events` para que el componente que sí puede
+hacer HTTP (App Extension o adaptador host) envíe un sobre con `context`,
+`selections`, `parameters`, `geometry` y `operation`. El backend autentica,
+valida y persiste el evento sin exponer tokens.
+
+### Auditoría de esta etapa
+
+- **Creados:** `topology_bridge.fs`.
+- **Modificados:** `app-extension.html`, `api_server.py`,
+  `AUDITORIA_MIGRACION.md`.
+- **Eliminados:** ninguno.
+- **Dependencias:** ninguna.
+- **Variables `.env`:** ninguna nueva.
+- **Configuración Onshape:** crear/importar `topology_bridge.fs` como Custom
+  Feature en el Feature List y usarlo en un Part Studio.
+- **Prueba mínima:** autenticarse en el panel, ejecutar el Custom Feature,
+  seleccionar entidades y verificar el atributo `topologyBridgeSelection`;
+  después un App Extension/adaptador debe enviar el evento validado al nuevo
+  endpoint.
+- **Pendiente:** conexión oficial del host/App Extension con el atributo,
+  resolución de referencias a geometría mediante API real, devolución de
+  geometría modificada y optimización FEA real.

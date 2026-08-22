@@ -1,466 +1,475 @@
-Actúa como ingeniero senior especializado en Python, FastAPI, OAuth 2.0 y Onshape REST API.
+Sí. Acá hay que **mantener la interfaz exactamente como está** y agregar el FeatureScript como un componente técnico de comunicación con la app. No hay que convertir la UI en una herramienta compleja todavía.
 
-Trabajarás sobre el proyecto EXISTENTE de Topología Optimizada.
+Además, hay una precisión arquitectónica importante: el FeatureScript debería encargarse de **capturar contexto/selecciones y enviar la definición del estudio**, mientras que la aplicación procesa la geometría y posteriormente devuelve el resultado para que Onshape pueda incorporarlo. La IA debe estudiar tu `ejemplo.txt` antes de escribir el FeatureScript y adaptar el patrón al proyecto.
 
-El objetivo ha cambiado: debemos MIGRAR LA ARQUITECTURA ACTUAL para eliminar completamente la dependencia de FeatureScript y permitir que la aplicación local se conecte directamente con la cuenta de Onshape del usuario mediante OAuth 2.0.
+Te dejo el prompt actualizado:
 
-NO reconstruyas la aplicación desde cero.
+Trabaja sobre el proyecto existente de Topología Optimizada.
 
-Primero inspecciona todo el proyecto existente, identifica qué componentes siguen dependiendo de FeatureScript/API Keys y determina qué debe conservarse, modificarse, eliminarse o reemplazarse.
+En esta etapa quiero mantener la interfaz gráfica MUY SIMPLE.
 
-IMPORTANTE:
+La interfaz NO debe convertirse todavía en una interfaz completa de optimización topológica.
 
-- No asumas que los endpoints de Onshape indicados en este documento existen exactamente con esa forma.
-- Verifica la API real de Onshape antes de implementar cada operación.
-- Si una operación no puede realizarse mediante REST de la forma planteada, identifica el mecanismo correcto de Onshape y adapta la arquitectura.
-- No inventes endpoints ni capacidades.
-- No mantengas código legacy solamente por conservarlo si ya no tiene utilidad.
-- Evita dependencias innecesarias.
-- Mantén el proyecto ejecutable después de cada grupo importante de cambios.
+Su función principal continúa siendo:
 
-OBJETIVO DE LA NUEVA ARQUITECTURA
+"Mostrar si la aplicación está funcionando y si está conectada correctamente con Onshape."
 
-La aplicación debe funcionar aproximadamente así:
-
-USUARIO
-↓
-INTERFAZ LOCAL
-↓
-OAuth 2.0
-↓
-Onshape
-↓
-Backend Python/FastAPI
-↓
-REST API de Onshape
-↓
-Lectura de contexto/geometría
-↓
-Procesamiento Topología Optimizada
-↓
-Resultado
-↓
-Onshape mediante la API/mecanismo compatible
-
-FeatureScript y App Extension dejan de ser componentes necesarios del flujo.
+Además, ahora debemos incorporar un FeatureScript que permita establecer la comunicación entre Onshape y la aplicación.
 
 ==================================================
-FASE 1 — AUDITORÍA DEL PROYECTO
 
-Antes de modificar archivos:
+1. INTERFAZ GRÁFICA
+   ==================================================
 
-1. Inspecciona toda la estructura del proyecto.
-2. Identifica:
-   - archivos FeatureScript;
-   - endpoints relacionados con FeatureScript;
-   - llamadas httpPost;
-   - autenticación mediante API Keys/HMAC;
-   - frontend actual;
-   - backend;
-   - procesamiento geométrico;
-   - solver;
-   - persistencia;
-   - tests;
-   - configuración.
-3. Determina las dependencias entre componentes.
+CONSERVAR EL CONCEPTO DE LA INTERFAZ ACTUAL.
 
-Genera una matriz:
+No rediseñar la aplicación como un dashboard complejo.
 
-Componente| Estado| Dependencia FeatureScript| Acción
-Backend| ...| ...| CONSERVAR/MODIFICAR/ELIMINAR
-Frontend| ...| ...| ...
-FeatureScript| ...| ...| ...
-Auth| ...| ...| ...
-Geometría| ...| ...| ...
-Solver| ...| ...| ...
-Persistencia| ...| ...| ...
+Debe mostrar únicamente:
 
-No implementes cambios hasta terminar esta auditoría.
+TOPOLOGÍA OPTIMIZADA
+
+Estado de la aplicación:
+● Aplicación iniciada
+
+Estado de Onshape:
+● Conectado / ○ No conectado
+
+Usuario:
+[usuario autenticado]
+
+[ Conectar con Onshape ]
+
+[ Desconectar ]
+
+La interfaz debe seguir siendo:
+
+* simple;
+* limpia;
+* profesional;
+* compacta;
+* responsive.
+
+NO agregar todavía:
+
+* selector de documentos;
+* selector de workspace;
+* selector de Part Studio;
+* parámetros de optimización;
+* cargas;
+* restricciones;
+* materiales;
+* solver;
+* mallado;
+* resultados;
+* configurador de estudios.
+
+La interfaz gráfica de esta etapa NO es el lugar donde se configura la optimización.
 
 ==================================================
-FASE 2 — MIGRACIÓN DE AUTENTICACIÓN
+2. OAUTH 2.0
+============
 
-Eliminar del flujo de usuario las API Keys, HMAC y cualquier dependencia de credenciales estáticas.
+Mantener el sistema OAuth 2.0 que ya funciona.
 
-Implementar OAuth 2.0 real.
+No reemplazar una implementación funcional innecesariamente.
 
-Debe existir:
+Verificar que continúe funcionando:
 
 GET /login
 
-Este endpoint debe construir la URL oficial de autorización de Onshape utilizando:
-
-https://oauth.onshape.com/oauth/authorize
-
-con:
-
-- client_id;
-- redirect_uri;
-- response_type=code;
-- scopes necesarios;
-- state seguro contra CSRF.
-
-Implementar:
-
 GET /oauth/callback
 
-Debe:
+El backend debe:
 
-- validar state;
-- recibir authorization code;
-- intercambiarlo server-to-server;
-- utilizar:
+* mantener client_secret exclusivamente en servidor;
+* almacenar los tokens de forma segura;
+* validar state;
+* renovar access_token cuando corresponda;
+* validar realmente la conexión con Onshape.
 
-https://oauth.onshape.com/oauth/token
+El frontend nunca debe recibir:
 
-- obtener access_token;
-- obtener refresh_token si Onshape lo proporciona;
-- guardar expiración;
-- almacenar la sesión de forma segura.
-
-Implementar una capa centralizada OAuth/OnshapeClient.
-
-NINGÚN código del frontend debe conocer:
-
-- client_secret;
-- access_token;
-- refresh_token.
+* client_secret;
+* access_token;
+* refresh_token.
 
 ==================================================
-FASE 3 — REFRESH AUTOMÁTICO
+3. FEATURESCRIPT
+================
 
-Implementar una rutina centralizada para renovar tokens.
+Ahora debes crear un FeatureScript específico para este proyecto.
 
-Debe:
+ANTES DE ESCRIBIRLO:
 
-- detectar expiración;
-- detectar HTTP 401;
-- utilizar refresh_token;
-- actualizar access_token;
-- actualizar expiración;
-- repetir la petición original cuando sea seguro hacerlo.
+En el proyecto se proporcionará un archivo:
 
-Evitar múltiples refresh simultáneos para la misma sesión.
+`ejemplo.txt`
 
-No duplicar esta lógica en cada endpoint.
-
-==================================================
-FASE 4 — ELIMINACIÓN DE FEATURESCRIPT
-
-Eliminar del flujo funcional:
-
-- master_topology_input.fs;
-- httpPost provenientes de FeatureScript;
-- endpoints creados exclusivamente para recibir datos desde FeatureScript;
-- lógica de serialización cuyo único propósito sea comunicarse con FeatureScript;
-- dependencia del contexto entregado por una App Extension.
+Este archivo contiene un ejemplo de FeatureScript/comunicación que debes estudiar.
 
 IMPORTANTE:
 
-No borres archivos inmediatamente si contienen lógica reutilizable.
+NO copies el ejemplo literalmente.
 
-Primero identifica qué funcionalidad puede reutilizarse y migra esa lógica al nuevo flujo.
+Debes:
 
-Una vez que la nueva arquitectura funcione, elimina código legacy que ya no tenga utilidad.
+1. leer completamente `ejemplo.txt`;
+2. identificar cómo funciona su comunicación;
+3. identificar qué datos envía;
+4. identificar cómo recibe resultados;
+5. identificar qué mecanismos de Onshape utiliza;
+6. determinar qué partes son reutilizables;
+7. adaptar el concepto a la arquitectura actual de Topología Optimizada.
 
-==================================================
-FASE 5 — CAPA DIRECTA DE ONSHAPE
+Si el ejemplo utiliza una técnica específica de comunicación, determina si es compatible con la arquitectura actual.
 
-Crear o reorganizar un cliente centralizado para Onshape.
-
-Todas las peticiones REST autenticadas deben pasar por esta capa.
-
-Utilizar:
-
-Authorization: Bearer <access_token>
-
-No permitir llamadas directas desde el frontend a la API de Onshape.
-
-La capa debe centralizar:
-
-- autenticación;
-- refresh;
-- headers;
-- timeout;
-- errores;
-- rate limiting;
-- logging;
-- serialización.
-
-Implementar manejo apropiado de:
-
-- 400;
-- 401;
-- 403;
-- 404;
-- 409;
-- 429;
-- 5xx.
+No inventes APIs de FeatureScript.
 
 ==================================================
-FASE 6 — CONTEXTO CAD
+4. RESPONSABILIDAD DEL FEATURESCRIPT
+====================================
 
-La aplicación ya no recibe contexto automáticamente desde FeatureScript.
+El FeatureScript NO será el lugar donde se ejecuta la optimización.
 
-Implementar en la interfaz local un selector para:
+Su responsabilidad será actuar como puente entre:
 
-- Documento (did);
-- Workspace (wid);
-- Elemento / Part Studio (eid).
+ONSHAPE
+↕
+FEATURESCRIPT
+↕
+APLICACIÓN
+↕
+BACKEND / PROCESAMIENTO
 
-El usuario debe poder consultar sus documentos disponibles mediante la API de Onshape y seleccionar el contexto de trabajo.
+El FeatureScript deberá poder:
 
-Guardar el último contexto seleccionado.
+* identificar el contexto actual;
+* obtener las selecciones necesarias;
+* recopilar los parámetros que posteriormente utilizará el proceso;
+* enviar esos datos a la aplicación;
+* recibir el resultado procesado;
+* utilizar el mecanismo apropiado de Onshape para aplicar/devolver la geometría resultante.
 
-La aplicación debe mostrar claramente:
-
-Conectado a Onshape como: [usuario]
-
-y:
-
-Documento: [...]
-Workspace: [...]
-Elemento: [...]
-
-No utilizar IDs hardcodeados.
-
-==================================================
-FASE 7 — GEOMETRÍA
-
-Auditar completamente "geometry_processor.py" y cualquier código relacionado.
-
-Determinar exactamente qué geometría obtiene actualmente y qué partes son simuladas.
-
-Implementar la adquisición directa de geometría mediante los mecanismos REALES disponibles en Onshape.
-
-Evaluar las alternativas disponibles para:
-
-- teselado;
-- STL;
-- STEP;
-- exportación;
-- información de Part Studio;
-- cuerpos/parts.
-
-Elegir el formato más apropiado para el pipeline existente.
-
-NO utilizar geometría aleatoria como sustituto silencioso de geometría real.
-
-Si alguna etapa todavía no puede procesarse realmente:
-
-- dejarla explícitamente identificada;
-- devolver un estado correcto;
-- no presentar datos ficticios como resultados reales.
+No implementar todavía toda la interfaz de configuración del estudio si no es necesaria para esta etapa.
 
 ==================================================
-FASE 8 — ESCRITURA DE RESULTADOS
+5. COMUNICACIÓN FEATURESCRIPT → APLICACIÓN
+==========================================
 
-Auditar cómo devuelve actualmente resultados el sistema.
+Diseñar una comunicación clara entre FeatureScript y el backend/aplicación.
 
-Eliminar cualquier dependencia de:
+El mensaje debe contener un esquema de datos estructurado.
 
-Resultado → FeatureScript → Onshape
+Como mínimo debe existir un contexto:
 
-Investigar el mecanismo REAL de Onshape que permita escribir/importar/actualizar el resultado.
+{
+documentId,
+workspaceId,
+elementId
+}
 
-Puede ser mediante:
+Y una estructura preparada para:
 
-- importación de geometría;
-- creación de elementos;
-- Feature API;
-- Feature Studios;
-- u otro mecanismo soportado.
+{
+selections,
+parameters,
+geometry,
+operation
+}
 
-NO inventar endpoints.
+No es necesario implementar todavía todos los parámetros de optimización.
 
-Si la escritura directa del resultado topológico todavía no puede implementarse correctamente:
+Pero la estructura debe ser extensible.
 
-- no generar archivos falsos;
-- mantener los resultados calculados;
-- crear una interfaz limpia para la futura escritura;
-- documentar exactamente qué API/mecanismo falta.
+IMPORTANTE:
 
-==================================================
-FASE 9 — INTERFAZ LOCAL
+No utilizar datos hardcodeados.
 
-Mover toda la configuración funcional a la interfaz local.
+No utilizar IDs ficticios.
 
-Debe permitir configurar como mínimo los parámetros que actualmente correspondan al proceso:
-
-- material;
-- tolerancias;
-- ángulo de voladizo;
-- parámetros de optimización;
-- condiciones necesarias para el cálculo.
-
-Eliminar la dependencia del panel FeatureScript.
-
-La UI debe mostrar estados claros:
-
-- Desconectado;
-- Conectando;
-- Conectado;
-- Token renovado;
-- Error de autenticación;
-- Documento seleccionado;
-- Procesando;
-- Resultado disponible;
-- Error.
+No depender de que el usuario copie manualmente IDs.
 
 ==================================================
-FASE 10 — PERSISTENCIA
+6. IDENTIFICACIÓN DE SELECCIONES
+================================
 
-Utilizar SQLite como almacenamiento local salvo que el proyecto ya tenga una alternativa claramente superior.
+El FeatureScript debe estar preparado para trabajar con las entidades seleccionadas dentro de Onshape.
 
-Persistir:
+Dependiendo del ejemplo proporcionado y de las capacidades reales de FeatureScript, estudiar cómo representar:
 
-- sesión OAuth;
-- access_token;
-- refresh_token;
-- expiración;
-- usuario;
-- último documento;
-- último workspace;
-- último elemento;
-- configuración;
-- jobs;
-- resultados;
-- errores.
+* cuerpos;
+* caras;
+* aristas;
+* vértices.
 
-Aplicar protección razonable a los secretos almacenados.
+La referencia debe mantenerse de forma que posteriormente el backend pueda identificar correctamente la geometría correspondiente.
 
-No almacenar credenciales en código fuente.
-
-Crear ".env.example" sin secretos reales.
+No inventar identificadores de geometría.
 
 ==================================================
-FASE 11 — LICENCIAMIENTO
+7. COMUNICACIÓN APLICACIÓN → FEATURESCRIPT
+==========================================
 
-Crear una capa independiente para validar acceso:
+La arquitectura debe permitir que, después del procesamiento, la aplicación pueda devolver información al entorno de Onshape.
 
-validate_user_access()
+El objetivo final será:
 
-o equivalente.
+Onshape
+↓
+selección/configuración
+↓
+FeatureScript
+↓
+aplicación
+↓
+procesamiento
+↓
+pieza modificada
+↓
+Onshape
 
-El cálculo principal NO debe conocer directamente cómo se valida el usuario.
+El resultado NO debe ser simplemente un archivo mostrado en la web.
 
-Inicialmente puede utilizar una implementación local/simple.
+Debe existir una estrategia real para devolver/incorporar la geometría modificada dentro del flujo de Onshape.
 
-La arquitectura debe permitir posteriormente reemplazarla por:
+IMPORTANTE:
 
-usuario → backend → base de datos → estado de licencia
+Investiga en la documentación/API real de Onshape cuál es el mecanismo correcto para conseguirlo.
 
-sin modificar el núcleo del cálculo.
+NO inventes endpoints.
 
-==================================================
-FASE 12 — DEPENDENCIAS LEGACY
-
-Después de implementar la nueva arquitectura, identificar:
-
-- FeatureScript innecesario;
-- App Extension innecesaria;
-- API Keys;
-- HMAC;
-- endpoints legacy;
-- payloads antiguos;
-- variables de entorno obsoletas;
-- dependencias Python obsoletas;
-- código muerto.
-
-Eliminar solamente aquello que realmente ya no sea utilizado.
-
-Actualizar:
-
-- pyproject.toml;
-- documentación;
-- tests;
-- ".env.example".
+Si la incorporación directa de la geometría todavía requiere una etapa posterior, implementa primero la arquitectura de comunicación y documenta exactamente qué parte queda pendiente.
 
 ==================================================
-FASE 13 — TESTS
+8. FEATURESCRIPT COMO CUSTOM FEATURE
+====================================
 
-Actualizar y ampliar los tests.
+Siempre que sea compatible con el proyecto y con el ejemplo proporcionado, crear el FeatureScript como Custom Feature de Onshape.
 
-Como mínimo verificar:
+Debe poder ser agregado al Feature List del Part Studio.
 
-- /login;
-- OAuth callback;
-- state/CSRF;
-- token exchange;
-- refresh;
-- HTTP 401;
-- selección de contexto;
-- consulta de documentos;
-- consulta de elementos;
-- adquisición de geometría;
-- persistencia SQLite;
-- jobs;
-- validación de licencia;
-- errores de API;
-- rate limiting.
+La experiencia buscada es que el usuario pueda permanecer dentro de Onshape.
 
-Los tests no deben depender de credenciales reales.
-
-Usar mocks únicamente para pruebas automatizadas, nunca como sustituto silencioso de funcionalidad en producción.
+No queremos que el usuario tenga que abrir manualmente la aplicación externa para operar el FeatureScript.
 
 ==================================================
-FASE 14 — AUDITORÍA FINAL
+9. BACKEND
+==========
 
-Al terminar, volver a auditar TODOS los requisitos de esta especificación.
+Crear/modificar los endpoints necesarios para recibir la comunicación del FeatureScript.
 
-Entregar:
+El backend debe:
 
-Requisito| Estado final| Evidencia| Archivo(s)
+* validar el request;
+* validar el contexto;
+* validar los datos recibidos;
+* identificar la sesión;
+* procesar la solicitud;
+* devolver una respuesta estructurada.
 
-Estados permitidos:
+No permitir que el FeatureScript controle directamente credenciales OAuth.
 
-COMPLETO
-PARCIAL
-FALTANTE
-NO APLICA
-CONFIGURACIÓN EXTERNA
+La autenticación con Onshape permanece en el backend.
 
-Para cualquier requisito PARCIAL o FALTANTE explicar exactamente por qué.
+==================================================
+10. ESTADOS DE COMUNICACIÓN
+===========================
 
-Además entregar:
+La aplicación debe poder determinar si existe comunicación válida.
 
-1. Archivos eliminados.
-2. Archivos creados.
-3. Archivos modificados.
-4. Dependencias agregadas/eliminadas.
-5. Variables ".env" nuevas.
-6. Configuración necesaria en Onshape Developer Portal.
-7. Pasos para ejecutar localmente.
-8. Limitaciones conocidas.
-9. Funcionalidades que continúan siendo simuladas o pendientes.
+Estados posibles:
+
+● Aplicación iniciada
+● Onshape conectado
+● FeatureScript conectado
+● Solicitud recibida
+● Procesando
+● Resultado disponible
+● Error
+
+No es necesario mostrar todos estos estados permanentemente en la interfaz.
+
+La interfaz principal debe seguir siendo simple.
+
+Estos estados pueden existir internamente para debugging/logging.
+
+==================================================
+11. GEOMETRÍA
+=============
+
+NO simular geometría.
+
+NO utilizar piezas aleatorias.
+
+NO generar resultados ficticios.
+
+Cuando el FeatureScript envíe información sobre la pieza:
+
+* identificar qué datos reales recibe la aplicación;
+* determinar cómo obtener la geometría real mediante Onshape API;
+* utilizar esos datos para el procesamiento.
+
+Si la extracción completa de geometría todavía no está implementada, no inventar el resultado.
+
+Dejar claramente identificada esa etapa como pendiente.
+
+==================================================
+12. RESULTADO DE LA OPTIMIZACIÓN
+================================
+
+La arquitectura debe quedar preparada para:
+
+FEATURESCRIPT
+↓
+DATOS DE PIEZA
+↓
+APLICACIÓN
+↓
+TOPOLOGÍA OPTIMIZADA
+↓
+PIEZA MODIFICADA
+↓
+FEATURESCRIPT / ONSHAPE
+
+El objetivo final es que la pieza modificada pueda regresar a Onshape.
+
+No crear un flujo donde el usuario tenga que descargar manualmente un archivo como solución definitiva.
+
+==================================================
+13. ARCHIVO ejemplo.txt
+=======================
+
+El archivo `ejemplo.txt` es una referencia técnica.
+
+Debes leerlo antes de implementar el FeatureScript.
+
+Después de analizarlo, documentar brevemente:
+
+* mecanismo de comunicación utilizado;
+* datos enviados;
+* datos recibidos;
+* qué partes se reutilizaron conceptualmente;
+* qué partes no son compatibles con este proyecto;
+* qué cambios fueron necesarios.
+
+No copies código innecesariamente.
+
+==================================================
+14. PRUEBA MÍNIMA DE INTEGRACIÓN
+================================
+
+Antes de intentar ejecutar la optimización completa, conseguir primero esta prueba:
+
+1. Abrir Onshape.
+2. Abrir el Part Studio.
+3. Ejecutar/agregar el Custom Feature.
+4. Realizar una selección simple.
+5. Ejecutar el FeatureScript.
+6. El FeatureScript envía los datos a la aplicación.
+7. El backend recibe la solicitud.
+8. El backend registra correctamente:
+
+   * documentId;
+   * workspaceId;
+   * elementId;
+   * selección;
+   * datos enviados.
+9. La aplicación responde correctamente.
+10. El FeatureScript recibe la respuesta.
+11. Confirmar que la comunicación funciona.
+
+SOLO después de conseguir esta prueba debe avanzarse hacia el procesamiento real de geometría.
+
+==================================================
+15. NO MODIFICAR INNECESARIAMENTE LA UI
+=======================================
+
+Este punto es MUY IMPORTANTE.
+
+No agregues a la interfaz externa:
+
+* paneles de selección;
+* configuradores;
+* formularios;
+* árboles de documentos;
+* parámetros de cargas;
+* materiales;
+* restricciones.
+
+La interfaz externa solamente confirma:
+
+"la aplicación está iniciada"
+
+y
+
+"está conectada con Onshape".
+
+La interacción con el modelo debe ocurrir desde Onshape.
+
+==================================================
+16. AUDITORÍA FINAL
+===================
+
+Al terminar, verificar:
+
+### Aplicación
+
+[ ] Backend ejecuta correctamente
+[ ] UI local funciona
+[ ] OAuth funciona
+[ ] Usuario autenticado
+[ ] Desconexión funciona
+
+### FeatureScript
+
+[ ] Custom Feature creado
+[ ] FeatureScript puede ejecutarse en Onshape
+[ ] Puede capturar selección
+[ ] Puede identificar contexto
+[ ] Puede comunicarse con la aplicación
+[ ] Puede recibir respuesta
+
+### Comunicación
+
+[ ] Onshape → FeatureScript
+[ ] FeatureScript → Backend
+[ ] Backend → FeatureScript
+[ ] Manejo de errores
+
+### Geometría
+
+[ ] Se identifica correctamente la pieza
+[ ] Se determina mecanismo real para obtener geometría
+[ ] No existen mocks de geometría
+
+### Resultado
+
+[ ] Arquitectura preparada para devolver pieza modificada
+[ ] No existen archivos ficticios
+[ ] Las partes no implementadas están documentadas
+
+Al finalizar indicar:
+
+1. archivos creados;
+2. archivos modificados;
+3. archivos eliminados;
+4. dependencias agregadas;
+5. endpoints nuevos;
+6. variables `.env`;
+7. configuración necesaria en Onshape;
+8. cómo instalar el FeatureScript;
+9. cómo realizar la prueba mínima;
+10. qué queda pendiente para implementar la optimización topológica real.
 
 REGLA FUNDAMENTAL:
 
-No optimices para "marcar todos los checks".
+La UI externa debe permanecer SIMPLE.
 
-Optimiza para que la aplicación tenga una arquitectura REAL, coherente y mantenible.
+La interacción con el CAD debe ocurrir DENTRO DE ONSHAPE.
 
-Nunca reemplaces una funcionalidad faltante con:
+FeatureScript funciona como puente de integración con el modelo, NO como motor de cálculo.
 
-- datos aleatorios;
-- mocks;
-- placeholders;
-- respuestas falsas;
-- archivos ficticios.
+Python/FastAPI es responsable de la lógica pesada y procesamiento.
 
-Si algo no puede implementarse todavía mediante la API real de Onshape, dilo explícitamente y deja la arquitectura preparada para incorporarlo posteriormente.
-
-PRIORIDAD:
-
-1. OAuth 2.0 real.
-2. Seguridad de credenciales.
-3. Conexión real con Onshape.
-4. Contexto CAD real.
-5. Geometría real.
-6. Persistencia.
-7. UI funcional.
-8. Procesamiento.
-9. Escritura de resultados.
-10. Licenciamiento preparado para nube.
-
-No vuelvas a solicitar decisiones sobre aspectos ya definidos en este prompt. Si surge una decisión técnica nueva, elige la alternativa más simple y compatible con la API real de Onshape y documenta la decisión.
+No inventes capacidades de Onshape: si una operación no es posible exactamente como se solicita, investiga la alternativa oficial y documenta la solución.

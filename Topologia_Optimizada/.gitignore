@@ -4,5 +4,9 @@ jobs.sqlite3
 __pycache__/
 .pytest_cache/
 .venv/
+runtime/
+python-3.12.10-amd64.exe
 *.pyc
 .idea/
+mkcert.exe
+certs/

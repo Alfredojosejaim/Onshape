@@ -47,14 +47,29 @@ if not defined MKCERT_CMD (
     exit /b 1
 )
 
+echo Verificando la autoridad certificadora local de mkcert...
+%MKCERT_CMD% -install
+if errorlevel 1 (
+    echo [ERROR] No se pudo instalar la CA local de mkcert.
+    echo Ejecuta este archivo como usuario con permisos para instalar certificados
+    echo o abre una consola y ejecuta: mkcert -install
+    echo.
+    pause
+    exit /b 1
+)
+
 if not exist "certs" mkdir "certs"
 if not exist "certs\localhost.pem" (
-    echo Instalando la CA local de mkcert y generando certificados HTTPS...
-    %MKCERT_CMD% -install
+    echo Generando certificados HTTPS...
+    %MKCERT_CMD% -cert-file "certs\localhost.pem" -key-file "certs\localhost-key.pem" localhost 127.0.0.1 ::1
     if errorlevel 1 (
-        echo [AVISO] No se pudo instalar la CA automaticamente.
-        echo         El navegador puede mostrar una advertencia de confianza.
+        echo [ERROR] No se pudieron generar los certificados HTTPS.
+        pause
+        exit /b 1
     )
+)
+if not exist "certs\localhost-key.pem" (
+    echo Generando la clave privada HTTPS...
     %MKCERT_CMD% -cert-file "certs\localhost.pem" -key-file "certs\localhost-key.pem" localhost 127.0.0.1 ::1
     if errorlevel 1 (
         echo [ERROR] No se pudieron generar los certificados HTTPS.

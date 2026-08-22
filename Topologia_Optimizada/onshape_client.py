@@ -137,14 +137,14 @@ class OnshapeClient:
         if token.get("expires_at", 0) <= time.time() + 30:
             token = self._refresh(token)
         headers = dict(kwargs.pop("headers", {}))
-        headers["Authorization"] = f"Bearer {token['access_token']}"
+        headers["Authorization"] = "Bearer " + token["access_token"]
         headers.setdefault("Accept", "application/vnd.onshape.v2+json")
         headers.setdefault("Content-Type", "application/json")
         kwargs.setdefault("timeout", self.timeout)
         response = self.session.request(method, f"{self.api_url}/{path.lstrip('/')}", headers=headers, **kwargs)
         if response.status_code == 401:
             token = self._refresh(token, force=True)
-            headers["Authorization"] = f"Bearer {token['access_token']}"
+            headers["Authorization"] = "Bearer " + token["access_token"]
             response = self.session.request(
                 method, f"{self.api_url}/{path.lstrip('/')}", headers=headers, **kwargs
             )

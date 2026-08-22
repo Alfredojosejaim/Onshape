@@ -9,7 +9,7 @@ import logging
 from typing import Any, Callable, Dict, Optional
 
 import numpy as np
-import requests
+from onshape_client import OnshapeClient, OnshapeAPIError
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ class GeometryProcessor:
 
     def __init__(
         self,
-        onshape_session: requests.Session,
+        onshape_session: OnshapeClient,
         did: str,
         wid: str,
         eid: str,
@@ -49,8 +49,9 @@ class GeometryProcessor:
                 f"{self.base_url}/partstudios/d/{self.did}/w/{self.wid}"
                 f"/e/{self.eid}/export"
             )
-            response = self.session.get(
-                url,
+            response = self.session.request(
+                "GET",
+                url.removeprefix(self.base_url),
                 params={"formatName": output_format.upper(), "version": "latest"},
                 timeout=30,
             )
@@ -58,11 +59,10 @@ class GeometryProcessor:
                 logger.info("Part Studio export downloaded (%d bytes)", len(response.content))
                 return response.content
             self.last_download_error_code = self._http_error_code(response.status_code)
-            logger.warning(
-                "Part Studio export failed: %s",
-                self.last_download_error_code,
-            )
-        except requests.RequestException:
+        except OnshapeAPIError as exc:
+            self.last_download_error_code = exc.code
+            logger.warning("Part Studio export failed: %s", exc.code)
+        except Exception:
             self.last_download_error_code = "ONSHAPE_REQUEST_FAILED"
             logger.exception("Part Studio export request failed")
         return None
@@ -74,7 +74,7 @@ class GeometryProcessor:
                 f"{self.base_url}/partstudios/d/{self.did}/w/{self.wid}"
                 f"/e/{self.eid}/properties"
             )
-            response = self.session.get(url, timeout=10)
+            response = self.session.request("GET", url.removeprefix(self.base_url), timeout=10)
             if response.status_code != 200:
                 logger.warning(
                     "Part properties failed: %s",
@@ -87,7 +87,7 @@ class GeometryProcessor:
                 for key in ("volume", "area", "mass", "centroid", "bounds")
                 if key in data
             }
-        except (requests.RequestException, ValueError):
+        except (OnshapeAPIError, ValueError):
             logger.exception("Part properties request failed")
             return {}
 

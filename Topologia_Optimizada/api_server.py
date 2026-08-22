@@ -121,6 +121,17 @@ def init_database() -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS integration_events (
+                event_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
 
 
 init_database()
@@ -205,14 +216,28 @@ def set_session_cookie(response: RedirectResponse, session_id: str) -> None:
     )
 
 
+class GeometryReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: str = Field(pattern="^(body|face|edge|vertex|reference)$")
+    reference: str = Field(min_length=1, max_length=2048)
+    role: str = Field(min_length=1, max_length=32)
+    context: Dict[str, str] = Field(min_length=1)
+    geometry: Optional[Dict[str, Any]] = None
+
+
 class Load(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    type: str = Field(default="force", pattern="^force$")
+    selection: list["GeometryReference"] = Field(min_length=1)
+    magnitude: float = Field(ge=0)
+    unit: str = Field(min_length=1, max_length=32)
+    directionMode: str = Field(default="vector", pattern="^(vector|face_normal)$")
     directionX: float
     directionY: float
     directionZ: float
-    magnitude: float = Field(ge=0)
-    unit: str = Field(min_length=1, max_length=32)
+    inverted: bool = False
 
     @model_validator(mode="after")
     def non_zero_direction(self) -> "Load":
@@ -221,31 +246,90 @@ class Load(BaseModel):
         return self
 
 
-class Optimization(BaseModel):
+class Constraint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: str = Field(default="fixed", pattern="^fixed$")
+    selection: list[GeometryReference] = Field(min_length=1)
+    ux: bool = True
+    uy: bool = True
+    uz: bool = True
+
+    @model_validator(mode="after")
+    def one_axis_required(self) -> "Constraint":
+        if not any((self.ux, self.uy, self.uz)):
+            raise ValueError("a constraint must restrict at least one axis")
+        return self
+
+
+class LoadCase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=128)
+    constraints: list[Constraint] = Field(min_length=1)
+    loads: list[Load] = Field(min_length=1)
+
+
+class Material(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=128)
+    source: str = Field(min_length=1, max_length=512)
+    youngModulus: float = Field(gt=0)
+    poisson: float = Field(gt=-1, lt=0.5)
+    density: float = Field(gt=0)
+    yieldStrength: float = Field(gt=0)
+
+
+class Objectives(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     volumeFraction: float = Field(gt=0, le=1)
+
+
+class SolverSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     maxIterations: int = Field(gt=0, le=10000)
+    convergenceTolerance: float = Field(gt=0, lt=1, default=0.01)
+
+
+class DesignSpace(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    preserve: list[GeometryReference] = Field(min_length=1)
+    obstacle: list[GeometryReference] = Field(default_factory=list)
+    initialShape: list[GeometryReference] = Field(default_factory=list)
+    symmetry: Optional[str] = None
+    obstacleOffset: Optional[float] = Field(default=None, ge=0)
 
 
 class TopologyConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schemaVersion: str = Field(min_length=1, max_length=32)
-    anchors: list[Any] = Field(default_factory=list)
-    loads: list[Load] = Field(min_length=1)
-    optimization: Optimization
+    studyName: str = Field(min_length=1, max_length=128)
+    context: Dict[str, str] = Field(min_length=1)
+    designSpace: DesignSpace
+    loadCases: list[LoadCase] = Field(min_length=1)
+    material: Material
+    objectives: Objectives
+    solverSettings: SolverSettings
     timestamp: str = Field(default_factory=utc_now)
 
 
 class OptimizationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    documentId: str = Field(min_length=1, max_length=256)
-    workspaceId: str = Field(min_length=1, max_length=256)
-    elementId: str = Field(min_length=1, max_length=256)
     topologyConfig: TopologyConfig
     timestamp: str = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def context_is_complete(self) -> "OptimizationRequest":
+        required = ("documentId", "workspaceId", "elementId")
+        if any(not self.topologyConfig.context.get(key) for key in required):
+            raise ValueError("context requires documentId, workspaceId and elementId")
+        return self
 
 
 class OptimizationResponse(BaseModel):
@@ -253,6 +337,22 @@ class OptimizationResponse(BaseModel):
     message: str
     jobId: Optional[str] = None
     data: Optional[Dict[str, Any]] = None
+
+
+class IntegrationEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operation: str = Field(min_length=1, max_length=64)
+    context: Dict[str, str] = Field(min_length=1)
+    selections: list[GeometryReference] = Field(default_factory=list)
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    geometry: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="after")
+    def context_is_complete(self) -> "IntegrationEvent":
+        if any(not self.context.get(key) for key in ("documentId", "workspaceId", "elementId")):
+            raise ValueError("context requires documentId, workspaceId and elementId")
+        return self
 
 
 class JobStatusResponse(BaseModel):
@@ -273,9 +373,10 @@ class JobStatus:
     def __init__(self, job_id: str, request: OptimizationRequest, session_id: str):
         self.job_id = job_id
         self.session_id = session_id
-        self.document_id = request.documentId
-        self.workspace_id = request.workspaceId
-        self.element_id = request.elementId
+        context = request.topologyConfig.context
+        self.document_id = context["documentId"]
+        self.workspace_id = context["workspaceId"]
+        self.element_id = context["elementId"]
         self.status = "queued"
         self.progress = 0
         self.message = "En cola de espera"
@@ -513,6 +614,55 @@ async def save_context(request: Request, context: Dict[str, str]) -> Dict[str, A
     return {"status": "saved", "context": {key: context[key] for key in required}}
 
 
+@app.post("/api/study/validate")
+async def validate_study(config: TopologyConfig, request: Request) -> Dict[str, Any]:
+    authenticated_session_id(request)
+    missing = []
+    if not config.designSpace.preserve:
+        missing.append("Geometría a conservar")
+    if not config.loadCases:
+        missing.append("Caso de carga")
+    else:
+        if not any(case.constraints for case in config.loadCases):
+            missing.append("Restricción")
+        if not any(case.loads for case in config.loadCases):
+            missing.append("Carga")
+    if not config.material:
+        missing.append("Material")
+    context_keys = ("documentId", "workspaceId", "elementId")
+    if any(not config.context.get(key) for key in context_keys):
+        missing.append("Contexto CAD")
+    return {"valid": not missing, "missing": missing}
+
+
+@app.post("/api/integration/events")
+async def receive_integration_event(event: IntegrationEvent, request: Request) -> Dict[str, Any]:
+    session_id = authenticated_session_id(request)
+    event_id = f"event_{uuid.uuid4().hex[:12]}"
+    with db_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO integration_events
+            (event_id, session_id, operation, payload_json, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (event_id, session_id, event.operation, event.model_dump_json(), utc_now()),
+        )
+    logger.info(
+        "FeatureScript event received: event_id=%s operation=%s selections=%d",
+        event_id,
+        event.operation,
+        len(event.selections),
+    )
+    return {
+        "status": "received",
+        "eventId": event_id,
+        "operation": event.operation,
+        "context": event.context,
+        "result": {"status": "accepted", "message": "Event stored for processing"},
+    }
+
+
 def ejecutar_optimizacion(job: JobStatus, request: OptimizationRequest, session_id: str) -> None:
     try:
         job.update(status="processing", progress=5, message="Iniciando procesamiento de geometria")
@@ -530,9 +680,9 @@ def ejecutar_optimizacion(job: JobStatus, request: OptimizationRequest, session_
         )
         processor = GeometryProcessor(
             client,
-            request.documentId,
-            request.workspaceId,
-            request.elementId,
+            request.topologyConfig.context["documentId"],
+            request.topologyConfig.context["workspaceId"],
+            request.topologyConfig.context["elementId"],
         )
         job.update(status="processing", progress=15, message="Descargando geometria de Onshape")
         geo_result = processor.process_full_pipeline()
@@ -552,8 +702,9 @@ def ejecutar_optimizacion(job: JobStatus, request: OptimizationRequest, session_
 
         job.update(status="processing", progress=30, message="Ejecutando solver")
         topopt_result = run_topology_optimization(
-            volume_fraction=request.topologyConfig.optimization.volumeFraction,
-            max_iterations=request.topologyConfig.optimization.maxIterations,
+            volume_fraction=request.topologyConfig.objectives.volumeFraction,
+            max_iterations=request.topologyConfig.solverSettings.maxIterations,
+            tolerance=request.topologyConfig.solverSettings.convergenceTolerance,
             forces=None,
             supports=None,
         )
@@ -611,11 +762,12 @@ async def optimizar_topologia(
         jobId=job_id,
         data={
             "config_recibida": {
-                "anchors_count": len(request.topologyConfig.anchors),
-                "volume_fraction": request.topologyConfig.optimization.volumeFraction,
-                "max_iterations": request.topologyConfig.optimization.maxIterations,
+                "preserve_count": len(request.topologyConfig.designSpace.preserve),
+                "load_cases": len(request.topologyConfig.loadCases),
+                "volume_fraction": request.topologyConfig.objectives.volumeFraction,
+                "max_iterations": request.topologyConfig.solverSettings.maxIterations,
             },
-            "documentId": request.documentId,
+            "documentId": request.topologyConfig.context["documentId"],
             "status_url": f"/api/optimize/status?jobId={job_id}",
         },
     )
@@ -663,6 +815,7 @@ async def documentacion() -> Dict[str, Any]:
         "version": "1.1.0",
         "note": "MVP: mesher y solver FEA reales requieren configuracion externa",
         "endpoints": {
+            "POST /api/integration/events": {"descripcion": "Recibe eventos estructurados del puente de integración"},
             "POST /api/optimize": {"descripcion": "Envia un trabajo de optimizacion"},
             "GET /api/optimize/status": {"descripcion": "Consulta el estado de un trabajo"},
             "GET /api/jobs": {"descripcion": "Lista trabajos persistentes"},

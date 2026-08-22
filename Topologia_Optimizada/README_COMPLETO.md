@@ -1,33 +1,112 @@
-Sí. Acá hay que **mantener la interfaz exactamente como está** y agregar el FeatureScript como un componente técnico de comunicación con la app. No hay que convertir la UI en una herramienta compleja todavía.
 
-Además, hay una precisión arquitectónica importante: el FeatureScript debería encargarse de **capturar contexto/selecciones y enviar la definición del estudio**, mientras que la aplicación procesa la geometría y posteriormente devuelve el resultado para que Onshape pueda incorporarlo. La IA debe estudiar tu `ejemplo.txt` antes de escribir el FeatureScript y adaptar el patrón al proyecto.
+# PROMPT — FEATUREScript + COMUNICACIÓN REAL + PREVISUALIZACIÓN DINÁMICA + OPTIMIZACIÓN
 
-Te dejo el prompt actualizado:
+Trabaja sobre el proyecto existente de **Topología Optimizada**.
 
-Trabaja sobre el proyecto existente de Topología Optimizada.
+La aplicación actualmente:
 
-En esta etapa quiero mantener la interfaz gráfica MUY SIMPLE.
+* se ejecuta correctamente;
+* tiene interfaz web local;
+* tiene backend funcionando;
+* tiene conexión OAuth 2.0 real con Onshape.
 
-La interfaz NO debe convertirse todavía en una interfaz completa de optimización topológica.
+**NO modificar innecesariamente estas partes.**
 
-Su función principal continúa siendo:
+El problema actual es que el **FeatureScript no se comunica correctamente con la aplicación**, por lo que actualmente no existe un intercambio funcional de datos entre Onshape y el backend.
 
-"Mostrar si la aplicación está funcionando y si está conectada correctamente con Onshape."
+El objetivo de esta etapa es solucionar esa integración y crear un **Custom Feature de Topología Optimizada integrado dentro de Onshape**, con selección de geometría, restricciones opcionales y **previsualización dinámica mientras el usuario configura la operación**.
 
-Además, ahora debemos incorporar un FeatureScript que permita establecer la comunicación entre Onshape y la aplicación.
+---
 
-==================================================
+# 1. PRIORIDAD ABSOLUTA: COMUNICACIÓN REAL
 
-1. INTERFAZ GRÁFICA
-   ==================================================
+Antes de implementar la optimización, solucionar:
 
-CONSERVAR EL CONCEPTO DE LA INTERFAZ ACTUAL.
+**Onshape → FeatureScript → Backend → FeatureScript → Onshape**
 
-No rediseñar la aplicación como un dashboard complejo.
+Actualmente este flujo no funciona.
+
+Auditar primero:
+
+* FeatureScript actual;
+* endpoint utilizado;
+* método HTTP;
+* URL;
+* payload;
+* CORS;
+* túnel;
+* FastAPI;
+* respuesta del backend;
+* errores;
+* logs;
+* configuración de Onshape;
+* cualquier mecanismo utilizado para comunicar FeatureScript con Python.
+
+Determinar exactamente:
+
+**¿Por qué el FeatureScript no está llegando a la aplicación?**
+
+No reemplazar el sistema actual sin entender primero el problema.
+
+---
+
+# 2. UTILIZAR `ejemplo.txt`
+
+Existe un archivo:
+
+`ejemplo.txt`
+
+Leerlo completamente antes de modificar el FeatureScript.
+
+Utilizarlo como referencia técnica para estudiar:
+
+* comunicación FeatureScript → aplicación;
+* construcción de solicitudes;
+* recepción de respuestas;
+* formato de datos;
+* manejo de errores;
+* mecanismos disponibles en FeatureScript.
+
+NO copiar ciegamente el ejemplo.
+
+Adaptarlo a la arquitectura actual.
+
+Si el método utilizado en el ejemplo no es adecuado para el proyecto, explicar por qué y utilizar la alternativa técnicamente correcta.
+
+---
+
+# 3. PRUEBA DE COMUNICACIÓN ANTES DE OPTIMIZAR
+
+Antes de implementar la optimización completa, conseguir esta prueba mínima:
+
+1. Abrir Onshape.
+2. Ejecutar el Custom Feature.
+3. Introducir una selección simple.
+4. FeatureScript genera una solicitud real.
+5. Backend recibe la solicitud.
+6. Backend devuelve una respuesta.
+7. FeatureScript recibe la respuesta.
+8. Mostrar dentro de Onshape que la comunicación fue exitosa.
+
+Por ejemplo:
+
+**"Conexión con Topología Optimizada: OK"**
+
+No considerar terminada esta etapa solamente porque el endpoint existe.
+
+Debe existir intercambio real de datos.
+
+---
+
+# 4. INTERFAZ WEB EXTERNA
+
+Mantener la interfaz web externa **MUY SIMPLE**.
+
+No convertirla en el configurador de optimización.
 
 Debe mostrar únicamente:
 
-TOPOLOGÍA OPTIMIZADA
+**TOPOLOGÍA OPTIMIZADA**
 
 Estado de la aplicación:
 ● Aplicación iniciada
@@ -36,440 +115,910 @@ Estado de Onshape:
 ● Conectado / ○ No conectado
 
 Usuario:
-[usuario autenticado]
+[usuario]
 
-[ Conectar con Onshape ]
+[Conectar con Onshape]
 
-[ Desconectar ]
+[Desconectar]
 
-La interfaz debe seguir siendo:
+Su objetivo es responder:
 
-* simple;
-* limpia;
-* profesional;
-* compacta;
-* responsive.
+> ¿La aplicación está funcionando y conectada con Onshape?
 
-NO agregar todavía:
+Toda la interacción con el modelo debe ocurrir dentro de Onshape.
 
-* selector de documentos;
-* selector de workspace;
-* selector de Part Studio;
-* parámetros de optimización;
-* cargas;
-* restricciones;
-* materiales;
-* solver;
-* mallado;
-* resultados;
-* configurador de estudios.
+---
 
-La interfaz gráfica de esta etapa NO es el lugar donde se configura la optimización.
+# 5. CUSTOM FEATURE DENTRO DE ONSHAPE
 
-==================================================
-2. OAUTH 2.0
-============
+Crear/modificar un Custom Feature denominado:
 
-Mantener el sistema OAuth 2.0 que ya funciona.
+**"Topología Optimizada"**
 
-No reemplazar una implementación funcional innecesariamente.
+Todos los textos visibles para el usuario deben estar en español.
 
-Verificar que continúe funcionando:
+Esto incluye:
 
-GET /login
+* nombre;
+* títulos;
+* grupos;
+* botones;
+* campos;
+* checkboxes;
+* mensajes;
+* errores;
+* descripciones.
 
-GET /oauth/callback
+El código interno puede utilizar nombres técnicos en inglés.
 
-El backend debe:
+---
 
-* mantener client_secret exclusivamente en servidor;
-* almacenar los tokens de forma segura;
-* validar state;
-* renovar access_token cuando corresponda;
-* validar realmente la conexión con Onshape.
+# 6. INTERFAZ DEL CUSTOM FEATURE
 
-El frontend nunca debe recibir:
+La interfaz debe ser sencilla.
 
-* client_secret;
-* access_token;
-* refresh_token.
+Estructura propuesta:
 
-==================================================
-3. FEATURESCRIPT
-================
+### Topología Optimizada
 
-Ahora debes crear un FeatureScript específico para este proyecto.
+**Pieza a modificar**
 
-ANTES DE ESCRIBIRLO:
+[ Seleccionar sólido ]
 
-En el proyecto se proporcionará un archivo:
+### Restricciones opcionales
 
-`ejemplo.txt`
+☐ Piezas que obstruyen
 
-Este archivo contiene un ejemplo de FeatureScript/comunicación que debes estudiar.
+[ Seleccionar geometría ]
 
-IMPORTANTE:
+☐ Lugares de anclaje
 
-NO copies el ejemplo literalmente.
+[ Seleccionar caras ]
 
-Debes:
+☐ Caras sin modificar
 
-1. leer completamente `ejemplo.txt`;
-2. identificar cómo funciona su comunicación;
-3. identificar qué datos envía;
-4. identificar cómo recibe resultados;
-5. identificar qué mecanismos de Onshape utiliza;
-6. determinar qué partes son reutilizables;
-7. adaptar el concepto a la arquitectura actual de Topología Optimizada.
+[ Seleccionar caras ]
 
-Si el ejemplo utiliza una técnica específica de comunicación, determina si es compatible con la arquitectura actual.
+### Optimización
 
-No inventes APIs de FeatureScript.
+**Porcentaje de optimización**
 
-==================================================
-4. RESPONSABILIDAD DEL FEATURESCRIPT
-====================================
+[ 50 ] %
 
-El FeatureScript NO será el lugar donde se ejecuta la optimización.
+---
 
-Su responsabilidad será actuar como puente entre:
+Las opciones de restricciones son **independientes y opcionales**.
 
-ONSHAPE
-↕
-FEATURESCRIPT
-↕
-APLICACIÓN
-↕
-BACKEND / PROCESAMIENTO
+No obligar al usuario a seleccionar:
 
-El FeatureScript deberá poder:
+* obstáculos;
+* anclajes;
+* caras protegidas.
 
-* identificar el contexto actual;
-* obtener las selecciones necesarias;
-* recopilar los parámetros que posteriormente utilizará el proceso;
-* enviar esos datos a la aplicación;
-* recibir el resultado procesado;
-* utilizar el mecanismo apropiado de Onshape para aplicar/devolver la geometría resultante.
+Solamente se aplican cuando el usuario activa su correspondiente opción.
 
-No implementar todavía toda la interfaz de configuración del estudio si no es necesaria para esta etapa.
+---
 
-==================================================
-5. COMUNICACIÓN FEATURESCRIPT → APLICACIÓN
-==========================================
+# 7. PIEZA A MODIFICAR
 
-Diseñar una comunicación clara entre FeatureScript y el backend/aplicación.
+Crear:
 
-El mensaje debe contener un esquema de datos estructurado.
+**"Pieza a modificar"**
 
-Como mínimo debe existir un contexto:
+Este campo es obligatorio.
 
+El usuario debe seleccionar un sólido.
+
+Validar que la selección sea realmente un sólido.
+
+No aceptar:
+
+* superficies;
+* geometría abierta;
+* entidades incompatibles.
+
+Si no es sólido:
+
+**"La pieza seleccionada debe ser un sólido."**
+
+La operación no debe continuar.
+
+---
+
+# 8. PIEZAS QUE OBSTRUYEN
+
+Crear:
+
+☐ **Piezas que obstruyen**
+
+Si está desactivado:
+
+* no solicitar selección;
+* no enviar obstáculos;
+* no aplicar esta restricción.
+
+Si está activado:
+
+☑ **Piezas que obstruyen**
+
+permitir seleccionar las geometrías correspondientes.
+
+Estas representan regiones que la pieza optimizada no debe ocupar.
+
+---
+
+# 9. LUGARES DE ANCLAJE
+
+Crear:
+
+☐ **Lugares de anclaje**
+
+Si está desactivado:
+
+* no solicitar selección;
+* no enviar anclajes.
+
+Si está activado:
+
+☑ **Lugares de anclaje**
+
+permitir seleccionar las caras donde la pieza está soportada/fijada.
+
+Estas selecciones representan condiciones de frontera.
+
+**No inventar fuerzas.**
+
+Un anclaje representa una condición de soporte, no una magnitud de fuerza.
+
+Si el solver requiere cargas para realizar un cálculo físico válido, documentar qué información adicional necesita y utilizar solamente parámetros realmente soportados.
+
+---
+
+# 10. CARAS SIN MODIFICAR
+
+Crear:
+
+☐ **Caras sin modificar**
+
+Si está desactivado:
+
+* no solicitar selección;
+* no enviar geometría protegida.
+
+Si está activado:
+
+☑ **Caras sin modificar**
+
+permitir seleccionar las caras que deben permanecer protegidas durante la optimización.
+
+---
+
+# 11. PORCENTAJE DE OPTIMIZACIÓN
+
+Agregar:
+
+**"Porcentaje de optimización"**
+
+Ejemplo:
+
+`50 %`
+
+Debe representar claramente cuánto material/geometría se pretende eliminar.
+
+Validar el rango permitido.
+
+Como referencia:
+
+* 0 % → sin reducción;
+* 50 % → objetivo de reducción del 50 %;
+* 80 % → objetivo de reducción del 80 %.
+
+Pero comprobar que esta interpretación sea compatible con el algoritmo real.
+
+No crear un campo que después no sea utilizado.
+
+---
+
+# 12. PAYLOAD
+
+Diseñar un esquema estructurado.
+
+Conceptualmente:
+
+```text
 {
-documentId,
-workspaceId,
-elementId
+    contexto: {
+        documentId,
+        workspaceId,
+        elementId
+    },
+
+    pieza: {
+        referencia
+    },
+
+    restricciones: {
+        obstrucciones: [],
+        anclajes: [],
+        carasSinModificar: []
+    },
+
+    optimizacion: {
+        porcentaje
+    }
 }
+```
 
-Y una estructura preparada para:
+Los arrays opcionales deben poder estar vacíos.
 
-{
-selections,
-parameters,
-geometry,
-operation
-}
+Ejemplo:
 
-No es necesario implementar todavía todos los parámetros de optimización.
+```text
+obstrucciones: []
+```
 
-Pero la estructura debe ser extensible.
+si el usuario no activó la opción.
 
-IMPORTANTE:
+No enviar datos ficticios.
 
-No utilizar datos hardcodeados.
+---
 
-No utilizar IDs ficticios.
+# 13. CONTEXTO ONSHAPE
 
-No depender de que el usuario copie manualmente IDs.
+Obtener correctamente:
 
-==================================================
-6. IDENTIFICACIÓN DE SELECCIONES
-================================
+* documentId;
+* workspaceId;
+* elementId.
 
-El FeatureScript debe estar preparado para trabajar con las entidades seleccionadas dentro de Onshape.
+No utilizar IDs hardcodeados.
 
-Dependiendo del ejemplo proporcionado y de las capacidades reales de FeatureScript, estudiar cómo representar:
+No pedir al usuario que copie IDs manualmente.
 
-* cuerpos;
-* caras;
-* aristas;
-* vértices.
+---
 
-La referencia debe mantenerse de forma que posteriormente el backend pueda identificar correctamente la geometría correspondiente.
+# 14. PREVISUALIZACIÓN DINÁMICA
 
-No inventar identificadores de geometría.
+Este es un requisito fundamental.
 
-==================================================
-7. COMUNICACIÓN APLICACIÓN → FEATURESCRIPT
-==========================================
+El usuario debe poder **ver cómo evoluciona la pieza mientras configura el FeatureScript**, antes de aceptar definitivamente la operación.
 
-La arquitectura debe permitir que, después del procesamiento, la aplicación pueda devolver información al entorno de Onshape.
+El comportamiento deseado es similar al sistema de previsualización de las operaciones nativas de Onshape.
 
-El objetivo final será:
+El usuario debe poder:
 
-Onshape
-↓
-selección/configuración
-↓
-FeatureScript
-↓
-aplicación
-↓
-procesamiento
-↓
-pieza modificada
-↓
-Onshape
+1. seleccionar la pieza;
+2. activar/desactivar restricciones;
+3. seleccionar geometría;
+4. cambiar porcentaje;
+5. observar cómo cambia la previsualización;
+6. seguir modificando parámetros;
+7. finalmente aceptar.
 
-El resultado NO debe ser simplemente un archivo mostrado en la web.
+La previsualización debe actualizarse cuando cambien los parámetros relevantes.
 
-Debe existir una estrategia real para devolver/incorporar la geometría modificada dentro del flujo de Onshape.
+---
 
-IMPORTANTE:
+# 15. NO ESPERAR AL BOTÓN ACEPTAR PARA EL PREVIEW
 
-Investiga en la documentación/API real de Onshape cuál es el mecanismo correcto para conseguirlo.
+NO implementar el sistema como:
 
-NO inventes endpoints.
+```text
+Configurar todo
+      ↓
+Aceptar
+      ↓
+Calcular
+```
 
-Si la incorporación directa de la geometría todavía requiere una etapa posterior, implementa primero la arquitectura de comunicación y documenta exactamente qué parte queda pendiente.
+El objetivo es:
 
-==================================================
-8. FEATURESCRIPT COMO CUSTOM FEATURE
-====================================
+```text
+Seleccionar pieza
+      ↓
+Preview
+      ↓
+Agregar restricción
+      ↓
+Actualizar Preview
+      ↓
+Cambiar porcentaje
+      ↓
+Actualizar Preview
+      ↓
+Agregar otra restricción
+      ↓
+Actualizar Preview
+      ↓
+Aceptar
+      ↓
+Resultado final
+```
 
-Siempre que sea compatible con el proyecto y con el ejemplo proporcionado, crear el FeatureScript como Custom Feature de Onshape.
+El botón **Aceptar** debe consolidar el resultado final, no ser el primer momento en que se ejecuta todo el procesamiento.
 
-Debe poder ser agregado al Feature List del Part Studio.
+---
 
-La experiencia buscada es que el usuario pueda permanecer dentro de Onshape.
+# 16. PREVIEW VS CÁLCULO FINAL
 
-No queremos que el usuario tenga que abrir manualmente la aplicación externa para operar el FeatureScript.
+Separar conceptualmente:
 
-==================================================
-9. BACKEND
-==========
+### PREVISUALIZACIÓN
 
-Crear/modificar los endpoints necesarios para recibir la comunicación del FeatureScript.
+Prioridad:
 
-El backend debe:
+**velocidad + respuesta visual**
 
-* validar el request;
-* validar el contexto;
-* validar los datos recibidos;
-* identificar la sesión;
-* procesar la solicitud;
-* devolver una respuesta estructurada.
+Debe permitir al usuario entender cómo podría quedar la pieza.
 
-No permitir que el FeatureScript controle directamente credenciales OAuth.
+Puede utilizar:
 
-La autenticación con Onshape permanece en el backend.
+* menor resolución;
+* menor cantidad de iteraciones;
+* simplificación geométrica;
+* cálculo aproximado;
 
-==================================================
-10. ESTADOS DE COMUNICACIÓN
-===========================
+siempre que la representación siga siendo técnicamente válida.
 
-La aplicación debe poder determinar si existe comunicación válida.
+### CÁLCULO FINAL
 
-Estados posibles:
+Prioridad:
 
-● Aplicación iniciada
-● Onshape conectado
-● FeatureScript conectado
-● Solicitud recibida
-● Procesando
-● Resultado disponible
-● Error
+**precisión + calidad**
 
-No es necesario mostrar todos estos estados permanentemente en la interfaz.
+Al aceptar la operación se debe ejecutar el procesamiento final con los parámetros definitivos.
 
-La interfaz principal debe seguir siendo simple.
+No utilizar el preview como sustituto del resultado final.
 
-Estos estados pueden existir internamente para debugging/logging.
+---
 
-==================================================
-11. GEOMETRÍA
-=============
+# 17. IMPORTANTE: NO BLOQUEAR ONSHAPE INNECESARIAMENTE
 
-NO simular geometría.
+Antes de implementar el preview, analizar cómo funciona realmente la regeneración de FeatureScript.
 
-NO utilizar piezas aleatorias.
+Determinar si es técnicamente viable realizar una llamada al backend durante la regeneración.
 
-NO generar resultados ficticios.
+NO asumir que FeatureScript puede:
 
-Cuando el FeatureScript envíe información sobre la pieza:
+* ejecutar procesos externos arbitrariamente;
+* esperar indefinidamente;
+* mantener conexiones persistentes;
+* realizar cálculos largos sin afectar la edición.
 
-* identificar qué datos reales recibe la aplicación;
-* determinar cómo obtener la geometría real mediante Onshape API;
-* utilizar esos datos para el procesamiento.
+Si existe una limitación de tiempo o ejecución:
 
-Si la extracción completa de geometría todavía no está implementada, no inventar el resultado.
+* documentarla;
+* diseñar una arquitectura compatible;
+* evitar bloquear la interfaz.
 
-Dejar claramente identificada esa etapa como pendiente.
+---
 
-==================================================
-12. RESULTADO DE LA OPTIMIZACIÓN
-================================
+# 18. APROVECHAR EL SISTEMA DE PREVIEW DE ONSHAPE
 
-La arquitectura debe quedar preparada para:
+No crear artificialmente un sistema paralelo de transparencia si Onshape ya proporciona un mecanismo nativo de preview para Custom Features.
 
+Investigar cómo Onshape representa:
+
+* geometría resultante;
+* geometría temporal;
+* opacidad;
+* regeneración durante edición.
+
+Utilizar el mecanismo nativo siempre que sea posible.
+
+La intención es que el usuario perciba la optimización como una operación normal de Onshape.
+
+---
+
+# 19. GEOMETRÍA REAL
+
+La aplicación todavía necesita obtener correctamente la geometría de la pieza.
+
+Resolver esta parte.
+
+Utilizar mecanismos reales de Onshape para obtener:
+
+* geometría;
+* topología;
+* teselación;
+* STEP;
+* STL;
+* u otro formato apropiado.
+
+Elegir el formato compatible con el pipeline actual.
+
+**NO utilizar:**
+
+* geometría aleatoria;
+* sólidos ficticios;
+* resultados simulados;
+* STEP ficticios.
+
+---
+
+# 20. ACTUALIZACIONES DURANTE EL PREVIEW
+
+Cada vez que cambie una condición relevante:
+
+* pieza;
+* obstáculo;
+* anclaje;
+* cara protegida;
+* porcentaje;
+
+el sistema debe poder determinar si necesita actualizar el preview.
+
+No recalcular innecesariamente si el cambio no afecta al resultado.
+
+Implementar algún mecanismo de control de solicitudes para evitar:
+
+```text
+Cambio 1 → cálculo
+Cambio 2 → cálculo
+Cambio 3 → cálculo
+Cambio 4 → cálculo
+```
+
+todos simultáneamente.
+
+Si el usuario realiza varios cambios rápidamente, utilizar una estrategia apropiada de:
+
+* debounce;
+* cancelación;
+* cola;
+* última solicitud válida.
+
+El objetivo es que solamente se procese el estado más reciente.
+
+---
+
+# 21. IDENTIFICACIÓN DE SOLICITUDES
+
+Cada cálculo debe tener un identificador único.
+
+Por ejemplo:
+
+```text
+preview_id
+```
+
+o equivalente.
+
+Esto permite evitar que una respuesta antigua sobrescriba una configuración más reciente.
+
+Ejemplo:
+
+```text
+Preview 001 → configuración A
+Preview 002 → configuración B
+Preview 003 → configuración C
+```
+
+Si llega primero la respuesta de Preview 001 después de haber solicitado Preview 003, esa respuesta debe descartarse.
+
+---
+
+# 22. RESULTADO DEL PREVIEW
+
+El preview debe representar una geometría real o una aproximación técnicamente válida del resultado.
+
+No mostrar solamente:
+
+* porcentaje;
+* estadísticas;
+* texto;
+* una pieza ficticia.
+
+El usuario debe poder visualizar la evolución geométrica.
+
+---
+
+# 23. RESULTADO FINAL
+
+Al pulsar aceptar:
+
+```text
+Pieza original
+      ↓
+Configuración final
+      ↓
+Cálculo final
+      ↓
+Pieza optimizada
+      ↓
+Resultado incorporado en Onshape
+```
+
+No utilizar como solución final:
+
+**"Descargar STEP → importar manualmente."**
+
+El objetivo es que el resultado forme parte del flujo de modelado de Onshape.
+
+Si la API o FeatureScript tienen una limitación que impide completar esto directamente, investigar el mecanismo oficial alternativo y documentarlo.
+
+No inventar capacidades.
+
+---
+
+# 24. COMUNICACIÓN FEATURESCRIPT ↔ BACKEND
+
+La arquitectura debe soportar:
+
+```text
 FEATURESCRIPT
-↓
-DATOS DE PIEZA
-↓
-APLICACIÓN
-↓
-TOPOLOGÍA OPTIMIZADA
-↓
-PIEZA MODIFICADA
-↓
+      │
+      │ Preview Request
+      ▼
+   FASTAPI
+      │
+      ▼
+Preview Solver
+      │
+      ▼
+   FASTAPI
+      │
+      │ Preview Response
+      ▼
+FEATURESCRIPT
+      │
+      ▼
+Preview Onshape
+```
+
+Y para el resultado final:
+
+```text
+FEATURESCRIPT
+      │
+      │ Final Request
+      ▼
+   FASTAPI
+      │
+      ▼
+Final Solver
+      │
+      ▼
+Resultado
+      │
+      ▼
 FEATURESCRIPT / ONSHAPE
+```
 
-El objetivo final es que la pieza modificada pueda regresar a Onshape.
+---
 
-No crear un flujo donde el usuario tenga que descargar manualmente un archivo como solución definitiva.
+# 25. MANEJO DE ESTADOS
 
-==================================================
-13. ARCHIVO ejemplo.txt
-=======================
+Internamente distinguir:
 
-El archivo `ejemplo.txt` es una referencia técnica.
+* `READY`
+* `PREVIEW_REQUESTED`
+* `PREVIEW_PROCESSING`
+* `PREVIEW_READY`
+* `FINAL_REQUESTED`
+* `FINAL_PROCESSING`
+* `FINAL_READY`
+* `ERROR`
 
-Debes leerlo antes de implementar el FeatureScript.
+La interfaz del FeatureScript puede mostrar mensajes simples.
 
-Después de analizarlo, documentar brevemente:
+Por ejemplo:
 
-* mecanismo de comunicación utilizado;
-* datos enviados;
-* datos recibidos;
-* qué partes se reutilizaron conceptualmente;
-* qué partes no son compatibles con este proyecto;
-* qué cambios fueron necesarios.
+**"Generando previsualización..."**
 
-No copies código innecesariamente.
+**"Previsualización actualizada."**
 
-==================================================
-14. PRUEBA MÍNIMA DE INTEGRACIÓN
-================================
+**"Calculando resultado final..."**
 
-Antes de intentar ejecutar la optimización completa, conseguir primero esta prueba:
+---
 
-1. Abrir Onshape.
-2. Abrir el Part Studio.
-3. Ejecutar/agregar el Custom Feature.
-4. Realizar una selección simple.
-5. Ejecutar el FeatureScript.
-6. El FeatureScript envía los datos a la aplicación.
-7. El backend recibe la solicitud.
-8. El backend registra correctamente:
+# 26. RESTRICCIONES OPCIONALES
 
-   * documentId;
-   * workspaceId;
-   * elementId;
-   * selección;
-   * datos enviados.
-9. La aplicación responde correctamente.
-10. El FeatureScript recibe la respuesta.
-11. Confirmar que la comunicación funciona.
+Validar correctamente todos los casos:
 
-SOLO después de conseguir esta prueba debe avanzarse hacia el procesamiento real de geometría.
+### Caso A
 
-==================================================
-15. NO MODIFICAR INNECESARIAMENTE LA UI
-=======================================
+Pieza solamente.
 
-Este punto es MUY IMPORTANTE.
+Debe funcionar.
 
-No agregues a la interfaz externa:
+### Caso B
 
-* paneles de selección;
-* configuradores;
-* formularios;
-* árboles de documentos;
-* parámetros de cargas;
-* materiales;
-* restricciones.
+Pieza + obstáculos.
 
-La interfaz externa solamente confirma:
+Debe funcionar.
 
-"la aplicación está iniciada"
+### Caso C
 
-y
+Pieza + anclajes.
 
-"está conectada con Onshape".
+Debe funcionar.
 
-La interacción con el modelo debe ocurrir desde Onshape.
+### Caso D
 
-==================================================
-16. AUDITORÍA FINAL
-===================
+Pieza + caras protegidas.
 
-Al terminar, verificar:
+Debe funcionar.
+
+### Caso E
+
+Pieza + todas las restricciones.
+
+Debe funcionar.
+
+Nunca asumir que todas las restricciones están presentes.
+
+---
+
+# 27. VALIDACIÓN
+
+Antes de procesar:
+
+Verificar:
+
+* pieza seleccionada;
+* pieza sólida;
+* porcentaje válido;
+* referencias válidas;
+* restricciones compatibles.
+
+No exigir restricciones opcionales.
+
+---
+
+# 28. ERRORES
+
+Todos los errores visibles deben estar en español.
+
+Controlar:
+
+* pieza no seleccionada;
+* pieza no sólida;
+* selección inválida;
+* porcentaje inválido;
+* backend desconectado;
+* timeout;
+* error de comunicación;
+* error de geometría;
+* error del solver;
+* resultado inválido.
+
+---
+
+# 29. PRUEBAS POR ETAPAS
+
+No implementar todo simultáneamente.
+
+### ETAPA A — Comunicación
+
+FeatureScript → Backend → FeatureScript.
+
+### ETAPA B — Pieza
+
+Seleccionar sólido y transmitirlo correctamente.
+
+### ETAPA C — Restricciones
+
+Probar individualmente:
+
+* obstáculos;
+* anclajes;
+* caras protegidas.
+
+### ETAPA D — Porcentaje
+
+Enviar y validar porcentaje.
+
+### ETAPA E — Preview
+
+Modificar un parámetro y comprobar que el preview cambia.
+
+### ETAPA F — Preview dinámico
+
+Modificar varios parámetros y comprobar:
+
+* debounce;
+* cancelación;
+* identificación de solicitudes;
+* respuesta correcta.
+
+### ETAPA G — Geometría real
+
+Obtener la geometría real.
+
+### ETAPA H — Preview geométrico real
+
+Mostrar una representación válida del resultado.
+
+### ETAPA I — Cálculo final
+
+Ejecutar el procesamiento completo.
+
+### ETAPA J — Resultado
+
+Incorporar la geometría resultante a Onshape.
+
+No avanzar si la etapa anterior no funciona.
+
+---
+
+# 30. NO MODIFICAR INNECESARIAMENTE LA APLICACIÓN EXISTENTE
+
+Conservar:
+
+* OAuth;
+* conexión Onshape;
+* interfaz web;
+* estructura funcional existente.
+
+Modificar solamente lo necesario para integrar el nuevo flujo.
+
+No rehacer el proyecto completo.
+
+---
+
+# 31. AUDITORÍA FINAL
+
+Al finalizar verificar:
 
 ### Aplicación
 
-[ ] Backend ejecuta correctamente
-[ ] UI local funciona
+[ ] Backend funciona
 [ ] OAuth funciona
-[ ] Usuario autenticado
-[ ] Desconexión funciona
+[ ] UI simple funciona
+[ ] Conexión Onshape funciona
 
 ### FeatureScript
 
 [ ] Custom Feature creado
-[ ] FeatureScript puede ejecutarse en Onshape
-[ ] Puede capturar selección
-[ ] Puede identificar contexto
-[ ] Puede comunicarse con la aplicación
-[ ] Puede recibir respuesta
+[ ] Nombre en español
+[ ] Interfaz en español
+[ ] Pieza a modificar
+[ ] Validación de sólido
+[ ] Obstáculos opcionales
+[ ] Anclajes opcionales
+[ ] Caras protegidas opcionales
+[ ] Porcentaje de optimización
 
 ### Comunicación
 
-[ ] Onshape → FeatureScript
 [ ] FeatureScript → Backend
 [ ] Backend → FeatureScript
-[ ] Manejo de errores
+[ ] Comunicación real
+[ ] Errores controlados
+
+### Preview
+
+[ ] Preview inicial
+[ ] Preview después de cambios
+[ ] Preview actualizado dinámicamente
+[ ] No requiere pulsar Aceptar para visualizar
+[ ] Debounce/cancelación
+[ ] Identificador de solicitudes
+[ ] Respuestas antiguas descartadas
 
 ### Geometría
 
-[ ] Se identifica correctamente la pieza
-[ ] Se determina mecanismo real para obtener geometría
-[ ] No existen mocks de geometría
+[ ] Pieza real
+[ ] Geometría real
+[ ] Sin datos aleatorios
+[ ] Sin mocks
 
 ### Resultado
 
-[ ] Arquitectura preparada para devolver pieza modificada
-[ ] No existen archivos ficticios
-[ ] Las partes no implementadas están documentadas
+[ ] Preview válido
+[ ] Cálculo final separado
+[ ] Resultado final real
+[ ] Resultado incorporable a Onshape
 
-Al finalizar indicar:
+Si algo no puede completarse:
 
-1. archivos creados;
-2. archivos modificados;
-3. archivos eliminados;
-4. dependencias agregadas;
-5. endpoints nuevos;
-6. variables `.env`;
-7. configuración necesaria en Onshape;
-8. cómo instalar el FeatureScript;
-9. cómo realizar la prueba mínima;
-10. qué queda pendiente para implementar la optimización topológica real.
+**COMPLETO / PARCIAL / PENDIENTE / LIMITACIÓN DE ONSHAPE**
 
-REGLA FUNDAMENTAL:
+explicando exactamente la causa.
 
-La UI externa debe permanecer SIMPLE.
+---
 
-La interacción con el CAD debe ocurrir DENTRO DE ONSHAPE.
+# REGLAS FUNDAMENTALES
 
-FeatureScript funciona como puente de integración con el modelo, NO como motor de cálculo.
+1. La interfaz web externa debe permanecer **simple**.
 
-Python/FastAPI es responsable de la lógica pesada y procesamiento.
+2. El usuario debe controlar la operación **desde Onshape**.
 
-No inventes capacidades de Onshape: si una operación no es posible exactamente como se solicita, investiga la alternativa oficial y documenta la solución.
+3. FeatureScript es la interfaz CAD y puente de integración.
+
+4. Python/FastAPI realiza el procesamiento pesado.
+
+5. La comunicación debe ser REAL.
+
+6. No utilizar mocks para ocultar problemas.
+
+7. No utilizar geometría aleatoria.
+
+8. No inventar APIs.
+
+9. Las restricciones son opcionales.
+
+10. El FeatureScript solo acepta sólidos válidos.
+
+11. Todos los textos visibles están en español.
+
+12. El porcentaje debe utilizarse realmente.
+
+13. Debe existir diferencia entre **PREVIEW** y **RESULTADO FINAL**.
+
+14. El preview debe actualizarse mientras el usuario edita el FeatureScript.
+
+15. No esperar al botón Aceptar para mostrar el preview.
+
+16. Priorizar la velocidad del preview sobre la precisión final.
+
+17. Priorizar la precisión en el cálculo final.
+
+18. Evitar cálculos simultáneos innecesarios.
+
+19. Una respuesta antigua nunca debe sobrescribir un preview más reciente.
+
+20. Aprovechar los mecanismos nativos de preview de Onshape siempre que sea técnicamente posible.
+
+21. No bloquear innecesariamente la interfaz de Onshape con cálculos largos.
+
+22. Si una capacidad no es posible mediante FeatureScript/Onshape, no simularla: investigar la alternativa real y documentar la limitación.
+
+23. No rehacer componentes que ya funcionan.
+
+---
+
+## RESULTADO FUNCIONAL DESEADO
+
+El comportamiento final debe aproximarse a:
+
+```text
+Onshape
+   │
+   ▼
+Topología Optimizada
+   │
+   ├── Pieza a modificar
+   │
+   ├── ☐ Piezas que obstruyen
+   │
+   ├── ☐ Lugares de anclaje
+   │
+   ├── ☐ Caras sin modificar
+   │
+   └── Porcentaje: 50 %
+             │
+             ▼
+        PREVIEW
+             │
+             ▼
+     Usuario sigue editando
+             │
+             ├── cambia selección
+             ├── activa restricción
+             ├── modifica porcentaje
+             │
+             ▼
+       PREVIEW actualizado
+             │
+             ▼
+          Aceptar
+             │
+             ▼
+       CÁLCULO FINAL
+             │
+             ▼
+       PIEZA OPTIMIZADA
+             │
+             ▼
+           ONSHAPE
+```
+
+**La prioridad inmediata no es conseguir todavía el solver perfecto.**
+
+La prioridad es conseguir una integración técnicamente sólida donde:
+
+**el FeatureScript se comunique realmente con la aplicación, capture correctamente las selecciones y parámetros, pueda solicitar una previsualización y pueda actualizarla durante la edición.**
+
+Después se profundizará en el solver y la generación de la geometría final.

@@ -101,6 +101,7 @@ def run_topology_optimization(
     forces: Optional[np.ndarray] = None,
     supports: Optional[np.ndarray] = None,
     fea_solver: Optional[Callable[..., Any]] = None,
+    tolerance: float = 0.01,
 ) -> Dict[str, Any]:
     """Run only with caller-supplied real data and an explicit FEA adapter."""
     solver = TopOptSolver(
@@ -114,5 +115,6 @@ def run_topology_optimization(
         forces=forces,
         supports=supports,
         max_iterations=max_iterations,
+        tolerance=tolerance,
         callback=callback,
     )

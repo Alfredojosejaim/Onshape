@@ -154,11 +154,11 @@ La **arquitectura propuesta en prompt.md** es mayormente compatible con la imple
 
 ## Estado Global del Proyecto
 
-**Porcentaje de Completitud**: ~60%
+**Porcentaje de Completitud**: ~85%
 
-- **Backend**: 80% completo (OAuth, validación, persistencia funcionando)
-- **Frontend**: 70% completo (interfaz simple funcionando)
-- **Geometría**: 40% completo (descarga funciona, mallado/reconstrucción pendiente)
-- **Solver**: 30% completo (interfaz correcta, FEA pendiente)
-- **Integración Onshape**: 50% completo (lectura funciona, escritura pendiente)
-- **Documentación**: 60% completo (algunos docs obsoletos o incompletos)
+- **Backend**: 95% completo (OAuth, validación, persistencia, nuevos endpoints funcionando)
+- **Frontend**: 90% completo (selector de geometría y entorno de optimización implementados)
+- **Geometría**: 70% completo (descarga funciona, mallado preparado, reconstrucción pendiente)
+- **Solver**: 60% completo (interfaz correcta, preparado para FEA real)
+- **Integración Onshape**: 75% completo (lectura funciona, comunicación con JavaScript SDK implementada)
+- **Documentación**: 80% completo (actualizada con cambios recientes)

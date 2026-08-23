@@ -3,19 +3,26 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Topología optimizada</title>
+  <title>Topología optimizada - Selector de Geometría</title>
   <style>
-    :root { color-scheme: light; --bg:#f5f7fa; --card:#fff; --ink:#172033; --muted:#667085; --line:#d9e0e8; --blue:#1769e0; --green:#147d50; --red:#b42318; }
+    :root { color-scheme: light; --bg:#f5f7fa; --card:#fff; --ink:#172033; --muted:#667085; --line:#d9e0e8; --blue:#1769e0; --green:#147d50; --red:#b42318; --input-bg:#f0f2f5; }
     * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--ink); font:14px system-ui,sans-serif; }
-    main { width:min(460px,100%); margin:auto; padding:24px 16px; } .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:20px; box-shadow:0 4px 14px #1720330d; }
+    main { width:min(500px,100%); margin:auto; padding:24px 16px; } .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:20px; box-shadow:0 4px 14px #1720330d; margin-bottom:16px; }
     h1 { margin:0 0 18px; font-size:22px; } h2 { margin:0 0 16px; font-size:16px; } .row { display:flex; justify-content:space-between; gap:12px; padding:10px 0; border-top:1px solid var(--line); }
     .label { color:var(--muted); } .value { font-weight:650; text-align:right; } .connected { color:var(--green); } .disconnected { color:var(--red); } .actions { display:flex; gap:8px; margin-top:18px; }
     button { flex:1; min-height:38px; border:1px solid var(--line); border-radius:7px; background:#fff; color:#154b9b; font:inherit; font-weight:650; cursor:pointer; } button.primary { background:var(--blue); border-color:var(--blue); color:#fff; } button:disabled { opacity:.5; cursor:not-allowed; }
     #notice { margin-top:14px; padding:10px; border-radius:7px; background:#eef2f7; color:var(--muted); } #notice.error { background:#fff0ee; color:var(--red); } .hidden { display:none; }
+    .form-group { margin-bottom:16px; } .form-group label { display:block; margin-bottom:6px; font-weight:500; color:var(--ink); }
+    .form-group input { width:100%; padding:10px; border:1px solid var(--line); border-radius:6px; background:var(--input-bg); font:inherit; }
+    .form-group input:focus { outline:2px solid var(--blue); border-color:var(--blue); }
+    .form-group input:disabled { background:#e9ecef; cursor:not-allowed; }
+    .section-title { font-size:15px; font-weight:600; margin:20px 0 12px; color:var(--ink); }
+    .info-text { font-size:13px; color:var(--muted); margin-top:4px; }
   </style>
 </head>
 <body>
 <main>
+  <!-- Estado de Conexión -->
   <section class="card">
     <h1>Topología optimizada</h1>
     <h2>Estado de la aplicación</h2>
@@ -25,23 +32,156 @@
     <div class="actions"><button id="login" class="primary" type="button">Conectar con Onshape</button><button id="logout" class="hidden" type="button">Desconectar</button></div>
     <div id="notice" class="hidden" role="status" aria-live="polite"></div>
   </section>
+
+  <!-- Selector de Geometría -->
+  <section class="card hidden" id="geometry-selector">
+    <h2>Selector de Geometría</h2>
+    <p class="info-text">Selecciona la geometría para enviar al entorno de optimización</p>
+    
+    <div class="section-title">Contexto CAD</div>
+    <div class="form-group">
+      <label for="documentId">Document ID</label>
+      <input type="text" id="documentId" placeholder="ID del documento Onshape" required>
+    </div>
+    <div class="form-group">
+      <label for="workspaceId">Workspace ID</label>
+      <input type="text" id="workspaceId" placeholder="ID del workspace" required>
+    </div>
+    <div class="form-group">
+      <label for="elementId">Element ID</label>
+      <input type="text" id="elementId" placeholder="ID del Part Studio" required>
+    </div>
+
+    <div class="section-title">Selección de Geometría</div>
+    <div class="form-group">
+      <label for="designSpace">Pieza a optimizar (Design Space)</label>
+      <input type="text" id="designSpace" placeholder="ID de la pieza/sólido principal" required>
+      <p class="info-text">La pieza que será optimizada topológicamente</p>
+    </div>
+    <div class="form-group">
+      <label for="keepOut">Obstáculos / Keep-out (opcional)</label>
+      <input type="text" id="keepOut" placeholder="IDs de piezas keep-out separados por coma">
+      <p class="info-text">Piezas que deben mantenerse como obstáculos durante la optimización</p>
+    </div>
+
+    <div class="actions">
+      <button id="send-geometry" class="primary" type="button" disabled>Enviar Geometría</button>
+      <button id="clear-form" type="button">Limpiar</button>
+    </div>
+    <div id="geometry-notice" class="hidden" role="status" aria-live="polite"></div>
+  </section>
 </main>
 <script>
   const $ = id => document.getElementById(id);
   function showError(message) { $('notice').textContent = message; $('notice').className = 'error'; $('notice').classList.remove('hidden'); }
+  function showGeometryNotice(message, isError = false) { 
+    $('geometry-notice').textContent = message; 
+    $('geometry-notice').className = isError ? 'error' : ''; 
+    $('geometry-notice').classList.remove('hidden'); 
+  }
   function setConnection(data) {
     const connected = Boolean(data.authenticated);
     $('onshape-status').textContent = connected ? '● Conectado' : '○ No conectado';
     $('onshape-status').className = `value ${connected ? 'connected' : 'disconnected'}`;
     $('user').textContent = connected ? (data.user?.name || data.user?.email || 'Usuario autenticado') : 'No autenticado';
     $('login').classList.toggle('hidden', connected); $('logout').classList.toggle('hidden', !connected);
+    
+    // Mostrar selector de geometría solo cuando está conectado
+    if (connected) {
+      $('geometry-selector').classList.remove('hidden');
+      // Pre-llenar contexto si está disponible
+      if (data.context) {
+        $('documentId').value = data.context.documentId || '';
+        $('workspaceId').value = data.context.workspaceId || '';
+        $('elementId').value = data.context.elementId || '';
+      }
+    } else {
+      $('geometry-selector').classList.add('hidden');
+    }
   }
   async function refresh() {
-    const response = await fetch('/api/auth/status', { credentials:'include' }); const data = await response.json();
-    if (!response.ok) throw new Error('No se pudo consultar la conexión con Onshape.'); setConnection(data);
+    const response = await fetch('/api/auth/status', { credentials:'include' }); 
+    const data = await response.json();
+    if (!response.ok) throw new Error('No se pudo consultar la conexión con Onshape.'); 
+    setConnection(data);
   }
   $('login').addEventListener('click', () => { window.location.href = '/login'; });
-  $('logout').addEventListener('click', async () => { const response = await fetch('/api/auth/logout', { method:'POST', credentials:'include' }); if (!response.ok) throw new Error('No se pudo cerrar la sesión.'); setConnection({ authenticated:false }); });
+  $('logout').addEventListener('click', async () => { 
+    const response = await fetch('/api/auth/logout', { method:'POST', credentials:'include' }); 
+    if (!response.ok) throw new Error('No se pudo cerrar la sesión.'); 
+    setConnection({ authenticated:false }); 
+  });
+  
+  // Validar formulario
+  function validateForm() {
+    const docId = $('documentId').value.trim();
+    const wsId = $('workspaceId').value.trim();
+    const elId = $('elementId').value.trim();
+    const designSpace = $('designSpace').value.trim();
+    
+    const isValid = docId && wsId && elId && designSpace;
+    $('send-geometry').disabled = !isValid;
+    return isValid;
+  }
+  
+  // Event listeners para validación
+  ['documentId', 'workspaceId', 'elementId', 'designSpace'].forEach(id => {
+    $(id).addEventListener('input', validateForm);
+  });
+  
+  // Enviar geometría
+  $('send-geometry').addEventListener('click', async () => {
+    if (!validateForm()) return;
+    
+    const payload = {
+      context: {
+        documentId: $('documentId').value.trim(),
+        workspaceId: $('workspaceId').value.trim(),
+        elementId: $('elementId').value.trim()
+      },
+      geometria: {
+        designSpace: [$('designSpace').value.trim()],
+        keepOut: $('keepOut').value.trim() ? $('keepOut').value.trim().split(',').map(s => s.trim()) : []
+      }
+    };
+    
+    try {
+      $('send-geometry').disabled = true;
+      $('send-geometry').textContent = 'Enviando...';
+      
+      const response = await fetch('/api/context', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload.context)
+      });
+      
+      if (!response.ok) throw new Error('Error al enviar contexto');
+      
+      showGeometryNotice('✓ Geometría enviada correctamente. Abriendo entorno de optimización...');
+      
+      // Aquí se podría redirigir a la aplicación principal de optimización
+      // setTimeout(() => { window.location.href = '/optimization'; }, 1500);
+      
+    } catch (error) {
+      showGeometryNotice('✗ Error: ' + error.message, true);
+    } finally {
+      $('send-geometry').disabled = false;
+      $('send-geometry').textContent = 'Enviar Geometría';
+    }
+  });
+  
+  // Limpiar formulario
+  $('clear-form').addEventListener('click', () => {
+    $('documentId').value = '';
+    $('workspaceId').value = '';
+    $('elementId').value = '';
+    $('designSpace').value = '';
+    $('keepOut').value = '';
+    $('geometry-notice').classList.add('hidden');
+    validateForm();
+  });
+  
   refresh().catch(error => showError(error.message));
 </script>
 </body>

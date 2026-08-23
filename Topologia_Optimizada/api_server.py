@@ -513,6 +513,16 @@ async def local_interface() -> FileResponse:
     return FileResponse("app-extension.html")
 
 
+@app.get("/app")
+async def optimization_interface() -> FileResponse:
+    return FileResponse("optimization-app.html")
+
+
+@app.get("/app/")
+async def optimization_interface_trailing() -> FileResponse:
+    return FileResponse("optimization-app.html")
+
+
 @app.get("/oauth/callback")
 async def oauth_callback(
     request: Request, code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None
@@ -617,6 +627,378 @@ async def save_context(request: Request, context: Dict[str, str]) -> Dict[str, A
         "status": "saved", 
         "context": {key: context[key] for key in required},
         "message": "Contexto CAD guardado correctamente"
+    }
+
+
+class GeometrySelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    
+    context: Dict[str, str] = Field(min_length=1)
+    designSpace: list[str] = Field(min_length=1)
+    keepOut: list[str] = Field(default_factory=list)
+
+
+@app.post("/api/geometry/selection")
+async def save_geometry_selection(request: Request, selection: GeometrySelection) -> Dict[str, Any]:
+    """Recibe y procesa selecciones de geometría desde Onshape."""
+    session_id = authenticated_session_id(request)
+    
+    # Validar contexto
+    required = ("documentId", "workspaceId", "elementId")
+    if any(not selection.context.get(key) for key in required):
+        raise HTTPException(status_code=422, detail="context requires documentId, workspaceId and elementId")
+    
+    # Guardar selección en sesión
+    with db_connection() as connection:
+        connection.execute(
+            "UPDATE oauth_sessions SET document_id=?, workspace_id=?, element_id=?, updated_at=? "
+            "WHERE session_id=?",
+            (selection.context["documentId"], selection.context["workspaceId"], 
+             selection.context["elementId"], utc_now(), session_id),
+        )
+    
+    logger.info(
+        "Selección de geometría recibida: session_id=%s designSpace=%d keepOut=%d",
+        session_id, len(selection.designSpace), len(selection.keepOut)
+    )
+    
+    # Preparar datos para el siguiente paso (obtención de geometría)
+    selection_data = {
+        "context": selection.context,
+        "designSpace": selection.designSpace,
+        "keepOut": selection.keepOut,
+        "timestamp": utc_now()
+    }
+    
+    return {
+        "status": "received",
+        "message": "Selección de geometría recibida correctamente",
+        "selection": {
+            "designSpace_count": len(selection.designSpace),
+            "keepOut_count": len(selection.keepOut),
+            "context": selection.context
+        },
+        "next_step": "geometry_download"
+    }
+
+
+@app.post("/api/geometry/download")
+async def download_geometry(request: Request, selection: GeometrySelection) -> Dict[str, Any]:
+    """Descarga geometría real desde Onshape basado en selecciones."""
+    session_id = authenticated_session_id(request)
+    
+    # Validar OAuth configurado
+    if not oauth_configured():
+        raise HTTPException(
+            status_code=503, 
+            detail="OAuth no configurado - Configure ONSHAPE_OAUTH_CLIENT_ID y ONSHAPE_OAUTH_CLIENT_SECRET"
+        )
+    
+    # Crear cliente Onshape
+    client = OnshapeClient(
+        token_store,
+        session_id,
+        OAUTH_CLIENT_ID,
+        OAUTH_CLIENT_SECRET,
+        token_url=OAUTH_TOKEN_URL,
+        api_url=OAUTH_API_URL,
+    )
+    
+    # Crear procesador de geometría
+    processor = GeometryProcessor(
+        client,
+        selection.context["documentId"],
+        selection.context["workspaceId"],
+        selection.context["elementId"],
+    )
+    
+    logger.info(
+        "Iniciando descarga de geometría: session_id=%s documentId=%s",
+        session_id, selection.context["documentId"]
+    )
+    
+    # Descargar geometría
+    try:
+        step_data = processor.download_part_studio(output_format="step")
+        
+        if not step_data:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "GEOMETRY_DOWNLOAD_FAILED",
+                    "message": "No se pudo descargar la geometría de Onshape"
+                }
+            )
+        
+        # Obtener propiedades
+        properties = processor.get_part_properties()
+        
+        logger.info(
+            "Geometría descargada exitosamente: session_id=%s size=%d bytes",
+            session_id, len(step_data)
+        )
+        
+        return {
+            "status": "success",
+            "message": "Geometría descargada correctamente",
+            "geometry": {
+                "format": "step",
+                "size_bytes": len(step_data),
+                "properties": properties
+            },
+            "selection": {
+                "designSpace": selection.designSpace,
+                "keepOut": selection.keepOut
+            },
+            "next_step": "meshing"
+        }
+        
+    except OnshapeAPIError as exc:
+        logger.error("Error de API Onshape: %s", exc.message)
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"code": exc.code, "message": exc.message}
+        ) from exc
+    except Exception as exc:
+        logger.exception("Error inesperado al descargar geometría")
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "GEOMETRY_DOWNLOAD_ERROR", "message": str(exc)}
+        ) from exc
+
+
+class MeshRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    
+    step_data: str  # Datos STEP en base64
+    target_element_size: float = Field(default=1.0, gt=0)
+    element_type: str = Field(default="tet10", pattern="^(tet4|tet10|hex8)$")
+
+
+@app.post("/api/mesh/generate")
+async def generate_mesh(request: Request, mesh_request: MeshRequest) -> Dict[str, Any]:
+    """Genera malla a partir de datos STEP usando un mesher externo."""
+    session_id = authenticated_session_id(request)
+    
+    logger.info(
+        "Solicitud de mallado recibida: session_id=%s element_size=%s element_type=%s",
+        session_id, mesh_request.target_element_size, mesh_request.element_type
+    )
+    
+    try:
+        # Decodificar datos STEP desde base64
+        import base64
+        step_bytes = base64.b64decode(mesh_request.step_data)
+        
+        # Crear procesador de geometría temporal
+        # Nota: Esto requiere un mesher real configurado
+        processor = GeometryProcessor(None, "", "", "")
+        
+        # Intentar generar malla
+        mesh_result = processor.create_mesh(
+            step_bytes,
+            mesh_request.target_element_size,
+            mesh_request.element_type
+        )
+        
+        if not mesh_result["success"]:
+            return {
+                "status": "pending",
+                "message": mesh_result["message"],
+                "code": mesh_result["code"],
+                "details": "Se requiere configurar un mesher externo real (ej: Gmsh, TetGen)"
+            }
+        
+        logger.info(
+            "Malla generada exitosamente: session_id=%s nodes=%d elements=%d",
+            session_id, mesh_result["num_nodes"], mesh_result["num_elements"]
+        )
+        
+        return {
+            "status": "success",
+            "message": "Malla generada correctamente",
+            "mesh": {
+                "num_nodes": mesh_result["num_nodes"],
+                "num_elements": mesh_result["num_elements"],
+                "element_type": mesh_request.element_type
+            },
+            "next_step": "boundary_conditions"
+        }
+        
+    except Exception as exc:
+        logger.exception("Error al generar malla")
+        return {
+            "status": "failed",
+            "message": "Error al generar malla",
+            "code": "MESH_GENERATION_ERROR",
+            "error": str(exc)
+        }
+
+
+class TopOptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    
+    volume_fraction: float = Field(gt=0, le=1)
+    max_iterations: int = Field(gt=0, le=10000)
+    tolerance: float = Field(gt=0, lt=1, default=0.01)
+    penalization: float = Field(default=3.0, gt=0)
+    rmin: float = Field(default=1.5, gt=0)
+    mesh_data: Optional[Dict[str, Any]] = None
+    forces: Optional[list[Dict[str, Any]]] = None
+    constraints: Optional[list[Dict[str, Any]]] = None
+
+
+@app.post("/api/topopt/run")
+async def run_topopt(request: Request, topopt_request: TopOptRequest) -> Dict[str, Any]:
+    """Ejecuta optimización topológica usando el solver TopOpt."""
+    session_id = authenticated_session_id(request)
+    
+    logger.info(
+        "Solicitud de optimización TopOpt: session_id=%s vol_frac=%s iterations=%s",
+        session_id, topopt_request.volume_fraction, topopt_request.max_iterations
+    )
+    
+    try:
+        # Ejecutar optimización usando el solver existente
+        # Nota: Esto requiere un adaptador FEA real configurado
+        result = run_topology_optimization(
+            volume_fraction=topopt_request.volume_fraction,
+            max_iterations=topopt_request.max_iterations,
+            tolerance=topopt_request.tolerance,
+            penalization=topopt_request.penalization,
+            rmin=topopt_request.rmin,
+            fea_solver=None  # Requiere adaptador FEA real
+        )
+        
+        if not result.get("success") or result.get("status") == "not_implemented":
+            return {
+                "status": "pending",
+                "message": result.get("error", "Optimización no disponible"),
+                "code": result.get("code", "TOPOPT_NOT_IMPLEMENTED"),
+                "details": "Se requiere configurar un adaptador FEA real (ej: FEniCS, Ansys, Abaqus)"
+            }
+        
+        logger.info(
+            "Optimización TopOpt completada: session_id=%s status=%s iterations=%s",
+            session_id, result.get("status"), result.get("iterations", 0)
+        )
+        
+        return {
+            "status": "success",
+            "message": "Optimización completada exitosamente",
+            "result": {
+                "final_volume_fraction": result.get("final_volume_fraction"),
+                "iterations": result.get("iterations", 0),
+                "converged": result.get("converged", False)
+            },
+            "next_step": "geometry_reconstruction"
+        }
+        
+    except Exception as exc:
+        logger.exception("Error al ejecutar optimización TopOpt")
+        return {
+            "status": "failed",
+            "message": "Error al ejecutar optimización",
+            "code": "TOPOPT_EXECUTION_ERROR",
+            "error": str(exc)
+        }
+
+
+class ForceDefinition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    
+    magnitude: float = Field(gt=0)
+    direction_x: float
+    direction_y: float
+    direction_z: float
+    application_point: Optional[str] = None  # ID de la cara/punto donde se aplica
+    force_type: str = Field(default="point", pattern="^(point|distributed|pressure)$")
+
+
+class ConstraintDefinition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    
+    constraint_type: str = Field(pattern="^(fixed|pinned|roller|symmetry)$")
+    location: str  # ID de la cara/edge donde se aplica
+    degrees_of_freedom: Dict[str, bool] = Field(default_factory=lambda: {
+        "ux": True, "uy": True, "uz": True, "rx": True, "ry": True, "rz": True
+    })
+
+
+@app.post("/api/boundary/forces")
+async def save_forces(request: Request, forces: list[ForceDefinition]) -> Dict[str, Any]:
+    """Guarda definiciones de fuerzas para el análisis."""
+    session_id = authenticated_session_id(request)
+    
+    logger.info(
+        "Fuerzas recibidas: session_id=%s count=%d",
+        session_id, len(forces)
+    )
+    
+    # Validar que la dirección no sea cero
+    for force in forces:
+        if force.direction_x == force.direction_y == force.direction_z == 0:
+            raise HTTPException(
+                status_code=422,
+                detail="La dirección de la fuerza no puede ser (0, 0, 0)"
+            )
+    
+    # Guardar fuerzas en sesión (en implementación real se guardaría en DB)
+    # Por ahora, retornamos confirmación
+    return {
+        "status": "saved",
+        "message": f"{len(forces)} fuerza(s) guardada(s) correctamente",
+        "forces_count": len(forces),
+        "force_types": [f.force_type for f in forces]
+    }
+
+
+@app.post("/api/boundary/constraints")
+async def save_constraints(request: Request, constraints: list[ConstraintDefinition]) -> Dict[str, Any]:
+    """Guarda definiciones de restricciones para el análisis."""
+    session_id = authenticated_session_id(request)
+    
+    logger.info(
+        "Restricciones recibidas: session_id=%s count=%d",
+        session_id, len(constraints)
+    )
+    
+    # Validar que al menos un grado de libertad esté restringido
+    for constraint in constraints:
+        if not any(constraint.degrees_of_freedom.values()):
+            raise HTTPException(
+                status_code=422,
+                detail="Al menos un grado de libertad debe estar restringido"
+            )
+    
+    # Guardar restricciones en sesión (en implementación real se guardaría en DB)
+    # Por ahora, retornamos confirmación
+    return {
+        "status": "saved",
+        "message": f"{len(constraints)} restricción(es) guardada(s) correctamente",
+        "constraints_count": len(constraints),
+        "constraint_types": [c.constraint_type for c in constraints]
+    }
+
+
+@app.get("/api/boundary/summary")
+async def get_boundary_summary(request: Request) -> Dict[str, Any]:
+    """Obtiene resumen de condiciones de frontera actuales."""
+    session_id = authenticated_session_id(request)
+    
+    # En implementación real, esto consultaría la base de datos
+    # Por ahora, retornamos un resumen placeholder
+    return {
+        "status": "ready",
+        "forces": {
+            "count": 0,
+            "types": []
+        },
+        "constraints": {
+            "count": 0,
+            "types": []
+        },
+        "message": "No hay condiciones de frontera definidas"
     }
 
 

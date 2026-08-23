@@ -611,7 +611,13 @@ async def save_context(request: Request, context: Dict[str, str]) -> Dict[str, A
             "WHERE session_id=?",
             (context["documentId"], context["workspaceId"], context["elementId"], utc_now(), session_id),
         )
-    return {"status": "saved", "context": {key: context[key] for key in required}}
+    logger.info("Contexto CAD guardado: session_id=%s documentId=%s workspaceId=%s elementId=%s", 
+                 session_id, context["documentId"], context["workspaceId"], context["elementId"])
+    return {
+        "status": "saved", 
+        "context": {key: context[key] for key in required},
+        "message": "Contexto CAD guardado correctamente"
+    }
 
 
 @app.post("/api/study/validate")

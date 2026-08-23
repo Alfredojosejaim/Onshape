@@ -53,14 +53,18 @@
     </div>
 
     <div class="section-title">Selección de Geometría</div>
+    <div class="actions">
+      <button id="select-body" type="button" disabled>Seleccionar Cuerpo</button>
+      <button id="select-face" type="button" disabled>Seleccionar Cara (Keep-out)</button>
+    </div>
     <div class="form-group">
       <label for="designSpace">Pieza a optimizar (Design Space)</label>
-      <input type="text" id="designSpace" placeholder="ID de la pieza/sólido principal" required>
+      <input type="text" id="designSpace" placeholder="Seleccione un cuerpo en Onshape" required>
       <p class="info-text">La pieza que será optimizada topológicamente</p>
     </div>
     <div class="form-group">
       <label for="keepOut">Obstáculos / Keep-out (opcional)</label>
-      <input type="text" id="keepOut" placeholder="IDs de piezas keep-out separados por coma">
+      <input type="text" id="keepOut" placeholder="Seleccione caras en Onshape o ingrese IDs manualmente">
       <p class="info-text">Piezas que deben mantenerse como obstáculos durante la optimización</p>
     </div>
 
@@ -73,12 +77,178 @@
 </main>
 <script>
   const $ = id => document.getElementById(id);
+  
+  // Variables para comunicación con Onshape
+  let onshapeContext = null;
+  let onshapeClientOrigin = null;
+  let messageIdCounter = 0;
+  
   function showError(message) { $('notice').textContent = message; $('notice').className = 'error'; $('notice').classList.remove('hidden'); }
   function showGeometryNotice(message, isError = false) { 
     $('geometry-notice').textContent = message; 
     $('geometry-notice').className = isError ? 'error' : ''; 
     $('geometry-notice').classList.remove('hidden'); 
   }
+  
+  // Función para extraer IDs de Onshape de la URL
+  function getOnshapeIdsFromUrl(currentURL) {
+    const url = new URL(currentURL);
+    const params = url.searchParams;
+
+    const documentId = params.get('documentId');
+    const workspaceId = params.get('workspaceId');
+    const elementId = params.get('elementId');
+
+    if (documentId && workspaceId && elementId) {
+      return { documentId, workspaceId, elementId };
+    }
+
+    const pathMatch = url.pathname.match(/\/documents\/([^/]+)\/(?:w|v|m)\/([^/]+)\/e\/([^/]+)/);
+
+    if (pathMatch) {
+      return {
+        documentId: pathMatch[1],
+        workspaceId: pathMatch[2],
+        elementId: pathMatch[3]
+      };
+    }
+
+    return null;
+  }
+  
+  // Inicializar comunicación con Onshape
+  function initializeOnshapeCommunication() {
+    const urlParams = new URLSearchParams(window.location.search);
+    onshapeClientOrigin = urlParams.get('server');
+    
+    if (!onshapeClientOrigin) {
+      console.log('No se detectó entorno Onshape (parámetro server faltante)');
+      return;
+    }
+    
+    // Extraer IDs de Onshape
+    onshapeContext = getOnshapeIdsFromUrl(window.location.href);
+    
+    if (onshapeContext) {
+      console.log('Contexto Onshape detectado:', onshapeContext);
+      // Pre-llenar campos automáticamente
+      $('documentId').value = onshapeContext.documentId;
+      $('workspaceId').value = onshapeContext.workspaceId;
+      $('elementId').value = onshapeContext.elementId;
+      
+      // Deshabilitar campos de contexto ya que vienen de Onshape
+      $('documentId').disabled = true;
+      $('workspaceId').disabled = true;
+      $('elementId').disabled = true;
+      
+      // Enviar mensaje de inicialización
+      sendApplicationInit();
+      
+      // Escuchar mensajes de Onshape
+      window.addEventListener('message', handleOnshapeMessage);
+      
+      // Habilitar botones de selección
+      $('select-body').disabled = false;
+      $('select-face').disabled = false;
+      
+      showGeometryNotice('✓ Conectado a Onshape - Listo para seleccionar geometría');
+    } else {
+      console.log('No se pudieron extraer IDs de Onshape de la URL');
+    }
+  }
+  
+  // Enviar mensaje de inicialización a Onshape
+  function sendApplicationInit() {
+    if (!onshapeContext || !onshapeClientOrigin) return;
+    
+    const message = {
+      documentId: onshapeContext.documentId,
+      workspaceId: onshapeContext.workspaceId,
+      elementId: onshapeContext.elementId,
+      messageName: 'applicationInit',
+      messageId: `init_${Date.now()}`
+    };
+    
+    window.parent.postMessage(message, onshapeClientOrigin);
+    console.log('Mensaje applicationInit enviado:', message);
+  }
+  
+  // Manejar mensajes de Onshape
+  function handleOnshapeMessage(event) {
+    // Validar origen del mensaje
+    if (event.origin !== onshapeClientOrigin) {
+      console.warn('Mensaje de origen no válido:', event.origin);
+      return;
+    }
+    
+    const message = event.data;
+    console.log('Mensaje recibido de Onshape:', message);
+    
+    // Manejar selecciones de usuario
+    if (message.messageName === 'SELECTION') {
+      handleSelectionMessage(message);
+    }
+  }
+  
+  // Manejar mensaje de selección
+  function handleSelectionMessage(message) {
+    if (!message.selections || message.selections.length === 0) return;
+    
+    const selection = message.selections[0];
+    console.log('Selección recibida:', selection);
+    
+    // Determinar tipo de entidad seleccionada
+    if (selection.entityType === 'BODY') {
+      // Si es un cuerpo/sólido, agregar al design space
+      const currentDesignSpace = $('designSpace').value.trim();
+      const newBodyId = selection.selectionId;
+      
+      if (currentDesignSpace && !currentDesignSpace.includes(newBodyId)) {
+        $('designSpace').value = currentDesignSpace + ',' + newBodyId;
+      } else if (!currentDesignSpace) {
+        $('designSpace').value = newBodyId;
+      }
+      
+      showGeometryNotice(`✓ Cuerpo seleccionado: ${newBodyId}`);
+    } else if (selection.entityType === 'FACE') {
+      // Si es una cara, agregar a keep-out
+      const currentKeepOut = $('keepOut').value.trim();
+      const newFaceId = selection.selectionId;
+      
+      if (currentKeepOut && !currentKeepOut.includes(newFaceId)) {
+        $('keepOut').value = currentKeepOut + ',' + newFaceId;
+      } else if (!currentKeepOut) {
+        $('keepOut').value = newFaceId;
+      }
+      
+      showGeometryNotice(`✓ Cara seleccionada (keep-out): ${newFaceId}`);
+    }
+    
+    validateForm();
+  }
+  
+  // Solicitar selección al usuario
+  function requestSelection(entityType = 'BODY', count = 1) {
+    if (!onshapeContext || !onshapeClientOrigin) {
+      showGeometryNotice('✗ No conectado a Onshape', true);
+      return;
+    }
+    
+    const message = {
+      documentId: onshapeContext.documentId,
+      workspaceId: onshapeContext.workspaceId,
+      elementId: onshapeContext.elementId,
+      messageName: 'requestSelection',
+      messageId: `select_${Date.now()}_${messageIdCounter++}`,
+      entityTypeSpecifier: [entityType],
+      requiredSelectionCount: count
+    };
+    
+    window.parent.postMessage(message, onshapeClientOrigin);
+    console.log('Solicitud de selección enviada:', message);
+    showGeometryNotice(`🔍 Seleccione ${entityType === 'BODY' ? 'un cuerpo' : 'una cara'} en Onshape...`);
+  }
+  
   function setConnection(data) {
     const connected = Boolean(data.authenticated);
     $('onshape-status').textContent = connected ? '● Conectado' : '○ No conectado';
@@ -89,22 +259,20 @@
     // Mostrar selector de geometría solo cuando está conectado
     if (connected) {
       $('geometry-selector').classList.remove('hidden');
-      // Pre-llenar contexto si está disponible
-      if (data.context) {
-        $('documentId').value = data.context.documentId || '';
-        $('workspaceId').value = data.context.workspaceId || '';
-        $('elementId').value = data.context.elementId || '';
-      }
+      // Intentar inicializar comunicación con Onshape
+      initializeOnshapeCommunication();
     } else {
       $('geometry-selector').classList.add('hidden');
     }
   }
+  
   async function refresh() {
     const response = await fetch('/api/auth/status', { credentials:'include' }); 
     const data = await response.json();
     if (!response.ok) throw new Error('No se pudo consultar la conexión con Onshape.'); 
     setConnection(data);
   }
+  
   $('login').addEventListener('click', () => { window.location.href = '/login'; });
   $('logout').addEventListener('click', async () => { 
     const response = await fetch('/api/auth/logout', { method:'POST', credentials:'include' }); 
@@ -125,9 +293,13 @@
   }
   
   // Event listeners para validación
-  ['documentId', 'workspaceId', 'elementId', 'designSpace'].forEach(id => {
+  ['designSpace', 'keepOut'].forEach(id => {
     $(id).addEventListener('input', validateForm);
   });
+  
+  // Botones de selección
+  $('select-body').addEventListener('click', () => requestSelection('BODY', 1));
+  $('select-face').addEventListener('click', () => requestSelection('FACE', 1));
   
   // Enviar geometría
   $('send-geometry').addEventListener('click', async () => {
@@ -139,29 +311,55 @@
         workspaceId: $('workspaceId').value.trim(),
         elementId: $('elementId').value.trim()
       },
-      geometria: {
-        designSpace: [$('designSpace').value.trim()],
-        keepOut: $('keepOut').value.trim() ? $('keepOut').value.trim().split(',').map(s => s.trim()) : []
-      }
+      designSpace: $('designSpace').value.trim().split(',').map(s => s.trim()).filter(s => s),
+      keepOut: $('keepOut').value.trim() ? $('keepOut').value.trim().split(',').map(s => s.trim()).filter(s => s) : []
     };
     
     try {
       $('send-geometry').disabled = true;
       $('send-geometry').textContent = 'Enviando...';
       
-      const response = await fetch('/api/context', {
+      // Primero guardar contexto
+      const contextResponse = await fetch('/api/context', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify(payload.context)
       });
       
-      if (!response.ok) throw new Error('Error al enviar contexto');
+      if (!contextResponse.ok) throw new Error('Error al enviar contexto');
       
-      showGeometryNotice('✓ Geometría enviada correctamente. Abriendo entorno de optimización...');
+      // Luego enviar selección de geometría
+      const selectionResponse = await fetch('/api/geometry/selection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload)
+      });
       
-      // Aquí se podría redirigir a la aplicación principal de optimización
-      // setTimeout(() => { window.location.href = '/optimization'; }, 1500);
+      if (!selectionResponse.ok) throw new Error('Error al enviar selección de geometría');
+      
+      const result = await selectionResponse.json();
+      showGeometryNotice(`✓ ${result.message}. Descargando geometría...`);
+      
+      // Descargar geometría real desde Onshape
+      const downloadResponse = await fetch('/api/geometry/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload)
+      });
+      
+      if (!downloadResponse.ok) {
+        const errorData = await downloadResponse.json();
+        throw new Error(errorData.detail?.message || 'Error al descargar geometría');
+      }
+      
+      const downloadResult = await downloadResponse.json();
+      showGeometryNotice(`✓ ${downloadResult.message}. Formato: ${downloadResult.geometry.format}, Tamaño: ${downloadResult.geometry.size_bytes} bytes`);
+      
+      // Redirigir a la aplicación principal de optimización
+      setTimeout(() => { window.location.href = '/app'; }, 1500);
       
     } catch (error) {
       showGeometryNotice('✗ Error: ' + error.message, true);
@@ -173,9 +371,6 @@
   
   // Limpiar formulario
   $('clear-form').addEventListener('click', () => {
-    $('documentId').value = '';
-    $('workspaceId').value = '';
-    $('elementId').value = '';
     $('designSpace').value = '';
     $('keepOut').value = '';
     $('geometry-notice').classList.add('hidden');

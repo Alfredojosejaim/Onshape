@@ -71,7 +71,24 @@ def init_database() -> None:
     with db_connection() as connection:
         connection.execute(
             """
-            CREATE TABLE IF NOT EXISTS jobs (\n                job_id TEXT PRIMARY KEY,\n                session_id TEXT,\n                document_id TEXT NOT NULL,\n                workspace_id TEXT NOT NULL,\n                element_id TEXT NOT NULL,\n                request_json TEXT NOT NULL,\n                status TEXT NOT NULL,\n                progress INTEGER NOT NULL,\n                message TEXT NOT NULL,\n                created_at TEXT NOT NULL,\n                updated_at TEXT NOT NULL,\n                end_time TEXT,\n                result_json TEXT,\n                error_code TEXT,\n                error_message TEXT\n            )\n            """
+            CREATE TABLE IF NOT EXISTS jobs (
+                job_id TEXT PRIMARY KEY,
+                session_id TEXT,
+                document_id TEXT NOT NULL,
+                workspace_id TEXT NOT NULL,
+                element_id TEXT NOT NULL,
+                request_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                progress INTEGER NOT NULL,
+                message TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                end_time TEXT,
+                result_json TEXT,
+                error_code TEXT,
+                error_message TEXT
+            )
+            """
         )
         job_columns = {
             row["name"]
@@ -82,7 +99,25 @@ def init_database() -> None:
 
         connection.execute(
             """
-            CREATE TABLE IF NOT EXISTS oauth_sessions (\n                session_id TEXT PRIMARY KEY,\n                access_token TEXT NOT NULL,\n                refresh_token TEXT,\n                expires_at REAL NOT NULL,\n                token_type TEXT NOT NULL,\n                scope TEXT,\n                user_json TEXT,\n                document_id TEXT,\n                workspace_id TEXT,\n                element_id TEXT,\n                step_cache BLOB,\n                tessellation_json TEXT,\n                mesh_json TEXT,\n                forces_json TEXT,\n                constraints_json TEXT,\n                updated_at TEXT NOT NULL\n            )\n            """
+            CREATE TABLE IF NOT EXISTS oauth_sessions (
+                session_id TEXT PRIMARY KEY,
+                access_token TEXT NOT NULL,
+                refresh_token TEXT,
+                expires_at REAL NOT NULL,
+                token_type TEXT NOT NULL,
+                scope TEXT,
+                user_json TEXT,
+                document_id TEXT,
+                workspace_id TEXT,
+                element_id TEXT,
+                step_cache BLOB,
+                tessellation_json TEXT,
+                mesh_json TEXT,
+                forces_json TEXT,
+                constraints_json TEXT,
+                updated_at TEXT NOT NULL
+            )
+            """
         )
         session_columns = {
             row["name"]
@@ -100,7 +135,12 @@ def init_database() -> None:
 
         connection.execute(
             """
-            CREATE TABLE IF NOT EXISTS oauth_states (\n                state TEXT PRIMARY KEY,\n                session_id TEXT NOT NULL,\n                expires_at REAL NOT NULL\n            )\n            """
+            CREATE TABLE IF NOT EXISTS oauth_states (
+                state TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                expires_at REAL NOT NULL
+            )
+            """
         )
 
 
@@ -924,10 +964,36 @@ async def health_check() -> Dict[str, Any]:
 if __name__ == "__main__":
     import uvicorn
 
+    certfile = os.getenv("SSL_CERTFILE")
+    keyfile = os.getenv("SSL_KEYFILE")
+
+    # Auto-detect certs/localhost.pem and certs/localhost-key.pem if present
+    if not certfile and os.path.exists("certs/localhost.pem"):
+        certfile = os.path.abspath("certs/localhost.pem")
+    elif certfile and not os.path.isabs(certfile):
+        resolved = os.path.abspath(certfile)
+        if os.path.exists(resolved):
+            certfile = resolved
+
+    if not keyfile and os.path.exists("certs/localhost-key.pem"):
+        keyfile = os.path.abspath("certs/localhost-key.pem")
+    elif keyfile and not os.path.isabs(keyfile):
+        resolved = os.path.abspath(keyfile)
+        if os.path.exists(resolved):
+            keyfile = resolved
+
+    ssl_cert = certfile if certfile and os.path.exists(certfile) else None
+    ssl_key = keyfile if keyfile and os.path.exists(keyfile) else None
+
+    if ssl_cert and ssl_key:
+        logger.info("Iniciando servidor HTTPS con certificados locales: %s", ssl_cert)
+    else:
+        logger.info("Iniciando servidor HTTP (sin certificados SSL)")
+
     uvicorn.run(
         app,
         host=os.getenv("HOST", "0.0.0.0"),
         port=int(os.getenv("PORT", "8000")),
-        ssl_certfile=os.getenv("SSL_CERTFILE") or None,
-        ssl_keyfile=os.getenv("SSL_KEYFILE") or None,
+        ssl_certfile=ssl_cert,
+        ssl_keyfile=ssl_key,
     )

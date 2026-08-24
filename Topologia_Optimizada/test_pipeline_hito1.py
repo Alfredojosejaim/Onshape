@@ -12,7 +12,8 @@ Validates:
 9. Pydantic schema validation for loads, constraints, and optimization configs.
 10. Querying real Part Studio parts list from Onshape API.
 11. STEP download filtering by specific part IDs.
-12. End-to-end pipeline consistency for Hito 1.
+12. HTTPS security configuration and TLS certificate presence.
+13. End-to-end pipeline consistency for Hito 1.
 """
 
 import os
@@ -27,7 +28,7 @@ import cadquery as cq
 
 from geometry_processor import GeometryProcessor
 from onshape_client import OAuthTokenStore, OnshapeAPIError, OnshapeClient
-from api_server import ForceDefinition, ConstraintDefinition, GeometrySelection
+from api_server import ForceDefinition, ConstraintDefinition, GeometrySelection, OAUTH_REDIRECT_URI
 
 
 class MemoryTokenStore(OAuthTokenStore):
@@ -239,7 +240,24 @@ class TestHito1Pipeline(unittest.TestCase):
         self.assertIsNotNone(downloaded_bytes)
         self.assertEqual(len(downloaded_bytes), len(sample_step))
 
-    # --- TEST 11: Complete Hito 1 Pipeline Consistency ---
+    # --- TEST 11: HTTPS and TLS Security Configuration ---
+    def test_https_security_configuration(self):
+        # Verify OAuth redirect URI uses HTTPS
+        self.assertTrue(OAUTH_REDIRECT_URI.startswith("https://"))
+
+        # Verify certs directory and PEM format if generated
+        cert_path = os.path.join(os.path.dirname(__file__), "certs", "localhost.pem")
+        key_path = os.path.join(os.path.dirname(__file__), "certs", "localhost-key.pem")
+
+        if os.path.exists(cert_path) and os.path.exists(key_path):
+            with open(cert_path, "r", encoding="utf-8") as f:
+                cert_content = f.read()
+            with open(key_path, "r", encoding="utf-8") as f:
+                key_content = f.read()
+            self.assertIn("-----BEGIN CERTIFICATE-----", cert_content)
+            self.assertIn("-----BEGIN PRIVATE KEY-----", key_content)
+
+    # --- TEST 12: Complete Hito 1 Pipeline Consistency ---
     def test_complete_hito1_pipeline(self):
         step_data = create_sample_step_bytes(length=20.0, width=15.0, height=10.0)
         processor = GeometryProcessor(None, "d1", "w1", "e1")

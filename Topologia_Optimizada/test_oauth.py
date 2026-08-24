@@ -35,7 +35,7 @@ class TestOAuthClient(unittest.TestCase):
             ]
         )
         client.session.post = lambda *args, **kwargs: next(token_responses)
-        client.exchange_code("code", "http://localhost/callback")
+        client.exchange_code("code", "https://localhost:8000/oauth/callback")
         self.assertEqual(store.tokens["session"]["access_token"], "first")
         refreshed = client._refresh(store.tokens["session"])
         self.assertEqual(refreshed["access_token"], "second")

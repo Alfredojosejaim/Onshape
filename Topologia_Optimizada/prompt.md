@@ -1,977 +1,989 @@
-ACTÚA COMO PROGRAMADOR SENIOR Y ARQUITECTO DE SOFTWARE ESPECIALIZADO EN PYTHON, FASTAPI, JAVASCRIPT/WEBGL, APIs CAD Y ONSHAPE.
+ACTÚA COMO PROGRAMADOR SENIOR, ARQUITECTO DE SOFTWARE Y ESPECIALISTA EN INTEGRACIONES CAD, ONSHAPE API, PYTHON, FASTAPI, JAVASCRIPT, WEBGL/THREE.JS, FEA Y OPTIMIZACIÓN TOPOLÓGICA.
 
-Trabaja DIRECTAMENTE sobre el proyecto existente de Topología Optimizada.
+TRABAJA DIRECTAMENTE SOBRE EL REPOSITORIO EXISTENTE.
 
-NO desarrolles un proyecto desde cero.
-
-Tu objetivo es AUDITAR, CORREGIR, REESTRUCTURAR Y MEJORAR el proyecto existente para convertirlo en una aplicación funcional de optimización topológica integrada con Onshape.
-
-IMPORTANTE:
-Antes de modificar cualquier archivo:
-
-1. Lee y analiza TODO el repositorio.
-2. Lee completamente `ejemplo.txt`.
-3. Revisa la implementación actual de OAuth.
-4. Revisa el backend FastAPI.
-5. Revisa el frontend.
-6. Revisa cualquier FeatureScript existente.
-7. Revisa cómo se obtiene actualmente la geometría.
-8. Revisa el solver TopOpt existente.
-9. Revisa la generación de malla.
-10. Revisa cómo se pretende devolver actualmente la geometría a Onshape.
-11. Identifica mocks, datos aleatorios, placeholders, funciones incompletas y código que simule funcionalidades reales.
-12. Verifica las APIs de Onshape utilizadas contra la documentación oficial actual antes de implementar cambios.
-
-NO asumas que una API, endpoint, evento o función existe. Si no existe, busca la alternativa oficial correcta.
+NO CREES UN PROYECTO NUEVO DESDE CERO.
 
 ==================================================
-1. NUEVA ARQUITECTURA DEFINITIVA
+CONTEXTO DEL PROYECTO
 ==================================================
 
-CAMBIA EL ENFOQUE DEL PROYECTO.
+El proyecto es una aplicación de optimización topológica integrada con Onshape.
 
-La aplicación NO debe intentar realizar la optimización directamente dentro de Onshape.
+Repositorio:
 
-Onshape será principalmente el entorno CAD de origen y destino.
+Onshape/
+└── Topologia_Optimizada/
 
-La aplicación externa será el entorno principal de trabajo y tendrá la interfaz más completa.
+El proyecto YA tiene una cantidad importante de infraestructura funcional.
 
-La arquitectura será:
+NO debes reconstruirla innecesariamente.
 
-ONS HAPE
-    │
-    │
-    ▼
-APP INTEGRADA EN ONSHAPE
-"SELECTOR DE GEOMETRÍA"
-    │
-    │ IDs + contexto
-    ▼
-BACKEND PYTHON / FASTAPI
-    │
-    ├── Obtención de geometría
-    ├── Preparación geométrica
-    ├── Mallado
-    ├── FEA
-    └── TopOpt
-    │
-    ▼
-APP EXTERNA PRINCIPAL
-"ENTORNO DE DISEÑO"
-    │
-    ├── Visor 3D CAD
-    ├── Configuración de fuerzas
-    ├── Fijaciones
-    ├── Restricciones
-    ├── Material
-    ├── Optimización
-    └── Previsualización
-    │
-    ▼
-BACKEND
-    │
-    ▼
-RESULTADO FINAL
-    │
-    ▼
-ONSHAPE REST API
-    │
-    ▼
-PIEZA OPTIMIZADA EN ONSHAPE
+Durante la auditoría inicial identificamos que ya existen, entre otros:
+
+- OAuth 2.0;
+- cliente de Onshape;
+- FastAPI;
+- persistencia SQLite;
+- modelos Pydantic;
+- manejo de tokens;
+- refresh token;
+- retry HTTP;
+- descarga de STEP;
+- base de visor Three.js;
+- modelos de fuerzas;
+- modelos de restricciones;
+- modelos de materiales;
+- configuración TopOpt;
+- App Extension;
+- aplicación externa.
+
+Tu trabajo consiste en:
+
+AUDITAR → CORREGIR → COMPLETAR → INTEGRAR → VALIDAR.
+
+No asumir que una funcionalidad está completa solamente porque exista:
+
+- una interfaz;
+- un endpoint;
+- un modelo Pydantic;
+- una función;
+- un comentario;
+- un mock;
+- una documentación que diga que está implementada.
+
+Una funcionalidad solamente se considera COMPLETA cuando los datos reales atraviesan todo el flujo y producen el resultado esperado.
 
 ==================================================
-2. PRINCIPIO FUNDAMENTAL
+1. PRIMER PASO OBLIGATORIO: AUDITORÍA
 ==================================================
 
-La aplicación integrada dentro de Onshape NO será el configurador de TopOpt.
+ANTES DE MODIFICAR CUALQUIER ARCHIVO:
 
-Su función será únicamente seleccionar geometría y enviar el contexto a la aplicación principal.
+1. Lee TODO el repositorio.
+2. Lee `ejemplo.txt`.
+3. Lee la documentación existente.
+4. Audita `api_server.py`.
+5. Audita `onshape_client.py`.
+6. Audita `geometry_processor.py`.
+7. Audita `topopt_solver.py`.
+8. Audita `optimization-app.html`.
+9. Audita `app-extension.html`.
+10. Audita todos los modelos de datos.
+11. Audita dependencias.
+12. Audita configuración OAuth.
+13. Audita persistencia.
+14. Audita el flujo de geometría.
+15. Audita fuerzas y restricciones.
+16. Audita materiales.
+17. Audita el flujo de resultados.
+18. Identifica código obsoleto relacionado con FeatureScript.
+19. Identifica mocks, placeholders y datos ficticios.
 
-La aplicación integrada debe permitir seleccionar como mínimo:
+Crear internamente una matriz:
 
-- pieza/sólido a optimizar;
-- piezas que actúan como obstáculos / Keep-out.
+ARCHIVO
+FUNCIÓN
+ESTADO
+PROBLEMA
+ACCIÓN
 
-Debe poder obtener:
+Clasificar cada componente como:
 
-- documentId;
-- workspaceId;
-- elementId;
-- identificadores de las piezas seleccionadas;
-- identificadores de caras o entidades cuando sean necesarios.
+- COMPLETO
+- PARCIAL
+- PENDIENTE
+- OBSOLETO
+- LIMITACIÓN EXTERNA
 
-NO colocar en esta interfaz:
-
-- solver;
-- parámetros de fuerzas;
-- materiales;
-- porcentaje de optimización;
-- configuración avanzada;
-- mallado;
-- parámetros FEA;
-- visor 3D avanzado.
-
-La interfaz integrada debe ser simple.
-
-==================================================
-3. FEATURESCIPT
-==================================================
-
-NO considerar FeatureScript como canal de comunicación con el backend.
-
-FeatureScript es un lenguaje determinista que se ejecuta en un sandbox aislado de Onshape.
-
-NO tiene acceso a:
-
-- HTTP;
-- sockets;
-- Internet;
-- Python;
-- C++;
-- librerías externas;
-- TopOpt externo.
-
-Por lo tanto:
-
-PROHIBIDO:
-
-FeatureScript → HTTP → FastAPI
-
-PROHIBIDO:
-
-FeatureScript → Python
-
-PROHIBIDO:
-
-FeatureScript → Socket
-
-Si existe actualmente código que intente realizar esto, eliminarlo o desactivarlo correctamente.
-
-Si FeatureScript deja de ser necesario debido a la nueva arquitectura, NO lo mantengas artificialmente.
-
-Antes de eliminarlo, determina si alguna parte del proyecto realmente depende de él.
+NO modificar código antes de completar esta auditoría.
 
 ==================================================
-4. APP INTEGRADA EN ONSHAPE
+2. ARQUITECTURA DEFINITIVA
 ==================================================
 
-La App integrada debe funcionar como un "Selector de Geometría".
-
-El flujo será:
-
-Usuario abre App
-↓
-Selecciona pieza a optimizar
-↓
-Selecciona opcionalmente piezas Keep-out
-↓
-Confirma selección
-↓
-La aplicación obtiene los IDs reales
-↓
-Envía el contexto al backend
-↓
-Backend obtiene la geometría
-↓
-Se abre/continúa el entorno principal de optimización
-
-La selección debe utilizar los mecanismos oficiales disponibles para Apps/Extensions de Onshape.
-
-NO inventar eventos.
-
-Investigar el SDK/API oficial actual de Onshape para determinar cómo capturar correctamente las selecciones.
-
-==================================================
-5. APLICACIÓN EXTERNA PRINCIPAL
-==================================================
-
-Esta aplicación será el componente principal del proyecto.
-
-Debe tener una interfaz gráfica profesional orientada a CAD / diseño generativo.
-
-NO debe parecer simplemente un formulario web.
-
-La pieza debe visualizarse en un visor 3D interactivo.
-
-El usuario debe poder:
-
-- orbitar alrededor de la pieza;
-- rotar;
-- hacer zoom;
-- hacer pan;
-- cambiar el ángulo de cámara;
-- inspeccionar todos los lados;
-- ocultar/mostrar geometrías;
-- visualizar obstáculos;
-- visualizar fijaciones;
-- visualizar fuerzas;
-- visualizar el resultado optimizado;
-- comparar geometría original y optimizada.
-
-El visor debe ser realmente interactivo.
-
-NO utilizar una imagen estática.
-
-Utilizar una tecnología apropiada como:
-
-- Three.js;
-- Babylon.js;
-- WebGL/WebGPU;
-- u otra tecnología adecuada.
-
-Primero audita el proyecto y reutiliza la tecnología existente si es razonable.
-
-==================================================
-6. VISUALIZACIÓN TIPO CAD
-==================================================
-
-La experiencia debe acercarse a un visor CAD.
-
-El usuario debe poder inspeccionar la pieza libremente.
-
-La geometría original debe poder distinguirse de:
-
-- obstáculos;
-- zonas de fijación;
-- zonas protegidas;
-- resultado optimizado.
-
-Las cargas deben visualizarse gráficamente.
-
-Por ejemplo:
-
-Fuerza ↓
-    ↓
-    ↓
-┌───────────┐
-│   PIEZA   │
-└───────────┘
-████████████
- FIJACIÓN
-
-No utilizar únicamente números en formularios.
-
-Las condiciones físicas deben poder verse sobre el modelo 3D.
-
-==================================================
-7. GEOMETRÍA REAL
-==================================================
-
-Eliminar cualquier implementación que utilice:
-
-- geometría aleatoria;
-- geometría ficticia;
-- STEP ficticio;
-- malla aleatoria;
-- resultados aleatorios;
-- fuerzas simuladas;
-- soportes simulados.
-
-La geometría debe provenir del documento real de Onshape.
-
-Audita la API oficial actual para determinar el mecanismo correcto para obtener:
-
-- geometría;
-- topología;
-- teselación;
-- STEP;
-- STL;
-- Parasolid u otro formato disponible.
-
-No asumir que Parasolid está disponible si la API actual no lo permite.
-
-Elegir el formato que sea realmente viable para el solver.
-
-Documentar la decisión.
-
-==================================================
-8. BACKEND PYTHON
-==================================================
-
-Mantener FastAPI si ya existe.
-
-No crear múltiples backends innecesarios.
-
-El backend será responsable de:
-
-- autenticación;
-- contexto;
-- descarga de geometría;
-- preparación geométrica;
-- mallado;
-- análisis FEA;
-- ejecución TopOpt;
-- generación del resultado;
-- comunicación con Onshape.
-
-La aplicación frontend nunca debe ejecutar el solver pesado directamente.
-
-==================================================
-9. AUDITORÍA DEL SOLVER TOPOPT
-==================================================
-
-ESTO ES OBLIGATORIO.
-
-Antes de diseñar definitivamente la interfaz de fuerzas y restricciones, analiza exactamente qué librería/solver TopOpt utiliza actualmente el proyecto.
-
-Determina:
-
-- qué tipo de problema resuelve;
-- qué entradas necesita;
-- qué tipo de cargas acepta;
-- qué condiciones de frontera acepta;
-- qué materiales acepta;
-- qué algoritmo utiliza;
-- qué parámetros necesita;
-- qué devuelve;
-- qué limitaciones tiene.
-
-NO agregues controles en la interfaz que luego no puedan utilizarse realmente.
-
-Si el solver actual NO soporta directamente una funcionalidad:
-
-NO simularla.
-
-Indicar:
-
-"NO SOPORTADO ACTUALMENTE POR EL SOLVER"
-
-y diseñar la arquitectura para permitir agregarla posteriormente.
-
-==================================================
-10. FUERZAS Y CARGAS
-==================================================
-
-Las fuerzas son una funcionalidad FUNDAMENTAL de la aplicación.
-
-La aplicación debe permitir definir condiciones de carga reales compatibles con el solver.
-
-Como mínimo evaluar soporte para:
-
-- magnitud;
-- dirección;
-- sentido;
-- punto o cara de aplicación;
-- múltiples fuerzas;
-- fijaciones;
-- restricciones de movimiento.
-
-Evaluar también si el solver puede soportar:
-
-- momentos;
-- torques;
-- cargas distribuidas;
-- presión;
-- gravedad.
-
-NO implementar estos tipos automáticamente.
-
-Primero verifica si el solver actual los soporta.
-
-Cuando una fuerza sea definida, debe representarse visualmente en el visor 3D.
-
-Por ejemplo mediante vectores/flechas.
-
-El usuario debe poder comprender visualmente:
-
-- dónde actúa;
-- hacia dónde apunta;
-- qué magnitud tiene.
-
-==================================================
-11. CONDICIONES DE FRONTERA
-==================================================
-
-Separar claramente:
-
-CARGAS
-
-de
-
-RESTRICCIONES / FIJACIONES.
-
-Una fijación no es una fuerza.
-
-El usuario debe poder seleccionar las zonas donde el modelo queda restringido.
-
-Ejemplo:
-
-- cara fija;
-- desplazamiento bloqueado;
-- soporte;
-- etc.
-
-Utilizar solamente condiciones realmente soportadas por el solver.
-
-==================================================
-12. OPTIMIZACIÓN
-==================================================
-
-La interfaz debe permitir configurar el objetivo de optimización.
-
-Como mínimo evaluar:
-
-- porcentaje de reducción de volumen;
-- volumen objetivo;
-- número de iteraciones;
-- tolerancia;
-- parámetros específicos del algoritmo TopOpt.
-
-No agregar parámetros que el solver no utilice.
-
-El porcentaje debe tener efecto real sobre el cálculo.
-
-Por ejemplo:
-
-0 % → conservar geometría original
-
-50 % → objetivo de aproximadamente 50 % de reducción de volumen
-
-80 % → objetivo de aproximadamente 80 %
-
-Si el solver interpreta este parámetro de otra forma, utilizar la interpretación correcta y explicarla en la interfaz.
-
-==================================================
-13. PREVISUALIZACIÓN EN TIEMPO REAL
-==================================================
-
-La aplicación externa debe permitir modificar parámetros y observar el resultado.
+La arquitectura debe quedar dividida en tres componentes principales:
+
+A. ONSHAPE + APP EXTENSION
+B. APP EXTERNA PRINCIPAL
+C. BACKEND PYTHON
 
 Flujo:
 
-Modificar fuerza
-↓
-Backend
-↓
-TopOpt / FEA
-↓
-Preview
-↓
-Visor 3D
-
-Modificar porcentaje
-↓
-Backend
-↓
-Preview actualizado
-
-Modificar restricción
-↓
-Backend
-↓
-Preview actualizado
-
-NO es necesario recalcular exactamente con cada pulsación de teclado.
-
-Implementar:
-
-- debounce;
-- cancelación;
-- requestId;
-- control de respuestas antiguas.
-
-Una respuesta antigua nunca puede sobrescribir una respuesta nueva.
-
-==================================================
-14. PREVIEW VS RESULTADO FINAL
-==================================================
-
-Separar:
-
+ONS HAPE
+   ↓
+APP EXTENSION
+   ↓
+SELECCIÓN DE GEOMETRÍA
+   ↓
+BACKEND PYTHON
+   ↓
+GEOMETRÍA REAL
+   ↓
+APP EXTERNA
+   ↓
+CONFIGURACIÓN FÍSICA
+   ↓
+FEA + TOPOPT
+   ↓
 PREVIEW
-
-Debe priorizar velocidad.
-
-Puede utilizar:
-
-- menor resolución;
-- menos iteraciones;
-- malla simplificada;
-- aproximaciones controladas.
-
+   ↓
 RESULTADO FINAL
+   ↓
+ONSHAPE API
+   ↓
+PIEZA OPTIMIZADA
 
-Debe priorizar precisión.
+La aplicación externa será la interfaz PRINCIPAL y MÁS POTENTE.
 
-Debe ejecutar el cálculo completo.
-
-La interfaz debe distinguir ambos estados.
-
-==================================================
-15. MATERIAL
-==================================================
-
-La biblioteca de materiales NO es obligatoria para el MVP inicial.
-
-Sin embargo, la arquitectura DEBE quedar preparada para incorporarla posteriormente.
-
-No crear una implementación innecesariamente compleja si el solver actual no la necesita todavía.
-
-Diseñar el modelo de datos para permitir:
-
-Material
-├── nombre
-├── módulo de Young
-├── coeficiente de Poisson
-├── densidad
-├── límite elástico
-├── resistencia
-└── propiedades adicionales
-
-Preparar la posibilidad de:
-
-1. Biblioteca integrada de materiales.
-2. Materiales personalizados creados por el usuario.
-3. Edición de materiales.
-4. Guardado local.
-5. Selección de material para el solver.
-
-Ejemplo futuro:
-
-Material:
-[ Acero ]
-
-Módulo de Young:
-[...]
-
-Poisson:
-[...]
-
-Densidad:
-[...]
-
-[ Crear material personalizado ]
-
-NO implementar propiedades que el solver no utilice.
-
-La biblioteca debe ser extensible.
+La App Extension dentro de Onshape será deliberadamente simple.
 
 ==================================================
-16. MODELO DE DATOS
+3. DECISIÓN SOBRE FEATURESCRIPT
 ==================================================
 
-Diseñar una estructura capaz de representar:
+FeatureScript NO forma parte de la nueva arquitectura de comunicación.
 
-GEOMETRÍA
+FeatureScript no puede realizar:
 
-- pieza;
-- obstáculos;
-- caras;
-- regiones.
+- HTTP;
+- sockets;
+- acceso a Internet;
+- comunicación directa con Python;
+- comunicación directa con FastAPI;
+- ejecución de librerías externas;
+- ejecución del solver externo.
 
-CONDICIONES FÍSICAS
+PROHIBIDO utilizar FeatureScript como puente de comunicación.
 
-- fuerzas;
-- fijaciones;
-- restricciones.
+NO eliminarlo inmediatamente.
 
-OPTIMIZACIÓN
+Primero audita todos los FeatureScript existentes.
 
-- volumen objetivo;
-- porcentaje;
-- iteraciones;
-- parámetros TopOpt.
+Determina:
 
-MATERIAL
+1. Para qué sirven.
+2. Qué archivos dependen de ellos.
+3. Qué funciones proporcionan.
+4. Si alguna función sigue siendo necesaria.
+5. Si puede reemplazarse mediante App Extension + SDK + API oficial.
 
-- material seleccionado;
-- propiedades.
+Después:
 
-CONTEXTO
+SI NO ES NECESARIO:
+→ ELIMINAR FEATURESCRIPT DEL PROYECTO Y DEL FLUJO.
+
+SI EXISTE UNA FUNCIÓN NATIVA DE ONSHAPE QUE SIGA SIENDO NECESARIA:
+→ CONSERVARLO únicamente para esa función.
+
+SI DEBE MODIFICARSE:
+→ REDISEÑARLO exclusivamente para operaciones nativas de Onshape.
+
+EN NINGÚN CASO:
+FeatureScript → Backend.
+
+La opción preferida es eliminarlo si la arquitectura funciona correctamente sin él.
+
+==================================================
+4. APP EXTENSION DE ONSHAPE
+==================================================
+
+NO crear una nueva App Extension.
+
+EVOLUCIONAR LA EXISTENTE.
+
+La App Extension actual debe convertirse en un:
+
+"SELECTOR DE GEOMETRÍA"
+
+Debe conservar:
+
+- OAuth;
+- estado de conexión;
+- integración existente;
+- componentes funcionales.
+
+Debe eliminar la dependencia de introducción manual de:
 
 - documentId;
 - workspaceId;
 - elementId;
-- partId.
+
+cuando estos datos puedan obtenerse directamente del contexto de Onshape.
+
+La interfaz debe ser simple.
+
+Debe permitir:
+
+1. Mostrar estado de aplicación.
+2. Mostrar conexión real con Onshape.
+3. Seleccionar el sólido/pieza a optimizar.
+4. Seleccionar uno o varios sólidos Keep-out.
+5. Mostrar las selecciones realizadas.
+6. Confirmar selección.
+7. Enviar contexto al backend.
+
+NO agregar:
+
+- solver;
+- fuerzas;
+- materiales;
+- mallado;
+- FEA;
+- parámetros avanzados;
+- porcentaje de optimización;
+- visor 3D principal.
+
+La App Extension solamente captura:
+
+GEOMETRÍA + CONTEXTO.
 
 ==================================================
-17. PAYLOAD
+5. SELECCIÓN REAL DE ONSHAPE
 ==================================================
 
-Utilizar una estructura equivalente a:
+La selección debe utilizar mecanismos oficiales de Onshape.
 
-{
-  "contexto": {
-    "documentId": "...",
-    "workspaceId": "...",
-    "elementId": "..."
-  },
-  "geometria": {
-    "designSpace": [],
-    "keepOut": []
-  },
-  "cargas": [],
-  "restricciones": [],
-  "optimizacion": {
-    "porcentaje": 50
-  },
-  "material": null
-}
+NO asumir que los eventos actuales del proyecto son eventos oficiales.
 
-Los campos pueden evolucionar según el proyecto.
+Auditar la implementación actual.
 
-Validar estrictamente el payload.
+Consultar la documentación oficial actual de Onshape para determinar:
 
-No aceptar datos arbitrarios.
+- SDK correcto;
+- API correcta;
+- mecanismo de selección;
+- contexto;
+- documentId;
+- workspaceId;
+- elementId;
+- partId;
+- faceId.
+
+Si la API actual no permite una determinada operación:
+
+NO inventarla.
+
+Documentar la limitación.
+
+La selección debe entregar IDs reales.
+
+No aceptar IDs ficticios escritos manualmente como flujo principal.
 
 ==================================================
-18. VISOR 3D
+6. APP EXTERNA: FUNCIÓN PRINCIPAL
 ==================================================
 
-El visor debe ser un componente central de la aplicación.
+La aplicación externa será el entorno principal de trabajo.
+
+Debe evolucionar el archivo existente:
+
+`optimization-app.html`
+
+NO crear una aplicación paralela si la existente puede evolucionarse.
+
+Debe convertirse en una interfaz tipo CAD / diseño generativo.
+
+El visor 3D será el elemento central.
+
+==================================================
+7. VISOR 3D
+==================================================
+
+Actualmente existe una base Three.js.
+
+CONSERVARLA.
+
+NO empezar nuevamente desde cero.
+
+Eliminar:
+
+- BoxGeometry de demostración;
+- geometría ficticia;
+- "Geometría de ejemplo";
+- geometría optimizada simulada;
+- resultados falsos.
+
+El visor debe mostrar geometría REAL obtenida de Onshape.
 
 Debe permitir:
 
 - orbit;
 - zoom;
 - pan;
-- selección;
-- ocultar/mostrar;
+- rotación;
+- inspección completa;
 - reset de cámara;
-- ajuste automático a la pieza.
+- fit-to-object;
+- ocultar/mostrar geometrías;
+- selección cuando corresponda.
 
-Debe permitir representar diferentes estados:
+La experiencia debe parecerse a un visor CAD.
 
-PIEZA ORIGINAL
+El usuario debe poder moverse alrededor de la pieza libremente.
+
+==================================================
+8. GEOMETRÍA REAL
+==================================================
+
+Actualmente el backend tiene capacidad de descarga de STEP.
+
+Auditarla y conservarla si funciona.
+
+El flujo debe quedar:
+
+ONSHAPE
+↓
+GEOMETRÍA REAL
+↓
+STEP / GLTF / STL / otro formato apropiado
+↓
+BACKEND
+↓
+VISOR 3D
+
+Determinar cuál es el formato más adecuado para:
+
+1. visualización;
+2. FEA;
+3. TopOpt;
+4. reconstrucción.
+
+Consultar documentación oficial de Onshape.
+
+No asumir que Parasolid está disponible.
+
+No asumir que un STL sirve para todas las etapas.
+
+Si conviene utilizar diferentes representaciones:
+
+VISUALIZACIÓN:
+GLTF/STL/teselación apropiada.
+
+CÁLCULO:
+STEP/B-Rep/u otro formato adecuado.
+
+No duplicar innecesariamente los datos.
+
+==================================================
+9. LOGIN DESDE LA APP EXTERNA
+==================================================
+
+La aplicación externa debe poder iniciar el flujo OAuth.
+
+Cuando el usuario abra la aplicación externa y NO exista una sesión válida:
+
+mostrar:
+
+"Conectá tu cuenta de Onshape para comenzar"
+
+[ INICIAR SESIÓN CON ONSHAPE ]
+
+El botón debe utilizar:
+
+GET /login
+
+y el backend debe realizar el OAuth 2.0 real.
+
+Después de autenticarse:
+
+Onshape
+↓
+/oauth/callback
+↓
+authorization code
+↓
+token exchange
+↓
+access_token
++
+refresh_token
+↓
+validación real contra Onshape
+↓
+APP EXTERNA
+
+Mostrar:
+
+"Conectado a Onshape como: [usuario]"
+
+No considerar que está conectado simplemente porque existe un token almacenado.
+
+Validar siempre que el token funciona.
+
+==================================================
+10. SESIÓN OAUTH
+==================================================
+
+Conservar el OAuth existente si funciona.
+
+Mantener:
+
+- authorization code;
+- access token;
+- refresh token;
+- expiración;
+- refresh automático;
+- state CSRF;
+- almacenamiento seguro.
+
+El frontend nunca debe recibir:
+
+- client_secret;
+- refresh_token.
+
+No hardcodear secretos.
+
+==================================================
+11. FUTURA INSTALACIÓN AUTOMÁTICA
+==================================================
+
+NO implementar todavía la instalación automática de la App Extension.
+
+Sin embargo, diseñar la arquitectura para permitirla posteriormente.
+
+En el futuro queremos poder detectar:
+
+"El usuario está autenticado pero todavía no tiene instalada la App Extension."
+
+Y eventualmente mostrar:
+
+[ AGREGAR APP A ONSHAPE ]
+
+Pero actualmente:
+
+NO IMPLEMENTAR.
+
+Solamente:
+
+- documentar el punto de integración;
+- dejar la arquitectura preparada;
+- investigar si Onshape ofrece API oficial para esta operación;
+- NO inventar mecanismos.
+
+==================================================
+12. FLUJO PRINCIPAL
+==================================================
+
+El flujo debe ser:
+
+1. Usuario abre la aplicación externa.
+2. Backend comprueba sesión.
+3. Si no existe:
+   mostrar "Iniciar sesión con Onshape".
+4. Usuario inicia OAuth.
+5. OAuth finaliza.
+6. Validar token contra Onshape.
+7. Mostrar usuario autenticado.
+8. Usuario abre la App Extension dentro de Onshape.
+9. Selecciona pieza.
+10. Selecciona opcionalmente Keep-out.
+11. Confirma.
+12. App Extension envía contexto.
+13. Backend obtiene geometría real.
+14. Aplicación externa recibe geometría.
+15. Visor muestra la pieza.
+16. Usuario configura condiciones físicas.
+17. Backend genera malla.
+18. Se prepara FEA.
+19. Se ejecuta TopOpt.
+20. Se genera preview.
+21. Usuario modifica parámetros.
+22. Se vuelve a calcular.
+23. Usuario acepta el resultado.
+24. Backend genera resultado final.
+25. Resultado se devuelve a Onshape.
+
+==================================================
+13. MODELO DE GEOMETRÍA
+==================================================
+
+Representar explícitamente:
+
+DESIGN SPACE
+→ pieza que será optimizada.
 
 KEEP-OUT
+→ geometría que no puede ser ocupada/removida.
 
-KEEP-IN
+KEEP-IN / REGIONES PROTEGIDAS
+→ regiones que deben permanecer.
 
 FIJACIONES
+→ zonas estructuralmente restringidas.
+
+CARGAS
+→ zonas donde actúan fuerzas.
+
+No mezclar estos conceptos.
+
+==================================================
+14. FUERZAS
+==================================================
+
+Las fuerzas son parte fundamental del proyecto.
+
+El usuario debe poder configurar:
+
+- magnitud;
+- unidad;
+- dirección;
+- sentido;
+- cara/punto de aplicación;
+- múltiples cargas.
+
+La interfaz debe mostrar las fuerzas sobre el modelo 3D.
+
+Utilizar vectores/flechas.
+
+Por ejemplo:
+
+       ↓ 1000 N
+       ↓
+ ┌────────────┐
+ │    PIEZA   │
+ └────────────┘
+ █████████████
+    FIJACIÓN
+
+Auditar exactamente qué tipos de carga admite el solver actual.
+
+Evaluar:
+
+- fuerza puntual;
+- fuerza distribuida;
+- presión;
+- gravedad;
+- momento;
+- torque.
+
+NO implementar automáticamente lo que el solver no soporte.
+
+==================================================
+15. RESTRICCIONES / FIJACIONES
+==================================================
+
+Separar:
 
 FUERZAS
 
-RESULTADO OPTIMIZADO
+de
 
-Idealmente utilizar diferentes representaciones visuales para distinguirlos.
+RESTRICCIONES.
 
-No hardcodear colores sin necesidad; utilizar una arquitectura de estilos configurable.
+Una restricción no es una fuerza.
 
-==================================================
-19. INTERFAZ DE USUARIO
-==================================================
+Permitir configurar restricciones compatibles con el solver.
 
-La aplicación externa debe tener una interfaz profesional.
-
-No convertirla en una lista interminable de campos.
-
-Organizar la configuración por categorías:
-
-GEOMETRÍA
-
-CARGAS
-
-RESTRICCIONES
-
-MATERIAL
-
-OPTIMIZACIÓN
-
-RESULTADO
-
-El visor debe ocupar la mayor parte de la pantalla.
-
-Los paneles de configuración deben acompañarlo.
-
-La aplicación debe ser usable con piezas complejas.
+La aplicación debe poder asociar una restricción a una región de la geometría.
 
 ==================================================
-20. ESTADOS DE LA APLICACIÓN
+16. MAPEO GEOMETRÍA → MALLA
 ==================================================
 
-Implementar estados claros:
+ESTE ES UNO DE LOS PUNTOS CRÍTICOS.
 
-READY
+Debe existir un flujo real:
 
-GEOMETRY_LOADING
+Onshape Face
+↓
+Geometría
+↓
+Malla
+↓
+Nodos / elementos correspondientes
+↓
+Condición FEA
 
-GEOMETRY_READY
+No basta con almacenar un `faceId`.
 
-MESHING
+El backend debe determinar qué nodos/elementos de la malla pertenecen a la región seleccionada.
 
-READY_FOR_ANALYSIS
+Implementar esta etapa correctamente.
 
-PREVIEW_PROCESSING
+Si la tecnología de mallado seleccionada no permite realizarlo directamente:
 
-PREVIEW_READY
+buscar una estrategia viable.
 
-FINAL_PROCESSING
-
-FINAL_READY
-
-ERROR
-
-Mostrar estados comprensibles al usuario.
-
-Ejemplos:
-
-"Preparando geometría..."
-
-"Generando malla..."
-
-"Preparado para calcular"
-
-"Generando previsualización..."
-
-"Previsualización actualizada"
-
-"Calculando resultado final..."
-
-"Resultado listo"
-
-"Error de cálculo"
+No simularlo.
 
 ==================================================
-21. ONSHAPE → APP
+17. MALLADO
 ==================================================
 
-La aplicación integrada envía:
+Actualmente el proyecto no tiene un mallador funcional integrado.
 
+Implementar un pipeline real.
+
+Evaluar herramientas como:
+
+- Gmsh;
+- Netgen;
+- TetGen;
+- otra alternativa apropiada.
+
+Elegir en función de:
+
+- compatibilidad;
+- calidad;
+- Python;
+- geometría STEP;
+- capacidad FEA;
+- facilidad de instalación local.
+
+No incorporar una dependencia sin justificarla.
+
+La malla debe ser real.
+
+No utilizar mallas aleatorias.
+
+==================================================
+18. FEA
+==================================================
+
+Actualmente `topopt_solver.py` espera un FEA solver real.
+
+Implementar la integración real.
+
+Auditar primero las opciones disponibles.
+
+Evaluar librerías apropiadas para:
+
+- elasticidad lineal;
+- condiciones de frontera;
+- cargas;
+- cálculo de desplazamientos;
+- tensiones;
+- compliance.
+
+No crear un solver ficticio.
+
+No devolver resultados aleatorios.
+
+Si la librería TopOpt actual requiere un FEA externo:
+
+integrarlo correctamente.
+
+==================================================
+19. TOPOPT
+==================================================
+
+Auditar `topopt_solver.py`.
+
+Determinar exactamente:
+
+- algoritmo;
+- entradas;
+- salidas;
+- parámetros;
+- dependencia real;
+- limitaciones.
+
+Actualmente el solver requiere un FEA real.
+
+No eliminar esa validación.
+
+Completarla.
+
+El resultado debe depender realmente de:
+
+- geometría;
+- malla;
+- cargas;
+- restricciones;
+- material;
+- objetivo.
+
+==================================================
+20. OPTIMIZACIÓN
+==================================================
+
+La aplicación debe permitir configurar:
+
+- porcentaje de optimización / reducción de volumen;
+- iteraciones;
+- tolerancia;
+- parámetros específicos del solver.
+
+El porcentaje debe afectar realmente al cálculo.
+
+No crear un control visual que no modifique el solver.
+
+==================================================
+21. PREVIEW
+==================================================
+
+Implementar previsualización real.
+
+El usuario debe poder modificar:
+
+- fuerzas;
+- restricciones;
+- optimización;
+- otros parámetros compatibles.
+
+y obtener un nuevo resultado.
+
+Utilizar:
+
+- debounce;
+- requestId;
+- cancelación de jobs;
+- control de concurrencia.
+
+Una respuesta antigua NO puede sobrescribir un resultado más reciente.
+
+Separar:
+
+PREVIEW
+
+de
+
+RESULTADO FINAL.
+
+Preview:
+prioridad = velocidad.
+
+Resultado final:
+prioridad = precisión.
+
+==================================================
+22. VISUALIZACIÓN DE RESULTADOS
+==================================================
+
+El visor debe poder alternar:
+
+- original;
+- resultado optimizado;
+- comparación.
+
+Debe mostrar:
+
+- fuerzas;
+- fijaciones;
+- Keep-out;
+- Keep-in;
+- resultado.
+
+Permitir ocultar/mostrar cada categoría.
+
+==================================================
+23. MATERIALES
+==================================================
+
+La biblioteca de materiales NO es obligatoria para la primera versión funcional.
+
+Pero la arquitectura debe permitir incorporarla.
+
+Conservar el modelo existente si es válido.
+
+Preparar:
+
+Material
+├── nombre
+├── módulo de Young
+├── Poisson
+├── densidad
+├── límite elástico
+└── propiedades adicionales
+
+Debe ser posible posteriormente:
+
+- utilizar materiales predeterminados;
+- crear materiales personalizados;
+- guardar materiales;
+- editar materiales;
+- seleccionarlos para el solver.
+
+No implementar propiedades que el solver no utilice.
+
+==================================================
+24. PERSISTENCIA
+==================================================
+
+Conservar SQLite.
+
+Utilizarla para:
+
+- OAuth;
+- sesiones;
 - contexto;
-- pieza;
-- obstáculos;
-- referencias necesarias.
+- jobs;
+- configuraciones;
+- materiales futuros;
+- resultados/metadatos.
 
-El backend obtiene la geometría real.
-
-No transferir geometría mediante métodos inseguros o improvisados.
+No almacenar secretos innecesarios.
 
 ==================================================
-22. APP → ONSHAPE
+25. BACKEND
+==================================================
+
+Conservar FastAPI.
+
+No crear otro backend.
+
+Auditar y mejorar:
+
+- endpoints;
+- modelos;
+- validaciones;
+- errores;
+- jobs;
+- estados;
+- concurrencia.
+
+Los cálculos pesados no deben bloquear el servidor.
+
+Evaluar:
+
+- BackgroundTasks;
+- worker;
+- cola;
+- WebSocket;
+- SSE;
+- polling.
+
+Elegir la solución adecuada.
+
+==================================================
+26. RESULTADO FINAL → ONSHAPE
 ==================================================
 
 El botón:
 
 [ ACEPTAR ]
 
-debe representar una operación explícita.
+debe ser el único paso que consolide el resultado.
 
-Al pulsarlo:
+Antes de aceptar:
 
-1. validar que existe un resultado final;
-2. validar que el cálculo terminó correctamente;
-3. enviar el resultado al backend;
-4. utilizar la API oficial de Onshape;
-5. crear/importar/actualizar el resultado dentro del documento;
-6. informar al usuario del resultado.
+NO modificar permanentemente el modelo CAD.
 
-NO modificar Onshape mientras el usuario solamente está probando previews, salvo que la API y la arquitectura hagan necesario algún mecanismo temporal.
+Al aceptar:
 
-El objetivo es que el resultado definitivo vuelva a Onshape solamente cuando el usuario pulse:
+1. Validar resultado.
+2. Validar que el cálculo final terminó.
+3. Generar geometría final.
+4. Determinar si es:
+   - malla;
+   - superficie;
+   - sólido CAD.
+5. Si es necesario, realizar reconstrucción.
+6. Utilizar API oficial de Onshape.
+7. Crear/importar el resultado.
+8. Confirmar operación.
+9. Informar al usuario.
 
-[ ACEPTAR ]
-
-==================================================
-23. API DE ONSHAPE
-==================================================
-
-AUDITAR LA DOCUMENTACIÓN OFICIAL ACTUAL DE ONSHAPE.
-
-Verificar específicamente:
-
-- OAuth;
-- Apps;
-- iframe;
-- JavaScript SDK;
-- selección;
-- contexto;
-- exportación de geometría;
-- importación;
-- Blob Elements;
-- Part Studio;
-- actualización de documentos;
-- creación de elementos;
-- ejecución de Features;
-- cualquier mecanismo necesario para devolver el resultado.
-
-NO inventar endpoints.
-
-NO asumir que una API de escritura puede modificar arbitrariamente una geometría existente.
-
-Si Onshape no permite una operación concreta:
-
-marcarla como:
-
-LIMITACIÓN DE ONSHAPE
-
-y proponer la alternativa oficial más cercana.
+NO afirmar que STL/mesh = sólido CAD automáticamente.
 
 ==================================================
-24. OAUTH
+27. RECONSTRUCCIÓN CAD
 ==================================================
 
-Conservar el OAuth 2.0 actual si funciona.
-
-No romperlo.
-
-Mantener:
-
-- Client ID;
-- Client Secret solamente en backend;
-- access token;
-- refresh token;
-- renovación;
-- persistencia;
-- scopes.
-
-Auditar los scopes necesarios.
-
-==================================================
-25. SEGURIDAD
-==================================================
-
-Implementar:
-
-- validación estricta de mensajes;
-- validación de origen;
-- CORS limitado;
-- HTTPS;
-- validación de payload;
-- OAuth;
-- secretos en .env;
-- ningún secreto hardcodeado.
-
-==================================================
-26. PERSISTENCIA
-==================================================
-
-Conservar la persistencia existente si es adecuada.
-
-Si falta:
-
-usar SQLite inicialmente.
-
-Preparar estructuras para:
-
-- sesión;
-- contexto;
-- configuraciones;
-- jobs;
-- resultados;
-- materiales personalizados futuros.
-
-==================================================
-27. ELIMINAR CÓDIGO FICTICIO
-==================================================
-
-Eliminar o sustituir:
-
-- datos aleatorios;
-- geometría aleatoria;
-- solver simulado;
-- fuerzas ficticias;
-- soportes ficticios;
-- STEP falso;
-- resultados falsos;
-- mocks utilizados como si fueran funcionalidades reales.
-
-Los mocks solamente pueden mantenerse para pruebas claramente identificadas.
-
-==================================================
-28. EJECUCIÓN DE CÁLCULOS
-==================================================
-
-No bloquear innecesariamente el servidor.
-
-Evaluar:
-
-- BackgroundTasks;
-- workers;
-- cola de trabajos;
-- WebSocket;
-- Server-Sent Events;
-- polling.
-
-Elegir la solución apropiada para el proyecto.
-
-La interfaz debe poder conocer:
-
-- progreso;
-- estado;
-- errores;
-- resultado.
-
-==================================================
-29. ARQUITECTURA DEL RESULTADO
-==================================================
-
-El resultado de TopOpt puede ser:
-
-- malla;
-- superficie;
-- sólido reconstruido.
-
-Determinar qué genera actualmente el solver.
-
-Si el solver produce una malla pero Onshape necesita una geometría CAD adecuada:
-
-documentar la etapa necesaria de reconstrucción.
-
-NO afirmar que una malla es automáticamente un sólido CAD.
+Determinar qué produce realmente el solver.
 
 Separar:
 
-RESULTADO DEL SOLVER
+RESULTADO TOPOPT
 
 de
 
 GEOMETRÍA CAD FINAL.
 
-==================================================
-30. AUDITORÍA DEL REPOSITORIO
-==================================================
+Si el solver produce una densidad/malla:
 
-Antes de modificar:
+implementar la etapa necesaria para obtener una representación apropiada.
 
-crear mentalmente una matriz:
+Investigar las posibilidades reales de Onshape para importar el resultado.
 
-ARCHIVO
-FUNCIÓN ACTUAL
-ESTADO
-PROBLEMA
-ACCIÓN
-
-Clasificar:
-
-COMPLETO
-
-PARCIAL
-
-PENDIENTE
-
-OBSOLETO
-
-LIMITACIÓN EXTERNA
-
-No reescribir archivos que ya funcionen correctamente.
+No inventar APIs.
 
 ==================================================
-31. ORDEN DE IMPLEMENTACIÓN
+28. MOCKS Y DATOS FICTICIOS
 ==================================================
 
-Implementar en este orden:
+Eliminar del flujo real:
 
-ETAPA 1
-Auditoría completa.
+- BoxGeometry;
+- geometría ficticia;
+- STEP ficticio;
+- malla ficticia;
+- fuerzas ficticias;
+- restricciones ficticias;
+- TopOpt simulado;
+- resultado optimizado simulado.
 
-ETAPA 2
-Arquitectura Onshape Selector.
+Los mocks pueden existir ÚNICAMENTE para tests y deben estar claramente separados.
 
-ETAPA 3
-Captura real de selección.
+==================================================
+29. DOCUMENTACIÓN DE ONSHAPE
+==================================================
 
-ETAPA 4
-Obtención real de geometría.
+Consultar documentación oficial actual de Onshape.
 
-ETAPA 5
-Visor 3D.
+Verificar:
 
-ETAPA 6
-Preparación de malla.
+- OAuth;
+- Apps;
+- App Extensions;
+- JavaScript SDK;
+- selección;
+- contexto;
+- exportación;
+- GLTF;
+- STL;
+- STEP;
+- Blob Elements;
+- importación;
+- Part Studio;
+- creación de elementos;
+- mecanismos para devolver geometría.
 
-ETAPA 7
-Auditoría/integración real del solver TopOpt.
+NO inventar endpoints.
 
-ETAPA 8
-Restricciones y fijacio
+Si existe una limitación:
+
+DOCUMENTARLA.
+
+==================================================
+30. SEGURIDAD
+==================================================
+
+Implementar:
+
+- OAuth real;
+- state CSRF;
+- secretos en `.env`;
+- CORS restringido;
+- validación de origen;
+- validación Pydantic;
+- validación de mensajes;
+- HTTPS cuando corresponda.
+
+El archivo `.env` debe ser LOCAL.
+
+NO incluir secretos reales en el repositorio.
+
+Conservar `.env.example`.
+
+Si se detecta que alguna credencial real fue expuesta históricamente:
+
+indicar que debe ser rotada.
+
+==================================================
+31. LIMPIEZA DEL REPOSITORIO
+==================================================
+
+Eliminar archivos obsoletos.
+
+No conservar:
+
+- código muerto;
+- endpoints de FeatureScript innecesarios;
+- mocks utilizados en producción;
+- duplicaciones;
+- dependencias no utilizadas.
+
+NO borrar archivos funcionales sin comprobar dependencias.
+

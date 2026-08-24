@@ -1,408 +1,457 @@
-# IMPLEMENTACIÓN Y AUDITORÍA — HITO 1: SELECCIÓN REAL DE GEOMETRÍA EN ONSHAPE
+# AUDITORÍA, CORRECCIÓN Y AUTOCONTENCIÓN DEL ENTORNO LOCAL
 
 ## ROL
 
 Actúa como ingeniero de software senior especializado en:
 
-- Python
-- FastAPI
-- JavaScript
+- Python / FastAPI
+- Windows
+- Uvicorn
+- HTTPS local
+- mkcert
+- OAuth 2.0
 - Onshape API
-- Onshape App Extensions
-- CAD/B-Rep
-- procesamiento STEP
-- integración CAD ↔ backend
-- testing y validación E2E.
+- JavaScript
+- testing y validación de integración.
 
-Debes trabajar sobre el repositorio actual y respetar estrictamente:
+Debes trabajar sobre el repositorio actual respetando estrictamente:
 
-- `prompt.md` → especificación técnica del proyecto.
-- `metodologia.md` → reglamento obligatorio de trabajo.
-- `resumen_implementacion.md` → registro oficial del estado real de implementación.
+- `prompt.md` → especificación del proyecto.
+- `metodologia.md` → reglamento obligatorio.
+- `resumen_implementacion.md` → registro real de implementación.
 
-`metodologia.md` es de cumplimiento obligatorio. No puedes ignorar, reinterpretar ni flexibilizar sus reglas.
+Antes de modificar cualquier cosa, lee los tres archivos y audita el estado actual.
 
 ---
 
-# OBJETIVO DE ESTA ITERACIÓN
+# OBJETIVO PRINCIPAL
 
-Completar de forma REAL y verificable el bloque actualmente pendiente del Hito 1:
+Corregir la implementación actual de HTTPS/mkcert para que el proyecto pueda ejecutarse en una instalación limpia de Windows sin requerir que el usuario instale mkcert manualmente.
 
-ONSHAPE → APP EXTENSION → SELECCIÓN REAL → BACKEND → STEP → VISUALIZACIÓN
+El proyecto debe ser realmente autocontenido respecto de mkcert y su configuración HTTPS local.
 
-El objetivo principal es eliminar la dependencia de IDs introducidos manualmente y conseguir una selección real de entidades desde Onshape.
+El resultado esperado es:
 
-NO avances hacia FEA, TopOpt ni reconstrucción de STEP mientras este bloque no esté correctamente resuelto.
-
----
-
-# FASE 0 — AUDITORÍA OBLIGATORIA
-
-Antes de modificar cualquier archivo:
-
-1. Lee completamente `prompt.md`.
-2. Lee completamente `metodologia.md`.
-3. Lee `resumen_implementacion.md`.
-4. Audita el código actual relacionado con:
-   - App Extension.
-   - comunicación Onshape ↔ iframe.
-   - autenticación OAuth.
-   - API backend.
-   - descarga STEP.
-   - procesamiento geométrico.
-   - tessellación.
-   - visor Three.js.
-   - tests.
-5. Determina qué requisitos están:
-   - COMPLETADOS.
-   - PARCIALES.
-   - PENDIENTES.
-   - BLOQUEADOS.
-6. No asumas que una funcionalidad está implementada porque exista una función, endpoint, botón, clase o test.
-7. Identifica cualquier implementación artificial, mock, fallback o aproximación que pueda estar siendo presentada como funcionalidad real.
-
-Antes de programar, debes tener claro exactamente qué falta.
-
----
-
-# FASE 1 — VERIFICAR EL MECANISMO REAL DE ONSHAPE
-
-Investiga primero la documentación oficial y actual de Onshape relacionada con:
-
-- App Extensions.
-- Element Tabs / iframe.
-- comunicación entre Onshape y la aplicación.
-- selección de entidades.
-- contexto del documento.
-- acceso a entidades seleccionadas.
-- APIs o mecanismos oficialmente soportados para obtener selección CAD.
-
-NO asumas que mecanismos existentes en el código son válidos.
-
-En particular, verifica antes de utilizarlos conceptos como:
-
-- `postMessage`
-- `applicationInit`
-- `requestSelection`
-- `SELECTION`
-- `onSelectionChanged`
-
-Si alguno de ellos no corresponde al mecanismo oficial aplicable, reemplázalo por la solución correcta.
-
-No inventes APIs ni protocolos.
-
----
-
-# FASE 2 — IMPLEMENTAR SELECCIÓN REAL
-
-Implementa el mecanismo necesario para permitir que el usuario seleccione desde Onshape la geometría requerida.
-
-Como mínimo debe ser posible obtener de forma real y verificable:
-
-- contexto del documento;
-- workspace/version correspondiente;
-- element/Part Studio correspondiente;
-- entidad geométrica seleccionada;
-- identificación necesaria para procesarla posteriormente.
-
-La selección debe producir datos reales provenientes de Onshape.
-
-## PROHIBIDO
-
-El flujo principal NO puede depender de:
-
-- introducir manualmente Document ID;
-- introducir manualmente Workspace ID;
-- introducir manualmente Element ID;
-- introducir manualmente Body ID;
-- introducir manualmente Face ID.
-
-Los campos manuales existentes deben eliminarse, reemplazarse o quedar fuera del flujo normal de uso.
-
-No implementes un sistema que simplemente simule una selección.
-
----
-
-# FASE 3 — INTEGRAR SELECCIÓN CON BACKEND
-
-Conecta la selección real con el backend.
-
-El flujo esperado debe ser conceptualmente:
-
-ONSHAPE
+CLONAR REPOSITORIO
 ↓
-APP EXTENSION
+EJECUTAR `INICIAR_APLICACION.bat`
 ↓
-SELECCIÓN REAL
+detectar dependencias
 ↓
-DATOS DE CONTEXTO + ENTIDADES
+obtener mkcert si es necesario
 ↓
-BACKEND FASTAPI
+verificar integridad
 ↓
-PROCESAMIENTO
-
-La comunicación debe:
-
-- validar los datos recibidos;
-- validar contexto;
-- rechazar datos incompletos;
-- manejar errores;
-- evitar confiar ciegamente en valores enviados por el frontend.
-
-No almacenar ni exponer secretos OAuth en frontend.
-
----
-
-# FASE 4 — CONECTAR CON EL PIPELINE STEP EXISTENTE
-
-Una vez obtenida una selección real:
-
-1. utilizar los datos reales de Onshape;
-2. obtener la geometría mediante la API correspondiente;
-3. generar/descargar STEP;
-4. validar que el STEP sea válido;
-5. procesarlo mediante CadQuery/OCP;
-6. generar la tessellación;
-7. entregar los datos necesarios al visor.
-
-No reemplaces este flujo por una geometría generada artificialmente.
-
----
-
-# FASE 5 — VISUALIZACIÓN
-
-Verifica que la geometría obtenida realmente corresponda a la entidad seleccionada.
-
-El visor debe utilizar la geometría obtenida del pipeline real.
-
-No utilizar:
-
-- `BoxGeometry`;
-- cubos ficticios;
-- modelos hardcodeados;
-- geometría de prueba como sustituto del modelo real.
-
-Las geometrías sintéticas pueden utilizarse exclusivamente en tests unitarios cuando sea necesario.
-
----
-
-# FASE 6 — REVISAR EL MALLADO EXISTENTE
-
-Audita la implementación actual de generación de malla.
-
-Determina claramente si cumple o no con los requisitos establecidos en `prompt.md`.
-
-Si el mallado actual utiliza aproximaciones como:
-
-- bounding boxes;
-- grids artificiales;
-- tetraedros generados manualmente;
-- fallback de geometría;
-- mallas ficticias;
-
-NO lo declares como mallado FEM CAD completo.
-
-Si es necesario modificarlo para cumplir correctamente el Hito 1, hazlo.
-
-Si requiere una dependencia especializada, evalúa técnicamente la opción adecuada antes de incorporarla.
-
-No agregues dependencias innecesarias.
-
----
-
-# FASE 7 — MAPEO CAD → FEM
-
-Audita y, si corresponde dentro de esta iteración, mejora el vínculo:
-
-Onshape entity
+instalar CA local
 ↓
-B-Rep / STEP face
+generar certificados
 ↓
-Mesh surface
+iniciar FastAPI con HTTPS
 ↓
-Mesh nodes/elements
-
-El sistema debe evitar depender únicamente de índices arbitrarios que puedan cambiar.
-
-El mapeo debe ser reproducible y validable.
+https://localhost:8000
 
 ---
 
-# FASE 8 — TESTING
+# FASE 1 — AUDITORÍA OBLIGATORIA
 
-Implementa o actualiza tests apropiados.
+Antes de modificar código:
 
-Diferencia claramente:
+1. Leer `prompt.md`.
+2. Leer `metodologia.md`.
+3. Leer `resumen_implementacion.md`.
+4. Revisar:
+   - `INICIAR_APLICACION.bat`
+   - `.gitignore`
+   - `.env`
+   - `.env.example`
+   - `api_server.py`
+   - configuración de Uvicorn/FastAPI
+   - frontend JavaScript
+   - configuración OAuth
+   - CORS
+   - cookies
+   - cualquier URL localhost.
+5. Determinar exactamente cómo se genera actualmente el certificado.
+6. Determinar si Uvicorn realmente está utilizando el certificado.
+7. Determinar si existen referencias HTTP que deban ser HTTPS.
+8. Determinar si `.env` contiene secretos reales.
 
-### Test unitario
-Prueba una función aislada.
-
-### Test de integración
-Prueba varios componentes conectados.
-
-### Test E2E
-Prueba el flujo real completo.
-
-No presentes un test unitario como prueba E2E.
-
-Los tests con geometría creada artificialmente son válidos para probar componentes geométricos, pero NO demuestran que:
-
-Onshape → selección → STEP → visor
-
-funcione.
-
-Si una prueba real requiere interacción con Onshape y no puede ejecutarse automáticamente, documenta esa limitación y realiza la mayor validación posible sin inventar resultados.
-
----
-
-# REGLA CRÍTICA DE CUMPLIMIENTO
-
-La existencia de código NO significa que un requisito esté cumplido.
-
-Tampoco constituye cumplimiento:
-
-- una función que nunca se ejecuta;
-- un endpoint sin integración real;
-- un botón sin funcionalidad real;
-- un mock;
-- un fallback artificial;
-- una prueba que solo verifica el mock;
-- una implementación teórica;
-- documentación que afirma que algo funciona.
-
-Un requisito solo puede marcarse como COMPLETADO cuando exista evidencia suficiente de que funciona.
+No modifiques código durante esta fase.
 
 ---
 
-# PROHIBICIÓN DE FALSOS POSITIVOS
+# FASE 2 — MKCERT AUTOCONTENIDO
 
-Nunca:
+Modificar `INICIAR_APLICACION.bat` para que no dependa de una instalación previa de mkcert.
 
-- inventes resultados;
-- simules respuestas de Onshape;
-- generes geometría artificial para aparentar éxito;
-- marques como completado algo que no pudiste verificar;
-- ocultes errores;
-- conviertas un estado pendiente en exitoso mediante fallback;
-- cambies los requisitos para que la implementación parezca cumplirlos.
+Si `mkcert.exe` no existe dentro del proyecto:
 
-Si algo no puede comprobarse, debe quedar como:
+1. detectar arquitectura de Windows;
+2. determinar la versión de mkcert que se utilizará;
+3. descargar automáticamente el binario oficial correspondiente;
+4. utilizar HTTPS para la descarga;
+5. verificar SHA-256 contra un hash conocido y documentado;
+6. si el hash no coincide, abortar inmediatamente;
+7. solo después de verificarlo permitir su ejecución.
 
-PENDIENTE o BLOQUEADO.
+No descargar ni ejecutar archivos arbitrarios.
+
+No utilizar fuentes de terceros para obtener el binario si existe una distribución oficial apropiada.
+
+Guardar el binario en una ubicación local del proyecto que ya esté contemplada por `.gitignore`.
+
+El usuario no debe tener que descargar ni copiar manualmente `mkcert.exe`.
 
 ---
 
-# FASE 9 — DOCUMENTACIÓN OBLIGATORIA
+# FASE 3 — GENERACIÓN DE CERTIFICADOS
 
-Al finalizar la intervención actualiza:
+El launcher debe:
 
-`resumen_implementacion.md`
+1. comprobar si existe la CA local de mkcert;
+2. ejecutar `mkcert -install` cuando sea necesario;
+3. comprobar que la operación fue exitosa;
+4. generar certificados para:
 
-Debe registrar como mínimo:
+   - `localhost`
+   - `127.0.0.1`
+   - `::1`
 
-## Fecha / Iteración
+5. almacenarlos dentro de:
 
-Indicar qué iteración se realizó.
+`certs/`
 
-## Objetivo
+6. no versionarlos en Git.
 
-Qué requisito se intentó completar.
+Si los certificados ya existen y siguen siendo válidos, no regenerarlos innecesariamente.
+
+Si faltan o son inválidos, regenerarlos.
+
+El launcher debe validar que los archivos esperados existen antes de iniciar FastAPI.
+
+---
+
+# FASE 4 — HTTPS REAL EN FASTAPI
+
+Verificar que `api_server.py` realmente utiliza:
+
+- `SSL_CERTFILE`
+- `SSL_KEYFILE`
+
+para configurar Uvicorn.
+
+No basta con definir las variables de entorno.
+
+Debe existir un flujo real equivalente a:
+
+uvicorn
+↓
+ssl_certfile
+↓
+ssl_keyfile
+↓
+HTTPS
+
+El servidor debe arrancar realmente en:
+
+`https://localhost:8000`
+
+Si la configuración actual utiliza otra arquitectura válida, mantenerla siempre que el resultado sea equivalente y verificable.
+
+---
+
+# FASE 5 — CONFIGURACIÓN DE SEGURIDAD
+
+Revisar:
+
+- `COOKIE_SECURE=true`
+- CORS
+- OAuth redirect URI
+- URLs internas
+- frontend
+- backend
+- callbacks OAuth.
+
+Todo el flujo local debe ser coherente con HTTPS.
+
+No permitir que una parte del sistema continúe dependiendo accidentalmente de:
+
+`http://localhost:8000`
+
+cuando deba utilizar HTTPS.
+
+---
+
+# FASE 6 — `.ENV` Y SECRETOS
+
+Auditar `.env`.
+
+Si contiene:
+
+- Client Secret real;
+- tokens;
+- credenciales;
+- claves privadas;
+- información sensible;
+
+NO exponerlos en código, frontend ni documentación.
+
+`.env` debe permanecer ignorado por Git.
+
+Si `.env` ya fue versionado anteriormente, comprobar su estado y corregir el repositorio según corresponda.
+
+No publicar ni copiar secretos en archivos de documentación.
+
+Mantener `.env.example` como plantilla sin secretos reales.
+
+---
+
+# FASE 7 — EXPERIENCIA DE ARRANQUE
+
+Mejorar `INICIAR_APLICACION.bat` para que sea robusto y claro.
+
+Debe informar:
+
+- qué dependencia está comprobando;
+- si mkcert ya existe;
+- si se está descargando;
+- si se está verificando;
+- si se está instalando la CA;
+- si se están generando certificados;
+- si FastAPI arrancó correctamente;
+- cuál es la URL final.
+
+Si ocurre un error, debe:
+
+1. explicar el problema;
+2. indicar la causa probable;
+3. detenerse;
+4. devolver un código de error apropiado.
+
+No ocultar errores mediante `|| exit /b 0`.
+
+---
+
+# FASE 8 — PREPARACIÓN PARA HITO 2
+
+Después de completar correctamente el objetivo HTTPS/autocontenido, puedes realizar mejoras adicionales SOLO si cumplen estas condiciones:
+
+- bajo riesgo;
+- no alteran la arquitectura establecida;
+- mejoran mantenibilidad;
+- mejoran validación;
+- mejoran trazabilidad;
+- preparan la futura etapa de FEA/mallado;
+- no implementan todavía FEA ni TopOpt.
+
+Prioridad de mejoras permitidas:
+
+### 1. Validación de contratos
+
+Revisar que los endpoints actuales:
+
+- validen correctamente entradas;
+- devuelvan errores coherentes;
+- no acepten datos incompletos silenciosamente.
+
+### 2. Persistencia
+
+Revisar que los datos de:
+
+- selección;
+- geometría;
+- malla;
+- fuerzas;
+- restricciones;
+
+mantengan una estructura consistente.
+
+### 3. Identificación geométrica
+
+Preparar interfaces claras para:
+
+Onshape Entity
+↓
+CAD/B-Rep Entity
+↓
+Mesh Entity
+
+No implementar todavía el solver.
+
+### 4. Testing
+
+Agregar tests que detecten regresiones en:
+
+- OAuth;
+- HTTPS;
+- descarga STEP;
+- selección de Parts;
+- tessellación;
+- endpoints existentes.
+
+No presentar mocks como pruebas E2E.
+
+### 5. Limpieza técnica
+
+Eliminar código muerto, duplicado o contradictorio siempre que pueda hacerse sin modificar el comportamiento esperado.
+
+---
+
+# RESTRICCIÓN CRÍTICA
+
+NO implementar:
+
+- FEA;
+- solver FEM;
+- TopOpt;
+- SIMP;
+- reconstrucción B-Rep;
+- exportación de geometría optimizada;
+- nuevas funcionalidades de Hito 2 que todavía no estén definidas.
+
+Si detectas algo que debería hacerse para Hito 2, documentarlo como propuesta y NO implementarlo.
+
+---
+
+# REGLA DE NO REGRESIÓN
+
+Las funcionalidades actualmente verificadas no deben romperse.
+
+Después de las modificaciones:
+
+1. ejecutar todos los tests existentes relevantes;
+2. agregar tests cuando sea necesario;
+3. verificar el arranque HTTPS;
+4. verificar OAuth;
+5. verificar endpoints principales.
+
+Si algo falla, corregirlo antes de declarar la iteración terminada.
+
+---
+
+# VALIDACIÓN REAL OBLIGATORIA
+
+No marques HTTPS como COMPLETADO simplemente porque:
+
+- existe `mkcert.exe`;
+- existen variables SSL;
+- existen certificados;
+- existe código de configuración.
+
+Debes verificar el flujo real:
+
+launcher
+↓
+mkcert
+↓
+certificado
+↓
+FastAPI/Uvicorn
+↓
+HTTPS
+↓
+localhost:8000
+
+Si no puedes ejecutar alguna parte por limitaciones del entorno, declararla como PENDIENTE/BLOQUEADA y explicar exactamente qué no pudo verificarse.
+
+No inventar resultados.
+
+---
+
+# DOCUMENTACIÓN OBLIGATORIA
+
+Actualizar `resumen_implementacion.md`.
+
+Registrar:
 
 ## Auditoría inicial
 
-Qué estaba:
-
-- completado;
-- parcial;
-- pendiente;
-- bloqueado.
+Qué estaba funcionando y qué estaba mal.
 
 ## Cambios realizados
 
-Enumerar archivos modificados y explicar brevemente cada cambio.
+Archivos modificados y motivo.
 
-## Pruebas realizadas
+## MKCERT
 
 Indicar:
 
-- tests unitarios;
-- tests de integración;
-- pruebas E2E;
-- pruebas manuales;
-- resultados obtenidos.
+- método de obtención;
+- versión utilizada;
+- verificación de integridad;
+- ubicación;
+- comportamiento cuando no existe.
 
-## Evidencia
+## HTTPS
 
-Indicar exactamente qué demuestra que una funcionalidad funciona.
+Indicar:
 
-## Problemas encontrados
+- certificado;
+- clave;
+- configuración Uvicorn;
+- URL final;
+- validación realizada.
 
-Registrar errores, limitaciones o incompatibilidades.
+## Seguridad
+
+Registrar:
+
+- tratamiento de `.env`;
+- secretos;
+- CORS;
+- cookies;
+- OAuth.
+
+## Tests
+
+Registrar cada prueba realizada y resultado.
+
+## Mejoras adicionales
+
+Si implementaste mejoras preparatorias para Hito 2, documentarlas por separado.
 
 ## Estado final
 
-Para cada requisito:
+Clasificar cada requisito:
 
 - COMPLETADO
 - PARCIAL
 - PENDIENTE
 - BLOQUEADO
 
-## Próximo paso
+---
 
-Indicar cuál es la siguiente acción técnica necesaria.
+# REGLA DE HONESTIDAD
+
+Nunca declarar una funcionalidad como COMPLETADA solo porque el código parece correcto.
+
+Debe existir evidencia.
+
+Si existe cualquier duda:
+
+PARCIAL / PENDIENTE / BLOQUEADO.
 
 ---
 
-# REGLA SOBRE RESUMEN_IMPLEMENTACION.MD
+# AUDITORÍA FINAL
 
-No escribas en `resumen_implementacion.md` lo que debería funcionar.
+Antes de terminar:
 
-Escribe únicamente lo que realmente:
-
-- implementaste;
-- ejecutaste;
-- verificaste;
-- observaste.
-
-Si no pudiste probar algo, dilo explícitamente.
-
----
-
-# RESTRICCIÓN DE ALCANCE
-
-NO implementar todavía:
-
-- FEA real;
-- solver estructural;
-- Topología optimizada;
-- SIMP completo;
-- reconstrucción STEP;
-- exportación final de geometría optimizada;
-- funcionalidades avanzadas que no sean necesarias para cerrar el Hito 1.
-
-No expandas el alcance innecesariamente.
+1. volver a leer `prompt.md`;
+2. comprobar `metodologia.md`;
+3. revisar `resumen_implementacion.md`;
+4. revisar todos los archivos modificados;
+5. comprobar que no se introdujeron secretos;
+6. comprobar que no se introdujeron certificados al repositorio;
+7. comprobar HTTPS real;
+8. ejecutar tests;
+9. comprobar que no se rompió funcionalidad anterior.
 
 ---
 
-# FASE 10 — AUDITORÍA FINAL
+# RESPUESTA FINAL
 
-Antes de finalizar:
-
-1. vuelve a leer `prompt.md`;
-2. vuelve a revisar `metodologia.md`;
-3. compara cada requisito afectado contra el código;
-4. verifica los tests;
-5. revisa `resumen_implementacion.md`;
-6. determina honestamente el estado final.
-
-No declares Hito 1 completo si todavía existe un requisito obligatorio sin verificar.
-
----
-
-# FORMATO DE RESPUESTA FINAL
-
-Al finalizar, responde únicamente con un resumen estructurado:
+Devuelve únicamente:
 
 ## Implementado
 - ...
@@ -422,7 +471,12 @@ Al finalizar, responde únicamente con un resumen estructurado:
 ## Archivos modificados
 - ...
 
-## Próximo paso recomendado
+## Mejoras adicionales realizadas
 - ...
 
-No incluyas explicaciones innecesarias ni afirmaciones que no estén respaldadas por pruebas.
+## Recomendaciones para Hito 2
+- ...
+
+No declares el Hito 2 como iniciado.
+
+El objetivo de esta iteración es dejar el proyecto autocontenido, seguro, reproducible y técnicamente preparado para que posteriormente podamos definir y ejecutar el Hito 2.

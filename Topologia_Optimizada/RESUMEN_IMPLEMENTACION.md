@@ -111,3 +111,18 @@ Iniciar el **Hito 2 (FEA y Optimización SIMP)**:
 1. Diseñar el ensamblador de la matriz de rigidez global $\mathbf{K}$ para elementos tetraédricos lineales `tet4` utilizando `scikit-fem` y `scipy.sparse`.
 2. Implementar la aplicación de condiciones de contorno de Dirichlet (fijaciones en nodos mapeados) y vectores de carga nodales $\mathbf{f}$.
 3. Integrar el solver lineal $\mathbf{K}\mathbf{u} = \mathbf{f}$ y el algoritmo SIMP con filtro de sensibilidades por radio $r_{\min}$.
+
+---
+
+## 8. Infraestructura SSL Autocontenida (mkcert)
+
+- **Instalación de mkcert:** Se integró el binario ejecutable `mkcert.exe` (v1.4.4 Windows x64) directamente en el directorio raíz del proyecto para asegurar un entorno de desarrollo 100% autocontenido, sin requerir instalación global previa en el sistema operativo.
+- **Autoridad Certificadora Local (CA):** Se ejecutó `mkcert.exe -install` para registrar la CA local de confianza en el almacén de certificados del sistema.
+- **Generación de Certificados TLS/HTTPS:** Se crearon los certificados locales válidos para `localhost`, `127.0.0.1` y `::1` en la carpeta `certs/`:
+  - `certs/localhost.pem` (Certificado público)
+  - `certs/localhost-key.pem` (Clave privada)
+- **Conexión con el Repositorio:**
+  1. **`INICIAR_APLICACION.bat`:** Detecta automáticamente `mkcert.exe` en la raíz del proyecto, valida la CA local, genera los certificados en `certs/` si faltan, y exporta las variables de entorno `SSL_CERTFILE` y `SSL_KEYFILE`.
+  2. **`api_server.py`:** En su bloque de arranque, resuelve dinámicamente las rutas relativas o absolutas a `certs/localhost.pem` y `certs/localhost-key.pem` para iniciar el servidor Uvicorn con soporte HTTPS nativo en `https://localhost:8000`.
+  3. **`.env` / `.env.example`:** Configuración de `SSL_CERTFILE=certs/localhost.pem` y `SSL_KEYFILE=certs/localhost-key.pem`.
+  4. **`.gitignore`:** Protección de `mkcert.exe` y la carpeta `certs/` para evitar comprometer certificados o binarios locales en el repositorio Git.

@@ -10,7 +10,9 @@ Validates:
 7. Geometric boundary condition mapping from CAD B-Rep faces to FEM nodes.
 8. Proper rejection of empty or corrupt STEP data.
 9. Pydantic schema validation for loads, constraints, and optimization configs.
-10. End-to-end pipeline consistency for Hito 1.
+10. Querying real Part Studio parts list from Onshape API.
+11. STEP download filtering by specific part IDs.
+12. End-to-end pipeline consistency for Hito 1.
 """
 
 import os
@@ -25,7 +27,7 @@ import cadquery as cq
 
 from geometry_processor import GeometryProcessor
 from onshape_client import OAuthTokenStore, OnshapeAPIError, OnshapeClient
-from api_server import ForceDefinition, ConstraintDefinition
+from api_server import ForceDefinition, ConstraintDefinition, GeometrySelection
 
 
 class MemoryTokenStore(OAuthTokenStore):
@@ -39,10 +41,15 @@ class MemoryTokenStore(OAuthTokenStore):
         self.tokens[session_id] = token
 
 
-def make_mock_response(status, payload):
+def make_mock_response(status, payload=None, content=None):
     resp = requests.Response()
     resp.status_code = status
-    resp._content = __import__("json").dumps(payload).encode()
+    if content is not None:
+        resp._content = content
+    elif payload is not None:
+        resp._content = __import__("json").dumps(payload).encode()
+    else:
+        resp._content = b""
     return resp
 
 
@@ -162,7 +169,7 @@ class TestHito1Pipeline(unittest.TestCase):
         res_corrupt = processor.tessellate_step(b"NOT A VALID STEP FILE HEADER DATA")
         self.assertFalse(res_corrupt["success"])
 
-    # --- TEST 9: Pydantic Schema Validation (Loads & Constraints) ---
+    # --- TEST 9: Pydantic Schema Validation (Loads & Constraints & Selection) ---
     def test_pydantic_schema_validation(self):
         # Valid Force
         f_valid = ForceDefinition(magnitude=500.0, direction_x=0.0, direction_y=-1.0, direction_z=0.0)
@@ -184,7 +191,55 @@ class TestHito1Pipeline(unittest.TestCase):
                 degrees_of_freedom={"ux": False, "uy": False, "uz": False, "rx": False, "ry": False, "rz": False}
             )
 
-    # --- TEST 10: Complete Hito 1 Pipeline Consistency ---
+        # Valid GeometrySelection
+        sel = GeometrySelection(
+            context={"documentId": "doc1", "workspaceId": "ws1", "elementId": "el1"},
+            designSpace=["JHD"],
+            keepOut=["JHF"],
+        )
+        self.assertEqual(sel.designSpace, ["JHD"])
+        self.assertEqual(sel.keepOut, ["JHF"])
+
+    # --- TEST 10: Onshape REST Part Studio Query & STEP Export with Part IDs ---
+    def test_onshape_parts_list_and_filtered_download(self):
+        store = MemoryTokenStore()
+        store.save_token("sess1", {
+            "access_token": "valid_token",
+            "refresh_token": "refresh_token",
+            "expires_at": 9999999999,
+            "token_type": "Bearer",
+            "scope": "OAuth2Read",
+        })
+        client = OnshapeClient(store, "sess1", "cid", "csecret")
+
+        mock_parts = [
+            {"partId": "JHD", "name": "Bracket_Solid", "bodyType": "solid"},
+            {"partId": "JHF", "name": "Pin_Obstacle", "bodyType": "solid"},
+        ]
+        sample_step = create_sample_step_bytes(10, 10, 10)
+
+        def mock_request(method, path, **kwargs):
+            if path.endswith("/parts"):
+                return make_mock_response(200, payload=mock_parts)
+            elif "/export" in path:
+                params = kwargs.get("params", {})
+                self.assertEqual(params.get("partIds"), "JHD")
+                return make_mock_response(200, content=sample_step)
+            return make_mock_response(404, payload={})
+
+        client.session.request = mock_request
+
+        processor = GeometryProcessor(client, "doc1", "ws1", "el1")
+        parts = processor.get_parts_list()
+        self.assertEqual(len(parts), 2)
+        self.assertEqual(parts[0]["partId"], "JHD")
+        self.assertEqual(parts[0]["name"], "Bracket_Solid")
+
+        downloaded_bytes = processor.download_part_studio(output_format="step", part_ids=["JHD"])
+        self.assertIsNotNone(downloaded_bytes)
+        self.assertEqual(len(downloaded_bytes), len(sample_step))
+
+    # --- TEST 11: Complete Hito 1 Pipeline Consistency ---
     def test_complete_hito1_pipeline(self):
         step_data = create_sample_step_bytes(length=20.0, width=15.0, height=10.0)
         processor = GeometryProcessor(None, "d1", "w1", "e1")

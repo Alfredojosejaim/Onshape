@@ -1,30 +1,30 @@
-"""FastAPI backend for the Onshape topology MVP.
+"""FastAPI backend for Onshape topology optimization.
 
-Jobs and their state are stored in SQLite so a process restart does not lose
-the queue history.  API credentials are read only on the backend and are
-never returned or written to logs.
+Handles OAuth 2.0 sessions, STEP geometry download and tessellation for Three.js,
+real volumetric FEM meshing, boundary conditions, and job persistence in SQLite.
 """
 
+import base64
 import json
 import logging
 import os
+import secrets
 import sqlite3
+import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
-import secrets
-import time
 
 from dotenv import find_dotenv, load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from fastapi.responses import FileResponse, RedirectResponse
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from geometry_processor import GeometryProcessor
-from topopt_solver import run_topology_optimization
 from onshape_client import OAuthTokenStore, OnshapeAPIError, OnshapeClient
+from topopt_solver import run_topology_optimization
 
 load_dotenv(find_dotenv())
 
@@ -44,7 +44,7 @@ OAUTH_TOKEN_URL = "https://oauth.onshape.com/oauth/token"
 OAUTH_API_URL = "https://cad.onshape.com/api"
 SESSION_COOKIE = "topologia_session"
 
-app = FastAPI(title="Optimizacion Topologica API", version="1.1.0")
+app = FastAPI(title="Optimizacion Topologica API", version="1.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.getenv("CORS_ORIGINS", "https://localhost:8000").split(","),
@@ -95,6 +95,7 @@ def init_database() -> None:
         }
         if "session_id" not in job_columns:
             connection.execute("ALTER TABLE jobs ADD COLUMN session_id TEXT")
+
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS oauth_sessions (
@@ -108,27 +109,35 @@ def init_database() -> None:
                 document_id TEXT,
                 workspace_id TEXT,
                 element_id TEXT,
+                step_cache BLOB,
+                tessellation_json TEXT,
+                mesh_json TEXT,
+                forces_json TEXT,
+                constraints_json TEXT,
                 updated_at TEXT NOT NULL
             )
             """
         )
+        session_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(oauth_sessions)").fetchall()
+        }
+        for col, col_type in [
+            ("step_cache", "BLOB"),
+            ("tessellation_json", "TEXT"),
+            ("mesh_json", "TEXT"),
+            ("forces_json", "TEXT"),
+            ("constraints_json", "TEXT"),
+        ]:
+            if col not in session_columns:
+                connection.execute(f"ALTER TABLE oauth_sessions ADD COLUMN {col} {col_type}")
+
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS oauth_states (
                 state TEXT PRIMARY KEY,
                 session_id TEXT NOT NULL,
                 expires_at REAL NOT NULL
-            )
-            """
-        )
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS integration_events (
-                event_id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL,
-                operation TEXT NOT NULL,
-                payload_json TEXT NOT NULL,
-                created_at TEXT NOT NULL
             )
             """
         )
@@ -216,6 +225,8 @@ def set_session_cookie(response: RedirectResponse, session_id: str) -> None:
     )
 
 
+# --- Pydantic Data Models ---
+
 class GeometryReference(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -226,11 +237,60 @@ class GeometryReference(BaseModel):
     geometry: Optional[Dict[str, Any]] = None
 
 
+class GeometrySelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    context: Dict[str, str] = Field(min_length=1)
+    designSpace: list[str] = Field(min_length=1)
+    keepOut: list[str] = Field(default_factory=list)
+
+
+class MeshRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    step_data: Optional[str] = None  # Base64 encoded STEP data or use session cache
+    target_element_size: float = Field(default=2.0, gt=0)
+    element_type: str = Field(default="tet4", pattern="^(tet4|tet10|hex8)$")
+
+
+class ForceDefinition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    magnitude: float = Field(gt=0)
+    direction_x: float
+    direction_y: float
+    direction_z: float
+    application_point: Optional[str] = None
+    force_type: str = Field(default="point", pattern="^(point|distributed|pressure)$")
+
+    @model_validator(mode="after")
+    def non_zero_direction(self) -> "ForceDefinition":
+        if self.direction_x == self.direction_y == self.direction_z == 0:
+            raise ValueError("La dirección de la fuerza no puede ser cero")
+        return self
+
+
+class ConstraintDefinition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    constraint_type: str = Field(pattern="^(fixed|pinned|roller|symmetry)$")
+    location: str
+    degrees_of_freedom: Dict[str, bool] = Field(default_factory=lambda: {
+        "ux": True, "uy": True, "uz": True, "rx": True, "ry": True, "rz": True
+    })
+
+    @model_validator(mode="after")
+    def one_axis_required(self) -> "ConstraintDefinition":
+        if not any(self.degrees_of_freedom.values()):
+            raise ValueError("Al menos un grado de libertad debe estar restringido")
+        return self
+
+
 class Load(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: str = Field(default="force", pattern="^force$")
-    selection: list["GeometryReference"] = Field(min_length=1)
+    selection: list[GeometryReference] = Field(min_length=1)
     magnitude: float = Field(ge=0)
     unit: str = Field(min_length=1, max_length=32)
     directionMode: str = Field(default="vector", pattern="^(vector|face_normal)$")
@@ -257,7 +317,7 @@ class Constraint(BaseModel):
 
     @model_validator(mode="after")
     def one_axis_required(self) -> "Constraint":
-        if not any((self.ux, self.uy, self.uz)):
+        if not any((self.ux, self.uy, self.uz)) :
             raise ValueError("a constraint must restrict at least one axis")
         return self
 
@@ -339,22 +399,6 @@ class OptimizationResponse(BaseModel):
     data: Optional[Dict[str, Any]] = None
 
 
-class IntegrationEvent(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    operation: str = Field(min_length=1, max_length=64)
-    context: Dict[str, str] = Field(min_length=1)
-    selections: list[GeometryReference] = Field(default_factory=list)
-    parameters: Dict[str, Any] = Field(default_factory=dict)
-    geometry: Optional[Dict[str, Any]] = None
-
-    @model_validator(mode="after")
-    def context_is_complete(self) -> "IntegrationEvent":
-        if any(not self.context.get(key) for key in ("documentId", "workspaceId", "elementId")):
-            raise ValueError("context requires documentId, workspaceId and elementId")
-        return self
-
-
 class JobStatusResponse(BaseModel):
     job_id: str
     status: str
@@ -368,7 +412,7 @@ class JobStatusResponse(BaseModel):
 
 
 class JobStatus:
-    """A small persistent view of one job."""
+    """Persistent job representation."""
 
     def __init__(self, job_id: str, request: OptimizationRequest, session_id: str):
         self.job_id = job_id
@@ -470,17 +514,7 @@ def row_to_response(row: sqlite3.Row) -> JobStatusResponse:
     )
 
 
-def set_configuration_pending(job: JobStatus) -> None:
-    job.update(
-        status="pending",
-        progress=0,
-        message="REQUIERE CONFIGURACION EXTERNA: credenciales de Onshape en el backend",
-        error={
-            "code": "ONSHAPE_CONFIGURATION_REQUIRED",
-            "message": "Configure backend Onshape credentials before running this job",
-        },
-    )
-
+# --- Application Endpoints ---
 
 @app.get("/login")
 async def login(request: Request) -> RedirectResponse:
@@ -557,7 +591,7 @@ async def oauth_callback(
             "UPDATE oauth_sessions SET user_json = ?, updated_at = ? WHERE session_id = ?",
             (json.dumps(user), utc_now(), session_id),
         )
-    response = RedirectResponse("/", status_code=303)
+    response = RedirectResponse("/app", status_code=303)
     set_session_cookie(response, session_id)
     return response
 
@@ -600,15 +634,6 @@ async def auth_status(request: Request) -> Dict[str, Any]:
     }
 
 
-@app.get("/api/onshape/documents")
-async def list_onshape_documents(request: Request) -> Any:
-    authenticated_session_id(request)
-    try:
-        return onshape_client(request).get_json("/documents")
-    except OnshapeAPIError as exc:
-        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
-
-
 @app.post("/api/context")
 async def save_context(request: Request, context: Dict[str, str]) -> Dict[str, Any]:
     required = ("documentId", "workspaceId", "elementId")
@@ -621,80 +646,44 @@ async def save_context(request: Request, context: Dict[str, str]) -> Dict[str, A
             "WHERE session_id=?",
             (context["documentId"], context["workspaceId"], context["elementId"], utc_now(), session_id),
         )
-    logger.info("Contexto CAD guardado: session_id=%s documentId=%s workspaceId=%s elementId=%s", 
-                 session_id, context["documentId"], context["workspaceId"], context["elementId"])
     return {
-        "status": "saved", 
+        "status": "saved",
         "context": {key: context[key] for key in required},
-        "message": "Contexto CAD guardado correctamente"
+        "message": "Contexto CAD guardado correctamente",
     }
-
-
-class GeometrySelection(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    
-    context: Dict[str, str] = Field(min_length=1)
-    designSpace: list[str] = Field(min_length=1)
-    keepOut: list[str] = Field(default_factory=list)
 
 
 @app.post("/api/geometry/selection")
 async def save_geometry_selection(request: Request, selection: GeometrySelection) -> Dict[str, Any]:
-    """Recibe y procesa selecciones de geometría desde Onshape."""
     session_id = authenticated_session_id(request)
-    
-    # Validar contexto
     required = ("documentId", "workspaceId", "elementId")
     if any(not selection.context.get(key) for key in required):
         raise HTTPException(status_code=422, detail="context requires documentId, workspaceId and elementId")
-    
-    # Guardar selección en sesión
     with db_connection() as connection:
         connection.execute(
             "UPDATE oauth_sessions SET document_id=?, workspace_id=?, element_id=?, updated_at=? "
             "WHERE session_id=?",
-            (selection.context["documentId"], selection.context["workspaceId"], 
-             selection.context["elementId"], utc_now(), session_id),
+            (selection.context["documentId"], selection.context["workspaceId"], selection.context["elementId"], utc_now(), session_id),
         )
-    
-    logger.info(
-        "Selección de geometría recibida: session_id=%s designSpace=%d keepOut=%d",
-        session_id, len(selection.designSpace), len(selection.keepOut)
-    )
-    
-    # Preparar datos para el siguiente paso (obtención de geometría)
-    selection_data = {
-        "context": selection.context,
-        "designSpace": selection.designSpace,
-        "keepOut": selection.keepOut,
-        "timestamp": utc_now()
-    }
-    
     return {
         "status": "received",
         "message": "Selección de geometría recibida correctamente",
         "selection": {
             "designSpace_count": len(selection.designSpace),
             "keepOut_count": len(selection.keepOut),
-            "context": selection.context
+            "context": selection.context,
         },
-        "next_step": "geometry_download"
+        "next_step": "geometry_download",
     }
 
 
 @app.post("/api/geometry/download")
 async def download_geometry(request: Request, selection: GeometrySelection) -> Dict[str, Any]:
-    """Descarga geometría real desde Onshape basado en selecciones."""
+    """Download real STEP from Onshape and perform CAD tessellation for Three.js."""
     session_id = authenticated_session_id(request)
-    
-    # Validar OAuth configurado
     if not oauth_configured():
-        raise HTTPException(
-            status_code=503, 
-            detail="OAuth no configurado - Configure ONSHAPE_OAUTH_CLIENT_ID y ONSHAPE_OAUTH_CLIENT_SECRET"
-        )
-    
-    # Crear cliente Onshape
+        raise HTTPException(status_code=503, detail="OAuth no configurado en backend")
+
     client = OnshapeClient(
         token_store,
         session_id,
@@ -703,302 +692,181 @@ async def download_geometry(request: Request, selection: GeometrySelection) -> D
         token_url=OAUTH_TOKEN_URL,
         api_url=OAUTH_API_URL,
     )
-    
-    # Crear procesador de geometría
     processor = GeometryProcessor(
         client,
         selection.context["documentId"],
         selection.context["workspaceId"],
         selection.context["elementId"],
     )
-    
-    logger.info(
-        "Iniciando descarga de geometría: session_id=%s documentId=%s",
-        session_id, selection.context["documentId"]
-    )
-    
-    # Descargar geometría
+
     try:
         step_data = processor.download_part_studio(output_format="step")
-        
         if not step_data:
             raise HTTPException(
                 status_code=500,
-                detail={
-                    "code": "GEOMETRY_DOWNLOAD_FAILED",
-                    "message": "No se pudo descargar la geometría de Onshape"
-                }
+                detail={"code": "GEOMETRY_DOWNLOAD_FAILED", "message": "No se pudo descargar STEP desde Onshape"},
             )
-        
-        # Obtener propiedades
+
+        tess_result = processor.tessellate_step(step_data)
         properties = processor.get_part_properties()
-        
-        logger.info(
-            "Geometría descargada exitosamente: session_id=%s size=%d bytes",
-            session_id, len(step_data)
-        )
-        
+
+        # Cache step and tessellation in SQLite session
+        with db_connection() as connection:
+            connection.execute(
+                "UPDATE oauth_sessions SET step_cache=?, tessellation_json=?, updated_at=? WHERE session_id=?",
+                (step_data, json.dumps(tess_result), utc_now(), session_id),
+            )
+
         return {
             "status": "success",
-            "message": "Geometría descargada correctamente",
+            "message": "Geometría STEP descargada y procesada correctamente",
             "geometry": {
                 "format": "step",
                 "size_bytes": len(step_data),
-                "properties": properties
+                "properties": properties,
+                "tessellation": tess_result if tess_result.get("success") else None,
             },
             "selection": {
                 "designSpace": selection.designSpace,
-                "keepOut": selection.keepOut
+                "keepOut": selection.keepOut,
             },
-            "next_step": "meshing"
+            "next_step": "meshing",
         }
-        
     except OnshapeAPIError as exc:
-        logger.error("Error de API Onshape: %s", exc.message)
-        raise HTTPException(
-            status_code=exc.status_code,
-            detail={"code": exc.code, "message": exc.message}
-        ) from exc
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
     except Exception as exc:
-        logger.exception("Error inesperado al descargar geometría")
-        raise HTTPException(
-            status_code=500,
-            detail={"code": "GEOMETRY_DOWNLOAD_ERROR", "message": str(exc)}
-        ) from exc
+        logger.exception("Error descargando y procesando geometría")
+        raise HTTPException(status_code=500, detail={"code": "GEOMETRY_PROCESSING_ERROR", "message": str(exc)}) from exc
 
 
-class MeshRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    
-    step_data: str  # Datos STEP en base64
-    target_element_size: float = Field(default=1.0, gt=0)
-    element_type: str = Field(default="tet10", pattern="^(tet4|tet10|hex8)$")
+@app.get("/api/geometry/current")
+async def get_current_geometry(request: Request) -> Dict[str, Any]:
+    """Retrieve the cached real CAD tessellation for the 3D viewer."""
+    session_id = authenticated_session_id(request)
+    with db_connection() as connection:
+        row = connection.execute(
+            "SELECT tessellation_json, document_id, workspace_id, element_id FROM oauth_sessions WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+    if not row or not row["tessellation_json"]:
+        return {"status": "no_geometry", "message": "No hay geometría cargada en la sesión"}
+    return {
+        "status": "success",
+        "tessellation": json.loads(row["tessellation_json"]),
+        "context": {
+            "documentId": row["document_id"],
+            "workspaceId": row["workspace_id"],
+            "elementId": row["element_id"],
+        },
+    }
 
 
 @app.post("/api/mesh/generate")
 async def generate_mesh(request: Request, mesh_request: MeshRequest) -> Dict[str, Any]:
-    """Genera malla a partir de datos STEP usando un mesher externo."""
+    """Generate real volumetric finite element mesh (nodes & elements) from STEP."""
     session_id = authenticated_session_id(request)
-    
-    logger.info(
-        "Solicitud de mallado recibida: session_id=%s element_size=%s element_type=%s",
-        session_id, mesh_request.target_element_size, mesh_request.element_type
+
+    step_bytes: Optional[bytes] = None
+    if mesh_request.step_data:
+        try:
+            step_bytes = base64.b64decode(mesh_request.step_data)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Formato Base64 de STEP inválido")
+    else:
+        with db_connection() as connection:
+            row = connection.execute(
+                "SELECT step_cache FROM oauth_sessions WHERE session_id = ?", (session_id,)
+            ).fetchone()
+            if row and row["step_cache"]:
+                step_bytes = row["step_cache"]
+
+    if not step_bytes:
+        raise HTTPException(status_code=400, detail="No se encontró geometría STEP para mallar")
+
+    processor = GeometryProcessor(None, "", "", "")
+    mesh_result = processor.create_mesh(
+        step_bytes,
+        target_element_size=mesh_request.target_element_size,
+        element_type=mesh_request.element_type,
     )
-    
-    try:
-        # Decodificar datos STEP desde base64
-        import base64
-        step_bytes = base64.b64decode(mesh_request.step_data)
-        
-        # Crear procesador de geometría temporal
-        # Nota: Esto requiere un mesher real configurado
-        processor = GeometryProcessor(None, "", "", "")
-        
-        # Intentar generar malla
-        mesh_result = processor.create_mesh(
-            step_bytes,
-            mesh_request.target_element_size,
-            mesh_request.element_type
-        )
-        
-        if not mesh_result["success"]:
-            return {
-                "status": "pending",
-                "message": mesh_result["message"],
-                "code": mesh_result["code"],
-                "details": "Se requiere configurar un mesher externo real (ej: Gmsh, TetGen)"
-            }
-        
-        logger.info(
-            "Malla generada exitosamente: session_id=%s nodes=%d elements=%d",
-            session_id, mesh_result["num_nodes"], mesh_result["num_elements"]
-        )
-        
-        return {
-            "status": "success",
-            "message": "Malla generada correctamente",
-            "mesh": {
-                "num_nodes": mesh_result["num_nodes"],
-                "num_elements": mesh_result["num_elements"],
-                "element_type": mesh_request.element_type
-            },
-            "next_step": "boundary_conditions"
-        }
-        
-    except Exception as exc:
-        logger.exception("Error al generar malla")
+
+    if not mesh_result.get("success"):
         return {
             "status": "failed",
-            "message": "Error al generar malla",
-            "code": "MESH_GENERATION_ERROR",
-            "error": str(exc)
+            "message": mesh_result.get("error", "Fallo al generar la malla"),
+            "code": mesh_result.get("code", "MESHER_FAILED"),
         }
 
-
-class TopOptRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    
-    volume_fraction: float = Field(gt=0, le=1)
-    max_iterations: int = Field(gt=0, le=10000)
-    tolerance: float = Field(gt=0, lt=1, default=0.01)
-    penalization: float = Field(default=3.0, gt=0)
-    rmin: float = Field(default=1.5, gt=0)
-    mesh_data: Optional[Dict[str, Any]] = None
-    forces: Optional[list[Dict[str, Any]]] = None
-    constraints: Optional[list[Dict[str, Any]]] = None
-
-
-@app.post("/api/topopt/run")
-async def run_topopt(request: Request, topopt_request: TopOptRequest) -> Dict[str, Any]:
-    """Ejecuta optimización topológica usando el solver TopOpt."""
-    session_id = authenticated_session_id(request)
-    
-    logger.info(
-        "Solicitud de optimización TopOpt: session_id=%s vol_frac=%s iterations=%s",
-        session_id, topopt_request.volume_fraction, topopt_request.max_iterations
-    )
-    
-    try:
-        # Ejecutar optimización usando el solver existente
-        # Nota: Esto requiere un adaptador FEA real configurado
-        result = run_topology_optimization(
-            volume_fraction=topopt_request.volume_fraction,
-            max_iterations=topopt_request.max_iterations,
-            tolerance=topopt_request.tolerance,
-            penalization=topopt_request.penalization,
-            rmin=topopt_request.rmin,
-            fea_solver=None  # Requiere adaptador FEA real
+    # Cache mesh in session
+    with db_connection() as connection:
+        connection.execute(
+            "UPDATE oauth_sessions SET mesh_json=?, updated_at=? WHERE session_id=?",
+            (json.dumps(mesh_result), utc_now(), session_id),
         )
-        
-        if not result.get("success") or result.get("status") == "not_implemented":
-            return {
-                "status": "pending",
-                "message": result.get("error", "Optimización no disponible"),
-                "code": result.get("code", "TOPOPT_NOT_IMPLEMENTED"),
-                "details": "Se requiere configurar un adaptador FEA real (ej: FEniCS, Ansys, Abaqus)"
-            }
-        
-        logger.info(
-            "Optimización TopOpt completada: session_id=%s status=%s iterations=%s",
-            session_id, result.get("status"), result.get("iterations", 0)
-        )
-        
-        return {
-            "status": "success",
-            "message": "Optimización completada exitosamente",
-            "result": {
-                "final_volume_fraction": result.get("final_volume_fraction"),
-                "iterations": result.get("iterations", 0),
-                "converged": result.get("converged", False)
-            },
-            "next_step": "geometry_reconstruction"
-        }
-        
-    except Exception as exc:
-        logger.exception("Error al ejecutar optimización TopOpt")
-        return {
-            "status": "failed",
-            "message": "Error al ejecutar optimización",
-            "code": "TOPOPT_EXECUTION_ERROR",
-            "error": str(exc)
-        }
 
-
-class ForceDefinition(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    
-    magnitude: float = Field(gt=0)
-    direction_x: float
-    direction_y: float
-    direction_z: float
-    application_point: Optional[str] = None  # ID de la cara/punto donde se aplica
-    force_type: str = Field(default="point", pattern="^(point|distributed|pressure)$")
-
-
-class ConstraintDefinition(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    
-    constraint_type: str = Field(pattern="^(fixed|pinned|roller|symmetry)$")
-    location: str  # ID de la cara/edge donde se aplica
-    degrees_of_freedom: Dict[str, bool] = Field(default_factory=lambda: {
-        "ux": True, "uy": True, "uz": True, "rx": True, "ry": True, "rz": True
-    })
+    return {
+        "status": "success",
+        "message": "Malla volumétrica generada correctamente",
+        "mesh": {
+            "num_nodes": mesh_result["num_nodes"],
+            "num_elements": mesh_result["num_elements"],
+            "element_type": mesh_result["element_type"],
+            "nodes": mesh_result["nodes"],
+            "elements": mesh_result["elements"],
+        },
+        "next_step": "boundary_conditions",
+    }
 
 
 @app.post("/api/boundary/forces")
-async def save_forces(request: Request, forces: list[ForceDefinition]) -> Dict[str, Any]:
-    """Guarda definiciones de fuerzas para el análisis."""
+async def save_forces(request: Request, forces: List[ForceDefinition]) -> Dict[str, Any]:
     session_id = authenticated_session_id(request)
-    
-    logger.info(
-        "Fuerzas recibidas: session_id=%s count=%d",
-        session_id, len(forces)
-    )
-    
-    # Validar que la dirección no sea cero
-    for force in forces:
-        if force.direction_x == force.direction_y == force.direction_z == 0:
-            raise HTTPException(
-                status_code=422,
-                detail="La dirección de la fuerza no puede ser (0, 0, 0)"
-            )
-    
-    # Guardar fuerzas en sesión (en implementación real se guardaría en DB)
-    # Por ahora, retornamos confirmación
+    forces_data = [f.model_dump() for f in forces]
+    with db_connection() as connection:
+        connection.execute(
+            "UPDATE oauth_sessions SET forces_json=?, updated_at=? WHERE session_id=?",
+            (json.dumps(forces_data), utc_now(), session_id),
+        )
     return {
         "status": "saved",
         "message": f"{len(forces)} fuerza(s) guardada(s) correctamente",
         "forces_count": len(forces),
-        "force_types": [f.force_type for f in forces]
+        "forces": forces_data,
     }
 
 
 @app.post("/api/boundary/constraints")
-async def save_constraints(request: Request, constraints: list[ConstraintDefinition]) -> Dict[str, Any]:
-    """Guarda definiciones de restricciones para el análisis."""
+async def save_constraints(request: Request, constraints: List[ConstraintDefinition]) -> Dict[str, Any]:
     session_id = authenticated_session_id(request)
-    
-    logger.info(
-        "Restricciones recibidas: session_id=%s count=%d",
-        session_id, len(constraints)
-    )
-    
-    # Validar que al menos un grado de libertad esté restringido
-    for constraint in constraints:
-        if not any(constraint.degrees_of_freedom.values()):
-            raise HTTPException(
-                status_code=422,
-                detail="Al menos un grado de libertad debe estar restringido"
-            )
-    
-    # Guardar restricciones en sesión (en implementación real se guardaría en DB)
-    # Por ahora, retornamos confirmación
+    constraints_data = [c.model_dump() for c in constraints]
+    with db_connection() as connection:
+        connection.execute(
+            "UPDATE oauth_sessions SET constraints_json=?, updated_at=? WHERE session_id=?",
+            (json.dumps(constraints_data), utc_now(), session_id),
+        )
     return {
         "status": "saved",
         "message": f"{len(constraints)} restricción(es) guardada(s) correctamente",
         "constraints_count": len(constraints),
-        "constraint_types": [c.constraint_type for c in constraints]
+        "constraints": constraints_data,
     }
 
 
 @app.get("/api/boundary/summary")
 async def get_boundary_summary(request: Request) -> Dict[str, Any]:
-    """Obtiene resumen de condiciones de frontera actuales."""
     session_id = authenticated_session_id(request)
-    
-    # En implementación real, esto consultaría la base de datos
-    # Por ahora, retornamos un resumen placeholder
+    with db_connection() as connection:
+        row = connection.execute(
+            "SELECT forces_json, constraints_json FROM oauth_sessions WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+    forces = json.loads(row["forces_json"]) if row and row["forces_json"] else []
+    constraints = json.loads(row["constraints_json"]) if row and row["constraints_json"] else []
     return {
         "status": "ready",
-        "forces": {
-            "count": 0,
-            "types": []
-        },
-        "constraints": {
-            "count": 0,
-            "types": []
-        },
-        "message": "No hay condiciones de frontera definidas"
+        "forces": {"count": len(forces), "items": forces},
+        "constraints": {"count": len(constraints), "items": constraints},
+        "message": f"{len(forces)} cargas y {len(constraints)} fijaciones configuradas",
     }
 
 
@@ -1023,108 +891,6 @@ async def validate_study(config: TopologyConfig, request: Request) -> Dict[str, 
     return {"valid": not missing, "missing": missing}
 
 
-@app.post("/api/integration/events")
-async def receive_integration_event(event: IntegrationEvent, request: Request) -> Dict[str, Any]:
-    session_id = authenticated_session_id(request)
-    event_id = f"event_{uuid.uuid4().hex[:12]}"
-    with db_connection() as connection:
-        connection.execute(
-            """
-            INSERT INTO integration_events
-            (event_id, session_id, operation, payload_json, created_at)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (event_id, session_id, event.operation, event.model_dump_json(), utc_now()),
-        )
-    logger.info(
-        "FeatureScript event received: event_id=%s operation=%s selections=%d",
-        event_id,
-        event.operation,
-        len(event.selections),
-    )
-    return {
-        "status": "received",
-        "eventId": event_id,
-        "operation": event.operation,
-        "context": event.context,
-        "result": {"status": "accepted", "message": "Event stored for processing"},
-    }
-
-
-def ejecutar_optimizacion(job: JobStatus, request: OptimizationRequest, session_id: str) -> None:
-    try:
-        job.update(status="processing", progress=5, message="Iniciando procesamiento de geometria")
-        if not oauth_configured() or not token_store.get_token(session_id):
-            set_configuration_pending(job)
-            return
-
-        client = OnshapeClient(
-            token_store,
-            session_id,
-            OAUTH_CLIENT_ID,
-            OAUTH_CLIENT_SECRET,
-            token_url=OAUTH_TOKEN_URL,
-            api_url=OAUTH_API_URL,
-        )
-        processor = GeometryProcessor(
-            client,
-            request.topologyConfig.context["documentId"],
-            request.topologyConfig.context["workspaceId"],
-            request.topologyConfig.context["elementId"],
-        )
-        job.update(status="processing", progress=15, message="Descargando geometria de Onshape")
-        geo_result = processor.process_full_pipeline()
-        if not geo_result.get("success"):
-            geo_status = geo_result.get("status", "pending")
-            job.update(
-                status=geo_status,
-                progress=20,
-                message=geo_result.get("error", "Geometry stage is not available"),
-                error={
-                    "code": geo_result.get("code", "GEOMETRY_STAGE_UNAVAILABLE"),
-                    "message": geo_result.get("error", "Geometry stage is not available"),
-                },
-                finished=geo_status == "failed",
-            )
-            return
-
-        job.update(status="processing", progress=30, message="Ejecutando solver")
-        topopt_result = run_topology_optimization(
-            volume_fraction=request.topologyConfig.objectives.volumeFraction,
-            max_iterations=request.topologyConfig.solverSettings.maxIterations,
-            tolerance=request.topologyConfig.solverSettings.convergenceTolerance,
-            forces=None,
-            supports=None,
-        )
-        if not topopt_result.get("success") or topopt_result.get("status") != "completed":
-            job.update(
-                status=topopt_result.get("status", "pending"),
-                progress=30,
-                message=topopt_result.get("error", "TopOpt stage is not available"),
-                error={
-                    "code": topopt_result.get("code", "TOPOPT_STAGE_UNAVAILABLE"),
-                    "message": topopt_result.get("error", "TopOpt stage is not available"),
-                },
-            )
-            return
-
-        job.update(
-            status="completed",
-            progress=100,
-            message="Optimizacion completada",
-            result=topopt_result,
-            finished=True,
-        )
-    except Exception:
-        logger.exception("[%s] job failed", job.job_id)
-        job.update(
-            status="failed",
-            message="Error interno procesando el trabajo",
-            error={"code": "INTERNAL_JOB_ERROR", "message": "Internal job error"},
-            finished=True,
-        )
-
-
 @app.get("/health")
 async def health_check() -> Dict[str, Any]:
     credentials_ready = oauth_configured()
@@ -1132,83 +898,6 @@ async def health_check() -> Dict[str, Any]:
         "status": "ok" if credentials_ready else "error",
         "oauth_configurado": credentials_ready,
         "message": "API de Optimizacion Topologica operativa",
-    }
-
-
-@app.post("/api/optimize", response_model=OptimizationResponse)
-async def optimizar_topologia(
-    request: OptimizationRequest, background_tasks: BackgroundTasks, http_request: Request
-) -> OptimizationResponse:
-    session_id = authenticated_session_id(http_request)
-    job_id = f"job_{uuid.uuid4().hex[:12]}"
-    job = JobStatus(job_id, request, session_id)
-    JOBS[job_id] = job
-    background_tasks.add_task(ejecutar_optimizacion, job, request, session_id)
-    return OptimizationResponse(
-        status="queued",
-        message="Optimizacion encolada - monitorear con /api/optimize/status",
-        jobId=job_id,
-        data={
-            "config_recibida": {
-                "preserve_count": len(request.topologyConfig.designSpace.preserve),
-                "load_cases": len(request.topologyConfig.loadCases),
-                "volume_fraction": request.topologyConfig.objectives.volumeFraction,
-                "max_iterations": request.topologyConfig.solverSettings.maxIterations,
-            },
-            "documentId": request.topologyConfig.context["documentId"],
-            "status_url": f"/api/optimize/status?jobId={job_id}",
-        },
-    )
-
-
-@app.get("/api/optimize/status", response_model=JobStatusResponse)
-async def estado_optimizacion(jobId: str, request: Request) -> JobStatusResponse:
-    session_id = authenticated_session_id(request)
-    with db_connection() as connection:
-        row = connection.execute(
-            "SELECT * FROM jobs WHERE job_id = ? AND session_id = ?",
-            (jobId, session_id),
-        ).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Job no encontrado")
-    return row_to_response(row)
-
-
-@app.get("/api/jobs")
-async def listar_trabajos(request: Request) -> Dict[str, Any]:
-    session_id = authenticated_session_id(request)
-    with db_connection() as connection:
-        rows = connection.execute(
-            "SELECT job_id, status, progress, document_id FROM jobs "
-            "WHERE session_id = ? ORDER BY created_at DESC",
-            (session_id,),
-        ).fetchall()
-    return {
-        "total_jobs": len(rows),
-        "jobs": {
-            row["job_id"]: {
-                "status": row["status"],
-                "progress": row["progress"],
-                "document": row["document_id"],
-            }
-            for row in rows
-        },
-    }
-
-
-@app.get("/api/docs")
-async def documentacion() -> Dict[str, Any]:
-    return {
-        "nombre": "API de Optimizacion Topologica",
-        "version": "1.1.0",
-        "note": "MVP: mesher y solver FEA reales requieren configuracion externa",
-        "endpoints": {
-            "POST /api/integration/events": {"descripcion": "Recibe eventos estructurados del puente de integración"},
-            "POST /api/optimize": {"descripcion": "Envia un trabajo de optimizacion"},
-            "GET /api/optimize/status": {"descripcion": "Consulta el estado de un trabajo"},
-            "GET /api/jobs": {"descripcion": "Lista trabajos persistentes"},
-            "GET /health": {"descripcion": "Verifica la API y configuracion"},
-        },
     }
 
 

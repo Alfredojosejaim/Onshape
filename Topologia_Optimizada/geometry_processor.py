@@ -1,10 +1,11 @@
 """Onshape geometry processor and real CAD/FEM mesh adapter.
 
 Provides:
-1. Real STEP export download via Onshape REST API.
-2. B-Rep parsing and tessellation (triangles, vertices, normals) for Three.js.
-3. Real volumetric finite element mesh generation (nodes and tetrahedral elements).
-4. Geometric boundary condition mapping from CAD B-Rep faces to FEM mesh nodes.
+1. Real STEP export download via Onshape REST API (full studio or specific part IDs).
+2. Part Studio entity querying (parts, bodies, metadata).
+3. B-Rep parsing and tessellation (triangles, vertices, normals, face metadata) for Three.js.
+4. Volumetric finite element mesh generation (nodes and tetrahedral elements).
+5. Geometric boundary condition mapping from CAD B-Rep faces to FEM mesh nodes.
 """
 
 import io
@@ -49,20 +50,45 @@ class GeometryProcessor:
             429: "ONSHAPE_RATE_LIMITED",
         }.get(status_code, "ONSHAPE_HTTP_ERROR")
 
-    def download_part_studio(self, output_format: str = "step") -> Optional[bytes]:
-        """Download a real Part Studio export from Onshape."""
+    def get_parts_list(self) -> List[Dict[str, Any]]:
+        """Query Onshape REST API for the real list of parts in this Part Studio."""
+        if not self.session:
+            return []
+        try:
+            url = f"/partstudios/d/{self.did}/w/{self.wid}/e/{self.eid}/parts"
+            response = self.session.get_json(url)
+            if isinstance(response, list):
+                return response
+            return []
+        except Exception:
+            logger.exception("Failed to get parts list from Onshape Part Studio")
+            return []
+
+    def download_part_studio(
+        self,
+        output_format: str = "step",
+        part_ids: Optional[List[str]] = None,
+    ) -> Optional[bytes]:
+        """Download a real Part Studio STEP export from Onshape (full studio or specific part IDs)."""
         if not self.session:
             self.last_download_error_code = "NO_ACTIVE_SESSION"
             return None
         try:
-            url = (
-                f"{self.base_url}/partstudios/d/{self.did}/w/{self.wid}"
-                f"/e/{self.eid}/export"
-            )
+            url = f"/partstudios/d/{self.did}/w/{self.wid}/e/{self.eid}/export"
+            params: Dict[str, str] = {
+                "formatName": output_format.upper(),
+                "version": "latest",
+            }
+            if part_ids:
+                # Filter out empty or whitespace strings
+                valid_ids = [p.strip() for p in part_ids if p and p.strip()]
+                if valid_ids:
+                    params["partIds"] = ",".join(valid_ids)
+
             response = self.session.request(
                 "GET",
-                url.removeprefix(self.base_url),
-                params={"formatName": output_format.upper(), "version": "latest"},
+                url,
+                params=params,
                 timeout=30,
             )
             if response.status_code == 200:
@@ -82,11 +108,8 @@ class GeometryProcessor:
         if not self.session:
             return {}
         try:
-            url = (
-                f"{self.base_url}/partstudios/d/{self.did}/w/{self.wid}"
-                f"/e/{self.eid}/properties"
-            )
-            response = self.session.request("GET", url.removeprefix(self.base_url), timeout=10)
+            url = f"/partstudios/d/{self.did}/w/{self.wid}/e/{self.eid}/properties"
+            response = self.session.request("GET", url, timeout=10)
             if response.status_code != 200:
                 logger.warning(
                     "Part properties failed: %s",
@@ -201,7 +224,7 @@ class GeometryProcessor:
         target_element_size: float = 2.0,
         element_type: str = "tet4",
     ) -> Dict[str, Any]:
-        """Generate a real volumetric finite element mesh from STEP data."""
+        """Generate a volumetric finite element mesh from STEP data."""
         if not step_data:
             return {
                 "success": False,
@@ -235,7 +258,7 @@ class GeometryProcessor:
                     "error": str(exc),
                 }
 
-        # Built-in solid volumetric tetrahedral / hexahedral discretization
+        # Solid volumetric tetrahedral / hexahedral discretization
         try:
             shape = self.load_shape_from_step(step_data)
             bbox = shape.BoundingBox()
@@ -300,7 +323,7 @@ class GeometryProcessor:
                             if element_type == "hex8":
                                 elements_list.append([n000, n100, n110, n010, n001, n101, n111, n011])
                             else:
-                                # Standard 5-tetrahedra decomposition of a cube (Kuhn triangulation)
+                                # 5-tetrahedra decomposition of a cube (Kuhn triangulation)
                                 elements_list.append([n000, n100, n010, n001])
                                 elements_list.append([n100, n110, n010, n111])
                                 elements_list.append([n001, n100, n101, n111])
@@ -308,7 +331,6 @@ class GeometryProcessor:
                                 elements_list.append([n001, n100, n010, n111])
 
             if len(elements_list) == 0 or len(nodes_list) == 0:
-                # If solid is thin or sub-element, add minimum enclosing tetrahedral mesh
                 for i in range(2):
                     for j in range(2):
                         for k in range(2):

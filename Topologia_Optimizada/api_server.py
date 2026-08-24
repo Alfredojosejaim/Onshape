@@ -1,7 +1,8 @@
 """FastAPI backend for Onshape topology optimization.
 
-Handles OAuth 2.0 sessions, STEP geometry download and tessellation for Three.js,
-real volumetric FEM meshing, boundary conditions, and job persistence in SQLite.
+Handles OAuth 2.0 sessions, Onshape Part Studio querying, STEP geometry download
+and tessellation for Three.js, real volumetric FEM meshing, boundary conditions,
+and job persistence in SQLite.
 """
 
 import base64
@@ -44,7 +45,7 @@ OAUTH_TOKEN_URL = "https://oauth.onshape.com/oauth/token"
 OAUTH_API_URL = "https://cad.onshape.com/api"
 SESSION_COOKIE = "topologia_session"
 
-app = FastAPI(title="Optimizacion Topologica API", version="1.2.0")
+app = FastAPI(title="Optimizacion Topologica API", version="1.3.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.getenv("CORS_ORIGINS", "https://localhost:8000").split(","),
@@ -70,24 +71,7 @@ def init_database() -> None:
     with db_connection() as connection:
         connection.execute(
             """
-            CREATE TABLE IF NOT EXISTS jobs (
-                job_id TEXT PRIMARY KEY,
-                session_id TEXT,
-                document_id TEXT NOT NULL,
-                workspace_id TEXT NOT NULL,
-                element_id TEXT NOT NULL,
-                request_json TEXT NOT NULL,
-                status TEXT NOT NULL,
-                progress INTEGER NOT NULL,
-                message TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                end_time TEXT,
-                result_json TEXT,
-                error_code TEXT,
-                error_message TEXT
-            )
-            """
+            CREATE TABLE IF NOT EXISTS jobs (\n                job_id TEXT PRIMARY KEY,\n                session_id TEXT,\n                document_id TEXT NOT NULL,\n                workspace_id TEXT NOT NULL,\n                element_id TEXT NOT NULL,\n                request_json TEXT NOT NULL,\n                status TEXT NOT NULL,\n                progress INTEGER NOT NULL,\n                message TEXT NOT NULL,\n                created_at TEXT NOT NULL,\n                updated_at TEXT NOT NULL,\n                end_time TEXT,\n                result_json TEXT,\n                error_code TEXT,\n                error_message TEXT\n            )\n            """
         )
         job_columns = {
             row["name"]
@@ -98,25 +82,7 @@ def init_database() -> None:
 
         connection.execute(
             """
-            CREATE TABLE IF NOT EXISTS oauth_sessions (
-                session_id TEXT PRIMARY KEY,
-                access_token TEXT NOT NULL,
-                refresh_token TEXT,
-                expires_at REAL NOT NULL,
-                token_type TEXT NOT NULL,
-                scope TEXT,
-                user_json TEXT,
-                document_id TEXT,
-                workspace_id TEXT,
-                element_id TEXT,
-                step_cache BLOB,
-                tessellation_json TEXT,
-                mesh_json TEXT,
-                forces_json TEXT,
-                constraints_json TEXT,
-                updated_at TEXT NOT NULL
-            )
-            """
+            CREATE TABLE IF NOT EXISTS oauth_sessions (\n                session_id TEXT PRIMARY KEY,\n                access_token TEXT NOT NULL,\n                refresh_token TEXT,\n                expires_at REAL NOT NULL,\n                token_type TEXT NOT NULL,\n                scope TEXT,\n                user_json TEXT,\n                document_id TEXT,\n                workspace_id TEXT,\n                element_id TEXT,\n                step_cache BLOB,\n                tessellation_json TEXT,\n                mesh_json TEXT,\n                forces_json TEXT,\n                constraints_json TEXT,\n                updated_at TEXT NOT NULL\n            )\n            """
         )
         session_columns = {
             row["name"]
@@ -134,12 +100,7 @@ def init_database() -> None:
 
         connection.execute(
             """
-            CREATE TABLE IF NOT EXISTS oauth_states (
-                state TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL,
-                expires_at REAL NOT NULL
-            )
-            """
+            CREATE TABLE IF NOT EXISTS oauth_states (\n                state TEXT PRIMARY KEY,\n                session_id TEXT NOT NULL,\n                expires_at REAL NOT NULL\n            )\n            """
         )
 
 
@@ -248,7 +209,7 @@ class GeometrySelection(BaseModel):
 class MeshRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    step_data: Optional[str] = None  # Base64 encoded STEP data or use session cache
+    step_data: Optional[str] = None
     target_element_size: float = Field(default=2.0, gt=0)
     element_type: str = Field(default="tet4", pattern="^(tet4|tet10|hex8)$")
 
@@ -317,7 +278,7 @@ class Constraint(BaseModel):
 
     @model_validator(mode="after")
     def one_axis_required(self) -> "Constraint":
-        if not any((self.ux, self.uy, self.uz)) :
+        if not any((self.ux, self.uy, self.uz)):
             raise ValueError("a constraint must restrict at least one axis")
         return self
 
@@ -653,6 +614,55 @@ async def save_context(request: Request, context: Dict[str, str]) -> Dict[str, A
     }
 
 
+@app.get("/api/partstudios/parts")
+async def get_partstudio_parts(
+    request: Request,
+    document_id: Optional[str] = None,
+    workspace_id: Optional[str] = None,
+    element_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Fetch the real list of parts/bodies in the active Part Studio from Onshape."""
+    session_id = authenticated_session_id(request)
+    if not oauth_configured():
+        raise HTTPException(status_code=503, detail="OAuth no configurado en backend")
+
+    # If context is not fully passed in query parameters, fallback to saved session context
+    if not (document_id and workspace_id and element_id):
+        with db_connection() as connection:
+            row = connection.execute(
+                "SELECT document_id, workspace_id, element_id FROM oauth_sessions WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+            if row and row["document_id"] and row["workspace_id"] and row["element_id"]:
+                document_id = document_id or row["document_id"]
+                workspace_id = workspace_id or row["workspace_id"]
+                element_id = element_id or row["element_id"]
+
+    if not (document_id and workspace_id and element_id):
+        raise HTTPException(status_code=400, detail="Faltan documentId, workspaceId o elementId")
+
+    client = onshape_client(request)
+    processor = GeometryProcessor(client, document_id, workspace_id, element_id)
+
+    try:
+        parts = processor.get_parts_list()
+        return {
+            "status": "success",
+            "context": {
+                "documentId": document_id,
+                "workspaceId": workspace_id,
+                "elementId": element_id,
+            },
+            "parts": parts,
+            "count": len(parts),
+        }
+    except OnshapeAPIError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+    except Exception as exc:
+        logger.exception("Error al consultar lista de piezas en Part Studio")
+        raise HTTPException(status_code=500, detail={"code": "ONSHAPE_PARTS_QUERY_ERROR", "message": str(exc)}) from exc
+
+
 @app.post("/api/geometry/selection")
 async def save_geometry_selection(request: Request, selection: GeometrySelection) -> Dict[str, Any]:
     session_id = authenticated_session_id(request)
@@ -700,7 +710,9 @@ async def download_geometry(request: Request, selection: GeometrySelection) -> D
     )
 
     try:
-        step_data = processor.download_part_studio(output_format="step")
+        # If user selected specific part IDs, pass them; if "all" or entire studio, part_ids is None
+        part_ids = [p.strip() for p in selection.designSpace if p and p.strip() and p.strip().lower() != "all"]
+        step_data = processor.download_part_studio(output_format="step", part_ids=part_ids or None)
         if not step_data:
             raise HTTPException(
                 status_code=500,
@@ -708,6 +720,12 @@ async def download_geometry(request: Request, selection: GeometrySelection) -> D
             )
 
         tess_result = processor.tessellate_step(step_data)
+        if not tess_result.get("success"):
+            raise HTTPException(
+                status_code=500,
+                detail={"code": tess_result.get("code", "STEP_TESSELLATION_FAILED"), "message": tess_result.get("error", "Error procesando STEP")},
+            )
+
         properties = processor.get_part_properties()
 
         # Cache step and tessellation in SQLite session
@@ -724,7 +742,7 @@ async def download_geometry(request: Request, selection: GeometrySelection) -> D
                 "format": "step",
                 "size_bytes": len(step_data),
                 "properties": properties,
-                "tessellation": tess_result if tess_result.get("success") else None,
+                "tessellation": tess_result,
             },
             "selection": {
                 "designSpace": selection.designSpace,
@@ -734,6 +752,8 @@ async def download_geometry(request: Request, selection: GeometrySelection) -> D
         }
     except OnshapeAPIError as exc:
         raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("Error descargando y procesando geometría")
         raise HTTPException(status_code=500, detail={"code": "GEOMETRY_PROCESSING_ERROR", "message": str(exc)}) from exc
@@ -763,7 +783,7 @@ async def get_current_geometry(request: Request) -> Dict[str, Any]:
 
 @app.post("/api/mesh/generate")
 async def generate_mesh(request: Request, mesh_request: MeshRequest) -> Dict[str, Any]:
-    """Generate real volumetric finite element mesh (nodes & elements) from STEP."""
+    """Generate volumetric finite element mesh (nodes & elements) from STEP."""
     session_id = authenticated_session_id(request)
 
     step_bytes: Optional[bytes] = None

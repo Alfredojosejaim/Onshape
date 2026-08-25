@@ -1,0 +1,41 @@
+# Root .gitignore for Onshape Repository
+
+# Byte-compiled / Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Local HTTPS & certificates
+mkcert.exe
+certs/
+*.pem
+*.key
+
+# Runtime databases & logs
+*.sqlite3
+*.sqlite3-journal
+*.log
+
+# Caches & IDEs
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.idea/
+.vscode/
+
+# OS files
+Thumbs.db
+.DS_Store

@@ -1,12 +1,58 @@
-.env
-jobs.sqlite3
-*.sqlite3
+# Byte-compiled / optimized / DLL files
 __pycache__/
-.pytest_cache/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging / build artifacts
+dist/
+build/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
 .venv/
-runtime/
-python-3.12.10-amd64.exe
-*.pyc
-.idea/
+venv/
+ENV/
+env/
+
+# Environment and secrets (Do NOT commit secrets)
+.env
+.env.*
+!.env.example
+
+# Local HTTPS & certificates (managed by mkcert / INICIAR_APLICACION.bat)
 mkcert.exe
 certs/
+*.pem
+*.key
+*.crt
+
+# Runtime SQLite databases & logs
+jobs.sqlite3
+*.sqlite3
+*.sqlite3-journal
+*.log
+
+# Testing & quality caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# IDEs & editor configurations
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Operating System files
+Thumbs.db
+.DS_Store
+Desktop.ini
+
+# Temporary files & runtime downloads
+runtime/
+python-*.exe
+*.tmp

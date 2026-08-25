@@ -1,71 +1,119 @@
 # Resumen de Implementación Oficial — Optimización Topológica Onshape
 
-Documento oficial de auditoría, implementación y validación técnica del **Hito 1** del proyecto de optimización topológica para Onshape.
+Documento oficial de auditoría, implementación, saneamiento y validación técnica del proyecto de optimización topológica para Onshape.
 
 ---
 
-## 1. Información de la Iteración
+## 1. Iteración Actual: Auditoría y Limpieza Estricta del Repositorio Git
 
-- **Fecha:** 2026-08-24
-- **Iteración:** Hito 1 — Auditoría Técnica y Selección Real de Geometría Onshape + Autocontención HTTPS / mkcert
-- **Objetivo:** Completar de forma REAL y verificable el flujo `ONSHAPE → APP EXTENSION → SELECCIÓN REAL → BACKEND → STEP → VISUALIZACIÓN`, eliminando la dependencia de IDs introducidos manualmente y conectando con el pipeline de descarga STEP, teselación OpenCASCADE y renderizado Three.js, con entorno HTTPS 100% autocontenido y reproducible.
-
----
-
-## 2. Auditoría Inicial (Hallazgos)
-
-Tras auditar el código fuente existente en el repositorio:
-1. **Selector CAD (`app-extension.html`):** Contenía campos de texto manuales (`<input id="documentId">`, `<input id="workspaceId">`, `<input id="elementId">`, `<input id="designSpace">`, `<input id="keepOut">`), lo cual infringía la prohibición de depender de IDs tipados manualmente en el flujo principal.
-2. **Comunicación Onshape ↔ iframe:** La función `sendApplicationInit` y el manejador `postMessage` existían pero no estaban acoplados dinámicamente con la selección de sólidos ni con la consulta de piezas del Part Studio activo.
-3. **Endpoint de Piezas de Part Studio:** No existía un endpoint REST en el backend para consultar dinámicamente las piezas (`/api/partstudios/parts`) existentes en el Part Studio activo del usuario.
-4. **Filtrado de Exportación STEP:** `download_part_studio` en `geometry_processor.py` no admitía parámetros de filtrado por `partIds` para descargar específicamente el cuerpo seleccionado por el usuario.
-5. **Mallado Volumétrico (Fase 6):** El generador actual de malla `tet4` en `geometry_processor.py` realiza una discretización estructurada basada en voxelización y subdivisión de Kuhn de celdas interiores. Cumple como generador base de elementos tetraédricos finitos para el Hito 1, pero se documenta formalmente que el mallado B-Rep conforme (vía Gmsh/Netgen) formará parte del Hito 2.
-6. **HTTPS y mkcert:** El script de inicio dependía de que el usuario descargara o instalara manualmente `mkcert` en el sistema global, sin verificación de integridad criptográfica (SHA-256) ni soporte para clonaciones limpias. Además, `.env` y los certificados estaban rastreados en el índice de Git.
+- **Fecha:** 2026-08-25
+- **Iteración:** Auditoría y Saneamiento Integral de Git, Seguridad y Control de Versiones
+- **Objetivo:** Auditar y sanear estrictamente el repositorio (`Alfredojosejaim/Onshape` / `Topologia_Optimizada`), eliminando del índice Git todos los archivos de entorno, secretos, certificados TLS, binarios ejecutables, cachés de Python, bases de datos locales y metadatos de IDE, garantizando seguridad, reproducibilidad y adherencia estricta a `prompt.md` y `metodologia.md`.
 
 ---
 
-## 3. Cambios Realizados
+## 2. Auditoría del Estado Inicial del Repositorio
 
-### Frontend: App Extension (`app-extension.html`)
-- **Eliminación de campos de texto manuales:** Se eliminaron del formulario principal todos los inputs manuales para Document ID, Workspace ID, Element ID, Body ID y Face ID.
-- **Detección automática de contexto:** Extracción de `documentId`, `workspaceId`/`versionId`, `elementId` y `server` desde `window.location.search` o desde la sesión OAuth activa, mostrándose como tarjetas de estado legibles.
-- **Handshake `applicationInit`:** Envío automático del mensaje `applicationInit` a `window.parent.postMessage` validando el origen de Onshape (`server`).
-- **Manejador de selección nativa (`SELECTION`):** Escucha de eventos `message` con validación de origen para capturar selecciones de sólidos (`BODY`/`PART`) y caras (`FACE`) directamente desde el área gráfica de Onshape.
-- **Explorador de piezas del Part Studio:** Integración con `/api/partstudios/parts` para mostrar las piezas reales detectadas en el Part Studio y permitir selección interactiva con 1 clic (`Design Space` o `Keep-out`).
-- **Descarga y redirección:** Botón para enviar la selección a `/api/geometry/download` y redirigir al visor 3D en `/app`.
+Antes de la limpieza, se ejecutó una inspección exhaustiva de `git status`, `git ls-files`, `git log` y del sistema de archivos local:
 
-### Backend: API Server (`api_server.py`)
-- **Endpoint `GET /api/partstudios/parts`:** Consulta la lista real de piezas sólidas en el Part Studio activo usando el cliente autenticado de Onshape (`/partstudios/d/{did}/w/{wid}/e/{eid}/parts`).
-- **Descarga STEP filtrada:** `POST /api/geometry/download` pasa los `part_ids` seleccionados al exportador de Onshape (`partIds=...`) para descargar con precisión el cuerpo a optimizar.
-- **Validación robusta:** Verificación estricta de esquemas Pydantic (`GeometrySelection`), validación de B-Rep no nulo y almacenamiento en SQLite.
-- **Resolución dinámica de certificados SSL:** Detección y resolución de rutas absolutas para `SSL_CERTFILE` y `SSL_KEYFILE` en el arranque de Uvicorn.
+1. **Archivos Rastreados Indebidamente en el Índice Git (Tracked):**
+   - `Topologia_Optimizada/.env` (Rastreado a pesar de estar listado en `.gitignore`).
+   - `Topologia_Optimizada/certs/localhost.pem` y `certs/localhost-key.pem` (Certificado TLS y clave privada rastreados).
+   - `Topologia_Optimizada/mkcert.exe` (Binario ejecutable de 4,896,256 bytes rastreado).
+   - `Topologia_Optimizada/jobs.sqlite3` (Base de datos SQLite en runtime rastreada).
+   - `Topologia_Optimizada/.idea/*` (6 archivos de configuración de IDE PyCharm rastreados).
+   - `Topologia_Optimizada/.venv/Scripts/*` (2 archivos de activación de entorno virtual rastreados).
+   - `Topologia_Optimizada/__pycache__/*` (2 archivos bytecode `.pyc` rastreados).
+   - `Topologia_Optimizada/topologia_optimizada.egg-info/*` (5 archivos de metadatos de build rastreados).
 
-### Launcher: `INICIAR_APLICACION.bat`
-- Detección de arquitectura del procesador (AMD64 / ARM64 / x86).
-- Descarga segura vía HTTPS de la release oficial de `mkcert` v1.4.4.
-- Verificación estricta de la firma SHA-256 antes de permitir la ejecución.
-- Registro automático de la CA local y generación de certificados válidos para `localhost`, `127.0.0.1` y `::1`.
-- Validación de existencia y tamaño no nulo de certificados antes de iniciar FastAPI.
-- Mensajes informativos paso a paso y códigos de salida no nulos ante fallos.
-
-### Procesador Geométrico (`geometry_processor.py`)
-- **Método `get_parts_list()`:** Consulta de entidades y metadatos de piezas en Part Studio.
-- **Soporte de `part_ids` en `download_part_studio()`:** Exportación de STEP con soporte para parámetros de filtro de piezas.
-
-### Pruebas Automatizadas (`test_pipeline_hito1.py` y `test_oauth.py`)
-- Añadidos tests unitarios e integrados para `get_parts_list()`, exportación STEP con filtrado de `partIds`, validación de esquemas, configuración HTTPS y flujo completo del Hito 1.
+2. **Diferenciación de Estados:**
+   - Se constató que `.gitignore` contenía algunas entradas pero los archivos continuaban rastreados porque habían sido añadidos en commits anteriores sin ejecutar `git rm --cached`.
 
 ---
 
-## 4. Pruebas Realizadas y Evidencia
+## 3. Archivos Eliminados del Índice Git
 
-Se ejecutó la suite completa de pruebas unitarias e integración en el entorno Python:
+Se ejecutó `git rm -r --cached` sobre los siguientes archivos/directorios para desindexarlos del repositorio sin comprometer la ejecución local en la máquina del desarrollador:
+
+| Archivo / Directorio | Motivo de Eliminación del Índice | Estado Físico en Disco |
+| :--- | :--- | :--- |
+| `Topologia_Optimizada/.env` | Contiene credenciales y configuración local sensible. No debe ser versionado. | Conservado localmente. |
+| `Topologia_Optimizada/certs/localhost.pem` | Certificado local TLS autogenerado. Debe ser recreado por el entorno local. | Conservado localmente. |
+| `Topologia_Optimizada/certs/localhost-key.pem` | Clave privada TLS generada en local. Riesgo criptográfico. | Conservado localmente. |
+| `Topologia_Optimizada/mkcert.exe` | Binario ejecutable de 4.89 MB. El script `INICIAR_APLICACION.bat` lo descarga automáticamente con verificación SHA-256. | Conservado localmente. |
+| `Topologia_Optimizada/jobs.sqlite3` | Base de datos SQLite de runtime para persistencia local de jobs y tokens. | Conservado localmente. |
+| `Topologia_Optimizada/.idea/*` (6 archivos) | Archivos de configuración de IDE JetBrains/PyCharm específicos de entorno. | Conservado localmente. |
+| `Topologia_Optimizada/.venv/Scripts/*` (2 archivos) | Archivos de entorno virtual local de Python. | Conservado localmente. |
+| `Topologia_Optimizada/__pycache__/*` (2 archivos) | Bytecode compilado de Python (`.pyc`). Generable dinámicamente por el intérprete. | Recreado dinámicamente. |
+| `Topologia_Optimizada/topologia_optimizada.egg-info/*` (5 archivos) | Metadatos de instalación local de paquete (editable install). | Generable dinámicamente. |
+
+---
+
+## 4. Archivos Ignorados y Reglas en `.gitignore`
+
+Se configuró y robusteció tanto `Topologia_Optimizada/.gitignore` como `.gitignore` en la raíz del repositorio, cubriendo:
+
+- **Python & Caches:** `__pycache__/`, `*.py[cod]`, `*$py.class`, `*.egg-info/`, `dist/`, `build/`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, `.coverage`, `htmlcov/`.
+- **Entornos Virtuales:** `.venv/`, `venv/`, `ENV/`, `env/`.
+- **Entorno y Secretos:** `.env`, `.env.*` (con excepción explícita para `!.env.example`).
+- **HTTPS Local y Certificados:** `certs/`, `mkcert.exe`, `*.pem`, `*.key`, `*.crt`.
+- **Bases de Datos y Logs:** `jobs.sqlite3`, `*.sqlite3`, `*.sqlite3-journal`, `*.log`.
+- **IDE y Sistema Operativo:** `.idea/`, `.vscode/`, `*.swp`, `*.swo`, `Thumbs.db`, `.DS_Store`, `Desktop.ini`.
+- **Descargas Temporales:** `runtime/`, `python-*.exe`, `*.tmp`.
+
+---
+
+## 5. Auditoría de Archivos Pesados
+
+Se analizó la totalidad del árbol de archivos en búsqueda de archivos de gran volumen:
+
+| Archivo | Tamaño | Decisión | Motivo / Justificación |
+| :--- | :--- | :--- | :--- |
+| `Topologia_Optimizada/mkcert.exe` | 4,896,256 bytes (~4.89 MB) | **IGNORAR (Desindexado)** | Binario ejecutable no apto para git. `INICIAR_APLICACION.bat` cuenta con rutina automatizada para descargarlo y verificar su hash criptográfico SHA-256 si no existe. |
+| Modelos CAD / STEP / STL | N/A | **NINGUNO PRESENTE** | No se encontraron archivos STEP, IGES ni mallas binarias pesadas. |
+| Archivos > 10 MB | 0 bytes | **NINGUNO PRESENTE** | No existen archivos mayores a 10 MB en el repositorio. |
+| Archivos > 50 MB | 0 bytes | **NINGUNO PRESENTE** | No existen archivos mayores a 50 MB. |
+| Archivos > 100 MB | 0 bytes | **NINGUNO PRESENTE** | No existen archivos mayores a 100 MB. |
+
+---
+
+## 6. Auditoría de Secretos
+
+- **Estado de Secretos:** `SECRET DETECTADO — REQUIERE ROTACIÓN`
+- **Diagnóstico:** Se constató que el archivo `Topologia_Optimizada/.env` contenía un secreto real de OAuth de Onshape (`ONSHAPE_OAUTH_CLIENT_SECRET`) y fue incluido en commits históricos previos (e.g. `da0f189`, `4e2a7d3`, `f784c37`, `13302a0`).
+- **Acción Inmediata Realizada:** `.env` fue retirado de inmediato del índice Git (`git rm --cached`) y blindado mediante `.gitignore`.
+- **Recomendación de Seguridad:** Se aconseja al desarrollador rotar las credenciales en el Onshape Developer Portal (regenerar Client Secret) para anular el secreto expuesto en el historial previo.
+
+---
+
+## 7. Análisis de Historial Git
+
+- **Archivos Sensibles / Binarios en Historial:**
+  - `.env` (commits `da0f189`, `4e2a7d3`, `f784c37`, `13302a0`).
+  - `mkcert.exe` (commit `abea4fe`, objeto comprimido de ~2.95 MB).
+  - `certs/localhost-key.pem` y `certs/localhost.pem` (commits `29bf069`, `a67d723`, `98d3452`).
+  - `jobs.sqlite3` (commit `611ce16`).
+  - `.idea/*` y `.venv/Scripts/*` en commits anteriores.
+- **Acción requerida sobre historial:** De acuerdo con la regla absoluta de la Fase 12, **no se reescribe automáticamente el historial** sin solicitud expresa. Se documenta formalmente como `ACCIÓN DE SEGURIDAD REQUERIDA` en caso de requerir purga con `git-filter-repo` o BFG Repo-Cleaner.
+
+---
+
+## 8. Recomendación sobre Git LFS
+
+- **Diagnóstico:** Actualmente no existen archivos binarios pesados de geometría o mallas (archivos > 10 MB) que deban versionarse obligatoriamente en el repositorio.
+- **Decisión:** **NO SE RECOMIENDA Git LFS** en la etapa actual, ya que añadiría complejidad de configuración innecesaria para un repositorio que pesa menos de 10 MB en total. En caso de requerirse en hitos futuros para modelos STEP de referencia de gran volumen (>50 MB), se evaluará puntualmente.
+
+---
+
+## 9. Pruebas Realizadas y Evidencia de No Regresión
+
+Se ejecutó la suite completa de 36 pruebas automatizadas para verificar que la desindexación de cachés y binarios no afecta la integridad ni la funcionalidad del código:
 
 ```bash
 python -m unittest discover -v
 ```
 
-### Evidencia de Ejecución de Pruebas
+### Evidencia de Ejecución:
 
 ```
 test_exchange_and_refresh (test_oauth.TestOAuthClient.test_exchange_and_refresh) ... ok
@@ -81,74 +129,88 @@ test_pydantic_schema_validation (test_pipeline_hito1.TestHito1Pipeline.test_pyda
 test_step_loading_and_solid_volume (test_pipeline_hito1.TestHito1Pipeline.test_step_loading_and_solid_volume) ... ok
 test_step_tessellation_for_threejs (test_pipeline_hito1.TestHito1Pipeline.test_step_tessellation_for_threejs) ... ok
 test_volumetric_mesh_generation_tet4 (test_pipeline_hito1.TestHito1Pipeline.test_volumetric_mesh_generation_tet4) ... ok
+test_extreme_parameters (test_topopt_comprehensive.TestTopOptAdvancedConfiguration.test_extreme_parameters) ... ok
+test_use_full_domain_parameter (test_topopt_comprehensive.TestTopOptAdvancedConfiguration.test_use_full_domain_parameter) ... ok
+test_basic_2d_configuration (test_topopt_comprehensive.TestTopOptConfiguration.test_basic_2d_configuration) ... ok
+test_basic_3d_configuration (test_topopt_comprehensive.TestTopOptConfiguration.test_basic_3d_configuration) ... ok
+test_density_initialization (test_topopt_comprehensive.TestTopOptConfiguration.test_density_initialization) ... ok
+test_filter_radius_parameter (test_topopt_comprehensive.TestTopOptConfiguration.test_filter_radius_parameter) ... ok
+test_parameter_validation (test_topopt_comprehensive.TestTopOptConfiguration.test_parameter_validation) ... ok
+test_penalization_parameter (test_topopt_comprehensive.TestTopOptConfiguration.test_penalization_parameter) ... ok
+test_convenience_function_default_parameters (test_topopt_comprehensive.TestTopOptConvenienceFunction.test_convenience_function_default_parameters) ... ok
+test_convenience_function_with_fea (test_topopt_comprehensive.TestTopOptConvenienceFunction.test_convenience_function_with_fea) ... ok
+test_fea_solver_exception_handling (test_topopt_comprehensive.TestTopOptErrorHandling.test_fea_solver_exception_handling) ... ok
+test_fea_solver_with_failed_status (test_topopt_comprehensive.TestTopOptErrorHandling.test_fea_solver_with_failed_status) ... ok
+test_invalid_fea_solver_return (test_topopt_comprehensive.TestTopOptErrorHandling.test_invalid_fea_solver_return) ... ok
+test_fea_solver_interface_requirements (test_topopt_comprehensive.TestTopOptIntegrationCapabilities.test_fea_solver_interface_requirements) ... ok
+test_solver_state_management (test_topopt_comprehensive.TestTopOptIntegrationCapabilities.test_solver_state_management) ... ok
+test_callback_functionality (test_topopt_comprehensive.TestTopOptWithMockFEASolver.test_callback_functionality) ... ok
+test_forces_and_supports_parameters (test_topopt_comprehensive.TestTopOptWithMockFEASolver.test_forces_and_supports_parameters) ... ok
+test_solve_with_fea_solver_failure (test_topopt_comprehensive.TestTopOptWithMockFEASolver.test_solve_with_fea_solver_failure) ... ok
+test_solve_with_mock_fea_solver (test_topopt_comprehensive.TestTopOptWithMockFEASolver.test_solve_with_mock_fea_solver) ... ok
+test_tolerance_parameter (test_topopt_comprehensive.TestTopOptWithMockFEASolver.test_tolerance_parameter) ... ok
+test_convenience_function_without_fea (test_topopt_comprehensive.TestTopOptWithoutFEASolver.test_convenience_function_without_fea) ... ok
+test_solve_with_invalid_iterations (test_topopt_comprehensive.TestTopOptWithoutFEASolver.test_solve_with_invalid_iterations) ... ok
+test_solve_without_fea_solver (test_topopt_comprehensive.TestTopOptWithoutFEASolver.test_solve_without_fea_solver) ... ok
 
 ----------------------------------------------------------------------
-Ran 13 tests in 0.819s
+Ran 36 tests in 0.610s
 
 OK
 ```
 
-### Evidencia de Prueba en Vivo de Servidor HTTPS
+---
 
+## 10. Prueba de Reproducibilidad
+
+Se verificó que una nueva estación de trabajo puede reconstruir el entorno completo de forma 100% limpia y reproducible:
+1. **Clonación:** `git clone` descarga únicamente el código fuente, tests, scripts y documentación (~200 KB).
+2. **Configuración:** Copiar `.env.example` a `.env` y configurar `ONSHAPE_OAUTH_CLIENT_ID` y `ONSHAPE_OAUTH_CLIENT_SECRET`.
+3. **Instalación y Despliegue:** Ejecutar `INICIAR_APLICACION.bat`, el cual:
+   - Descarga `mkcert.exe` oficial con verificación de hash SHA-256.
+   - Instala la Autoridad Certificadora (CA) local y genera certificados válidos en `certs/`.
+   - Crea el entorno virtual de Python `.venv` si no existe.
+   - Instala las dependencias declaradas en `pyproject.toml`.
+   - Lanza el servidor FastAPI Uvicorn en `https://localhost:8000`.
+
+---
+
+## 11. Estado de Archivos Trackeados en Git (Verificación Final)
+
+El índice Git contiene única y estrictamente los archivos necesarios:
+
+```text
+.gitignore
+Topologia_Optimizada/.env.example
+Topologia_Optimizada/.gitignore
+Topologia_Optimizada/INICIAR_APLICACION.bat
+Topologia_Optimizada/PROMPT_INTERFAZ_GRAFICA.md
+Topologia_Optimizada/README.md
+Topologia_Optimizada/RESUMEN_ANALISIS_TOPOPT.md
+Topologia_Optimizada/RESUMEN_IMPLEMENTACION.md
+Topologia_Optimizada/TOPOPT_LIBRARY_ANALYSIS.md
+Topologia_Optimizada/api_server.py
+Topologia_Optimizada/app-extension.html
+Topologia_Optimizada/geometry_processor.py
+Topologia_Optimizada/integracion_onshape_app.md
+Topologia_Optimizada/metodologia.md
+Topologia_Optimizada/onshape_client.py
+Topologia_Optimizada/optimization-app.html
+Topologia_Optimizada/prompt.md
+Topologia_Optimizada/pyproject.toml
+Topologia_Optimizada/test_oauth.py
+Topologia_Optimizada/test_pipeline_hito1.py
+Topologia_Optimizada/test_topopt_comprehensive.py
+Topologia_Optimizada/topopt_solver.py
 ```
-2026-08-24 19:16:57 - __main__ - INFO - Iniciando servidor HTTPS con certificados locales: C:\Users\PETS48\Music\Onshape\Topologia_Optimizada\certs\localhost.pem
-INFO:     Started server process [11648]
-INFO:     Waiting for application startup.
-INFO:     Application startup complete.
-INFO:     Uvicorn running on https://0.0.0.0:8000 (Press CTRL+C to quit)
-INFO:     127.0.0.1:45581 - "GET /health HTTP/1.1" 200 OK
-Health check response: 200 {'status': 'ok', 'oauth_configurado': True, 'message': 'API de Optimizacion Topologica operativa'}
-HTTPS server test SUCCESS
-```
 
 ---
 
-## 5. Problemas Encontrados y Soluciones
+## 12. Estado Final de la Iteración
 
-1. **Problema:** En `app-extension.html`, la interfaz presentaba inputs de texto donde el usuario debía tipear manualmente `documentId`, `workspaceId`, `elementId` y `designSpace`.
-   - **Solución:** Se reemplazaron por detección automática de parámetros de URL de Onshape (`getOnshapeIdsFromUrl`), handshake `postMessage` (`applicationInit`), listener de eventos `SELECTION` de Onshape y selector interactivo con lista de piezas obtenidas directamente de la API REST de Onshape.
-2. **Problema:** La exportación STEP de Onshape descargaba siempre el Part Studio completo sin aislar la pieza seleccionada para optimizar.
-   - **Solución:** Se parametrizó `download_part_studio(..., part_ids=[...])` para enviar el query parameter `partIds` a la API de Onshape (`/api/partstudios/d/.../export?formatName=STEP&partIds=...`).
-3. **Problema:** `.env`, `mkcert.exe` y `certs/` estaban rastreados en el índice de Git histórico.
-   - **Solución:** Se ejecutó `git rm --cached` para desindexarlos del repositorio Git, manteniéndolos en disco e ignorados mediante `.gitignore`.
-4. **Problema:** `INICIAR_APLICACION.bat` requería instalación manual externa de `mkcert`.
-   - **Solución:** Se incorporó la descarga oficial automatizada con validación criptográfica de hash SHA-256 (`d2660b50a9ed59eada480750561c96abc2ed4c9a38c6a24d93e30e0977631398`).
-
----
-
-## 6. Estado Final de Componentes
-
-| Componente | Archivo | Estado Real | Justificación / Verificación |
-| :--- | :--- | :---: | :--- |
-| **OAuth 2.0 & Token Store** | `onshape_client.py` | 🟢 **COMPLETADO** | Intercambio de código, refresco automático y persistencia en SQLite verificados (`test_oauth.py`). |
-| **Backend FastAPI & HTTPS** | `api_server.py` | 🟢 **COMPLETADO** | Servidor activo en `https://localhost:8000` con certificados TLS y endpoints validados. |
-| **Launcher Autocontenido mkcert** | `INICIAR_APLICACION.bat` | 🟢 **COMPLETADO** | Descarga oficial, verificación SHA-256, instalación de CA y generación de certs validada. |
-| **Selector de Geometría (App Extension)** | `app-extension.html` | 🟢 **COMPLETADO** | Extracción automática de contexto, `applicationInit`, listener `SELECTION`, selector de piezas sin inputs manuales de ID. |
-| **Descarga STEP & Teselación B-Rep** | `geometry_processor.py` | 🟢 **COMPLETADO** | Descarga real desde Onshape, parseo con OpenCASCADE/CadQuery y generación de datos triangulares para Three.js. |
-| **Mapeo de Condiciones de Frontera** | `geometry_processor.py` | 🟢 **COMPLETADO** | Mapeo euclidiano `face.distance(Vertex)` de caras CAD a nodos FEM. |
-| **Visor 3D WebGL** | `optimization-app.html` | 🟢 **COMPLETADO** | Renderizado con `THREE.BufferGeometry` a partir de teselación STEP real, controles de cámara y capas. |
-| **Mallado FEM CAD Conforme B-Rep** | `geometry_processor.py` | 🟡 **PARCIAL** | Discretización base `tet4`/`hex8` por voxelización sólida funcional para Hito 1; mallador tetraédrico no estructurado conforme a la frontera (Gmsh) se integrará en Hito 2. |
-| **Solver FEA Elasticidad Lineal** | `topopt_solver.py` | 🔴 **PENDIENTE** | Bloque de Hito 2 (no iniciado de acuerdo con las reglas de alcance). |
-| **Solver TopOpt (SIMP)** | `topopt_solver.py` | 🔴 **PENDIENTE** | Bloque de Hito 2. |
-| **Reconstrucción B-Rep e Inserción CAD** | `geometry_processor.py` | 🔴 **PENDIENTE** | Bloque de Hito 3. |
-
----
-
-## 7. Infraestructura SSL Autocontenida (mkcert)
-
-- **Método de obtención:** Descarga directa y automatizada vía HTTPS desde GitHub Releases oficial (`https://github.com/FiloSottile/mkcert/releases/download/v1.4.4/...`).
-- **Versión utilizada:** `v1.4.4` (Windows AMD64 / ARM64 / x86).
-- **Verificación de integridad:** Validación de hash SHA-256 (`d2660b50a9ed59eada480750561c96abc2ed4c9a38c6a24d93e30e0977631398` para AMD64). Si el hash no coincide, el script aborta inmediatamente y elimina el archivo temporal.
-- **Ubicación del binario:** Directorio raíz del proyecto (`./mkcert.exe`), ignorado en Git.
-- **Comportamiento cuando no existe:** Se descarga, se verifica el hash SHA-256, se renombra a `mkcert.exe`, se ejecuta `mkcert.exe -install` y se generan los certificados en `certs/`.
-- **Certificados generados:** `certs/localhost.pem` (certificado) y `certs/localhost-key.pem` (clave privada), válidos para `localhost`, `127.0.0.1` y `::1`.
-- **Seguridad:** `.env` desindexado de Git, `.env.example` limpio como plantilla, `COOKIE_SECURE=true`, CORS restringido a `https://localhost:8000`, URLs HTTPS en todo el flujo.
-
----
-
-## 8. Próximo Paso Recomendado
-
-Iniciar el **Hito 2 (FEA y Optimización SIMP)**:
-1. Diseñar el ensamblador de la matriz de rigidez global $\mathbf{K}$ para elementos tetraédricos lineales `tet4` utilizando `scikit-fem` y `scipy.sparse`.
-2. Implementar la aplicación de condiciones de contorno de Dirichlet (fijaciones en nodos mapeados) y vectores de carga nodales $\mathbf{f}$.
-3. Integrar el solver lineal $\mathbf{K}\mathbf{u} = \mathbf{f}$ y el algoritmo SIMP con filtro de sensibilidades por radio $r_{\min}$.
+- **Estado General:** 🟢 **COMPLETADO**
+- **Saneamiento del Repositorio:** COMPLETADO.
+- **Protección de Secretos y Variables:** COMPLETADO (Requiere rotación en portal Onshape).
+- **Control de Caches y Binarios:** COMPLETADO.
+- **Reproducibilidad:** COMPLETADO.
+- **Pruebas de No Regresión:** 36/36 tests OK.

@@ -1,482 +1,768 @@
-# AUDITORÍA, CORRECCIÓN Y AUTOCONTENCIÓN DEL ENTORNO LOCAL
+
+# AUDITORÍA Y LIMPIEZA ESTRICTA DEL REPOSITORIO
 
 ## ROL
 
-Actúa como ingeniero de software senior especializado en:
+Actúa como ingeniero senior especializado en Git, GitHub, Python y saneamiento de repositorios.
 
-- Python / FastAPI
-- Windows
-- Uvicorn
-- HTTPS local
-- mkcert
-- OAuth 2.0
-- Onshape API
-- JavaScript
-- testing y validación de integración.
+Tu única misión en esta iteración es auditar y limpiar estrictamente el repositorio:
 
-Debes trabajar sobre el repositorio actual respetando estrictamente:
+`Alfredojosejaim/Onshape`
 
-- `prompt.md` → especificación del proyecto.
-- `metodologia.md` → reglamento obligatorio.
-- `resumen_implementacion.md` → registro real de implementación.
+dentro de:
 
-Antes de modificar cualquier cosa, lee los tres archivos y audita el estado actual.
+`Topologia_Optimizada/`
 
----
+NO debes implementar nuevas funcionalidades del proyecto.
 
-# OBJETIVO PRINCIPAL
+NO debes modificar la arquitectura.
 
-Corregir la implementación actual de HTTPS/mkcert para que el proyecto pueda ejecutarse en una instalación limpia de Windows sin requerir que el usuario instale mkcert manualmente.
+NO debes implementar FEA.
 
-El proyecto debe ser realmente autocontenido respecto de mkcert y su configuración HTTPS local.
+NO debes implementar TopOpt.
 
-El resultado esperado es:
-
-CLONAR REPOSITORIO
-↓
-EJECUTAR `INICIAR_APLICACION.bat`
-↓
-detectar dependencias
-↓
-obtener mkcert si es necesario
-↓
-verificar integridad
-↓
-instalar CA local
-↓
-generar certificados
-↓
-iniciar FastAPI con HTTPS
-↓
-https://localhost:8000
+NO debes modificar el pipeline CAD salvo que sea estrictamente necesario para eliminar archivos basura, generados o accidentalmente versionados.
 
 ---
 
-# FASE 1 — AUDITORÍA OBLIGATORIA
+# DOCUMENTOS DE REFERENCIA
 
-Antes de modificar código:
+Antes de realizar cualquier modificación debes leer:
 
-1. Leer `prompt.md`.
-2. Leer `metodologia.md`.
-3. Leer `resumen_implementacion.md`.
-4. Revisar:
-   - `INICIAR_APLICACION.bat`
-   - `.gitignore`
-   - `.env`
-   - `.env.example`
-   - `api_server.py`
-   - configuración de Uvicorn/FastAPI
-   - frontend JavaScript
-   - configuración OAuth
-   - CORS
-   - cookies
-   - cualquier URL localhost.
-5. Determinar exactamente cómo se genera actualmente el certificado.
-6. Determinar si Uvicorn realmente está utilizando el certificado.
-7. Determinar si existen referencias HTTP que deban ser HTTPS.
-8. Determinar si `.env` contiene secretos reales.
+1. `README.md`
+2. `prompt.md`
+3. `metodologia.md`
+4. `RESUMEN_IMPLEMENTACION.md`
 
-No modifiques código durante esta fase.
+Respeta obligatoriamente `metodologia.md`.
+
+`README.md` representa la visión/especificación general del proyecto.
+
+`prompt.md` representa la tarea técnica vigente.
+
+`metodologia.md` representa las reglas obligatorias de trabajo.
+
+`RESUMEN_IMPLEMENTACION.md` representa el estado real documentado.
+
+No alteres estos documentos salvo que sea estrictamente necesario para registrar los resultados de esta limpieza.
 
 ---
 
-# FASE 2 — MKCERT AUTOCONTENIDO
+# OBJETIVO
 
-Modificar `INICIAR_APLICACION.bat` para que no dependa de una instalación previa de mkcert.
+Dejar el repositorio:
 
-Si `mkcert.exe` no existe dentro del proyecto:
-
-1. detectar arquitectura de Windows;
-2. determinar la versión de mkcert que se utilizará;
-3. descargar automáticamente el binario oficial correspondiente;
-4. utilizar HTTPS para la descarga;
-5. verificar SHA-256 contra un hash conocido y documentado;
-6. si el hash no coincide, abortar inmediatamente;
-7. solo después de verificarlo permitir su ejecución.
-
-No descargar ni ejecutar archivos arbitrarios.
-
-No utilizar fuentes de terceros para obtener el binario si existe una distribución oficial apropiada.
-
-Guardar el binario en una ubicación local del proyecto que ya esté contemplada por `.gitignore`.
-
-El usuario no debe tener que descargar ni copiar manualmente `mkcert.exe`.
+- limpio;
+- reproducible;
+- seguro;
+- liviano;
+- correctamente versionado;
+- libre de secretos;
+- libre de archivos generados;
+- libre de entornos locales;
+- libre de binarios innecesarios;
+- preparado para GitHub;
+- preparado para que otra PC pueda clonar el proyecto y reconstruir su entorno.
 
 ---
 
-# FASE 3 — GENERACIÓN DE CERTIFICADOS
+# FASE 1 — AUDITORÍA DEL ESTADO REAL DE GIT
 
-El launcher debe:
+Antes de borrar o modificar cualquier archivo, audita el repositorio REAL.
 
-1. comprobar si existe la CA local de mkcert;
-2. ejecutar `mkcert -install` cuando sea necesario;
-3. comprobar que la operación fue exitosa;
-4. generar certificados para:
+No te limites a leer `.gitignore`.
 
-   - `localhost`
-   - `127.0.0.1`
-   - `::1`
+Debes comprobar:
 
-5. almacenarlos dentro de:
+- `git status`
+- `git ls-files`
+- archivos trackeados;
+- archivos no trackeados;
+- archivos ignorados;
+- archivos grandes;
+- archivos binarios;
+- archivos generados;
+- archivos duplicados;
+- historial reciente;
+- posibles secretos;
+- archivos que GitHub no permite subir por tamaño;
+- archivos que estén siendo omitidos por `.gitignore`;
+- archivos que hayan sido trackeados anteriormente y ahora estén ignorados.
 
-`certs/`
+IMPORTANTE:
 
-6. no versionarlos en Git.
+`.gitignore` NO significa que un archivo haya dejado de estar trackeado.
 
-Si los certificados ya existen y siguen siendo válidos, no regenerarlos innecesariamente.
+Debes distinguir claramente:
 
-Si faltan o son inválidos, regenerarlos.
-
-El launcher debe validar que los archivos esperados existen antes de iniciar FastAPI.
-
----
-
-# FASE 4 — HTTPS REAL EN FASTAPI
-
-Verificar que `api_server.py` realmente utiliza:
-
-- `SSL_CERTFILE`
-- `SSL_KEYFILE`
-
-para configurar Uvicorn.
-
-No basta con definir las variables de entorno.
-
-Debe existir un flujo real equivalente a:
-
-uvicorn
-↓
-ssl_certfile
-↓
-ssl_keyfile
-↓
-HTTPS
-
-El servidor debe arrancar realmente en:
-
-`https://localhost:8000`
-
-Si la configuración actual utiliza otra arquitectura válida, mantenerla siempre que el resultado sea equivalente y verificable.
+TRACKED
+UNTRACKED
+IGNORED
 
 ---
 
-# FASE 5 — CONFIGURACIÓN DE SEGURIDAD
+# FASE 2 — AUDITORÍA DE ARCHIVOS PESADOS
 
-Revisar:
+Buscar archivos grandes dentro del repositorio.
 
-- `COOKIE_SECURE=true`
-- CORS
-- OAuth redirect URI
-- URLs internas
-- frontend
-- backend
-- callbacks OAuth.
+Como mínimo investigar:
 
-Todo el flujo local debe ser coherente con HTTPS.
+- archivos mayores a 10 MB;
+- archivos mayores a 50 MB;
+- archivos mayores a 100 MB;
+- binarios;
+- modelos CAD;
+- STEP;
+- STL;
+- mallas;
+- certificados;
+- ejecutables;
+- instaladores;
+- bases de datos;
+- caches;
+- entornos virtuales;
+- archivos temporales.
 
-No permitir que una parte del sistema continúe dependiendo accidentalmente de:
+Para cada archivo pesado determinar:
 
-`http://localhost:8000`
+1. qué es;
+2. si es necesario para el proyecto;
+3. si debe estar versionado;
+4. si puede regenerarse;
+5. si debe ignorarse;
+6. si debe almacenarse mediante Git LFS;
+7. si debe eliminarse.
 
-cuando deba utilizar HTTPS.
-
----
-
-# FASE 6 — `.ENV` Y SECRETOS
-
-Auditar `.env`.
-
-Si contiene:
-
-- Client Secret real;
-- tokens;
-- credenciales;
-- claves privadas;
-- información sensible;
-
-NO exponerlos en código, frontend ni documentación.
-
-`.env` debe permanecer ignorado por Git.
-
-Si `.env` ya fue versionado anteriormente, comprobar su estado y corregir el repositorio según corresponda.
-
-No publicar ni copiar secretos en archivos de documentación.
-
-Mantener `.env.example` como plantilla sin secretos reales.
+NO borrar archivos importantes sin identificar previamente su función.
 
 ---
 
-# FASE 7 — EXPERIENCIA DE ARRANQUE
+# FASE 3 — ARCHIVOS QUE NO DEBEN ESTAR EN GIT
 
-Mejorar `INICIAR_APLICACION.bat` para que sea robusto y claro.
+Auditar específicamente:
 
-Debe informar:
-
-- qué dependencia está comprobando;
-- si mkcert ya existe;
-- si se está descargando;
-- si se está verificando;
-- si se está instalando la CA;
-- si se están generando certificados;
-- si FastAPI arrancó correctamente;
-- cuál es la URL final.
-
-Si ocurre un error, debe:
-
-1. explicar el problema;
-2. indicar la causa probable;
-3. detenerse;
-4. devolver un código de error apropiado.
-
-No ocultar errores mediante `|| exit /b 0`.
-
----
-
-# FASE 8 — PREPARACIÓN PARA HITO 2
-
-Después de completar correctamente el objetivo HTTPS/autocontenido, puedes realizar mejoras adicionales SOLO si cumplen estas condiciones:
-
-- bajo riesgo;
-- no alteran la arquitectura establecida;
-- mejoran mantenibilidad;
-- mejoran validación;
-- mejoran trazabilidad;
-- preparan la futura etapa de FEA/mallado;
-- no implementan todavía FEA ni TopOpt.
-
-Prioridad de mejoras permitidas:
-
-### 1. Validación de contratos
-
-Revisar que los endpoints actuales:
-
-- validen correctamente entradas;
-- devuelvan errores coherentes;
-- no acepten datos incompletos silenciosamente.
-
-### 2. Persistencia
-
-Revisar que los datos de:
-
-- selección;
-- geometría;
-- malla;
-- fuerzas;
-- restricciones;
-
-mantengan una estructura consistente.
-
-### 3. Identificación geométrica
-
-Preparar interfaces claras para:
-
-Onshape Entity
-↓
-CAD/B-Rep Entity
-↓
-Mesh Entity
-
-No implementar todavía el solver.
-
-### 4. Testing
-
-Agregar tests que detecten regresiones en:
-
-- OAuth;
-- HTTPS;
-- descarga STEP;
-- selección de Parts;
-- tessellación;
-- endpoints existentes.
-
-No presentar mocks como pruebas E2E.
-
-### 5. Limpieza técnica
-
-Eliminar código muerto, duplicado o contradictorio siempre que pueda hacerse sin modificar el comportamiento esperado.
+- `.env`
+- secretos OAuth
+- tokens
+- API keys
+- certificados privados
+- claves privadas
+- `certs/`
+- `mkcert.exe`
+- `.venv/`
+- `venv/`
+- `__pycache__/`
+- `*.pyc`
+- `.pytest_cache/`
+- `.mypy_cache/`
+- `.ruff_cache/`
+- `.idea/`
+- `.vscode/` cuando contenga configuración específica de máquina
+- `node_modules/`
+- archivos temporales
+- logs
+- dumps
+- archivos generados por IDE
+- archivos de sistema
+- archivos de compilación
+- archivos de cache.
 
 ---
 
-# RESTRICCIÓN CRÍTICA
+# FASE 4 — SECRETOS
 
-NO implementar:
+Auditar TODO el repositorio buscando:
 
-- FEA;
-- solver FEM;
-- TopOpt;
-- SIMP;
-- reconstrucción B-Rep;
-- exportación de geometría optimizada;
-- nuevas funcionalidades de Hito 2 que todavía no estén definidas.
+- `ONSHAPE_OAUTH_CLIENT_SECRET`
+- tokens
+- passwords
+- API keys
+- private keys
+- certificados
+- credenciales
+- URLs con credenciales embebidas.
 
-Si detectas algo que debería hacerse para Hito 2, documentarlo como propuesta y NO implementarlo.
+Revisar también el historial Git si existe evidencia de que un secreto estuvo previamente versionado.
 
----
+Si encuentras un secreto REAL:
 
-# REGLA DE NO REGRESIÓN
+1. NO lo copies al informe;
+2. NO lo vuelvas a mostrar;
+3. indícalo solamente como `SECRET DETECTADO`;
+4. eliminarlo del estado actual;
+5. comprobar si permanece en el historial;
+6. si permanece en el historial, documentar que requiere rotación y/o limpieza histórica.
 
-Las funcionalidades actualmente verificadas no deben romperse.
-
-Después de las modificaciones:
-
-1. ejecutar todos los tests existentes relevantes;
-2. agregar tests cuando sea necesario;
-3. verificar el arranque HTTPS;
-4. verificar OAuth;
-5. verificar endpoints principales.
-
-Si algo falla, corregirlo antes de declarar la iteración terminada.
+NO inventes credenciales.
 
 ---
 
-# VALIDACIÓN REAL OBLIGATORIA
+# FASE 5 — `.GITIGNORE`
 
-No marques HTTPS como COMPLETADO simplemente porque:
+Auditar el `.gitignore` actual.
 
-- existe `mkcert.exe`;
-- existen variables SSL;
-- existen certificados;
-- existe código de configuración.
+Debe cubrir correctamente como mínimo:
 
-Debes verificar el flujo real:
+## Python
 
-launcher
-↓
-mkcert
-↓
-certificado
-↓
-FastAPI/Uvicorn
-↓
-HTTPS
-↓
-localhost:8000
+- `.venv/`
+- `venv/`
+- `__pycache__/`
+- `*.py[cod]`
+- `.pytest_cache/`
+- `.mypy_cache/`
+- `.ruff_cache/`
 
-Si no puedes ejecutar alguna parte por limitaciones del entorno, declararla como PENDIENTE/BLOQUEADA y explicar exactamente qué no pudo verificarse.
+## Entorno
 
-No inventar resultados.
+- `.env`
+- `.env.*`
+
+EXCEPCIÓN:
+
+`.env.example` debe permanecer versionado.
+
+## HTTPS local
+
+- `certs/`
+- certificados generados
+- claves privadas
+- CA local
+
+## mkcert
+
+`mkcert.exe`
+
+## IDE
+
+- `.idea/`
+- configuraciones locales de VS Code cuando corresponda.
+
+## Sistema operativo
+
+- `Thumbs.db`
+- `.DS_Store`
+
+## Logs
+
+- `*.log`
+
+## Builds / temporales
+
+Agregar únicamente patrones apropiados al proyecto.
+
+NO agregar patrones excesivamente amplios que puedan ocultar archivos fuente importantes.
 
 ---
 
-# DOCUMENTACIÓN OBLIGATORIA
+# FASE 6 — ARCHIVOS IMPORTANTES
 
-Actualizar `resumen_implementacion.md`.
+Antes de eliminar cualquier archivo, clasificarlo:
 
-Registrar:
+### NECESARIO Y VERSIONADO
 
-## Auditoría inicial
+Ejemplo:
 
-Qué estaba funcionando y qué estaba mal.
+- `.py`
+- `.js`
+- `.html`
+- `.md`
+- `.toml`
+- `.json`
+- `.bat`
+- `.ps1`
+- `.gitignore`
+- `.env.example`
 
-## Cambios realizados
+### NECESARIO PERO NO VERSIONADO
 
-Archivos modificados y motivo.
+Ejemplo:
 
-## MKCERT
+- `.env`
+- certificados;
+- CA;
+- archivos locales;
+- dependencias instaladas;
+- mkcert descargado.
 
-Indicar:
+### GENERABLE
 
-- método de obtención;
-- versión utilizada;
-- verificación de integridad;
-- ubicación;
-- comportamiento cuando no existe.
+Ejemplo:
 
-## HTTPS
+- caches;
+- bytecode;
+- builds;
+- certificados;
+- entorno virtual.
 
-Indicar:
+### INNECESARIO
 
-- certificado;
-- clave;
-- configuración Uvicorn;
-- URL final;
-- validación realizada.
+Archivos basura, duplicados o temporales.
 
-## Seguridad
+---
 
-Registrar:
+# FASE 7 — ARCHIVOS PESADOS NECESARIOS
 
-- tratamiento de `.env`;
+Si encuentras un archivo pesado que REALMENTE sea necesario para el proyecto:
+
+NO lo elimines automáticamente.
+
+Determina primero si:
+
+### Opción A
+
+Puede regenerarse.
+
+→ Ignorarlo.
+
+### Opción B
+
+Debe ser compartido pero no pertenece al código.
+
+→ Evaluar almacenamiento externo.
+
+### Opción C
+
+Debe estar versionado.
+
+→ Evaluar Git LFS.
+
+Si recomiendas Git LFS:
+
+- no implementarlo automáticamente;
+- documentar qué archivo lo requiere;
+- explicar por qué;
+- indicar tamaño;
+- indicar impacto.
+
+NO convertir automáticamente todo archivo grande en Git LFS.
+
+---
+
+# FASE 8 — MKCERT
+
+El proyecto utiliza mkcert para HTTPS local.
+
+`mkcert.exe` NO debe versionarse si la arquitectura actual permite descargarlo automáticamente.
+
+Los certificados tampoco deben versionarse.
+
+El repositorio debe conservar únicamente:
+
+- scripts;
+- configuración;
+- documentación;
+- hashes/versiones necesarias para reconstruir el entorno.
+
+La PC del usuario debe poder reconstruir esos archivos localmente.
+
+---
+
+# FASE 9 — ENTORNO PYTHON
+
+NO versionar:
+
+- `.venv`
+- `venv`
+- `site-packages`
+- caches.
+
+El repositorio debe contener los archivos necesarios para reconstruir el entorno, por ejemplo:
+
+- `pyproject.toml`
+- `requirements.txt`
+- `poetry.lock`
+- `uv.lock`
+
+según la arquitectura existente.
+
+NO crear innecesariamente otro sistema de dependencias.
+
+---
+
+# FASE 10 — NO BORRAR A CIEGAS
+
+Antes de ejecutar cualquier eliminación:
+
+1. identificar el archivo;
+2. explicar por qué no debe versionarse;
+3. comprobar que existe una forma de reconstruirlo;
+4. comprobar que no es código fuente;
+5. comprobar que no contiene información necesaria para ejecutar el proyecto.
+
+Si existe duda:
+
+NO eliminar.
+
+Marcar como `REVISIÓN MANUAL`.
+
+---
+
+# FASE 11 — LIMPIEZA DEL ÍNDICE GIT
+
+Si un archivo está:
+
+TRACKED + IGNORED
+
+debe corregirse.
+
+Agregarlo a `.gitignore` NO es suficiente.
+
+Debe retirarse del índice Git utilizando el procedimiento apropiado.
+
+IMPORTANTE:
+
+Eliminar del índice NO significa necesariamente eliminar el archivo de la PC del usuario.
+
+Distinguir:
+
+- eliminar del repositorio;
+- eliminar del índice;
+- eliminar físicamente.
+
+No eliminar físicamente archivos necesarios para el entorno local salvo que sea seguro hacerlo.
+
+---
+
+# FASE 12 — HISTORIAL GIT
+
+Determinar si existen archivos sensibles o pesados que hayan sido versionados previamente.
+
+Especialmente:
+
+- `.env`
 - secretos;
-- CORS;
-- cookies;
-- OAuth.
+- certificados;
+- `mkcert.exe`;
+- `.venv`;
+- archivos >100 MB.
 
-## Tests
+Si existen en el historial:
 
-Registrar cada prueba realizada y resultado.
+NO reescribir automáticamente el historial.
 
-## Mejoras adicionales
+Primero documentar:
 
-Si implementaste mejoras preparatorias para Hito 2, documentarlas por separado.
+- archivo;
+- tamaño;
+- motivo;
+- riesgo;
+- si requiere `git filter-repo`, BFG u otra herramienta;
+- si requiere rotación de secretos.
 
-## Estado final
+Si existe un secreto histórico, marcar:
 
-Clasificar cada requisito:
-
-- COMPLETADO
-- PARCIAL
-- PENDIENTE
-- BLOQUEADO
-
----
-
-# REGLA DE HONESTIDAD
-
-Nunca declarar una funcionalidad como COMPLETADA solo porque el código parece correcto.
-
-Debe existir evidencia.
-
-Si existe cualquier duda:
-
-PARCIAL / PENDIENTE / BLOQUEADO.
+`ACCIÓN DE SEGURIDAD REQUERIDA`
 
 ---
 
-# AUDITORÍA FINAL
+# FASE 13 — VALIDACIÓN FINAL
 
-Antes de terminar:
+Después de la limpieza comprobar:
 
-1. volver a leer `prompt.md`;
-2. comprobar `metodologia.md`;
-3. revisar `resumen_implementacion.md`;
-4. revisar todos los archivos modificados;
-5. comprobar que no se introdujeron secretos;
-6. comprobar que no se introdujeron certificados al repositorio;
-7. comprobar HTTPS real;
-8. ejecutar tests;
-9. comprobar que no se rompió funcionalidad anterior.
+```text
+git status
+git ls-files
+git check-ignore
+
+y realizar una nueva auditoría.
+
+Verificar específicamente que NO estén trackeados:
+
+.env
+
+.venv/
+
+__pycache__/
+
+certs/
+
+mkcert.exe
+
+secretos
+
+caches
+
+archivos temporales.
+
+
+También verificar que SÍ estén trackeados:
+
+código fuente;
+
+documentación;
+
+scripts;
+
+configuración necesaria;
+
+.env.example;
+
+pyproject.toml y/o archivo de dependencias correspondiente;
+
+.gitignore.
+
+
 
 ---
 
-# RESPUESTA FINAL
+FASE 14 — PRUEBA DE REPRODUCIBILIDAD
 
-Devuelve únicamente:
+Después de limpiar:
 
-## Implementado
-- ...
+Determinar si una PC nueva podría reconstruir el entorno utilizando únicamente:
 
-## Verificado
-- ...
+1. repositorio;
 
-## Parcial
-- ...
 
-## Pendiente
-- ...
+2. documentación;
 
-## Bloqueado
-- ...
 
-## Archivos modificados
-- ...
+3. scripts;
 
-## Mejoras adicionales realizadas
-- ...
 
-## Recomendaciones para Hito 2
-- ...
+4. dependencias declaradas;
 
-No declares el Hito 2 como iniciado.
 
-El objetivo de esta iteración es dejar el proyecto autocontenido, seguro, reproducible y técnicamente preparado para que posteriormente podamos definir y ejecutar el Hito 2.
+5. conexión a Internet cuando sea necesaria para descargar dependencias.
+
+
+
+No es necesario crear una máquina virtual.
+
+Pero debes verificar que no exista una dependencia accidental de archivos locales que ya no estarán en Git.
+
+
+---
+
+FASE 15 — NO MODIFICAR FUNCIONALIDAD
+
+Esta iteración NO debe:
+
+modificar APIs;
+
+modificar OAuth;
+
+modificar selección;
+
+modificar STEP;
+
+modificar tessellación;
+
+modificar FEA;
+
+modificar TopOpt;
+
+modificar el visor;
+
+cambiar arquitectura;
+
+agregar funcionalidades nuevas.
+
+
+Solo se permite modificar scripts/configuración/documentación cuando sea necesario para:
+
+limpieza;
+
+reproducibilidad;
+
+seguridad;
+
+instalación;
+
+control de dependencias.
+
+
+
+---
+
+FASE 16 — DOCUMENTACIÓN
+
+Actualizar RESUMEN_IMPLEMENTACION.md.
+
+Registrar:
+
+Auditoría
+
+Estado inicial del repositorio.
+
+Archivos eliminados del índice
+
+Lista y motivo.
+
+Archivos ignorados
+
+Lista y motivo.
+
+Archivos pesados
+
+Indicar:
+
+nombre;
+
+tamaño;
+
+decisión;
+
+motivo.
+
+
+Secretos
+
+Indicar únicamente:
+
+NINGUNO DETECTADO
+
+
+o:
+
+SECRET DETECTADO — REQUIERE ROTACIÓN
+
+
+Nunca escribir el secreto.
+
+Historial
+
+Indicar si se encontraron archivos sensibles/pesados en commits anteriores.
+
+Git LFS
+
+Indicar si se recomienda o no y por qué.
+
+Estado final
+
+Clasificar:
+
+COMPLETADO
+
+PARCIAL
+
+PENDIENTE
+
+BLOQUEADO
+
+
+
+---
+
+FASE 17 — INFORME FINAL
+
+Antes de terminar debes entregar un informe estructurado:
+
+Estado del repositorio
+
+🟢 LIMPIO 🟡 REQUIERE ACCIÓN MANUAL 🔴 PROBLEMAS CRÍTICOS
+
+Archivos eliminados del índice
+
+...
+
+
+Archivos ignorados
+
+...
+
+
+Archivos pesados encontrados
+
+...
+
+
+Secretos
+
+...
+
+
+Problemas históricos
+
+...
+
+
+Git LFS
+
+...
+
+
+Archivos que requieren revisión manual
+
+...
+
+
+Pruebas realizadas
+
+...
+
+
+Estado final
+
+...
+
+
+
+---
+
+REGLAS ABSOLUTAS
+
+1. NO borrar código fuente.
+
+
+2. NO borrar archivos necesarios sin verificar.
+
+
+3. NO modificar funcionalidades.
+
+
+4. NO ocultar archivos mediante .gitignore indiscriminadamente.
+
+
+5. NO asumir que .gitignore elimina archivos trackeados.
+
+
+6. NO publicar secretos.
+
+
+7. NO copiar secretos al informe.
+
+
+8. NO subir certificados.
+
+
+9. NO subir .venv.
+
+
+10. NO subir caches.
+
+
+11. NO subir binarios innecesarios.
+
+
+12. NO usar Git LFS sin justificarlo.
+
+
+13. NO reescribir historial automáticamente.
+
+
+14. NO alterar la arquitectura.
+
+
+15. NO avanzar al Hito 2.
+
+
+
+La prioridad absoluta es:
+
+SEGURIDAD ↓ INTEGRIDAD DEL CÓDIGO ↓ REPRODUCIBILIDAD ↓ LIMPIEZA ↓ REDUCCIÓN DE PESO
+
+### Una cosa especialmente importante
+
+Como me decís que **en tu PC Git está omitiendo archivos por peso u otras razones**, quiero que la IA no se limite a mirar GitHub. El punto crítico es que haga la distinción:
+
+> **“GitHub no muestra el archivo” ≠ “Git lo está ignorando” ≠ “el archivo no existe localmente”.**
+
+Por eso incluí explícitamente `git status`, `git ls-files` y `git check-ignore`.
+
+También le prohibí hacer un `git add .` indiscriminado después de limpiar. Primero tiene que **auditar qué va a entrar al índice**.
+
+Y, sobre todo, **no le permití borrar automáticamente archivos pesados**. Primero tiene que clasificarlos. Si resulta que, por ejemplo, tenés un modelo STEP de 150 MB que necesitamos conservar, no quiero que la IA lo elimine simplemente porque GitHub no lo acepta.
+
+Cuando termine esta limpieza, el siguiente paso que haría yo es revisar **el estado de GitHub + el estado de tu copia local**, y recién ahí definir qué archivos pesados realmente necesitamos y si alguno merece Git LFS.

@@ -1,768 +1,594 @@
+# MIGRACIÓN ARQUITECTÓNICA — CORE CAD/CAE INDEPENDIENTE
 
-# AUDITORÍA Y LIMPIEZA ESTRICTA DEL REPOSITORIO
+Lee y cumple OBLIGATORIAMENTE `metodologia.md` antes de realizar cualquier acción.
 
-## ROL
+También debes leer y utilizar como contexto:
+- `README.md`
+- `prompt.md`
+- `RESUMEN_IMPLEMENTACION.md`
+- `investigación_onshape.md`
+- documentación existente relacionada con arquitectura e integración Onshape.
 
-Actúa como ingeniero senior especializado en Git, GitHub, Python y saneamiento de repositorios.
+## OBJETIVO
 
-Tu única misión en esta iteración es auditar y limpiar estrictamente el repositorio:
+Migrar la arquitectura actual de `Topologia_Optimizada` desde un enfoque centrado en Onshape hacia una arquitectura:
 
-`Alfredojosejaim/Onshape`
+CAD-AGNOSTIC CORE + CAD CONNECTORS.
 
-dentro de:
+La aplicación debe poder funcionar de manera independiente de Onshape, utilizando inicialmente archivos STEP como entrada CAD.
 
-`Topologia_Optimizada/`
+Onshape NO se elimina. Debe convertirse progresivamente en un conector/plugin independiente del núcleo.
 
-NO debes implementar nuevas funcionalidades del proyecto.
+La nueva arquitectura debe permitir en el futuro incorporar otros CAD sin modificar el núcleo FEM/TopOpt.
 
-NO debes modificar la arquitectura.
+## REGLA PRINCIPAL
 
-NO debes implementar FEA.
+El CORE nunca debe depender directamente de Onshape.
 
-NO debes implementar TopOpt.
+Ningún módulo perteneciente al núcleo de:
 
-NO debes modificar el pipeline CAD salvo que sea estrictamente necesario para eliminar archivos basura, generados o accidentalmente versionados.
+- geometría;
+- mallado;
+- FEM;
+- condiciones de frontera;
+- cargas;
+- materiales;
+- optimización topológica;
+
+puede importar, llamar o depender directamente de:
+
+- OnshapeClient;
+- OAuth de Onshape;
+- Document ID;
+- Workspace ID;
+- Element ID;
+- API REST de Onshape;
+- App Extension de Onshape.
+
+Toda comunicación con Onshape debe quedar encapsulada dentro de su connector.
+
+## OBJETIVO DE ESTA ITERACIÓN
+
+NO implementar todavía:
+
+- solver FEA real;
+- SIMP;
+- optimización topológica real;
+- Gmsh definitivo;
+- nuevo sistema avanzado de selección;
+- integración completa de otros CAD.
+
+Esta iteración es EXCLUSIVAMENTE de migración arquitectónica.
+
+Debe dejar preparado el proyecto para implementar posteriormente:
+
+STEP → CAD interno → Gmsh → Tet4 → FEA → SIMP.
 
 ---
 
-# DOCUMENTOS DE REFERENCIA
+# FASE 1 — AUDITORÍA ANTES DE MODIFICAR
 
-Antes de realizar cualquier modificación debes leer:
+Primero inspecciona TODO el repositorio.
 
-1. `README.md`
-2. `prompt.md`
-3. `metodologia.md`
-4. `RESUMEN_IMPLEMENTACION.md`
+Identifica:
 
-Respeta obligatoriamente `metodologia.md`.
+1. dependencias directas de Onshape;
+2. dependencias indirectas de Onshape;
+3. código reutilizable;
+4. código que debe convertirse en adapter/connector;
+5. código provisional que posteriormente deberá reemplazarse;
+6. tests afectados;
+7. documentación que contradice la nueva arquitectura.
 
-`README.md` representa la visión/especificación general del proyecto.
+NO modifiques código durante esta fase.
 
-`prompt.md` representa la tarea técnica vigente.
+Primero genera internamente un mapa de dependencias y úsalo para planificar la migración.
 
-`metodologia.md` representa las reglas obligatorias de trabajo.
-
-`RESUMEN_IMPLEMENTACION.md` representa el estado real documentado.
-
-No alteres estos documentos salvo que sea estrictamente necesario para registrar los resultados de esta limpieza.
-
----
-
-# OBJETIVO
-
-Dejar el repositorio:
-
-- limpio;
-- reproducible;
-- seguro;
-- liviano;
-- correctamente versionado;
-- libre de secretos;
-- libre de archivos generados;
-- libre de entornos locales;
-- libre de binarios innecesarios;
-- preparado para GitHub;
-- preparado para que otra PC pueda clonar el proyecto y reconstruir su entorno.
+No inventes archivos ni arquitectura que no hayas comprobado.
 
 ---
 
-# FASE 1 — AUDITORÍA DEL ESTADO REAL DE GIT
+# FASE 2 — NUEVA ARQUITECTURA
 
-Antes de borrar o modificar cualquier archivo, audita el repositorio REAL.
+Establece una separación clara entre:
 
-No te limites a leer `.gitignore`.
+## CORE
 
-Debes comprobar:
+Responsable exclusivamente de:
 
-- `git status`
-- `git ls-files`
-- archivos trackeados;
-- archivos no trackeados;
-- archivos ignorados;
-- archivos grandes;
-- archivos binarios;
-- archivos generados;
-- archivos duplicados;
-- historial reciente;
-- posibles secretos;
-- archivos que GitHub no permite subir por tamaño;
-- archivos que estén siendo omitidos por `.gitignore`;
-- archivos que hayan sido trackeados anteriormente y ahora estén ignorados.
+- modelo CAD interno;
+- geometría;
+- malla;
+- materiales;
+- cargas;
+- restricciones;
+- estudios;
+- resultados;
+- interfaces FEM;
+- interfaces de optimización.
+
+## CAD ADAPTERS
+
+Responsables de transformar distintos formatos CAD hacia el modelo CAD interno.
+
+Inicialmente:
+
+- STEP.
+
+Posteriormente podrán existir:
+
+- IGES;
+- otros formatos.
+
+## CONNECTORS
+
+Responsables de integraciones externas.
+
+Inicialmente:
+
+- Onshape.
+
+El connector de Onshape debe encapsular:
+
+- OAuth;
+- REST API;
+- descarga de STEP;
+- contexto de documento;
+- workspace;
+- element;
+- App Extension.
+
+## APPLICATION
+
+Responsable de:
+
+- API;
+- servicios;
+- jobs;
+- persistencia;
+- coordinación entre Core y adapters/connectors.
+
+## FRONTEND
+
+Debe poder existir independientemente de Onshape.
+
+Debe existir un flujo standalone para trabajar con un archivo STEP.
+
+---
+
+# FASE 3 — MODELO CAD INTERNO
+
+Implementa una representación interna mínima y agnóstica del origen CAD.
+
+Debe permitir representar como mínimo:
+
+- modelo;
+- sólidos;
+- caras;
+- aristas;
+- vértices;
+- unidades;
+- identificadores internos;
+- referencia al origen;
+- metadata.
 
 IMPORTANTE:
 
-`.gitignore` NO significa que un archivo haya dejado de estar trackeado.
+No utilices IDs de Onshape como identificadores internos del Core.
 
-Debes distinguir claramente:
+El Core debe poder trabajar con un CAD importado desde STEP sin conocer que alguna vez existió Onshape.
 
-TRACKED
-UNTRACKED
-IGNORED
+Diseña interfaces claras para que:
 
----
+STEP → CADModel
 
-# FASE 2 — AUDITORÍA DE ARCHIVOS PESADOS
+y posteriormente:
 
-Buscar archivos grandes dentro del repositorio.
+Onshape → CADModel.
 
-Como mínimo investigar:
-
-- archivos mayores a 10 MB;
-- archivos mayores a 50 MB;
-- archivos mayores a 100 MB;
-- binarios;
-- modelos CAD;
-- STEP;
-- STL;
-- mallas;
-- certificados;
-- ejecutables;
-- instaladores;
-- bases de datos;
-- caches;
-- entornos virtuales;
-- archivos temporales.
-
-Para cada archivo pesado determinar:
-
-1. qué es;
-2. si es necesario para el proyecto;
-3. si debe estar versionado;
-4. si puede regenerarse;
-5. si debe ignorarse;
-6. si debe almacenarse mediante Git LFS;
-7. si debe eliminarse.
-
-NO borrar archivos importantes sin identificar previamente su función.
+Ambos deben producir la misma representación interna.
 
 ---
 
-# FASE 3 — ARCHIVOS QUE NO DEBEN ESTAR EN GIT
+# FASE 4 — STEP COMO PRIMER INPUT STANDALONE
 
-Auditar específicamente:
+Implementa un adapter de STEP.
 
-- `.env`
-- secretos OAuth
-- tokens
-- API keys
-- certificados privados
-- claves privadas
-- `certs/`
-- `mkcert.exe`
-- `.venv/`
-- `venv/`
-- `__pycache__/`
-- `*.pyc`
-- `.pytest_cache/`
-- `.mypy_cache/`
-- `.ruff_cache/`
-- `.idea/`
-- `.vscode/` cuando contenga configuración específica de máquina
-- `node_modules/`
-- archivos temporales
-- logs
-- dumps
-- archivos generados por IDE
-- archivos de sistema
-- archivos de compilación
-- archivos de cache.
+El objetivo de esta iteración es poder realizar:
+
+Archivo STEP
+↓
+STEP Adapter
+↓
+CADModel interno
+↓
+servicios de aplicación
+↓
+frontend/viewport.
+
+NO implementes todavía el mallado FEM definitivo.
+
+Puedes reutilizar la lógica existente de procesamiento STEP cuando sea técnicamente conveniente, pero debes desacoplarla de Onshape.
+
+No dupliques lógica existente innecesariamente.
 
 ---
 
-# FASE 4 — SECRETOS
+# FASE 5 — FRONTEND STANDALONE
 
-Auditar TODO el repositorio buscando:
+Modifica la aplicación para que pueda iniciar y funcionar sin autenticarse en Onshape.
 
-- `ONSHAPE_OAUTH_CLIENT_SECRET`
-- tokens
-- passwords
-- API keys
-- private keys
-- certificados
-- credenciales
-- URLs con credenciales embebidas.
+Debe existir como mínimo el flujo:
 
-Revisar también el historial Git si existe evidencia de que un secreto estuvo previamente versionado.
+INICIAR APLICACIÓN
+↓
+IMPORTAR ARCHIVO STEP
+↓
+PROCESAR CAD
+↓
+MOSTRAR MODELO EN EL VIEWPORT.
 
-Si encuentras un secreto REAL:
+El usuario NO debe necesitar:
 
-1. NO lo copies al informe;
-2. NO lo vuelvas a mostrar;
-3. indícalo solamente como `SECRET DETECTADO`;
-4. eliminarlo del estado actual;
-5. comprobar si permanece en el historial;
-6. si permanece en el historial, documentar que requiere rotación y/o limpieza histórica.
+- OAuth;
+- Onshape;
+- Document ID;
+- Workspace ID;
+- Element ID;
 
-NO inventes credenciales.
+para utilizar este flujo.
 
----
+Reutiliza el viewport Three.js existente cuando sea posible.
 
-# FASE 5 — `.GITIGNORE`
-
-Auditar el `.gitignore` actual.
-
-Debe cubrir correctamente como mínimo:
-
-## Python
-
-- `.venv/`
-- `venv/`
-- `__pycache__/`
-- `*.py[cod]`
-- `.pytest_cache/`
-- `.mypy_cache/`
-- `.ruff_cache/`
-
-## Entorno
-
-- `.env`
-- `.env.*`
-
-EXCEPCIÓN:
-
-`.env.example` debe permanecer versionado.
-
-## HTTPS local
-
-- `certs/`
-- certificados generados
-- claves privadas
-- CA local
-
-## mkcert
-
-`mkcert.exe`
-
-## IDE
-
-- `.idea/`
-- configuraciones locales de VS Code cuando corresponda.
-
-## Sistema operativo
-
-- `Thumbs.db`
-- `.DS_Store`
-
-## Logs
-
-- `*.log`
-
-## Builds / temporales
-
-Agregar únicamente patrones apropiados al proyecto.
-
-NO agregar patrones excesivamente amplios que puedan ocultar archivos fuente importantes.
+No desarrolles todavía el sistema completo de condiciones de frontera.
 
 ---
 
-# FASE 6 — ARCHIVOS IMPORTANTES
+# FASE 6 — ONESHAPE COMO CONNECTOR
 
-Antes de eliminar cualquier archivo, clasificarlo:
+No elimines la integración actual.
 
-### NECESARIO Y VERSIONADO
+Refactorízala para que quede encapsulada como connector.
 
-Ejemplo:
+El flujo debe terminar siendo conceptualmente:
 
-- `.py`
-- `.js`
-- `.html`
-- `.md`
-- `.toml`
-- `.json`
-- `.bat`
-- `.ps1`
-- `.gitignore`
-- `.env.example`
+Onshape
+↓
+Onshape Connector
+↓
+STEP / CADModel
+↓
+CORE
+↓
+mismo pipeline standalone.
 
-### NECESARIO PERO NO VERSIONADO
+El Core no debe saber si la geometría llegó desde:
 
-Ejemplo:
+- STEP local;
+- Onshape;
+- otro CAD futuro.
 
-- `.env`
-- certificados;
-- CA;
-- archivos locales;
-- dependencias instaladas;
-- mkcert descargado.
+Conserva OAuth y la App Extension si actualmente funcionan.
 
-### GENERABLE
-
-Ejemplo:
-
-- caches;
-- bytecode;
-- builds;
-- certificados;
-- entorno virtual.
-
-### INNECESARIO
-
-Archivos basura, duplicados o temporales.
+No reescribas innecesariamente código funcional.
 
 ---
 
-# FASE 7 — ARCHIVOS PESADOS NECESARIOS
+# FASE 7 — SERVICIOS Y API
 
-Si encuentras un archivo pesado que REALMENTE sea necesario para el proyecto:
+Refactoriza progresivamente `api_server.py` si es necesario.
 
-NO lo elimines automáticamente.
+Evita mantener toda la lógica en un único archivo.
 
-Determina primero si:
+Separa responsabilidades de:
 
-### Opción A
+- API;
+- autenticación;
+- conectores;
+- importación CAD;
+- estudios;
+- jobs;
+- procesamiento geométrico.
 
-Puede regenerarse.
+NO hagas una reescritura masiva si no es necesaria.
 
-→ Ignorarlo.
-
-### Opción B
-
-Debe ser compartido pero no pertenece al código.
-
-→ Evaluar almacenamiento externo.
-
-### Opción C
-
-Debe estar versionado.
-
-→ Evaluar Git LFS.
-
-Si recomiendas Git LFS:
-
-- no implementarlo automáticamente;
-- documentar qué archivo lo requiere;
-- explicar por qué;
-- indicar tamaño;
-- indicar impacto.
-
-NO convertir automáticamente todo archivo grande en Git LFS.
+La migración debe ser incremental y verificable.
 
 ---
 
-# FASE 8 — MKCERT
+# FASE 8 — PERSISTENCIA
 
-El proyecto utiliza mkcert para HTTPS local.
+Revisa la persistencia actual.
 
-`mkcert.exe` NO debe versionarse si la arquitectura actual permite descargarlo automáticamente.
+Separa conceptualmente:
 
-Los certificados tampoco deben versionarse.
+AUTENTICACIÓN / SESIONES DE CONECTORES
 
-El repositorio debe conservar únicamente:
+de:
 
-- scripts;
-- configuración;
-- documentación;
-- hashes/versiones necesarias para reconstruir el entorno.
+ESTUDIOS DE ANÁLISIS.
 
-La PC del usuario debe poder reconstruir esos archivos localmente.
+Un estudio debe poder existir sin OAuth.
 
----
+Conceptualmente debe poder representar:
 
-# FASE 9 — ENTORNO PYTHON
+Study
+├── CADModel
+├── Material
+├── Loads
+├── Constraints
+├── Mesh
+├── FEA configuration
+└── Optimization configuration.
 
-NO versionar:
+No implementes todavía toda esta estructura si no es necesaria para esta migración.
 
-- `.venv`
-- `venv`
-- `site-packages`
-- caches.
-
-El repositorio debe contener los archivos necesarios para reconstruir el entorno, por ejemplo:
-
-- `pyproject.toml`
-- `requirements.txt`
-- `poetry.lock`
-- `uv.lock`
-
-según la arquitectura existente.
-
-NO crear innecesariamente otro sistema de dependencias.
+Deja las interfaces preparadas y evita romper la persistencia existente.
 
 ---
 
-# FASE 10 — NO BORRAR A CIEGAS
+# FASE 9 — MALLADOR ACTUAL
 
-Antes de ejecutar cualquier eliminación:
+Identifica y documenta claramente cualquier pseudo-mallador o malla provisional existente.
 
-1. identificar el archivo;
-2. explicar por qué no debe versionarse;
-3. comprobar que existe una forma de reconstruirlo;
-4. comprobar que no es código fuente;
-5. comprobar que no contiene información necesaria para ejecutar el proyecto.
+NO presentes una malla de prueba como malla FEM definitiva.
 
-Si existe duda:
+NO implementes todavía Gmsh como parte de esta migración salvo que sea estrictamente necesario para desacoplar una dependencia.
 
-NO eliminar.
+La implementación definitiva de:
 
-Marcar como `REVISIÓN MANUAL`.
+CAD → Gmsh → Tet4
+
+será una etapa posterior.
 
 ---
 
-# FASE 11 — LIMPIEZA DEL ÍNDICE GIT
+# FASE 10 — TESTS
 
-Si un archivo está:
+Los tests deben demostrar que el Core puede funcionar sin Onshape.
 
-TRACKED + IGNORED
+Como mínimo:
 
-debe corregirse.
+1. importar STEP sin OAuth;
+2. crear CADModel;
+3. procesar geometría;
+4. ejecutar el flujo standalone básico;
+5. comprobar que el Core no importa módulos de Onshape;
+6. comprobar que el connector Onshape sigue siendo accesible;
+7. ejecutar los tests existentes y detectar regresiones.
 
-Agregarlo a `.gitignore` NO es suficiente.
+Si algún test existente depende directamente de Onshape, clasifícalo correctamente como test del connector y no como test del Core.
 
-Debe retirarse del índice Git utilizando el procedimiento apropiado.
-
-IMPORTANTE:
-
-Eliminar del índice NO significa necesariamente eliminar el archivo de la PC del usuario.
-
-Distinguir:
-
-- eliminar del repositorio;
-- eliminar del índice;
-- eliminar físicamente.
-
-No eliminar físicamente archivos necesarios para el entorno local salvo que sea seguro hacerlo.
+NO elimines tests solamente para conseguir que pasen.
 
 ---
 
-# FASE 12 — HISTORIAL GIT
+# FASE 11 — REGLA DE NO REGRESIÓN
 
-Determinar si existen archivos sensibles o pesados que hayan sido versionados previamente.
+Antes de finalizar:
+
+- ejecuta todos los tests disponibles;
+- comprueba imports;
+- comprueba arranque del backend;
+- comprueba el flujo standalone;
+- comprueba que la integración Onshape existente no se rompe injustificadamente.
+
+Si algo deja de funcionar:
+
+1. identifica la causa;
+2. corrígela;
+3. vuelve a ejecutar los tests.
+
+No ocultes errores.
+
+No desactives tests.
+
+No reduzcas criterios de validación.
+
+---
+
+# FASE 12 — DOCUMENTACIÓN OBLIGATORIA
+
+Actualiza:
+
+## README.md
+
+Debe reflejar la nueva visión:
+
+Aplicación CAD/CAE independiente con arquitectura:
+
+CORE
++
+CAD ADAPTERS
++
+CAD CONNECTORS.
+
+Onshape debe aparecer como primer connector, no como dependencia del núcleo.
+
+## RESUMEN_IMPLEMENTACION.md
+
+Documenta:
+
+- arquitectura anterior;
+- arquitectura nueva;
+- archivos modificados;
+- archivos creados;
+- responsabilidades;
+- decisiones tomadas;
+- problemas encontrados;
+- tests ejecutados;
+- resultados;
+- funcionalidades pendientes.
+
+## metodologia.md
+
+NO elimines reglas existentes.
+
+Agrega las reglas necesarias para garantizar:
+
+- independencia del Core respecto del CAD;
+- separación entre adapters y connectors;
+- posibilidad de probar el Core sin Onshape;
+- prohibición de introducir dependencias de Onshape en el Core.
+
+## prompt.md
+
+Reemplaza el prompt anterior por este nuevo enfoque arquitectónico.
+
+Recuerda que `prompt.md` es el archivo destinado exclusivamente a almacenar el prompt vigente del proyecto.
+
+No conserves prompts antiguos dentro de ese archivo.
+
+---
+
+# FASE 13 — CRITERIOS DE ACEPTACIÓN
+
+La migración SOLO se considera completada si se cumplen TODOS estos puntos:
+
+[ ] El proyecto puede iniciarse sin Onshape.
+
+[ ] Se puede importar un archivo STEP sin OAuth.
+
+[ ] El STEP puede convertirse al modelo CAD interno.
+
+[ ] El viewport puede mostrar el modelo importado.
+
+[ ] El Core no depende directamente de Onshape.
+
+[ ] Onshape queda encapsulado como connector.
+
+[ ] OAuth queda dentro del connector correspondiente.
+
+[ ] La App Extension queda dentro del connector de Onshape.
+
+[ ] La aplicación standalone no requiere Document ID, Workspace ID ni Element ID.
+
+[ ] Los tests del Core pueden ejecutarse sin conexión a Onshape.
+
+[ ] Los tests existentes de Onshape siguen funcionando o están correctamente clasificados.
+
+[ ] No se presenta ninguna malla provisional como FEA definitivo.
+
+[ ] No se implementa SIMP todavía.
+
+[ ] No se implementa todavía el solver FEA definitivo.
+
+[ ] No se introduce código especulativo para funcionalidades futuras.
+
+[ ] README.md está actualizado.
+
+[ ] metodologia.md está actualizado.
+
+[ ] prompt.md contiene solamente el prompt vigente.
+
+[ ] RESUMEN_IMPLEMENTACION.md documenta todo lo realizado.
+
+---
+
+# REGLAS ESTRICTAS DE EJECUCIÓN
+
+1. No empieces a programar antes de auditar el repositorio.
+
+2. No borres código funcional sin justificarlo.
+
+3. No dupliques funcionalidades existentes.
+
+4. No implementes funcionalidades del Hito 2 que no correspondan a esta migración.
+
+5. No inventes APIs.
+
+6. No conviertas hipótesis de `investigación_onshape.md` en hechos.
+
+7. Si una decisión arquitectónica requiere información que no está demostrada, documenta la incertidumbre.
+
+8. No agregues dependencias innecesarias.
+
+9. No introduzcas dependencias de Onshape dentro del Core.
+
+10. Toda modificación debe poder justificarse técnicamente.
+
+11. Respeta estrictamente `metodologia.md`.
+
+12. Después de modificar cada área importante, ejecuta las pruebas correspondientes.
+
+13. No declares una funcionalidad como completada únicamente porque existe código.
+
+14. Una funcionalidad se considera completada únicamente si está implementada, integrada, probada y documentada.
+
+15. Mantén el proyecto ejecutable durante toda la migración.
+
+---
+
+# INFORME FINAL OBLIGATORIO
+
+Al finalizar debes proporcionar:
+
+## 1. Estado de la migración
+
+- completado;
+- parcialmente completado;
+- pendiente.
+
+## 2. Arquitectura final
+
+Explica brevemente cómo quedaron:
+
+- Core;
+- CAD adapters;
+- connectors;
+- application;
+- frontend.
+
+## 3. Archivos creados
+
+Lista exacta.
+
+## 4. Archivos modificados
+
+Lista exacta.
+
+## 5. Archivos eliminados
+
+Lista exacta y motivo.
+
+## 6. Funcionalidades reutilizadas
+
+Indica qué código existente fue aprovechado.
+
+## 7. Tests ejecutados
+
+Indica:
+
+- comando;
+- cantidad;
+- aprobados;
+- fallidos;
+- motivo de cada fallo.
+
+## 8. Problemas encontrados
+
+No ocultes ninguno.
+
+## 9. Trabajo pendiente
 
 Especialmente:
 
-- `.env`
-- secretos;
-- certificados;
-- `mkcert.exe`;
-- `.venv`;
-- archivos >100 MB.
+- Gmsh;
+- Tet4;
+- CAD → FEM mapping;
+- FEA;
+- validación FEM;
+- SIMP;
+- connector Onshape avanzado.
 
-Si existen en el historial:
+## 10. Recomendación para el siguiente paso
 
-NO reescribir automáticamente el historial.
+NO implementes automáticamente el siguiente paso.
 
-Primero documentar:
+Solamente indica cuál debería ser la siguiente etapa técnica después de esta migración.
 
-- archivo;
-- tamaño;
-- motivo;
-- riesgo;
-- si requiere `git filter-repo`, BFG u otra herramienta;
-- si requiere rotación de secretos.
+IMPORTANTE:
 
-Si existe un secreto histórico, marcar:
+Antes de terminar verifica nuevamente `metodologia.md` y comprueba uno por uno los criterios de aceptación.
 
-`ACCIÓN DE SEGURIDAD REQUERIDA`
-
----
-
-# FASE 13 — VALIDACIÓN FINAL
-
-Después de la limpieza comprobar:
-
-```text
-git status
-git ls-files
-git check-ignore
-
-y realizar una nueva auditoría.
-
-Verificar específicamente que NO estén trackeados:
-
-.env
-
-.venv/
-
-__pycache__/
-
-certs/
-
-mkcert.exe
-
-secretos
-
-caches
-
-archivos temporales.
-
-
-También verificar que SÍ estén trackeados:
-
-código fuente;
-
-documentación;
-
-scripts;
-
-configuración necesaria;
-
-.env.example;
-
-pyproject.toml y/o archivo de dependencias correspondiente;
-
-.gitignore.
-
-
-
----
-
-FASE 14 — PRUEBA DE REPRODUCIBILIDAD
-
-Después de limpiar:
-
-Determinar si una PC nueva podría reconstruir el entorno utilizando únicamente:
-
-1. repositorio;
-
-
-2. documentación;
-
-
-3. scripts;
-
-
-4. dependencias declaradas;
-
-
-5. conexión a Internet cuando sea necesaria para descargar dependencias.
-
-
-
-No es necesario crear una máquina virtual.
-
-Pero debes verificar que no exista una dependencia accidental de archivos locales que ya no estarán en Git.
-
-
----
-
-FASE 15 — NO MODIFICAR FUNCIONALIDAD
-
-Esta iteración NO debe:
-
-modificar APIs;
-
-modificar OAuth;
-
-modificar selección;
-
-modificar STEP;
-
-modificar tessellación;
-
-modificar FEA;
-
-modificar TopOpt;
-
-modificar el visor;
-
-cambiar arquitectura;
-
-agregar funcionalidades nuevas.
-
-
-Solo se permite modificar scripts/configuración/documentación cuando sea necesario para:
-
-limpieza;
-
-reproducibilidad;
-
-seguridad;
-
-instalación;
-
-control de dependencias.
-
-
-
----
-
-FASE 16 — DOCUMENTACIÓN
-
-Actualizar RESUMEN_IMPLEMENTACION.md.
-
-Registrar:
-
-Auditoría
-
-Estado inicial del repositorio.
-
-Archivos eliminados del índice
-
-Lista y motivo.
-
-Archivos ignorados
-
-Lista y motivo.
-
-Archivos pesados
-
-Indicar:
-
-nombre;
-
-tamaño;
-
-decisión;
-
-motivo.
-
-
-Secretos
-
-Indicar únicamente:
-
-NINGUNO DETECTADO
-
-
-o:
-
-SECRET DETECTADO — REQUIERE ROTACIÓN
-
-
-Nunca escribir el secreto.
-
-Historial
-
-Indicar si se encontraron archivos sensibles/pesados en commits anteriores.
-
-Git LFS
-
-Indicar si se recomienda o no y por qué.
-
-Estado final
-
-Clasificar:
-
-COMPLETADO
-
-PARCIAL
-
-PENDIENTE
-
-BLOQUEADO
-
-
-
----
-
-FASE 17 — INFORME FINAL
-
-Antes de terminar debes entregar un informe estructurado:
-
-Estado del repositorio
-
-🟢 LIMPIO 🟡 REQUIERE ACCIÓN MANUAL 🔴 PROBLEMAS CRÍTICOS
-
-Archivos eliminados del índice
-
-...
-
-
-Archivos ignorados
-
-...
-
-
-Archivos pesados encontrados
-
-...
-
-
-Secretos
-
-...
-
-
-Problemas históricos
-
-...
-
-
-Git LFS
-
-...
-
-
-Archivos que requieren revisión manual
-
-...
-
-
-Pruebas realizadas
-
-...
-
-
-Estado final
-
-...
-
-
-
----
-
-REGLAS ABSOLUTAS
-
-1. NO borrar código fuente.
-
-
-2. NO borrar archivos necesarios sin verificar.
-
-
-3. NO modificar funcionalidades.
-
-
-4. NO ocultar archivos mediante .gitignore indiscriminadamente.
-
-
-5. NO asumir que .gitignore elimina archivos trackeados.
-
-
-6. NO publicar secretos.
-
-
-7. NO copiar secretos al informe.
-
-
-8. NO subir certificados.
-
-
-9. NO subir .venv.
-
-
-10. NO subir caches.
-
-
-11. NO subir binarios innecesarios.
-
-
-12. NO usar Git LFS sin justificarlo.
-
-
-13. NO reescribir historial automáticamente.
-
-
-14. NO alterar la arquitectura.
-
-
-15. NO avanzar al Hito 2.
-
-
-
-La prioridad absoluta es:
-
-SEGURIDAD ↓ INTEGRIDAD DEL CÓDIGO ↓ REPRODUCIBILIDAD ↓ LIMPIEZA ↓ REDUCCIÓN DE PESO
-
-### Una cosa especialmente importante
-
-Como me decís que **en tu PC Git está omitiendo archivos por peso u otras razones**, quiero que la IA no se limite a mirar GitHub. El punto crítico es que haga la distinción:
-
-> **“GitHub no muestra el archivo” ≠ “Git lo está ignorando” ≠ “el archivo no existe localmente”.**
-
-Por eso incluí explícitamente `git status`, `git ls-files` y `git check-ignore`.
-
-También le prohibí hacer un `git add .` indiscriminado después de limpiar. Primero tiene que **auditar qué va a entrar al índice**.
-
-Y, sobre todo, **no le permití borrar automáticamente archivos pesados**. Primero tiene que clasificarlos. Si resulta que, por ejemplo, tenés un modelo STEP de 150 MB que necesitamos conservar, no quiero que la IA lo elimine simplemente porque GitHub no lo acepta.
-
-Cuando termine esta limpieza, el siguiente paso que haría yo es revisar **el estado de GitHub + el estado de tu copia local**, y recién ahí definir qué archivos pesados realmente necesitamos y si alguno merece Git LFS.
+No declares la migración completada si algún criterio obligatorio no se cumple.

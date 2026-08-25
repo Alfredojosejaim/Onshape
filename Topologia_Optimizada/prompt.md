@@ -1,594 +1,875 @@
-# MIGRACIÓN ARQUITECTÓNICA — CORE CAD/CAE INDEPENDIENTE
+PROMPT — FINALIZACIÓN ESTRICTA DE LA MIGRACIÓN CAD-AGNOSTIC
 
-Lee y cumple OBLIGATORIAMENTE `metodologia.md` antes de realizar cualquier acción.
+ROL
 
-También debes leer y utilizar como contexto:
-- `README.md`
-- `prompt.md`
-- `RESUMEN_IMPLEMENTACION.md`
-- `investigación_onshape.md`
-- documentación existente relacionada con arquitectura e integración Onshape.
+Actúa como ingeniero de software senior, arquitecto de sistemas y auditor de código, especializado en Python, aplicaciones CAD/CAE y refactorizaciones arquitectónicas.
 
-## OBJETIVO
+Estás trabajando directamente sobre este repositorio:
 
-Migrar la arquitectura actual de `Topologia_Optimizada` desde un enfoque centrado en Onshape hacia una arquitectura:
+"Alfredojosejaim/Onshape"
 
-CAD-AGNOSTIC CORE + CAD CONNECTORS.
+y específicamente sobre:
 
-La aplicación debe poder funcionar de manera independiente de Onshape, utilizando inicialmente archivos STEP como entrada CAD.
+"Topologia_Optimizada/"
 
-Onshape NO se elimina. Debe convertirse progresivamente en un conector/plugin independiente del núcleo.
+---
 
-La nueva arquitectura debe permitir en el futuro incorporar otros CAD sin modificar el núcleo FEM/TopOpt.
+1. OBJETIVO ÚNICO DE ESTA EJECUCIÓN
 
-## REGLA PRINCIPAL
+Debes FINALIZAR LA MIGRACIÓN ARQUITECTÓNICA CAD-AGNOSTIC que quedó incompleta.
 
-El CORE nunca debe depender directamente de Onshape.
+La aplicación debe dejar de estar estructuralmente centrada en Onshape y pasar a ser una aplicación standalone, capaz de funcionar independientemente de Onshape.
 
-Ningún módulo perteneciente al núcleo de:
+OBJETIVO ARQUITECTÓNICO FINAL
 
-- geometría;
-- mallado;
-- FEM;
-- condiciones de frontera;
+                    ┌─────────────────┐
+                    │   CAD INPUT     │
+                    │ STEP inicialmente│
+                    └────────┬────────┘
+                             ↓
+                    ┌─────────────────┐
+                    │  CAD ADAPTER    │
+                    └────────┬────────┘
+                             ↓
+                    ┌─────────────────┐
+                    │      CORE       │
+                    │                 │
+                    │ Geometry        │
+                    │ Mesh            │
+                    │ Materials       │
+                    │ Boundary        │
+                    │ Study           │
+                    └────────┬────────┘
+                             ↓
+                    ┌─────────────────┐
+                    │  APPLICATION    │
+                    │    SERVICES     │
+                    └────────┬────────┘
+                             ↓
+                    ┌─────────────────┐
+                    │   STANDALONE    │
+                    │   APPLICATION   │
+                    └─────────────────┘
+
+         FUTURO — NO IMPLEMENTAR AHORA
+                             │
+                 ┌───────────┴───────────┐
+                 ↓                       ↓
+             Onshape                  Otros CAD
+            Connector                Connectors
+
+---
+
+2. DOCUMENTACIÓN OBLIGATORIA ANTES DE MODIFICAR CÓDIGO
+
+Antes de tocar cualquier archivo debes leer obligatoriamente:
+
+1. "README.md"
+2. "prompt.md"
+3. "metodologia.md"
+4. "plan_implementacion_antigravity.md"
+5. "RESUMEN_IMPLEMENTACION.md"
+
+Después debes inspeccionar el árbol completo de:
+
+"Topologia_Optimizada/"
+
+No empieces a programar inmediatamente.
+
+Primero realiza una auditoría del estado actual.
+
+---
+
+3. AUDITORÍA INICIAL OBLIGATORIA
+
+Debes construir internamente una tabla de control con TODOS los puntos del "plan_implementacion_antigravity.md".
+
+Cada punto debe clasificarse exclusivamente como:
+
+- "IMPLEMENTADO"
+- "PARCIAL"
+- "NO IMPLEMENTADO"
+- "NO APLICA"
+
+No asumas que algo está implementado porque exista un archivo.
+
+Debes comprobar el código real.
+
+Regla
+
+«La existencia de un archivo NO demuestra que una funcionalidad esté implementada.»
+
+---
+
+4. REGLA DE ALCANCE
+
+Durante esta ejecución NO debes implementar:
+
+- Gmsh definitivo.
+- Solver FEA definitivo.
+- SIMP.
+- Optimización topológica.
+- nuevas funcionalidades matemáticas.
+- nuevas integraciones CAD.
+- plugin de Onshape.
+- extensión de Onshape.
+- OAuth nuevo.
+- funcionalidades avanzadas de visualización.
+
+El único objetivo es terminar la migración arquitectónica.
+
+Si encuentras código relacionado con estas áreas, no lo elimines si todavía es necesario para preservar el funcionamiento existente. Solo modifica lo estrictamente necesario para completar la arquitectura.
+
+---
+
+5. PASO 1 — ELIMINAR LA DEPENDENCIA ESTRUCTURAL DE ONSHAPE
+
+Debes revisar TODO el repositorio buscando:
+
+- "onshape"
+- "Onshape"
+- "OAuth"
+- "document_id"
+- "workspace_id"
+- "element_id"
+- "OnshapeClient"
+- "OAuthTokenStore"
+- URLs de API de Onshape
+- imports de módulos Onshape
+- sesiones OAuth
+- endpoints específicos de Onshape
+- lógica de autenticación específica de Onshape
+
+IMPORTANTE
+
+NO debes simplemente borrar todos los archivos relacionados con Onshape.
+
+Debes distinguir entre:
+
+Código que pertenece al Core
+
+Debe eliminarse cualquier dependencia de Onshape.
+
+Código que pertenece a una futura integración
+
+Debe aislarse en:
+
+connectors/onshape/
+
+Código obsoleto
+
+Debe eliminarse únicamente si ya no tiene ninguna utilidad.
+
+---
+
+6. PASO 2 — CREAR EL LÍMITE DEL CONNECTOR ONSHAPE
+
+Implementa:
+
+connectors/
+└── onshape/
+    ├── __init__.py
+    ├── client.py
+    └── service.py
+
+El connector debe contener exclusivamente lógica específica de Onshape.
+
+Debe incluir, cuando corresponda:
+
+- autenticación;
+- OAuth;
+- llamadas REST;
+- descarga de geometría;
+- operaciones específicas de Onshape.
+
+REGLA CRÍTICA
+
+El Core NO puede importar nada desde:
+
+connectors.onshape
+
+La dependencia permitida es únicamente:
+
+Connector → Application/Core
+
+Nunca:
+
+Core → Connector
+
+---
+
+7. PASO 3 — ELIMINAR O AISLAR "onshape_client.py"
+
+Si existe:
+
+onshape_client.py
+
+en la raíz de "Topologia_Optimizada/", debes determinar si contiene lógica exclusiva de Onshape.
+
+Si es así:
+
+1. migrarla al connector;
+2. actualizar los imports;
+3. ejecutar los tests;
+4. eliminar el archivo raíz cuando ya no sea necesario.
+
+No dejes dos implementaciones simultáneas.
+
+Debe existir una única fuente de verdad para la integración Onshape.
+
+---
+
+8. PASO 4 — DESACOPLAR COMPLETAMENTE EL CORE
+
+Revisa TODOS los archivos dentro de:
+
+core/
+
+El Core debe poder importarse y ejecutarse sin:
+
+- Onshape;
+- OAuth;
+- requests específicos de Onshape;
+- IDs de documentos Onshape;
+- sesiones;
+- endpoints REST de Onshape.
+
+REGLA
+
+No debe existir ningún import directa o indirectamente equivalente a:
+
+from onshape_client import ...
+from connectors.onshape import ...
+
+dentro del Core.
+
+---
+
+9. PASO 5 — ELIMINAR DEPENDENCIAS CAD CONCRETAS INNECESARIAS DEL CORE
+
+Inspecciona especialmente:
+
+core/meshing.py
+core/geometry.py
+core/models.py
+
+El Core debe trabajar con las abstracciones internas del proyecto.
+
+No debe depender innecesariamente de objetos concretos de:
+
+- CadQuery;
+- OpenCASCADE;
+- Onshape;
+- cualquier CAD específico.
+
+Si CadQuery/OpenCASCADE es necesario para el procesamiento del STEP, esa dependencia debe pertenecer al Adapter correspondiente.
+
+La arquitectura correcta debe ser:
+
+STEP
+ ↓
+StepAdapter
+ ↓
+CADModel
+ ↓
+Core
+
+No:
+
+STEP
+ ↓
+StepAdapter
+ ↓
+CadQuery Shape
+ ↓
+Core
+
+---
+
+10. PASO 6 — VERIFICAR "CADModel"
+
+Revisa:
+
+core/models.py
+
+El "CADModel" debe representar una geometría independientemente de su origen.
+
+Debe poder representar modelos provenientes de:
+
+- STEP;
+- futuros formatos;
+- futuros connectors.
+
+Los identificadores internos no deben depender de Onshape.
+
+Si existe metadata de origen, debe ser opcional.
+
+---
+
+11. PASO 7 — VERIFICAR EL STEP ADAPTER
+
+Revisa:
+
+adapters/cad/step_adapter.py
+
+Debe ser responsable exclusivamente de:
+
+STEP
+ ↓
+lectura
+ ↓
+validación
+ ↓
+conversión
+ ↓
+CADModel
+
+No debe contener:
+
+- OAuth;
+- llamadas a Onshape;
+- lógica de UI;
+- lógica de FEA;
+- lógica de optimización.
+
+Debe permanecer independiente del backend y del frontend.
+
+---
+
+12. PASO 8 — CREAR LA CAPA DE SERVICES
+
+Implementa:
+
+services/
+├── __init__.py
+├── cad_service.py
+└── study_service.py
+
+"cad_service.py"
+
+Debe centralizar operaciones relacionadas con:
+
+- importar CAD;
+- validar CAD;
+- obtener información del modelo;
+- administrar modelos cargados.
+
+"study_service.py"
+
+Debe centralizar operaciones relacionadas con:
+
+- creación de estudios;
+- configuración del estudio;
+- material;
 - cargas;
-- materiales;
-- optimización topológica;
+- restricciones;
+- malla;
+- resultados.
 
-puede importar, llamar o depender directamente de:
+No debe contener lógica específica de Onshape.
 
-- OnshapeClient;
-- OAuth de Onshape;
-- Document ID;
-- Workspace ID;
-- Element ID;
-- API REST de Onshape;
-- App Extension de Onshape.
+---
 
-Toda comunicación con Onshape debe quedar encapsulada dentro de su connector.
+13. PASO 9 — REFACTORIZAR "api_server.py"
 
-## OBJETIVO DE ESTA ITERACIÓN
+"api_server.py" no debe seguir siendo el lugar donde se concentra toda la lógica del sistema.
+
+Debe convertirse principalmente en:
+
+HTTP
+ ↓
+Router / Endpoint
+ ↓
+Service
+ ↓
+Core
+
+No debe contener directamente toda la lógica de:
+
+- CAD;
+- estudios;
+- persistencia;
+- OAuth;
+- Onshape;
+- procesamiento geométrico.
+
+Extrae responsabilidades a las capas correspondientes.
+
+---
+
+14. PASO 10 — DESACOPLAR LA PERSISTENCIA
+
+Revisa la base de datos y los modelos persistentes.
+
+La aplicación debe poder almacenar un estudio sin requerir:
+
+- document_id;
+- workspace_id;
+- element_id;
+- OAuth;
+- sesión Onshape.
+
+Un estudio standalone debe poder existir por sí mismo.
+
+Si existen campos Onshape, deben convertirse en metadata opcional de un futuro connector o eliminarse cuando corresponda.
+
+---
+
+15. PASO 11 — CREAR FLUJO STANDALONE
+
+Debe existir un flujo real:
+
+Usuario
+ ↓
+Selecciona archivo STEP
+ ↓
+Backend
+ ↓
+CAD Service
+ ↓
+STEP Adapter
+ ↓
+CADModel
+ ↓
+Respuesta
+ ↓
+Frontend
+ ↓
+Visualización
+
+Este flujo NO debe requerir:
+
+- login Onshape;
+- OAuth;
+- document ID;
+- workspace ID;
+- element ID.
+
+---
+
+16. PASO 12 — REVISAR EL FRONTEND
+
+Revisa:
+
+optimization-app.html
+
+y todos los archivos frontend relacionados.
+
+El frontend standalone no debe iniciar preguntando:
+
+"Comprobando conexión con Onshape"
+
+ni depender de:
+
+Selector de Geometría de Onshape
+
+La experiencia principal debe ser:
+
+Importar CAD
+
+o equivalente.
+
+La aplicación debe poder iniciar sin conexión externa.
+
+---
+
+17. PASO 13 — MANTENER ONSHAPE COMO FUTURO CONNECTOR
+
+NO elimines toda posibilidad futura de Onshape.
+
+Debe quedar preparado conceptualmente:
+
+connectors/onshape/
+
+pero la aplicación standalone NO debe depender de él.
+
+La aplicación debe funcionar perfectamente si:
+
+connectors/onshape/
+
+no está disponible.
+
+---
+
+18. PASO 14 — TESTS DE LÍMITES ARQUITECTÓNICOS
+
+Implementa tests específicos:
+
+tests/
+├── test_core_cad.py
+├── test_step_adapter.py
+├── test_standalone_api.py
+└── test_architecture_boundaries.py
+
+Como mínimo debes comprobar:
+
+Test A
+
+El Core importa correctamente sin Onshape.
+
+Test B
+
+El StepAdapter genera un "CADModel".
+
+Test C
+
+La API puede iniciar sin credenciales OAuth.
+
+Test D
+
+La importación STEP funciona sin conexión a Onshape.
+
+Test E
+
+El Core no importa módulos de:
+
+connectors.onshape
+
+Test F
+
+Un estudio standalone puede existir sin:
+
+document_id
+workspace_id
+element_id
+
+---
+
+19. PASO 15 — BÚSQUEDA AUTOMÁTICA DE DEPENDENCIAS PROHIBIDAS
+
+Después de la refactorización realiza una búsqueda global.
+
+Debes buscar al menos:
+
+onshape
+OAuth
+document_id
+workspace_id
+element_id
+OnshapeClient
+OAuthTokenStore
+/api/v2/
+api.onshape.com
+
+Clasifica cada coincidencia.
+
+Ninguna coincidencia dentro de "core/" debe quedar sin justificación.
+
+Ninguna dependencia de Onshape debe ser necesaria para arrancar la aplicación standalone.
+
+---
+
+20. PASO 16 — EJECUTAR TESTS
+
+Ejecuta:
+
+pytest
+
+y todos los tests específicos creados durante esta migración.
+
+No aceptes:
+
+"debería funcionar"
+
+como evidencia.
+
+Debe existir ejecución real.
+
+Si existen fallos:
+
+1. identificar;
+2. corregir;
+3. volver a ejecutar;
+4. documentar.
+
+---
+
+21. PASO 17 — VERIFICACIÓN MANUAL DEL FLUJO STANDALONE
+
+Debes comprobar realmente:
+
+arrancar aplicación
+        ↓
+sin OAuth
+        ↓
+sin Onshape
+        ↓
+abrir aplicación
+        ↓
+seleccionar STEP
+        ↓
+importar
+        ↓
+crear CADModel
+        ↓
+mostrar modelo
+
+Si no puedes ejecutar una prueba manual completa por limitaciones del entorno, debes declararlo explícitamente.
+
+No lo marques como PASS.
+
+---
+
+22. PASO 18 — NO TOCAR TODAVÍA EL MOTOR FEM
+
+El mallador provisional existente debe permanecer claramente identificado como provisional.
+
+NO reemplazarlo todavía por Gmsh durante esta tarea.
 
 NO implementar todavía:
 
-- solver FEA real;
-- SIMP;
-- optimización topológica real;
-- Gmsh definitivo;
-- nuevo sistema avanzado de selección;
-- integración completa de otros CAD.
+- Tet4 definitivo;
+- ensamblaje K;
+- solver FEA;
+- SIMP.
 
-Esta iteración es EXCLUSIVAMENTE de migración arquitectónica.
-
-Debe dejar preparado el proyecto para implementar posteriormente:
-
-STEP → CAD interno → Gmsh → Tet4 → FEA → SIMP.
+Eso será la siguiente etapa.
 
 ---
 
-# FASE 1 — AUDITORÍA ANTES DE MODIFICAR
+23. PASO 19 — ACTUALIZAR "RESUMEN_IMPLEMENTACION.md"
 
-Primero inspecciona TODO el repositorio.
+Documenta la ejecución realizada.
 
-Identifica:
+Debes agregar una nueva sección indicando:
 
-1. dependencias directas de Onshape;
-2. dependencias indirectas de Onshape;
-3. código reutilizable;
-4. código que debe convertirse en adapter/connector;
-5. código provisional que posteriormente deberá reemplazarse;
-6. tests afectados;
-7. documentación que contradice la nueva arquitectura.
+Migración CAD-Agnostic
 
-NO modifiques código durante esta fase.
+Para cada acción:
 
-Primero genera internamente un mapa de dependencias y úsalo para planificar la migración.
+Acción
+Estado
+Archivos modificados
+Archivos creados
+Archivos eliminados
+Tests ejecutados
+Resultado
 
-No inventes archivos ni arquitectura que no hayas comprobado.
+Diferencia obligatoriamente:
 
----
+- Implementado.
+- Parcial.
+- Pendiente.
+- No verificable.
 
-# FASE 2 — NUEVA ARQUITECTURA
-
-Establece una separación clara entre:
-
-## CORE
-
-Responsable exclusivamente de:
-
-- modelo CAD interno;
-- geometría;
-- malla;
-- materiales;
-- cargas;
-- restricciones;
-- estudios;
-- resultados;
-- interfaces FEM;
-- interfaces de optimización.
-
-## CAD ADAPTERS
-
-Responsables de transformar distintos formatos CAD hacia el modelo CAD interno.
-
-Inicialmente:
-
-- STEP.
-
-Posteriormente podrán existir:
-
-- IGES;
-- otros formatos.
-
-## CONNECTORS
-
-Responsables de integraciones externas.
-
-Inicialmente:
-
-- Onshape.
-
-El connector de Onshape debe encapsular:
-
-- OAuth;
-- REST API;
-- descarga de STEP;
-- contexto de documento;
-- workspace;
-- element;
-- App Extension.
-
-## APPLICATION
-
-Responsable de:
-
-- API;
-- servicios;
-- jobs;
-- persistencia;
-- coordinación entre Core y adapters/connectors.
-
-## FRONTEND
-
-Debe poder existir independientemente de Onshape.
-
-Debe existir un flujo standalone para trabajar con un archivo STEP.
+No declares la migración completa si existe cualquier criterio pendiente.
 
 ---
 
-# FASE 3 — MODELO CAD INTERNO
+24. PASO 20 — ACTUALIZAR "plan_implementacion_antigravity.md"
 
-Implementa una representación interna mínima y agnóstica del origen CAD.
+No borres el historial anterior.
 
-Debe permitir representar como mínimo:
+Actualiza el plan indicando qué puntos fueron:
 
-- modelo;
-- sólidos;
-- caras;
-- aristas;
-- vértices;
-- unidades;
-- identificadores internos;
-- referencia al origen;
-- metadata.
+[COMPLETADO]
+[PARCIAL]
+[PENDIENTE]
 
-IMPORTANTE:
-
-No utilices IDs de Onshape como identificadores internos del Core.
-
-El Core debe poder trabajar con un CAD importado desde STEP sin conocer que alguna vez existió Onshape.
-
-Diseña interfaces claras para que:
-
-STEP → CADModel
-
-y posteriormente:
-
-Onshape → CADModel.
-
-Ambos deben producir la misma representación interna.
+y deja claramente identificado el siguiente trabajo.
 
 ---
 
-# FASE 4 — STEP COMO PRIMER INPUT STANDALONE
+25. PASO 21 — AUDITORÍA FINAL
 
-Implementa un adapter de STEP.
+Antes de finalizar debes comprobar:
 
-El objetivo de esta iteración es poder realizar:
+Arquitectura
 
-Archivo STEP
-↓
-STEP Adapter
-↓
-CADModel interno
-↓
-servicios de aplicación
-↓
-frontend/viewport.
+Core
+ ├── independiente de Onshape
+ ├── independiente de OAuth
+ └── independiente de conectores
 
-NO implementes todavía el mallado FEM definitivo.
+Standalone
 
-Puedes reutilizar la lógica existente de procesamiento STEP cuando sea técnicamente conveniente, pero debes desacoplarla de Onshape.
-
-No dupliques lógica existente innecesariamente.
-
----
-
-# FASE 5 — FRONTEND STANDALONE
-
-Modifica la aplicación para que pueda iniciar y funcionar sin autenticarse en Onshape.
-
-Debe existir como mínimo el flujo:
-
-INICIAR APLICACIÓN
-↓
-IMPORTAR ARCHIVO STEP
-↓
-PROCESAR CAD
-↓
-MOSTRAR MODELO EN EL VIEWPORT.
-
-El usuario NO debe necesitar:
-
-- OAuth;
-- Onshape;
-- Document ID;
-- Workspace ID;
-- Element ID;
-
-para utilizar este flujo.
-
-Reutiliza el viewport Three.js existente cuando sea posible.
-
-No desarrolles todavía el sistema completo de condiciones de frontera.
-
----
-
-# FASE 6 — ONESHAPE COMO CONNECTOR
-
-No elimines la integración actual.
-
-Refactorízala para que quede encapsulada como connector.
-
-El flujo debe terminar siendo conceptualmente:
+STEP
+ ↓
+Adapter
+ ↓
+CADModel
+ ↓
+Service
+ ↓
+API
+ ↓
+Frontend
 
 Onshape
-↓
-Onshape Connector
-↓
-STEP / CADModel
-↓
-CORE
-↓
-mismo pipeline standalone.
 
-El Core no debe saber si la geometría llegó desde:
+Onshape
+ ↓
+Connector
+ ↓
+Application/Core
 
-- STEP local;
-- Onshape;
-- otro CAD futuro.
+Nunca:
 
-Conserva OAuth y la App Extension si actualmente funcionan.
-
-No reescribas innecesariamente código funcional.
+Core
+ ↓
+Onshape
 
 ---
 
-# FASE 7 — SERVICIOS Y API
+26. CRITERIO DE FINALIZACIÓN
 
-Refactoriza progresivamente `api_server.py` si es necesario.
+NO puedes declarar la tarea completada hasta que TODOS estos puntos sean verdaderos:
 
-Evita mantener toda la lógica en un único archivo.
+- [ ] Core independiente de Onshape.
+- [ ] Core independiente de OAuth.
+- [ ] StepAdapter operativo.
+- [ ] CADModel independiente del origen.
+- [ ] Onshape aislado como connector.
+- [ ] "services/" implementado.
+- [ ] "api_server.py" desacoplado.
+- [ ] Persistencia standalone.
+- [ ] Frontend standalone.
+- [ ] Aplicación arranca sin Onshape.
+- [ ] Importación STEP no requiere Onshape.
+- [ ] Tests arquitectónicos implementados.
+- [ ] Tests ejecutados.
+- [ ] Búsqueda global de dependencias realizada.
+- [ ] Documentación actualizada.
+- [ ] Auditoría final realizada.
 
-Separa responsabilidades de:
+Si alguno está incompleto:
 
-- API;
-- autenticación;
-- conectores;
-- importación CAD;
-- estudios;
-- jobs;
-- procesamiento geométrico.
-
-NO hagas una reescritura masiva si no es necesaria.
-
-La migración debe ser incremental y verificable.
-
----
-
-# FASE 8 — PERSISTENCIA
-
-Revisa la persistencia actual.
-
-Separa conceptualmente:
-
-AUTENTICACIÓN / SESIONES DE CONECTORES
-
-de:
-
-ESTUDIOS DE ANÁLISIS.
-
-Un estudio debe poder existir sin OAuth.
-
-Conceptualmente debe poder representar:
-
-Study
-├── CADModel
-├── Material
-├── Loads
-├── Constraints
-├── Mesh
-├── FEA configuration
-└── Optimization configuration.
-
-No implementes todavía toda esta estructura si no es necesaria para esta migración.
-
-Deja las interfaces preparadas y evita romper la persistencia existente.
+«NO declares la migración terminada.»
 
 ---
 
-# FASE 9 — MALLADOR ACTUAL
+27. REGLA CONTRA EL USO DE PLACEHOLDERS
 
-Identifica y documenta claramente cualquier pseudo-mallador o malla provisional existente.
+No puedes utilizar:
 
-NO presentes una malla de prueba como malla FEM definitiva.
+- mocks;
+- datos ficticios;
+- resultados simulados;
+- funciones vacías;
+- "pass";
+- respuestas hardcodeadas;
 
-NO implementes todavía Gmsh como parte de esta migración salvo que sea estrictamente necesario para desacoplar una dependencia.
+para aparentar que una etapa arquitectónica está implementada.
 
-La implementación definitiva de:
-
-CAD → Gmsh → Tet4
-
-será una etapa posterior.
-
----
-
-# FASE 10 — TESTS
-
-Los tests deben demostrar que el Core puede funcionar sin Onshape.
-
-Como mínimo:
-
-1. importar STEP sin OAuth;
-2. crear CADModel;
-3. procesar geometría;
-4. ejecutar el flujo standalone básico;
-5. comprobar que el Core no importa módulos de Onshape;
-6. comprobar que el connector Onshape sigue siendo accesible;
-7. ejecutar los tests existentes y detectar regresiones.
-
-Si algún test existente depende directamente de Onshape, clasifícalo correctamente como test del connector y no como test del Core.
-
-NO elimines tests solamente para conseguir que pasen.
+Los mocks solamente son aceptables dentro de tests cuando estén claramente identificados como mocks.
 
 ---
 
-# FASE 11 — REGLA DE NO REGRESIÓN
+28. REGLA CONTRA LA EXPANSIÓN DEL ALCANCE
 
-Antes de finalizar:
+Si durante la ejecución descubres problemas relacionados con FEA, SIMP, Gmsh u optimización:
 
-- ejecuta todos los tests disponibles;
-- comprueba imports;
-- comprueba arranque del backend;
-- comprueba el flujo standalone;
-- comprueba que la integración Onshape existente no se rompe injustificadamente.
+1. documenta el problema;
+2. no lo resuelvas ahora;
+3. continúa con la migración arquitectónica.
 
-Si algo deja de funcionar:
+La prioridad actual es:
 
-1. identifica la causa;
-2. corrígela;
-3. vuelve a ejecutar los tests.
-
-No ocultes errores.
-
-No desactives tests.
-
-No reduzcas criterios de validación.
+«Arquitectura standalone estable.»
 
 ---
 
-# FASE 12 — DOCUMENTACIÓN OBLIGATORIA
+29. REGLA DE TRAZABILIDAD
 
-Actualiza:
+Cada modificación debe poder relacionarse con un objetivo concreto del presente prompt.
 
-## README.md
+No realices refactorizaciones "por si acaso".
 
-Debe reflejar la nueva visión:
+Antes de modificar un archivo pregúntate:
 
-Aplicación CAD/CAE independiente con arquitectura:
+«¿Esta modificación es necesaria para completar la migración CAD-Agnostic?»
 
-CORE
-+
-CAD ADAPTERS
-+
-CAD CONNECTORS.
+Si la respuesta es no:
 
-Onshape debe aparecer como primer connector, no como dependencia del núcleo.
-
-## RESUMEN_IMPLEMENTACION.md
-
-Documenta:
-
-- arquitectura anterior;
-- arquitectura nueva;
-- archivos modificados;
-- archivos creados;
-- responsabilidades;
-- decisiones tomadas;
-- problemas encontrados;
-- tests ejecutados;
-- resultados;
-- funcionalidades pendientes.
-
-## metodologia.md
-
-NO elimines reglas existentes.
-
-Agrega las reglas necesarias para garantizar:
-
-- independencia del Core respecto del CAD;
-- separación entre adapters y connectors;
-- posibilidad de probar el Core sin Onshape;
-- prohibición de introducir dependencias de Onshape en el Core.
-
-## prompt.md
-
-Reemplaza el prompt anterior por este nuevo enfoque arquitectónico.
-
-Recuerda que `prompt.md` es el archivo destinado exclusivamente a almacenar el prompt vigente del proyecto.
-
-No conserves prompts antiguos dentro de ese archivo.
+«NO modificar.»
 
 ---
 
-# FASE 13 — CRITERIOS DE ACEPTACIÓN
+30. INFORME FINAL OBLIGATORIO
 
-La migración SOLO se considera completada si se cumplen TODOS estos puntos:
+Al terminar debes responder con:
 
-[ ] El proyecto puede iniciarse sin Onshape.
+A. Resumen ejecutivo
 
-[ ] Se puede importar un archivo STEP sin OAuth.
+Qué se consiguió.
 
-[ ] El STEP puede convertirse al modelo CAD interno.
+B. Cambios realizados
 
-[ ] El viewport puede mostrar el modelo importado.
+Lista exacta de modificaciones.
 
-[ ] El Core no depende directamente de Onshape.
+C. Archivos creados
 
-[ ] Onshape queda encapsulado como connector.
+Lista.
 
-[ ] OAuth queda dentro del connector correspondiente.
+D. Archivos modificados
 
-[ ] La App Extension queda dentro del connector de Onshape.
+Lista.
 
-[ ] La aplicación standalone no requiere Document ID, Workspace ID ni Element ID.
+E. Archivos eliminados
 
-[ ] Los tests del Core pueden ejecutarse sin conexión a Onshape.
+Lista y motivo.
 
-[ ] Los tests existentes de Onshape siguen funcionando o están correctamente clasificados.
+F. Tests
 
-[ ] No se presenta ninguna malla provisional como FEA definitivo.
+Comando ejecutado + resultado real.
 
-[ ] No se implementa SIMP todavía.
-
-[ ] No se implementa todavía el solver FEA definitivo.
-
-[ ] No se introduce código especulativo para funcionalidades futuras.
-
-[ ] README.md está actualizado.
-
-[ ] metodologia.md está actualizado.
-
-[ ] prompt.md contiene solamente el prompt vigente.
-
-[ ] RESUMEN_IMPLEMENTACION.md documenta todo lo realizado.
-
----
-
-# REGLAS ESTRICTAS DE EJECUCIÓN
-
-1. No empieces a programar antes de auditar el repositorio.
-
-2. No borres código funcional sin justificarlo.
-
-3. No dupliques funcionalidades existentes.
-
-4. No implementes funcionalidades del Hito 2 que no correspondan a esta migración.
-
-5. No inventes APIs.
-
-6. No conviertas hipótesis de `investigación_onshape.md` en hechos.
-
-7. Si una decisión arquitectónica requiere información que no está demostrada, documenta la incertidumbre.
-
-8. No agregues dependencias innecesarias.
-
-9. No introduzcas dependencias de Onshape dentro del Core.
-
-10. Toda modificación debe poder justificarse técnicamente.
-
-11. Respeta estrictamente `metodologia.md`.
-
-12. Después de modificar cada área importante, ejecuta las pruebas correspondientes.
-
-13. No declares una funcionalidad como completada únicamente porque existe código.
-
-14. Una funcionalidad se considera completada únicamente si está implementada, integrada, probada y documentada.
-
-15. Mantén el proyecto ejecutable durante toda la migración.
-
----
-
-# INFORME FINAL OBLIGATORIO
-
-Al finalizar debes proporcionar:
-
-## 1. Estado de la migración
-
-- completado;
-- parcialmente completado;
-- pendiente.
-
-## 2. Arquitectura final
-
-Explica brevemente cómo quedaron:
-
-- Core;
-- CAD adapters;
-- connectors;
-- application;
-- frontend.
-
-## 3. Archivos creados
+G. Dependencias Onshape restantes
 
 Lista exacta.
 
-## 4. Archivos modificados
+Si no quedan dentro del Core:
+
+NINGUNA
+
+H. Estado de la migración
+
+Uno de:
+
+COMPLETA
+PARCIAL
+BLOQUEADA
+
+I. Pendientes
 
 Lista exacta.
 
-## 5. Archivos eliminados
+J. Siguiente etapa
 
-Lista exacta y motivo.
+Indicar exclusivamente qué debe hacerse después de esta migración.
 
-## 6. Funcionalidades reutilizadas
+---
 
-Indica qué código existente fue aprovechado.
+REGLA FINAL Y MÁS IMPORTANTE
 
-## 7. Tests ejecutados
+No quiero una explicación teórica de cómo debería quedar la arquitectura.
 
-Indica:
+Quiero que modifiques el repositorio real.
 
-- comando;
-- cantidad;
-- aprobados;
-- fallidos;
-- motivo de cada fallo.
+Debes trabajar de forma secuencial, verificando cada etapa antes de pasar a la siguiente.
 
-## 8. Problemas encontrados
+No marques una tarea como completada porque hayas escrito el código.
 
-No ocultes ninguno.
+Una tarea solo está completada cuando:
 
-## 9. Trabajo pendiente
+IMPLEMENTACIÓN
++
+INTEGRACIÓN
++
+TEST
++
+VERIFICACIÓN
++
+DOCUMENTACIÓN
 
-Especialmente:
+están presentes.
 
-- Gmsh;
-- Tet4;
-- CAD → FEM mapping;
-- FEA;
-- validación FEM;
-- SIMP;
-- connector Onshape avanzado.
+Si los tokens o el tiempo se agotan antes de terminar:
 
-## 10. Recomendación para el siguiente paso
+1. detente;
+2. documenta exactamente hasta dónde llegaste;
+3. marca los puntos restantes como "PENDIENTE";
+4. NO declares la migración completada.
 
-NO implementes automáticamente el siguiente paso.
+No continúes con Gmsh, FEA ni SIMP.
 
-Solamente indica cuál debería ser la siguiente etapa técnica después de esta migración.
-
-IMPORTANTE:
-
-Antes de terminar verifica nuevamente `metodologia.md` y comprueba uno por uno los criterios de aceptación.
-
-No declares la migración completada si algún criterio obligatorio no se cumple.
+Primero termina y verifica completamente esta migración arquitectónica.

@@ -1,1664 +1,807 @@
+TOPOLOGÍA OPTIMIZADA
 
-# TOPOLOGÍA OPTIMIZADA PARA ONSHAPE
-
-## Especificación maestra del proyecto
-
----
-
-# 1. VISIÓN DEL PROYECTO
-
-**Topología Optimizada** es una aplicación privada/personal integrada con Onshape cuyo objetivo es permitir realizar optimización topológica de piezas CAD utilizando la geometría real del modelo, condiciones físicas definidas por el usuario y un motor externo de cálculo.
-
-La aplicación combina:
-
-- Onshape como entorno CAD de origen y destino.
-- Una App Extension integrada dentro de Onshape para seleccionar geometría.
-- Una aplicación externa como interfaz principal de trabajo.
-- Un backend Python/FastAPI para procesamiento y coordinación.
-- Un sistema de procesamiento geométrico CAD.
-- Un sistema de mallado FEM.
-- Un solver de elementos finitos.
-- Un algoritmo de optimización topológica.
-- Un visor 3D interactivo.
-- La API REST de Onshape para intercambio de datos.
-
-El objetivo final es que el usuario pueda seleccionar una pieza dentro de Onshape, definir las condiciones necesarias desde la aplicación externa, ejecutar una optimización topológica y devolver el resultado a Onshape.
+Especificación maestra del proyecto
 
 ---
 
-# 2. OBJETIVO PRINCIPAL
+1. VISIÓN DEL PROYECTO
 
-El flujo completo objetivo es:
+Topología Optimizada es una aplicación independiente de análisis y optimización topológica orientada a modelos CAD 3D.
 
-```text
-ONSHAPE
-   │
-   │ Selección de sólidos
-   ▼
-APP EXTENSION
-   │
-   │ Identificación de geometría
-   ▼
-BACKEND PYTHON
-   │
-   │ API REST Onshape
-   ▼
-GEOMETRÍA CAD REAL
-   │
-   ▼
-PROCESAMIENTO GEOMÉTRICO
-   │
-   ▼
-MALLA FEM
-   │
-   ├── Design Space
-   ├── Keep-out
-   ├── Regiones de carga
-   └── Regiones de restricción
-   │
-   ▼
-APLICACIÓN EXTERNA
-   │
-   ├── Material
-   ├── Fuerzas
-   ├── Restricciones
-   ├── Porcentaje de optimización
-   └── Parámetros del cálculo
-   │
-   ▼
-FEA
-   │
-   ▼
-TOPOLOGICAL OPTIMIZATION
-   │
-   ▼
-RESULTADO OPTIMIZADO
-   │
-   ▼
+El objetivo principal del proyecto es desarrollar una aplicación CAD/CAE capaz de recibir una geometría CAD, preparar un análisis estructural, ejecutar un análisis por elementos finitos (FEA) y posteriormente realizar optimización topológica mediante métodos como SIMP.
+
+La aplicación debe ser completamente funcional de forma independiente de cualquier plataforma CAD externa.
+
+La primera vía de entrada será mediante archivos CAD, inicialmente STEP.
+
+La integración con plataformas externas como Onshape se considera una extensión futura y no debe ser una dependencia del núcleo de la aplicación.
+
+---
+
+2. OBJETIVO PRINCIPAL
+
+El objetivo es conseguir un flujo completo y verificable:
+
+ARCHIVO CAD
+    │
+    ▼
+IMPORTACIÓN
+    │
+    ▼
+MODELO CAD INTERNO
+    │
+    ▼
 VISUALIZACIÓN 3D
-   │
-   ▼
-ACEPTAR
-   │
-   ▼
-ONSHAPE
-````
+    │
+    ▼
+DEFINICIÓN DEL ESTUDIO
+    │
+    ├── Design Space
+    ├── Keep-out
+    ├── Material
+    ├── Cargas
+    └── Restricciones
+    │
+    ▼
+MALLADO FEM
+    │
+    ▼
+MALLA TET4
+    │
+    ▼
+ANÁLISIS FEA
+    │
+    ├── Desplazamientos
+    ├── Deformaciones
+    ├── Tensiones
+    ├── Reacciones
+    └── Compliance
+    │
+    ▼
+OPTIMIZACIÓN TOPOLÓGICA
+    │
+    ▼
+RESULTADO OPTIMIZADO
+    │
+    ▼
+VISUALIZACIÓN Y VALIDACIÓN
+    │
+    ▼
+EXPORTACIÓN
+
+Este flujo debe poder ejecutarse sin conexión con Onshape.
 
 ---
 
-# 3. PRINCIPIO ARQUITECTÓNICO FUNDAMENTAL
+3. PRINCIPIO ARQUITECTÓNICO FUNDAMENTAL
 
-La aplicación está dividida en dos interfaces con responsabilidades diferentes.
+La arquitectura del proyecto debe seguir el principio:
 
-## 3.1. Interfaz dentro de Onshape
+«CAD-AGNOSTIC CORE + CAD ADAPTERS + FUTURE CONNECTORS»
 
-La App Extension integrada en Onshape tiene una función deliberadamente simple:
+El núcleo matemático y de procesamiento no debe depender de ningún CAD específico.
 
-> Seleccionar los sólidos que participan en la optimización.
+La aplicación debe poder trabajar con un modelo procedente de:
 
-No debe convertirse en la interfaz principal de configuración de TopOpt.
+STEP
+  ↓
+CAD Adapter
+  ↓
+Core
 
-Su responsabilidad principal es proporcionar contexto geométrico real.
+y en el futuro:
 
-Debe permitir seleccionar como mínimo:
-
-* Pieza a optimizar.
-* Piezas que funcionan como obstáculos/Keep-out.
-
-La interfaz interna debe ser:
-
-* simple;
-* rápida;
-* clara;
-* integrada;
-* orientada a selección.
-
----
-
-# 4. APLICACIÓN EXTERNA
-
-La aplicación externa es la **interfaz principal y más potente del sistema**.
-
-Aquí se realiza la configuración de la optimización.
-
-Debe comportarse visualmente como una aplicación CAD/CAE moderna.
-
-El usuario debe poder:
-
-* visualizar la pieza;
-* rotarla;
-* hacer zoom;
-* desplazarla;
-* inspeccionarla desde cualquier ángulo;
-* visualizar obstáculos;
-* configurar fuerzas;
-* configurar restricciones;
-* configurar materiales;
-* establecer el grado de optimización;
-* ejecutar el cálculo;
-* visualizar el resultado;
-* aceptar o cancelar el resultado.
-
----
-
-# 5. VISOR 3D
-
-La aplicación externa debe disponer de un visor 3D interactivo.
-
-El visor debe permitir como mínimo:
-
-* Orbit/rotación.
-* Zoom.
-* Pan/desplazamiento.
-* Ajustar a pantalla.
-* Centrar modelo.
-* Visualización desde cualquier orientación.
-
-La geometría mostrada debe corresponder a la geometría CAD real obtenida desde Onshape.
-
-No se deben utilizar geometrías ficticias como sustituto de la pieza real en producción.
-
-Las geometrías auxiliares sí pueden utilizar representaciones simplificadas exclusivamente para visualización.
-
----
-
-# 6. FLUJO DE SELECCIÓN
-
-El usuario comienza trabajando en Onshape.
-
-## 6.1. Pieza principal
-
-El usuario selecciona el sólido que desea optimizar.
-
-Esta selección representa el:
-
-**DESIGN SPACE**
-
-El Design Space es la región de material sobre la cual el algoritmo de optimización puede actuar.
-
----
-
-## 6.2. Obstáculos / Keep-out
-
-El usuario puede seleccionar uno o varios sólidos adicionales.
-
-Estos representan regiones que:
-
-* no deben ser invadidas;
-* no deben eliminarse;
-* deben permanecer fuera del volumen optimizado.
-
-Estas regiones se denominan:
-
-**KEEP-OUT**
-
-La selección de Keep-out es opcional.
-
-Si no se selecciona ningún Keep-out, la optimización debe trabajar únicamente con el Design Space.
-
----
-
-# 7. DESIGN SPACE
-
-El Design Space representa el volumen inicial sobre el cual se ejecutará la optimización.
-
-Debe estar asociado a geometría real.
-
-El flujo correcto es:
-
-```text
-Selección en Onshape
-        ↓
-Identificación del sólido
-        ↓
-Obtención de geometría CAD
-        ↓
-Procesamiento geométrico
-        ↓
-Malla
-        ↓
-Elementos pertenecientes al Design Space
-```
-
-El sistema no debe asumir que descargar un Part Studio completo equivale automáticamente a obtener el sólido seleccionado.
-
-Debe existir una identificación correcta de la geometría correspondiente.
-
----
-
-# 8. KEEP-OUT
-
-Los Keep-out representan geometría que debe quedar protegida.
-
-El flujo es:
-
-```text
-Selección del obstáculo
-        ↓
-Geometría CAD
-        ↓
-Malla
-        ↓
-Región Keep-out
-        ↓
-Restricción de TopOpt
-```
-
-El sistema debe soportar:
-
-* cero Keep-out;
-* un Keep-out;
-* múltiples Keep-out.
-
----
-
-# 9. GEOMETRÍA CAD
-
-La aplicación debe trabajar con geometría CAD real.
-
-El flujo general será:
-
-```text
 Onshape
-   ↓
-API REST
-   ↓
-Exportación CAD
-   ↓
-STEP / Parasolid / formato equivalente
-   ↓
-OpenCASCADE / CadQuery
-   ↓
-Geometría sólida
-```
+  ↓
+Connector
+  ↓
+CAD Adapter / CADModel
+  ↓
+Core
 
-El sistema debe validar:
-
-* respuesta HTTP;
-* existencia del archivo;
-* integridad del archivo;
-* formato;
-* existencia de sólidos;
-* errores de importación;
-* geometría inválida.
-
-No se deben utilizar geometrías ficticias en producción.
+La misma lógica deberá poder reutilizarse posteriormente con otras plataformas CAD.
 
 ---
 
-# 10. PROCESAMIENTO GEOMÉTRICO
+4. PRIORIDAD ACTUAL DEL PROYECTO
 
-La geometría CAD debe convertirse en una representación adecuada para cálculo numérico.
+La prioridad absoluta es:
 
-El procesamiento debe conservar información suficiente para relacionar:
+«Construir una aplicación standalone técnicamente funcional.»
 
-* sólidos;
-* caras;
-* regiones;
-* elementos de malla;
-* nodos.
+Actualmente NO son prioridad:
 
-Debe ser posible determinar qué parte de la malla corresponde a:
+- integración con Onshape;
+- plugins;
+- extensiones para CAD;
+- sincronización bidireccional;
+- modificación del Feature Tree de Onshape;
+- soporte para múltiples plataformas CAD.
 
-* Design Space;
-* Keep-out;
-* superficies de aplicación de fuerzas;
-* superficies de restricciones.
+Estas funcionalidades podrán desarrollarse posteriormente.
 
----
-
-# 11. MALLA FEM
-
-El sistema debe generar una malla volumétrica adecuada para análisis estructural 3D.
-
-La malla debe estar formada por elementos compatibles con el solver FEA utilizado.
-
-La implementación debe validar como mínimo:
-
-* conectividad;
-* orientación;
-* elementos degenerados;
-* calidad geométrica;
-* volumen;
-* Jacobiano;
-* aspect ratio;
-* estabilidad numérica;
-* representación de la geometría.
-
-El método de mallado será elegido en función de la solución técnicamente más adecuada.
-
-Pueden evaluarse herramientas como:
-
-* Gmsh;
-* Netgen;
-* TetGen;
-* otras herramientas equivalentes.
-
-No se debe incorporar una dependencia simplemente por existir.
-
-La elección debe justificarse técnicamente.
+La aplicación debe tener valor y utilidad incluso si nunca se instala un plugin.
 
 ---
 
-# 12. MAPEO CAD → MALLA
+5. ARQUITECTURA GENERAL
 
-La aplicación debe mantener una relación entre geometría CAD y malla.
+La aplicación se dividirá conceptualmente en las siguientes capas:
 
-Debe ser posible pasar de:
+┌─────────────────────────────────────┐
+│             FRONTEND                │
+│       Interfaz + Visor 3D           │
+└──────────────────┬──────────────────┘
+                   │
+┌──────────────────▼──────────────────┐
+│           APPLICATION               │
+│ API + Servicios + Estudios + Jobs   │
+└──────────────────┬──────────────────┘
+                   │
+┌──────────────────▼──────────────────┐
+│               CORE                  │
+│                                     │
+│ Geometría                           │
+│ Malla                               │
+│ Materiales                          │
+│ Cargas                              │
+│ Restricciones                       │
+│ FEA                                 │
+│ Optimización                        │
+└──────────────────┬──────────────────┘
+                   │
+          ┌────────┴────────┐
+          ▼                 ▼
+     CAD ADAPTERS       FUTURE CONNECTORS
+          │                 │
+        STEP             Onshape
+        IGES             Otros CAD
+        ...              ...
 
-```text
-Cara CAD
+---
+
+6. CORE
+
+El Core constituye el núcleo técnico del proyecto.
+
+Debe ser completamente independiente del origen de la geometría.
+
+Debe contener las funcionalidades relacionadas con:
+
+- modelo CAD interno;
+- geometría;
+- malla;
+- materiales;
+- cargas;
+- restricciones;
+- condiciones de frontera;
+- análisis FEA;
+- resultados;
+- optimización topológica.
+
+Regla estricta
+
+Ningún módulo del Core puede depender directamente de:
+
+- Onshape;
+- OAuth;
+- API REST de Onshape;
+- Document ID;
+- Workspace ID;
+- Element ID;
+- App Extensions;
+- APIs específicas de otros CAD.
+
+El Core debe poder probarse y ejecutarse sin conexión a ninguna plataforma CAD externa.
+
+---
+
+7. MODELO CAD INTERNO
+
+La aplicación debe utilizar una representación interna independiente del CAD de origen.
+
+Conceptualmente:
+
+CADModel
+├── model_id
+├── units
+├── solids
+├── faces
+├── edges
+├── vertices
+└── metadata
+
+Las entidades deben disponer de identificadores internos propios.
+
+No se deben utilizar identificadores específicos de Onshape como IDs internos del Core.
+
+El origen de una entidad podrá conservarse como metadata, pero nunca debe convertirse en una dependencia arquitectónica.
+
+---
+
+8. IMPORTACIÓN CAD
+
+La primera entrada soportada oficialmente será:
+
+STEP
+
+El flujo será:
+
+Archivo STEP
+     ↓
+STEP Adapter
+     ↓
+Validación
+     ↓
+CADModel
+     ↓
+Core
+
+La importación debe validar como mínimo:
+
+- existencia del archivo;
+- formato;
+- integridad;
+- unidades;
+- existencia de sólidos;
+- geometría válida;
+- errores de importación.
+
+No se deben utilizar geometrías ficticias para reemplazar una geometría CAD real.
+
+Las geometrías sintéticas únicamente podrán utilizarse en tests controlados.
+
+---
+
+9. VISOR 3D
+
+La aplicación debe disponer de un visor 3D independiente.
+
+Debe permitir como mínimo:
+
+- rotación;
+- zoom;
+- desplazamiento;
+- centrado;
+- ajuste a pantalla;
+- inspección desde diferentes orientaciones;
+- selección de entidades cuando la funcionalidad correspondiente esté implementada.
+
+El modelo mostrado debe proceder del CAD importado.
+
+El visor debe funcionar sin conexión con Onshape.
+
+---
+
+10. DEFINICIÓN DEL ESTUDIO
+
+El usuario debe poder crear un estudio de análisis sobre el modelo importado.
+
+Un estudio deberá poder representar conceptualmente:
+
+Study
+├── CADModel
+├── Design Space
+├── Keep-out
+├── Material
+├── Loads
+├── Constraints
+├── Mesh
+├── FEA configuration
+└── Optimization configuration
+
+La implementación puede evolucionar progresivamente, pero la arquitectura debe evitar mezclar estas responsabilidades.
+
+---
+
+11. DESIGN SPACE
+
+El Design Space representa el volumen de material sobre el cual puede actuar la optimización.
+
+Debe estar asociado a geometría real del modelo.
+
+Conceptualmente:
+
+CADModel
    ↓
-Región geométrica
+Design Space
    ↓
-Elementos / nodos
-```
+Región optimizable
+
+No debe asumirse que todo el modelo CAD constituye automáticamente el Design Space si el estudio permite definir regiones diferentes.
+
+---
+
+12. KEEP-OUT
+
+Los Keep-out representan regiones que deben permanecer protegidas durante la optimización.
+
+Pueden existir:
+
+- cero Keep-out;
+- uno;
+- múltiples.
+
+El sistema debe conservar la relación entre la región CAD y la región correspondiente de la malla.
+
+CAD Keep-out
+     ↓
+Malla
+     ↓
+Elementos protegidos
+     ↓
+Restricción TopOpt
+
+---
+
+13. MALLADO FEM
+
+La aplicación debe generar una malla volumétrica apta para análisis estructural 3D.
+
+La primera implementación objetivo será una malla de:
+
+Tetraedros lineales de 4 nodos — Tet4.
+
+La herramienta de mallado deberá seleccionarse y validarse técnicamente.
+
+La solución prevista para el pipeline principal es:
+
+Gmsh + OpenCASCADE
+
+pero su utilización definitiva deberá validarse mediante pruebas reales.
+
+La malla debe permitir identificar:
+
+- nodos;
+- elementos;
+- conectividad;
+- superficies;
+- regiones;
+- correspondencia CAD → FEM.
+
+No se considera válido un mallador provisional como solución FEM definitiva.
+
+---
+
+14. MAPEO CAD → FEM
+
+Debe existir una relación verificable entre:
+
+Entidad CAD
+     ↓
+Superficie / región FEM
+     ↓
+Nodos / elementos
 
 Esto será necesario para aplicar:
 
-* fuerzas;
-* restricciones;
-* Keep-out;
-* condiciones de frontera.
+- cargas;
+- restricciones;
+- Design Space;
+- Keep-out.
 
-El sistema debe evitar falsos positivos producidos únicamente por proximidad espacial cuando la geometría sea compleja.
+El sistema deberá utilizar identificadores topológicos o geométricos robustos.
 
-Cuando sea necesario se podrán utilizar:
-
-* normales;
-* proyección;
-* intersección;
-* proximidad;
-* bounding boxes;
-* información B-Rep;
-* regiones físicas del mallador.
+La proximidad espacial no debe utilizarse como único mecanismo cuando pueda generar ambigüedades.
 
 ---
 
-# 13. FUERZAS
+15. MATERIALES
 
-Las fuerzas se configurarán desde la aplicación externa.
+El sistema debe disponer de una representación de material.
 
-El usuario debe poder definir:
+Como mínimo:
 
-* magnitud;
-* unidad;
-* dirección X;
-* dirección Y;
-* dirección Z;
-* sentido;
-* región/cara de aplicación.
+- nombre;
+- módulo de Young;
+- coeficiente de Poisson.
 
-La arquitectura debe permitir múltiples cargas.
+Posteriormente podrá incluir:
+
+- densidad;
+- límite elástico;
+- propiedades térmicas;
+- materiales personalizados;
+- biblioteca ampliada.
+
+La primera versión debe implementar únicamente las propiedades realmente utilizadas por el solver.
+
+---
+
+16. CARGAS
+
+El sistema debe permitir definir cargas físicas reales.
+
+Inicialmente deben contemplarse cargas compatibles con el solver implementado.
+
+La arquitectura debe permitir definir:
+
+- magnitud;
+- unidad;
+- dirección;
+- sentido;
+- región de aplicación.
 
 El flujo será:
 
-```text
-Fuerza configurada
-       ↓
+Carga
+  ↓
 Región CAD
-       ↓
-Superficie de malla
-       ↓
-Nodos
-       ↓
-Vector de cargas
-       ↓
-FEA
-```
+  ↓
+Superficie FEM
+  ↓
+Nodos / DOFs
+  ↓
+Vector F
 
-Las fuerzas deben representar condiciones físicas reales.
-
-No se deben utilizar fuerzas aleatorias o simuladas en producción.
+No se deben utilizar cargas aleatorias o ficticias en producción.
 
 ---
 
-# 14. RESTRICCIONES
+17. RESTRICCIONES
 
-El usuario debe poder definir las condiciones de frontera necesarias para el análisis.
-
-Las restricciones se asocian a regiones geométricas.
+El usuario debe poder definir condiciones de frontera.
 
 El flujo será:
 
-```text
 Restricción
-      ↓
+     ↓
 Región CAD
-      ↓
+     ↓
 Malla
-      ↓
+     ↓
 Nodos
-      ↓
-Grados de libertad
-      ↓
-Condición FEA
-```
+     ↓
+DOFs restringidos
+     ↓
+FEA
 
-Inicialmente se implementarán únicamente los tipos de restricciones realmente soportados por el solver.
-
-No mostrar como funcional una restricción que todavía no esté conectada al solver real.
+Solo deben mostrarse como disponibles las restricciones realmente soportadas por el solver.
 
 ---
 
-# 15. MATERIAL
-
-La aplicación debe estar preparada para utilizar una biblioteca de materiales.
-
-Como mínimo, la arquitectura debe permitir definir:
-
-* nombre;
-* módulo de Young;
-* coeficiente de Poisson;
-* densidad cuando corresponda;
-* otras propiedades necesarias para futuras extensiones.
-
-La biblioteca inicial podrá incluir materiales comunes como:
-
-* aluminio;
-* acero;
-* titanio.
-
-La arquitectura debe permitir posteriormente:
-
-* crear materiales personalizados;
-* editar materiales;
-* guardar materiales;
-* importar materiales;
-* ampliar la biblioteca.
-
-La biblioteca avanzada de materiales no es requisito para la primera versión funcional del solver.
-
----
-
-# 16. FEA
-
-El sistema debe disponer de un análisis estructural mediante elementos finitos.
+18. FEA
 
 La primera implementación objetivo será:
 
-**Elasticidad lineal estática 3D.**
+Elasticidad lineal estática 3D.
 
-Debe permitir resolver:
+El solver debe trabajar sobre la malla real y resolver el sistema:
 
-* desplazamientos;
-* fuerzas;
-* restricciones;
-* reacciones;
-* deformaciones;
-* tensiones;
-* compliance.
+K · u = F
 
-El solver debe utilizar la malla volumétrica real.
+Como mínimo deberá poder obtener:
 
-No se permiten:
+- desplazamientos;
+- deformaciones;
+- tensiones;
+- reacciones;
+- compliance.
 
-* desplazamientos aleatorios;
-* fuerzas aleatorias;
-* resultados ficticios;
-* solver simulado.
+No se consideran resultados válidos:
+
+- valores aleatorios;
+- valores estimados sin cálculo FEM;
+- placeholders;
+- simulaciones visuales;
+- resultados generados artificialmente.
+
+Una funcionalidad FEA solo se considera implementada cuando el resultado proviene del solver real y ha sido validado.
 
 ---
 
-# 17. OPTIMIZACIÓN TOPOLÓGICA
+19. VALIDACIÓN FEA
 
-El sistema debe utilizar un algoritmo real de optimización topológica.
+Antes de utilizar el solver para optimización topológica deberá superar pruebas numéricas.
 
-La arquitectura debe permitir implementar métodos como:
+Como mínimo:
 
-**SIMP — Solid Isotropic Material with Penalization**
+Cantilever Beam
 
-El flujo general será:
+Comparación contra una solución analítica conocida.
 
-```text
-Malla
-   ↓
-Material
-   ↓
-Condiciones de frontera
-   ↓
-Cargas
-   ↓
+Patch Test
+
+Verificación del comportamiento del elemento Tet4.
+
+Convergencia de malla
+
+Comparación de resultados con refinamiento progresivo.
+
+Los resultados deberán documentar:
+
+- error;
+- condiciones;
+- tamaño de malla;
+- resultado analítico;
+- resultado FEM;
+- criterio de aceptación.
+
+---
+
+20. OPTIMIZACIÓN TOPOLÓGICA
+
+Una vez validado el FEA se implementará la optimización topológica.
+
+El método inicial objetivo será:
+
+SIMP — Solid Isotropic Material with Penalization
+
+Flujo:
+
+Densidad inicial
+      ↓
 FEA
-   ↓
+      ↓
 Compliance
-   ↓
+      ↓
+Sensibilidades
+      ↓
 Actualización de densidades
-   ↓
-Nueva geometría/material distribuido
-   ↓
-Nueva iteración FEA
-```
+      ↓
+Filtro / regularización
+      ↓
+Nueva iteración
+      ↓
+FEA
+      ↓
+...
+
+La optimización debe utilizar resultados provenientes del solver FEA real.
 
 ---
 
-# 18. PORCENTAJE DE OPTIMIZACIÓN
+21. OBJETIVO DE VOLUMEN
 
-La interfaz debe permitir definir un objetivo de volumen.
+El usuario podrá definir una fracción de volumen objetivo.
 
 Por ejemplo:
 
-```text
-30 %
-```
+0.30
 
-representa un objetivo aproximado de conservar el 30 % del volumen inicial de diseño.
+representa el objetivo de conservar aproximadamente el 30 % del volumen de diseño.
 
-La arquitectura debe distinguir entre:
+El sistema debe diferenciar entre:
 
-* porcentaje introducido por el usuario;
-* fracción de volumen utilizada por el solver;
-* resultado final realmente obtenido.
+- volumen objetivo;
+- volumen obtenido;
+- error respecto al objetivo.
 
-No se debe afirmar que una pieza fue optimizada al porcentaje solicitado si el algoritmo no alcanzó ese objetivo.
+No se debe declarar alcanzado un porcentaje si el algoritmo no lo alcanzó.
 
 ---
 
-# 19. ITERACIONES
+22. ITERACIONES Y CONVERGENCIA
 
-La optimización debe trabajar mediante iteraciones.
+Cada iteración debe registrar como mínimo:
 
-Cada iteración podrá incluir:
+- número de iteración;
+- volumen;
+- compliance;
+- cambio de densidad;
+- criterio de convergencia;
+- estado.
 
-```text
-1. Distribución de densidad
-2. FEA
-3. Cálculo de compliance
-4. Actualización
-5. Verificación de convergencia
-```
+La aplicación debe permitir determinar si la optimización:
 
-La aplicación debe poder informar al usuario del estado del cálculo.
-
-Como mínimo:
-
-* iteración actual;
-* número total de iteraciones;
-* porcentaje de volumen;
-* compliance;
-* estado;
-* errores.
+- convergió;
+- alcanzó el máximo de iteraciones;
+- falló;
+- fue cancelada.
 
 ---
 
-# 20. VISUALIZACIÓN DEL RESULTADO
+23. VISUALIZACIÓN DE RESULTADOS
 
-La aplicación externa debe mostrar visualmente la evolución del resultado.
+El visor debe permitir inspeccionar:
 
-El usuario debe poder observar:
+- geometría original;
+- Design Space;
+- Keep-out;
+- restricciones;
+- cargas;
+- malla;
+- desplazamientos;
+- tensiones;
+- densidades;
+- resultado optimizado.
 
-* geometría inicial;
-* Design Space;
-* Keep-out;
-* restricciones;
-* cargas;
-* resultado optimizado.
+La visualización debe representar datos calculados realmente.
 
-El resultado debe poder inspeccionarse mediante el visor 3D.
-
-La visualización no debe ser solamente una representación abstracta de datos.
-
----
-
-# 21. FLUJO DE ACEPTACIÓN
-
-El resultado optimizado no debe enviarse inmediatamente a Onshape sin confirmación.
-
-El usuario debe poder:
-
-```text
-CALCULAR
-   ↓
-VISUALIZAR
-   ↓
-INSPECCIONAR
-   ↓
-ACEPTAR / CANCELAR
-```
-
-Si selecciona:
-
-### ACEPTAR
-
-El sistema inicia el proceso de devolución a Onshape.
-
-### CANCELAR
-
-El resultado no modifica el modelo de Onshape.
+No se deben generar representaciones que puedan confundirse con resultados FEA reales.
 
 ---
 
-# 22. DEVOLUCIÓN A ONSHAPE
+24. EXPORTACIÓN
 
-Después de aceptar el resultado:
+La aplicación debe poder exportar resultados cuando la funcionalidad correspondiente esté implementada.
 
-```text
-Resultado TopOpt
-      ↓
-Reconstrucción / conversión CAD
-      ↓
-Formato compatible
-      ↓
-API REST Onshape
-      ↓
-Importación
-      ↓
-Resultado dentro de Onshape
-```
+Inicialmente se priorizará:
 
-La arquitectura debe permitir devolver la geometría optimizada como un resultado CAD utilizable.
-
-La solución concreta para la reconstrucción e importación debe utilizar mecanismos reales soportados por Onshape.
-
-No se debe simular una modificación del Feature Tree.
-
----
-
-# 23. SINCRONIZACIÓN
-
-La aplicación externa debe mantener el contexto del documento de trabajo:
-
-* Document ID;
-* Workspace ID;
-* Element ID;
-
-cuando corresponda.
-
-El contexto debe provenir de la integración real con Onshape.
-
-No se debe depender de introducir manualmente IDs como mecanismo principal de uso.
-
----
-
-# 24. AUTENTICACIÓN
-
-La aplicación utilizará:
-
-**OAuth 2.0 de Onshape.**
-
-El flujo objetivo será:
-
-```text
-Aplicación
-   ↓
-Login
-   ↓
-Onshape OAuth
-   ↓
-Autorización
-   ↓
-Callback
-   ↓
-Authorization Code
-   ↓
-Token
-   ↓
-Sesión autenticada
-```
-
-Los secretos deben permanecer exclusivamente en el backend.
-
-El frontend nunca debe recibir:
-
-* Client Secret;
-* Refresh Token;
-* credenciales privadas.
-
----
-
-# 25. SESIÓN
-
-La aplicación debe mantener la sesión mediante persistencia local.
-
-Se podrá utilizar:
-
-* SQLite;
-* otra persistencia local adecuada.
-
-Debe almacenarse únicamente la información necesaria.
-
-Los tokens deben almacenarse de forma segura.
-
-El sistema debe soportar renovación automática del Access Token.
-
-Si Onshape devuelve HTTP 401:
-
-```text
-Access Token expirado
-        ↓
-Refresh Token
-        ↓
-Nuevo Access Token
-        ↓
-Repetir petición
-```
-
-Si la renovación falla:
-
-```text
-Sesión expirada
-        ↓
-Solicitar nueva autenticación
-```
-
----
-
-# 26. SEGURIDAD
-
-Las credenciales sensibles no deben estar hardcodeadas.
-
-Debe utilizarse `.env` o un mecanismo seguro equivalente.
-
-El repositorio debe incluir:
-
-`.env.example`
-
-pero nunca:
-
-`.env`
-
-con secretos reales.
-
-La aplicación debe validar:
-
-* OAuth state;
-* sesiones;
-* errores HTTP;
-* payloads;
-* permisos;
-* entradas de usuario.
-
----
-
-# 27. BACKEND
-
-El backend principal estará desarrollado en:
-
-**Python + FastAPI**
-
-Sus responsabilidades incluyen:
-
-* autenticación;
-* comunicación con Onshape;
-* gestión de sesiones;
-* recepción de selecciones;
-* descarga de geometría;
-* procesamiento CAD;
-* generación de malla;
-* asociación CAD/malla;
-* preparación FEA;
-* ejecución FEA;
-* ejecución TopOpt;
-* gestión de jobs;
-* resultados;
-* comunicación con frontend.
-
-El backend no debe contener lógica de presentación innecesaria.
-
----
-
-# 28. FRONTEND
-
-La aplicación externa podrá utilizar:
-
-* HTML;
-* CSS;
-* JavaScript;
-* TypeScript;
-* Three.js;
-
-o tecnologías equivalentes adecuadamente justificadas.
-
-La interfaz debe ser:
-
-* limpia;
-* profesional;
-* responsive;
-* clara;
-* orientada a CAD/CAE.
-
-No debe convertirse en una interfaz excesivamente compleja si una función puede representarse de forma más simple.
-
----
-
-# 29. ESTADOS DEL PROCESO
-
-La aplicación debe manejar estados claros.
-
-Ejemplo:
-
-```text
-NO CONECTADO
-      ↓
-CONECTANDO
-      ↓
-CONECTADO
-      ↓
-ESPERANDO SELECCIÓN
-      ↓
-GEOMETRÍA RECIBIDA
-      ↓
-PREPARANDO MALLA
-      ↓
-CONFIGURACIÓN
-      ↓
-CALCULANDO
-      ↓
-RESULTADO DISPONIBLE
-      ↓
-ACEPTAR
-      ↓
-EXPORTANDO
-      ↓
-COMPLETADO
-```
-
-Los errores deben tener estados diferenciados.
-
----
-
-# 30. MANEJO DE ERRORES
-
-Los errores deben ser reales y explicables.
-
-Ejemplos:
-
-* OAuth fallido;
-* sesión expirada;
-* documento inexistente;
-* permiso insuficiente;
-* selección inválida;
-* pieza no sólida;
-* STEP inválido;
-* geometría corrupta;
-* mallado fallido;
-* malla degenerada;
-* FEA sin convergencia;
-* TopOpt sin convergencia;
-* exportación fallida;
-* error de API.
-
-No ocultar errores detrás de mensajes genéricos.
-
----
-
-# 31. VALIDACIÓN DE PIEZA
-
-La pieza principal debe ser válida para el proceso.
-
-Como mínimo:
-
-* debe representar un sólido;
-* debe poder obtenerse desde Onshape;
-* debe poder procesarse geométricamente;
-* debe poder mallarse.
-
-Si no cumple las condiciones:
-
-```text
-Pieza no válida para optimización
-```
-
-y explicar el motivo.
-
----
-
-# 32. LIMITACIONES DE ONSHAPE
-
-La arquitectura debe respetar las limitaciones reales de Onshape.
-
-FeatureScript no se utilizará como canal de comunicación de red.
-
-FeatureScript:
-
-* funciona en sandbox;
-* no realiza HTTP;
-* no utiliza sockets;
-* no ejecuta Python;
-* no ejecuta C++;
-* no utiliza librerías externas arbitrarias.
-
-Por lo tanto, la comunicación externa se realizará mediante:
-
-**App Extension + JavaScript + Backend + API REST de Onshape.**
-
-No se debe intentar convertir FeatureScript en un servidor o cliente HTTP.
-
----
-
-# 33. FEATURESCRIPT
-
-FeatureScript no forma parte de la arquitectura actual de comunicación.
-
-No debe utilizarse para:
-
-* enviar datos al backend;
-* recibir datos del backend;
-* ejecutar FEA;
-* ejecutar TopOpt;
-* transferir geometría mediante HTTP.
-
-Si en el futuro se utiliza FeatureScript para alguna función CAD nativa específica, deberá ser una decisión arquitectónica independiente y documentada.
-
----
-
-# 34. PERSISTENCIA
-
-La aplicación debe poder almacenar localmente:
-
-* sesión;
-* contexto de trabajo;
-* configuraciones;
-* jobs;
-* estados;
-* resultados;
-* cache cuando sea conveniente.
-
-La persistencia debe diseñarse para poder migrarse posteriormente a una arquitectura cloud.
-
----
-
-# 35. LICENCIAMIENTO FUTURO
-
-Aunque inicialmente la aplicación será privada/personal, la arquitectura debe permitir agregar posteriormente un sistema de:
-
-* usuarios;
-* licencias;
-* suscripciones;
-* permisos.
-
-La lógica principal debe poder aislarse de la validación de licencia.
-
-No implementar un sistema comercial completo mientras no sea necesario.
-
----
-
-# 36. RENDIMIENTO
-
-Los cálculos pesados no deben ejecutarse dentro de:
-
-* navegador;
-* App Extension;
-* interfaz de Onshape.
-
-Los cálculos deben realizarse en el backend.
-
-La interfaz debe permanecer disponible para mostrar:
-
-* progreso;
-* estado;
-* errores;
-* resultados.
-
----
-
-# 37. JOBS
-
-Las operaciones de FEA y TopOpt deben tratarse como jobs.
-
-Un job debería poder representar:
-
-* ID;
-* usuario;
-* contexto Onshape;
-* geometría;
-* parámetros;
-* estado;
-* progreso;
-* resultado;
-* errores;
-* timestamps.
-
-Estados posibles:
-
-```text
-PENDING
-PREPARING
-MESHING
-SOLVING
-OPTIMIZING
-COMPLETED
-FAILED
-CANCELLED
-```
-
----
-
-# 38. CANCELACIÓN
-
-La arquitectura debe permitir posteriormente cancelar un cálculo.
-
-Una cancelación debe:
-
-* detener el job cuando sea posible;
-* liberar recursos;
-* conservar información del estado;
-* no modificar Onshape si el usuario no aceptó el resultado.
-
----
-
-# 39. CACHE
-
-La aplicación puede utilizar cache para reducir llamadas innecesarias a Onshape.
-
-Se podrá cachear:
-
-* geometría;
-* malla;
-* resultados intermedios;
-
-siempre que exista una estrategia para invalidar datos obsoletos.
-
-No utilizar cache de forma que se trabaje accidentalmente con una versión antigua del modelo.
-
----
-
-# 40. TESTING
-
-Debe existir una separación clara entre:
-
-## Tests unitarios
-
-Pueden utilizar:
-
-* geometría sintética;
-* mocks;
-* fixtures.
-
-## Tests de integración
-
-Deben comprobar componentes reales.
-
-## Tests end-to-end
-
-Deben recorrer realmente el flujo correspondiente.
-
-No llamar "end-to-end" a un test que solamente genera una pieza local con CadQuery.
-
-Los tests deben validar comportamiento, no solamente existencia de funciones.
-
----
-
-# 41. REGLA CONTRA MOCKS EN PRODUCCIÓN
-
-Está prohibido utilizar mocks o datos ficticios para representar funcionalidades reales en producción.
-
-No utilizar:
-
-* fuerzas aleatorias;
-* desplazamientos aleatorios;
-* geometría ficticia;
-* resultados TopOpt inventados;
-* solver falso;
-* piezas simuladas.
-
-Los mocks solamente son aceptables dentro de tests controlados.
-
----
-
-# 42. CRITERIO DE "IMPLEMENTADO"
-
-Una funcionalidad solo se considera implementada cuando:
-
-1. Existe el código necesario.
-2. Está integrada con el flujo correspondiente.
-3. Utiliza datos reales cuando corresponda.
-4. Maneja errores.
-5. Tiene pruebas apropiadas.
-6. El comportamiento está validado.
-
-Crear una función no significa automáticamente que la funcionalidad esté terminada.
-
----
-
-# 43. CRITERIO DE "COMPLETO"
-
-Una etapa se considera completa solamente cuando todas sus dependencias necesarias están funcionando.
-
-Ejemplo:
-
-No considerar:
-
-```text
-TOPTOPOLOGÍA COMPLETA
-```
-
-si:
-
-```text
-FEA = simulación
-```
-
-o:
-
-```text
-MALLA = inválida
-```
-
-o:
-
-```text
-CARGAS = datos ficticios
-```
-
----
-
-# 44. ROADMAP DEL PROYECTO
-
-El proyecto se desarrollará progresivamente.
-
-## HITO 1 — INTEGRACIÓN Y GEOMETRÍA
-
-Objetivo:
-
-```text
-Onshape
-↓
-App Extension
-↓
-Selección real
-↓
-Backend
-↓
-Geometría CAD real
-↓
-Visor 3D
-```
-
----
-
-## HITO 2 — MALLADO Y REGIONES
-
-Objetivo:
-
-```text
-Geometría
-↓
-Malla volumétrica
-↓
-Design Space
-↓
-Keep-out
-↓
-Mapeo CAD → malla
-```
-
-Debe existir una malla técnicamente adecuada para el solver.
-
----
-
-## HITO 3 — FEA
-
-Objetivo:
-
-```text
-Malla
-↓
-Material
-↓
-Fuerzas
-↓
-Restricciones
-↓
-FEA 3D
-↓
-Resultados
-```
-
----
-
-## HITO 4 — TOPOPT
-
-Objetivo:
-
-```text
-FEA
-↓
-Compliance
-↓
-SIMP / TopOpt
-↓
-Iteraciones
-↓
-Convergencia
-↓
-Geometría optimizada
-```
-
----
-
-## HITO 5 — VISUALIZACIÓN Y EXPERIENCIA
-
-Objetivo:
-
-* visor CAD/CAE completo;
-* evolución del resultado;
-* parámetros;
-* indicadores;
-* inspección;
-* comparación inicial/final.
-
----
-
-## HITO 6 — RETORNO A ONSHAPE
-
-Objetivo:
-
-```text
 Resultado
-↓
-Reconstrucción CAD
-↓
-API Onshape
-↓
-Resultado dentro de Onshape
-```
+   ↓
+Formato CAD / malla compatible
+
+Los formatos específicos se decidirán según las capacidades reales del pipeline.
+
+La exportación debe producir archivos válidos y verificables.
 
 ---
 
-## HITO 7 — MATERIALES Y EXTENSIONES
+25. PROYECTOS Y ESTUDIOS
 
-Objetivo:
+La arquitectura debe permitir guardar y recuperar estudios.
 
-* biblioteca de materiales;
-* materiales personalizados;
-* configuraciones avanzadas;
-* análisis adicionales.
+Un proyecto podrá contener:
 
----
+Project
+├── CADModel
+├── Study
+├── Material
+├── Loads
+├── Constraints
+├── Mesh
+├── FEA Results
+└── Optimization Results
 
-## HITO 8 — PREPARACIÓN PARA NUBE
-
-Objetivo:
-
-* usuarios;
-* licencias;
-* jobs remotos;
-* almacenamiento;
-* escalabilidad;
-* seguridad;
-* despliegue cloud.
+La persistencia debe estar desacoplada de cualquier autenticación de CAD externo.
 
 ---
 
-# 45. ARQUITECTURA DE COMPONENTES
+26. ONESHAPE Y OTROS CAD
 
-La estructura conceptual es:
+La integración con Onshape no forma parte de la prioridad actual.
 
-```text
-┌──────────────────────────────────────────┐
-│                  ONSHAPE                 │
-│                                          │
-│  Documento / Part Studio / Geometría    │
-└──────────────────┬───────────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────────┐
-│             APP EXTENSION                │
-│                                          │
-│ Selección de sólidos                     │
-│ Contexto                                  │
-└──────────────────┬───────────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────────┐
-│            BACKEND FASTAPI               │
-│                                          │
-│ OAuth                                    │
-│ API Onshape                              │
-│ Geometría                                │
-│ Malla                                    │
-│ FEA                                      │
-│ TopOpt                                   │
-│ Jobs                                     │
-└──────────────┬───────────────┬───────────┘
-               │               │
-               ▼               ▼
-┌────────────────────┐  ┌──────────────────┐
-│ PROCESAMIENTO CAD  │  │ SOLVER FEM/TOPOPT│
-│                    │  │                  │
-│ STEP               │  │ FEA              │
-│ OpenCASCADE        │  │ SIMP             │
-│ CadQuery           │  │ Optimización     │
-└──────────┬─────────┘  └────────┬─────────┘
-           │                     │
-           └──────────┬──────────┘
-                      ▼
-┌──────────────────────────────────────────┐
-│          APLICACIÓN EXTERNA              │
-│                                          │
-│ Visor 3D                                │
-│ Parámetros                               │
-│ Fuerzas                                  │
-│ Restricciones                            │
-│ Material                                 │
-│ Optimización                             │
-│ Resultados                               │
-└──────────────────┬───────────────────────┘
-                   │
-                   │ Aceptar
-                   ▼
-┌──────────────────────────────────────────┐
-│                  ONSHAPE                 │
-│                                          │
-│ Resultado optimizado                     │
-└──────────────────────────────────────────┘
-```
+Cuando el Core standalone sea funcional, podrán desarrollarse conectores externos.
+
+Conceptualmente:
+
+Onshape
+    ↓
+Connector
+    ↓
+CADModel
+    ↓
+Core
+
+El connector podrá posteriormente encargarse de:
+
+- importar geometría;
+- exportar resultados;
+- sincronizar contexto;
+- autenticación;
+- comunicación con la plataforma CAD.
+
+Pero estas funcionalidades NO deben introducir dependencias de Onshape dentro del Core.
+
+La misma arquitectura deberá permitir incorporar posteriormente otras plataformas CAD.
 
 ---
 
-# 46. TECNOLOGÍAS OBJETIVO
+27. PRIORIDADES DEL DESARROLLO
 
-Las tecnologías pueden evolucionar si existe una razón técnica.
+El orden de desarrollo recomendado es:
 
-La arquitectura inicial contempla:
+H1 — Infraestructura
 
-### Backend
+- aplicación standalone;
+- arquitectura Core;
+- modelo CAD interno;
+- frontend;
+- backend;
+- importación STEP.
 
-* Python 3.10+
-* FastAPI
-* Uvicorn
+H2 — FEM
 
-### Frontend
+- Gmsh;
+- Tet4;
+- mapeo CAD → FEM;
+- materiales;
+- cargas;
+- restricciones;
+- solver FEA;
+- validación.
 
-* HTML/CSS
-* JavaScript/TypeScript
-* Three.js
+H3 — Optimización
 
-### CAD
+- SIMP;
+- sensibilidades;
+- filtros;
+- control de volumen;
+- convergencia;
+- validación.
 
-* OpenCASCADE
-* CadQuery
+H4 — Resultado
 
-### Persistencia
+- visualización avanzada;
+- exportación;
+- persistencia de estudios;
+- mejoras de rendimiento.
 
-* SQLite inicialmente
+H5 — Integraciones
 
-### Integración
+- Onshape;
+- otros CAD;
+- plugins;
+- sincronización.
 
-* Onshape REST API
-* OAuth 2.0
-
-### FEA
-
-* Solver FEM compatible con Python
-* scikit-fem u otra alternativa técnicamente adecuada
-
-### Optimización
-
-* Implementación TopOpt/SIMP adecuada para el modelo FEA utilizado
-
----
-
-# 47. CONFIGURACIÓN DE ONSHAPE
-
-La aplicación debe utilizar una OAuth Application privada configurada en el Developer Portal.
-
-Debe configurarse:
-
-* Client ID;
-* Client Secret;
-* Redirect URI;
-* App URL cuando corresponda;
-* Scopes necesarios.
-
-Los scopes deben limitarse a los permisos realmente necesarios.
+Este orden puede modificarse únicamente mediante una decisión técnica documentada.
 
 ---
 
-# 48. DESARROLLO LOCAL
+28. REGLAS DE DESARROLLO
 
-La aplicación debe poder ejecutarse inicialmente en entorno local.
+La implementación debe respetar estrictamente "metodologia.md".
 
-Ejemplo conceptual:
+Además:
 
-```bash
-python -m venv .venv
-```
-
-Activar entorno.
-
-Instalar dependencias.
-
-Configurar:
-
-```text
-.env
-```
-
-Ejecutar FastAPI mediante Uvicorn.
-
-Cuando sea necesario para integración OAuth/iFrame:
-
-utilizar un túnel HTTPS compatible.
+1. El Core debe ser independiente del CAD.
+2. No se deben introducir dependencias de Onshape en el Core.
+3. No se deben implementar placeholders como si fueran funcionalidades terminadas.
+4. No se deben generar resultados físicos ficticios.
+5. No se debe declarar una etapa completada solo porque existe código.
+6. Toda funcionalidad debe estar implementada, integrada, probada y documentada.
+7. Las hipótesis deben diferenciarse de los hechos verificados.
+8. Las dependencias deben justificarse técnicamente.
+9. Las pruebas deben ejecutarse sobre el código real.
+10. Los resultados numéricos deben poder reproducirse.
+11. Los fallos deben documentarse y corregirse, no ocultarse.
+12. Las funcionalidades futuras no deben adelantarse si ponen en riesgo la estabilidad del Core.
 
 ---
 
-# 49. EXPERIENCIA DE USUARIO OBJETIVO
+29. CRITERIO DE "APLICACIÓN FUNCIONAL"
 
-El usuario final debería experimentar algo similar a:
+El proyecto no se considerará una aplicación funcional completa hasta que sea capaz de ejecutar de forma real y verificable:
 
-```text
-1. Abrir Onshape.
+STEP
+ ↓
+CADModel
+ ↓
+Malla Tet4
+ ↓
+Material
+ ↓
+Cargas
+ ↓
+Restricciones
+ ↓
+FEA
+ ↓
+Desplazamientos / Tensiones / Compliance
+ ↓
+SIMP
+ ↓
+Resultado optimizado
+ ↓
+Visualización
+ ↓
+Exportación
 
-2. Abrir Topología Optimizada.
+Cada etapa debe utilizar datos reales provenientes de la etapa anterior.
 
-3. Seleccionar la pieza.
-
-4. Seleccionar opcionalmente obstáculos.
-
-5. Enviar selección.
-
-6. La aplicación externa recibe la geometría.
-
-7. La pieza aparece en el visor 3D.
-
-8. El usuario inspecciona la pieza.
-
-9. Configura restricciones.
-
-10. Configura fuerzas.
-
-11. Selecciona material.
-
-12. Define porcentaje objetivo.
-
-13. Ejecuta optimización.
-
-14. Visualiza el proceso.
-
-15. Inspecciona el resultado.
-
-16. Decide:
-       ACEPTAR
-       o
-       CANCELAR
-
-17. Si acepta:
-       resultado → Onshape.
-```
+No se acepta simular una etapa para aparentar que el pipeline está terminado.
 
 ---
 
-# 50. PRINCIPIOS DE DISEÑO
+30. ESTADO DEL PROYECTO
 
-El proyecto debe seguir estos principios:
+Este documento representa la visión y arquitectura objetivo del proyecto.
 
-### Simplicidad
+El estado real de implementación debe mantenerse actualizado en:
 
-La interfaz debe ser tan sencilla como sea posible sin sacrificar funcionalidad.
+"RESUMEN_IMPLEMENTACION.md"
 
-### Separación de responsabilidades
+La metodología y las reglas de cumplimiento se mantienen en:
 
-Onshape selecciona.
+"metodologia.md"
 
-La aplicación externa configura.
+El prompt de desarrollo vigente se mantiene exclusivamente en:
 
-El backend calcula.
+"prompt.md"
 
-Onshape recibe el resultado.
+La documentación de investigación técnica se mantiene en sus respectivos archivos de investigación.
 
-### Datos reales
+El README describe qué debe ser el producto.
 
-La producción debe trabajar con datos reales.
-
-### Seguridad
-
-Los secretos nunca se exponen al frontend.
-
-### Trazabilidad
-
-Cada cálculo debe poder relacionarse con:
-
-* usuario;
-* contexto;
-* geometría;
-* parámetros;
-* resultado.
-
-### Validación
-
-Nada debe declararse completo sin validación.
-
-### Modularidad
-
-Cada componente debe poder evolucionar independientemente.
-
-### Extensibilidad
-
-La arquitectura debe permitir agregar:
-
-* nuevos materiales;
-* nuevos tipos de carga;
-* nuevos tipos de restricciones;
-* nuevos algoritmos;
-* nuevos solvers;
-* funcionalidades cloud.
-
----
-
-# 51. LIMITACIONES Y DECISIONES
-
-## FeatureScript
-
-No se utilizará como mecanismo de comunicación con el backend.
-
-## App Extension
-
-Su función principal es la selección y el contexto.
-
-## Aplicación externa
-
-Es la interfaz principal.
-
-## Cálculos
-
-Se ejecutan fuera de Onshape.
-
-## API
-
-La comunicación con Onshape se realiza mediante mecanismos oficiales.
-
----
-
-# 52. ESTADO DEL README
-
-Este documento representa la:
-
-**ARQUITECTURA OBJETIVO DEL PROYECTO.**
-
-No representa el estado actual de implementación.
-
-El estado real debe determinarse mediante una auditoría independiente del repositorio.
-
----
-
-# 53. REGLA FUNDAMENTAL PARA FUTURAS AUDITORÍAS
-
-Toda auditoría futura debe comparar el repositorio contra este documento.
-
-El proceso será:
-
-```text
-README.md
-     ↓
-Requisitos objetivo
-     ↓
-Auditoría del repositorio
-     ↓
-Estado real
-     ↓
-Diferencias
-     ↓
-prompt.md
-     ↓
-Implementación
-     ↓
-Tests
-     ↓
-Nueva auditoría
-```
-
-El README debe considerarse la referencia arquitectónica principal.
-
-Los prompts son instrucciones temporales de implementación.
-
-El código es la implementación actual.
-
-La auditoría determina la diferencia entre ambos.
-
----
-
-# 54. REGLA DE CAMBIO DE ARQUITECTURA
-
-Si durante el desarrollo se determina que una decisión arquitectónica de este documento es técnicamente incorrecta o que existe una alternativa considerablemente mejor:
-
-NO modificar silenciosamente la arquitectura.
-
-Primero:
-
-1. Identificar el problema.
-2. Explicar la limitación.
-3. Proponer la alternativa.
-4. Evaluar impacto.
-5. Actualizar este README.
-6. Recién entonces modificar los prompts y el código.
-
-Esto evita que la arquitectura real del proyecto se desvíe progresivamente de su objetivo original.
-
----
-
-# 55. DEFINICIÓN FINAL DEL PRODUCTO
-
-La aplicación terminada debe permitir transformar una pieza CAD real de Onshape en una pieza optimizada mediante un flujo integrado:
-
-```text
-SELECCIONAR
-     ↓
-VISUALIZAR
-     ↓
-CONFIGURAR
-     ↓
-SIMULAR
-     ↓
-OPTIMIZAR
-     ↓
-INSPECCIONAR
-     ↓
-ACEPTAR
-     ↓
-DEVOLVER A ONSHAPE
-```
-
-El objetivo no es únicamente generar una distribución matemática de densidades.
-
-El objetivo final es proporcionar un flujo práctico de:
-
-**CAD → FEA → Optimización Topológica → CAD**
-
-manteniendo una conexión coherente entre la geometría original de Onshape, el cálculo externo y el resultado final.
-
-```
-
-**Este README pasa a ser nuestra referencia principal.** A partir de ahora, cuando hagamos la auditoría del repositorio, no voy a preguntarme "¿qué dijo el prompt anterior que había que hacer?", sino **"¿qué exige el README y qué parte de eso existe realmente en el código?"**.
-```
+Los demás documentos describen cómo se desarrolla, qué se investigó y qué está realmente implementado.

@@ -70,6 +70,19 @@ def run_basic_fea():
             material_properties.SetValue(Kratos.YOUNG_MODULUS, Young_modulus)
             material_properties.SetValue(Kratos.POISSON_RATIO, Poisson_ratio)
             
+            # Agregar ley constitutiva (constitutive law) usando el método correcto
+            try:
+                # Intentar diferentes formas de crear la ley constitutiva
+                constitutive_law = Kratos.ConstitutiveLaw()
+                material_properties.SetValue(Kratos.CONSTITUTIVE_LAW, constitutive_law)
+            except:
+                try:
+                    # Método alternativo usando el registro de leyes constitutivas
+                    constitutive_law = Kratos.KratosGlobals.GetRegistry("ConstitutiveLaw")
+                    material_properties.SetValue(Kratos.CONSTITUTIVE_LAW, constitutive_law)
+                except:
+                    print("Advertencia: No se pudo configurar ley constitutiva, intentando sin ella")
+            
             for i in range(0, len(tet_elements), 4):
                 elem_id = i//4 + 1
                 node_ids = [int(tet_elements[i+j]) for j in range(4)]
@@ -138,36 +151,18 @@ def run_basic_fea():
     # Crear esquema y criterio de convergencia simplificados
     try:
         scheme = Kratos.ResidualBasedIncrementalUpdateStaticScheme()
-        convergence_criteria = Kratos.DisplacementCriteria(1e-6, 1e-6)
         
-        # Intentar crear estrategia con diferentes constructores
-        try:
-            builder_and_solver = Kratos.ResidualBasedBlockBuilderAndSolver(linear_solver)
-            solving_strategy = Kratos.ResidualBasedLinearStrategy(
-                model_part,
-                scheme,
-                linear_solver,
-                convergence_criteria,
-                builder_and_solver,
-                30
-            )
-        except:
-            try:
-                solving_strategy = Kratos.ResidualBasedLinearStrategy(
-                    model_part,
-                    scheme,
-                    linear_solver,
-                    convergence_criteria,
-                    30
-                )
-            except:
-                # Usar el constructor más simple
-                solving_strategy = Kratos.ResidualBasedLinearStrategy(
-                    model_part,
-                    scheme,
-                    linear_solver,
-                    30
-                )
+        # Usar la firma correcta del constructor según el error:
+        # Kratos.ResidualBasedLinearStrategy(arg0: ModelPart, arg1: Scheme, arg2: LinearSolver, arg3: bool, arg4: bool, arg5: bool, arg6: bool)
+        solving_strategy = Kratos.ResidualBasedLinearStrategy(
+            model_part,
+            scheme,
+            linear_solver,
+            True,  # ComputeReactions
+            True,  # ReformulateDofSet
+            True,  # MoveMesh
+            False  # CalculateNormDxFlag
+        )
     except Exception as e:
         print(f"Error configurando estrategia: {e}")
         print("Intentando enfoque alternativo...")

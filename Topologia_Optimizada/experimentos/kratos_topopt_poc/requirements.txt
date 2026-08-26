@@ -1,0 +1,13 @@
+# Requirements para Kratos Topological Optimization PoC
+# 
+# NOTA: Kratos Multiphysics no se instala vía pip normalmente.
+# Requiere instalación desde fuente o paquetes específicos del sistema.
+# Ver: https://github.com/KratosMultiphysics/Kratos
+#
+# Gmsh también requiere instalación separada.
+# Ver: https://gmsh.info/
+
+# Dependencias Python estándar que podrían ser necesarias
+numpy>=1.20.0
+scipy>=1.7.0
+matplotlib>=3.3.0

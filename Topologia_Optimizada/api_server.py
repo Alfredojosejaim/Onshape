@@ -26,6 +26,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from geometry_processor import GeometryProcessor
 from onshape_client import OAuthTokenStore, OnshapeAPIError, OnshapeClient
 from topopt_solver import run_topology_optimization
+from services.cad_service import CADService
+from services.study_service import StudyService
 
 load_dotenv(find_dotenv())
 
@@ -187,6 +189,10 @@ class SQLiteTokenStore(OAuthTokenStore):
 
 
 token_store = SQLiteTokenStore()
+
+# Standalone services (independent of Onshape)
+cad_service = CADService()
+study_service = StudyService(DB_PATH)
 
 
 def session_id_from_request(request: Request) -> str:
@@ -959,6 +965,143 @@ async def health_check() -> Dict[str, Any]:
         "oauth_configurado": credentials_ready,
         "message": "API de Optimizacion Topologica operativa",
     }
+
+
+# --- Standalone Endpoints (Independent of Onshape) ---
+
+class StepUploadRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    step_data: str = Field(min_length=1)
+    model_name: str = Field(default="Imported STEP", min_length=1)
+
+
+class StandaloneMeshRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    model_id: str = Field(min_length=1)
+    target_element_size: float = Field(default=2.0, gt=0)
+    element_type: str = Field(default="tet4", pattern="^(tet4|tet10|hex8)$")
+
+
+class StandaloneTessellationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    model_id: str = Field(min_length=1)
+    linear_deflection: float = Field(default=0.1, gt=0)
+    angular_deflection: float = Field(default=0.1, gt=0)
+
+
+class BoundaryMappingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    model_id: str = Field(min_length=1)
+    nodes: List[List[float]] = Field(min_length=1)
+    face_indices: Optional[List[int]] = None
+    tolerance: float = Field(default=0.5, gt=0)
+
+
+@app.post("/api/cad/step/upload")
+async def upload_step_file(request: StepUploadRequest) -> Dict[str, Any]:
+    """Import STEP file directly without Onshape/OAuth (standalone)."""
+    try:
+        step_bytes = base64.b64decode(request.step_data)
+        cad_model = cad_service.import_step_from_bytes(
+            step_bytes,
+            model_name=request.model_name,
+            metadata={"source": "standalone_upload"},
+        )
+        study_service.save_cad_model(cad_model)
+        return {
+            "success": True,
+            "status": "ready",
+            "model_id": cad_model.id,
+            "model_name": cad_model.name,
+            "model": cad_model.to_dict(),
+        }
+    except Exception as exc:
+        logger.exception("STEP upload failed")
+        raise HTTPException(status_code=400, detail=f"STEP import failed: {str(exc)}")
+
+
+@app.get("/api/cad/models/{model_id}")
+async def get_cad_model(model_id: str) -> Dict[str, Any]:
+    """Retrieve model and tessellation data (standalone)."""
+    cad_model = cad_service.get_model(model_id)
+    if not cad_model:
+        raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
+    return cad_model.to_dict()
+
+
+@app.post("/api/cad/models/{model_id}/tessellate")
+async def tessellate_model(model_id: str, request: StandaloneTessellationRequest) -> Dict[str, Any]:
+    """Generate tessellation for Three.js visualization (standalone)."""
+    if model_id != request.model_id:
+        raise HTTPException(status_code=400, detail="Model ID mismatch")
+    return cad_service.tessellate_model(
+        model_id,
+        linear_deflection=request.linear_deflection,
+        angular_deflection=request.angular_deflection,
+    )
+
+
+@app.post("/api/cad/models/{model_id}/mesh")
+async def generate_mesh_standalone(model_id: str, request: StandaloneMeshRequest) -> Dict[str, Any]:
+    """Generate mesh on imported CAD (standalone)."""
+    if model_id != request.model_id:
+        raise HTTPException(status_code=400, detail="Model ID mismatch")
+    return cad_service.generate_mesh(
+        model_id,
+        target_element_size=request.target_element_size,
+        element_type=request.element_type,
+    )
+
+
+@app.post("/api/cad/models/{model_id}/boundary/map")
+async def map_boundary_conditions_standalone(model_id: str, request: BoundaryMappingRequest) -> Dict[str, Any]:
+    """Map boundary conditions (standalone)."""
+    if model_id != request.model_id:
+        raise HTTPException(status_code=400, detail="Model ID mismatch")
+    return cad_service.map_boundary_conditions(
+        model_id,
+        request.nodes,
+        face_indices=request.face_indices,
+        tolerance=request.tolerance,
+    )
+
+
+@app.get("/api/studies")
+async def list_studies() -> List[Dict[str, Any]]:
+    """List all studies (standalone)."""
+    return study_service.list_studies()
+
+
+@app.post("/api/studies")
+async def create_study_standalone(request: Dict[str, Any]) -> Dict[str, Any]:
+    """Create a study (standalone)."""
+    try:
+        study = study_service.create_study(
+            name=request.get("name", "New Study"),
+            metadata=request.get("metadata"),
+        )
+        return study.to_dict()
+    except Exception as exc:
+        logger.exception("Study creation failed")
+        raise HTTPException(status_code=400, detail=f"Study creation failed: {str(exc)}")
+
+
+@app.get("/api/studies/{study_id}")
+async def get_study_standalone(study_id: str) -> Dict[str, Any]:
+    """Get a study (standalone)."""
+    study = study_service.get_study(study_id)
+    if not study:
+        raise HTTPException(status_code=404, detail=f"Study {study_id} not found")
+    return study.to_dict()
+
+
+@app.delete("/api/studies/{study_id}")
+async def delete_study_standalone(study_id: str) -> Dict[str, Any]:
+    """Delete a study (standalone)."""
+    deleted = study_service.delete_study(study_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Study {study_id} not found")
+    return {"success": True, "message": f"Study {study_id} deleted"}
 
 
 if __name__ == "__main__":

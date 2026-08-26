@@ -20,7 +20,6 @@ class SourceType(str, Enum):
     STEP = "step"
     IGES = "iges"
     BREP = "brep"
-    ONSHAPE = "onshape"
     UPLOAD = "upload"
     SYNTHETIC = "synthetic"
 

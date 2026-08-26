@@ -1,56 +1,64 @@
 
 
-# PROMPT — SANEAMIENTO Y CONSOLIDACIÓN DE LA ARQUITECTURA STANDALONE
+# PROMPT — LIMPIEZA FINAL DE RESIDUOS DE ONSHAPE
 
 ## 1. OBJETIVO
 
-Realizar una migración y saneamiento técnico definitivo del proyecto `Topologia_Optimizada` para convertirlo en una aplicación **100 % standalone**, completamente independiente de cualquier aplicación, plataforma, servicio o API CAD externa.
+Realizar exclusivamente la limpieza final del repositorio después de la migración a la arquitectura standalone.
 
-La prioridad absoluta de esta intervención es conseguir que la aplicación pueda funcionar con un archivo CAD local, inicialmente STEP, sin necesitar:
+La arquitectura objetivo YA ESTÁ DEFINIDA y NO debe modificarse.
 
-- Onshape;
-- SolidWorks;
-- Fusion 360;
-- FreeCAD;
-- AutoCAD;
-- ninguna otra aplicación CAD;
-- cuentas externas;
-- OAuth;
-- APIs CAD externas;
-- plugins;
-- extensiones;
-- iframes de plataformas CAD;
-- conexión a servidores CAD externos.
+El objetivo de esta tarea es eliminar completamente del código ejecutable cualquier dependencia, compatibilidad o residuo funcional de Onshape que ya no sea necesario.
 
-## 2. REGLA ARQUITECTÓNICA SUPREMA
-
-La aplicación standalone es el producto principal.
-
-El flujo objetivo de esta etapa es:
+La aplicación debe quedar como:
 
 ```text
-ARCHIVO STEP LOCAL
-        ↓
-STEP ADAPTER
-        ↓
+ARCHIVO CAD LOCAL
+       ↓
+STEP Adapter
+       ↓
 CADModel
-        ↓
-CORE DE LA APLICACIÓN
-        ↓
-RESULTADO / PREPARACIÓN PARA ETAPAS POSTERIORES
+       ↓
+Core
+       ↓
+Servicios de la aplicación
 
-No debe existir ninguna dependencia de Onshape ni de otro CAD para ejecutar este flujo.
-
-Las futuras integraciones con CAD serán módulos opcionales y externos al Core.
-
-NO desarrollar dichos módulos durante esta intervención.
+La aplicación standalone debe continuar funcionando exactamente después de la limpieza.
 
 
 ---
 
-3. DOCUMENTACIÓN QUE DEBES LEER
+2. REGLA PRINCIPAL
 
-Antes de modificar código debes leer obligatoriamente:
+A partir de esta tarea:
+
+> ONshape NO forma parte de la aplicación principal.
+
+
+
+No conservar código de Onshape por:
+
+compatibilidad;
+
+versiones anteriores;
+
+posibles usos futuros;
+
+"por si acaso";
+
+facilidad de migración futura.
+
+
+Las futuras integraciones con Onshape serán desarrolladas posteriormente como módulos independientes.
+
+NO desarrollar ningún plugin, extensión o integración CAD durante esta tarea.
+
+
+---
+
+3. DOCUMENTACIÓN OBLIGATORIA
+
+Antes de modificar código lee:
 
 1. README.md
 
@@ -65,863 +73,765 @@ Antes de modificar código debes leer obligatoriamente:
 
 
 
-IMPORTANTE:
+No utilices:
 
-plan_implementacion_antigravity.md pertenece a una arquitectura anterior y NO debe utilizarse como fuente de requisitos, planificación ni arquitectura.
+plan_implementacion_antigravity.md
 
-Si existe, debe ser eliminado durante esta intervención.
+Si aparece nuevamente, debe considerarse un archivo obsoleto y eliminarse.
 
-No crees ningún nuevo archivo de planificación equivalente.
-
-
----
-
-4. AUDITORÍA INICIAL OBLIGATORIA
-
-Antes de modificar archivos realiza una auditoría completa del repositorio.
-
-Debes identificar explícitamente:
-
-estructura actual;
-
-módulos;
-
-dependencias;
-
-imports;
-
-endpoints;
-
-frontend;
-
-tests;
-
-scripts;
-
-configuraciones;
-
-variables de entorno;
-
-documentación;
-
-archivos heredados;
-
-referencias a Onshape;
-
-referencias a OAuth;
-
-referencias a FeatureScript;
-
-referencias a App Extension;
-
-referencias a iframe de Onshape;
-
-referencias a APIs CAD externas;
-
-código muerto;
-
-mocks;
-
-fallbacks;
-
-componentes duplicados.
-
-
-Busca referencias tanto por nombre de archivo como por contenido.
-
-No asumas que un archivo es innecesario únicamente por su nombre.
-
-Antes de eliminar código debes determinar qué dependencias tiene.
+No crees ningún nuevo archivo de planificación.
 
 
 ---
 
-5. ELIMINACIÓN DE LA ARQUITECTURA ONshape
+4. AUDITORÍA ANTES DE MODIFICAR
 
-La arquitectura actual del producto NO debe conservar funcionalidad Onshape.
+Primero realiza una búsqueda global en TODO el repositorio.
 
-Debes identificar y eliminar o aislar completamente del flujo standalone cualquier componente relacionado con:
+Busca al menos:
 
-onshape_client.py;
+onshape
+Onshape
+ONSHAPE
+oauth
+OAuth
+featurescript
+FeatureScript
+app-extension
+App Extension
+iframe
+client_id
+client_secret
+document_id
+workspace_id
+element_id
+did
+wid
+eid
+onshape_session
+
+También busca:
+
+connectors.onshape
+onshape_client
+oauth2
+oauth/callback
+oauth/token
+cad.onshape.com
+oauth.onshape.com
+
+NO elimines todavía.
+
+Clasifica cada coincidencia como:
+
+A — Código funcional obsoleto
+B — Compatibilidad obsoleta
+C — Test obsoleto
+D — Configuración obsoleta
+E — Documentación histórica
+F — Referencia válida no funcional
+G — Falso positivo
+
+Documenta esta clasificación antes de comenzar las eliminaciones.
+
+
+---
+
+5. ELIMINAR EL CONECTOR ONSHAPE
+
+Audita:
+
+connectors/onshape/
+
+Si este directorio únicamente contiene la antigua integración con Onshape:
+
+> ELIMINARLO COMPLETAMENTE.
+
+
+
+Esto incluye:
+
+cliente;
+
+servicio;
+
+helpers;
 
 OAuth;
 
-/login;
+modelos;
 
-/oauth/callback;
+tests específicos;
 
-tokens;
-
-Client ID;
-
-Client Secret;
-
-Document ID;
-
-Workspace ID;
-
-Element ID;
-
-API REST de Onshape;
-
-FeatureScript;
-
-App Extension;
-
-iframe específico de Onshape;
-
-selección de geometría desde Onshape;
-
-descarga de modelos desde Onshape;
-
-endpoints específicos de Onshape;
-
-tests específicos de Onshape;
-
-frontend específico de Onshape.
+imports asociados.
 
 
-La decisión sobre cada archivo debe basarse en su uso real.
+No reemplazarlo por otro conector.
 
-Si un archivo es exclusivamente de la arquitectura Onshape anterior y ya no tiene utilidad:
+No crear un "placeholder".
+
+La ausencia del conector es el comportamiento esperado.
+
+
+---
+
+6. ELIMINAR onshape_client.py
+
+Audita:
+
+onshape_client.py
+
+Si únicamente funciona como shim o compatibilidad hacia el antiguo conector:
 
 > ELIMINARLO.
 
 
 
-No mantenerlo solamente para "compatibilidad hacia atrás".
+Antes de eliminarlo:
 
-La compatibilidad con la arquitectura anterior NO es un requisito.
-
-
----
-
-6. ARCHIVOS HEREDADOS
-
-Presta especial atención a archivos como:
-
-onshape_client.py
-
-test_oauth.py
-
-app-extension.html
-
-integracion_onshape_app.md
-
-plan_implementacion_antigravity.md
+1. buscar todos sus imports;
 
 
-Determina individualmente si:
-
-1. debe eliminarse;
+2. determinar qué módulos lo utilizan;
 
 
-2. debe reemplazarse;
+3. eliminar esas dependencias;
 
 
-3. debe conservarse por una razón técnica real.
+4. ejecutar tests.
 
 
 
-No conserves código exclusivamente porque existía antes.
-
-No elimines archivos sin analizar sus dependencias.
-
-Toda decisión debe documentarse en RESUMEN_IMPLEMENTACION.md.
+No modificar la arquitectura standalone para conservar este archivo.
 
 
 ---
 
-7. OAUTH
+7. ELIMINAR ONSHAPE DE geometry_processor.py
 
-La aplicación standalone NO utiliza OAuth.
+Audita cuidadosamente:
 
-Debes eliminar del producto:
+geometry_processor.py
 
-flujo de login OAuth;
+Elimina cualquier parámetro heredado como:
 
-callback OAuth;
+onshape_session
+did
+wid
+eid
 
-intercambio de tokens;
+si ya no forma parte de la arquitectura standalone.
 
-refresh tokens;
+Elimina también métodos cuya única finalidad sea:
 
-credenciales OAuth;
-
-configuración específica de Onshape;
-
-variables de entorno relacionadas con Onshape.
-
-
-No reemplaces OAuth por otro sistema de autenticación.
-
-La aplicación standalone no necesita autenticación externa para cargar y procesar archivos locales.
-
-
----
-
-8. API
-
-Audita api_server.py y todos los servicios relacionados.
-
-El servidor debe quedar orientado exclusivamente a las necesidades de la aplicación standalone.
-
-Elimina endpoints cuya única función sea:
-
-autenticarse contra Onshape;
-
-obtener datos de Onshape;
+listar partes desde Onshape;
 
 descargar modelos desde Onshape;
 
-consultar documentos externos;
+obtener propiedades desde Onshape;
 
-ejecutar operaciones específicas de Onshape.
-
-
-No crees endpoints equivalentes innecesarios.
-
-La API debe evolucionar alrededor del flujo:
-
-ARCHIVO LOCAL
-      ↓
-IMPORTACIÓN
-      ↓
-CADModel
-      ↓
-PROCESAMIENTO
+comunicarse con Onshape.
 
 
----
+Por ejemplo, revisa específicamente métodos como:
 
-9. FRONTEND
+get_parts_list()
+download_part_studio()
+get_part_properties()
 
-Audita todo el frontend.
+No reemplaces estos métodos por llamadas falsas.
 
-El frontend actual NO debe presentar:
+Si ya no tienen utilidad dentro de la arquitectura actual:
 
-conexión con Onshape;
-
-estado de conexión Onshape;
-
-login;
-
-OAuth;
-
-Document ID;
-
-Workspace ID;
-
-Element ID;
-
-selector de plataforma CAD.
+> eliminarlos.
 
 
-La interfaz debe orientarse al uso standalone.
 
-El flujo mínimo esperado es:
+Si alguna parte del GeometryProcessor sigue siendo necesaria para STEP/CADModel:
 
-IMPORTAR ARCHIVO STEP
-        ↓
-VALIDAR ARCHIVO
-        ↓
-CARGAR MODELO
-        ↓
-MOSTRAR ESTADO DEL MODELO
-
-No desarrolles todavía:
-
-configuración avanzada de FEA;
-
-optimización topológica;
-
-selección avanzada de restricciones;
-
-plugins CAD;
-
-integración con Onshape.
+> conservar únicamente esa funcionalidad.
 
 
-Esas funcionalidades pertenecen a etapas posteriores.
+
+El resultado debe ser un componente limpio y coherente con la arquitectura standalone.
 
 
 ---
 
-10. CADModel
+8. ELIMINAR OAUTH
 
-Verifica que CADModel sea realmente independiente del formato y de cualquier plataforma CAD externa.
+Audita todo el repositorio buscando:
 
-El Core no debe recibir objetos específicos de Onshape.
+oauth
+OAuth
+client_id
+client_secret
+access_token
+refresh_token
+authorization
+oauth/callback
+oauth/token
 
-El flujo correcto es:
+Elimina cualquier código OAuth cuya finalidad sea la integración con Onshape.
 
-STEP
- ↓
-STEP Adapter
- ↓
-CADModel
- ↓
-Core
+Esto incluye:
 
-El Core no debe importar directamente:
+funciones;
 
-onshape_client;
+rutas;
 
-módulos OAuth;
+servicios;
 
-APIs externas;
+clientes;
 
-código específico del formato STEP.
+tests;
 
-
-El adaptador debe ser responsable de convertir la información externa al modelo interno.
-
-
----
-
-11. STEP ADAPTER
-
-Audita el adaptador STEP existente.
-
-Debe permitir:
-
-1. recibir una ruta local;
-
-
-2. validar que el archivo existe;
-
-
-3. validar extensión/formato;
-
-
-4. abrir el STEP;
-
-
-5. detectar errores de lectura;
-
-
-6. extraer la geometría necesaria;
-
-
-7. construir un CADModel;
-
-
-8. devolver errores claros cuando corresponda.
-
-
-
-No utilizar datos ficticios para afirmar que el adaptador funciona.
-
-
----
-
-12. PRUEBA REAL DE IMPORTACIÓN
-
-Debes realizar una prueba utilizando un archivo STEP real.
-
-La prueba debe demostrar:
-
-STEP REAL
-   ↓
-STEP ADAPTER
-   ↓
-CADModel REAL
-
-Debe comprobarse como mínimo:
-
-archivo válido;
-
-archivo inexistente;
-
-archivo inválido/corrupto;
-
-extracción de geometría;
-
-creación del modelo interno;
-
-manejo correcto de errores.
-
-
-Si no existe un STEP real apropiado en el repositorio, crea una prueba reproducible que indique claramente qué archivo externo local debe utilizarse.
-
-No inventes resultados.
-
-
----
-
-13. CORE
-
-Audita todos los módulos dentro de core/.
-
-El Core debe ser independiente de:
-
-Onshape;
-
-OAuth;
-
-HTTP externo;
-
-APIs CAD;
-
-frontend;
-
-detalles de presentación;
-
-credenciales.
-
-
-Debe poder recibir información del modelo interno y trabajar sobre ella.
-
-Si encuentras imports o dependencias prohibidas dentro del Core:
-
-> corrígelos.
-
-
-
-
----
-
-14. DEPENDENCIAS
-
-Audita:
-
-requirements.txt;
-
-pyproject.toml;
-
-archivos de configuración;
-
-scripts de instalación;
+configuración;
 
 variables de entorno.
 
 
-Elimina dependencias que sean utilizadas exclusivamente por Onshape/OAuth si ya no tienen otra función válida.
+NO sustituyas OAuth por otro sistema de autenticación.
 
-No elimines una librería solamente porque parezca innecesaria.
-
-Comprueba primero sus usos.
-
-No agregues dependencias nuevas salvo que sean necesarias para cumplir el objetivo de esta intervención.
+La aplicación standalone no necesita autenticación externa para cargar modelos locales.
 
 
 ---
 
-15. VARIABLES DE ENTORNO
+9. CONFIGURACIÓN
 
-Audita .env.example y cualquier configuración relacionada.
+Audita:
 
-No deben existir variables obligatorias relacionadas con:
+.env.example
+pyproject.toml
+requirements.txt
+configuración
+scripts
+
+No debe existir ninguna configuración obligatoria relacionada con:
 
 ONSHAPE_*
 OAUTH_*
-CLIENT_ID
-CLIENT_SECRET
+ONSHAPE_CLIENT_ID
+ONSHAPE_CLIENT_SECRET
 
-si su único propósito era la integración anterior.
+Si una variable solamente existía para Onshape:
 
-La aplicación standalone debe poder iniciarse sin credenciales externas.
+> eliminarla.
+
+
+
+No eliminar variables que tengan una función standalone válida.
 
 
 ---
 
-16. TESTS
+10. API
 
-Audita todos los tests existentes.
+Audita api_server.py y todos los routers/servicios.
 
-Clasifícalos:
+No deben existir endpoints cuya función sea:
 
-VÁLIDOS
+login de Onshape;
 
-Tests que comprueban funcionalidades pertenecientes a la nueva arquitectura standalone.
+OAuth;
 
-OBSOLETOS
+callback OAuth;
 
-Tests cuyo único objetivo era comprobar:
+listar documentos de Onshape;
+
+listar partes de Onshape;
+
+descargar modelos desde Onshape;
+
+consultar propiedades de Onshape.
+
+
+El API standalone debe conservar únicamente funcionalidad propia de la aplicación.
+
+Debe seguir funcionando el flujo:
+
+STEP local
+   ↓
+upload
+   ↓
+StepAdapter
+   ↓
+CADModel
+   ↓
+procesamiento
+
+NO reemplazar endpoints eliminados por endpoints simulados.
+
+
+---
+
+11. FRONTEND
+
+Audita todo el frontend.
+
+Elimina cualquier UI que exista únicamente para:
+
+conectar Onshape;
+
+iniciar sesión;
+
+mostrar estado de conexión Onshape;
+
+OAuth;
+
+seleccionar documentos de Onshape;
+
+seleccionar Workspaces;
+
+seleccionar Elements;
+
+utilizar un iframe de Onshape.
+
+
+NO implementar una nueva integración.
+
+El frontend debe continuar orientado a:
+
+Importar modelo CAD local
+        ↓
+Procesar modelo
+        ↓
+Mostrar información/resultados
+
+No desarrollar nuevas funciones de FEA ni TopOpt.
+
+
+---
+
+12. TESTS
+
+Audita todos los tests.
+
+Elimina tests cuyo único propósito sea probar:
 
 OAuth;
 
 Onshape;
 
-App Extension;
-
-APIs Onshape;
-
-integración CAD externa.
-
-
-Los tests obsoletos deben eliminarse junto con la funcionalidad obsoleta.
-
-No mantengas tests de arquitectura descartada solamente para conservar un número elevado de tests.
-
-NUEVOS
-
-Cuando sea necesario, crea tests que demuestren:
-
-STEP → Adapter → CADModel
-
-y la independencia del Core.
-
-
----
-
-17. TEST DE INDEPENDENCIA
-
-Debes crear o adaptar una prueba que demuestre que el Core puede utilizarse sin:
+connectors.onshape;
 
 onshape_client;
 
-OAuth;
+App Extension;
 
-credenciales externas;
+API REST de Onshape;
 
-red;
-
-aplicaciones CAD externas.
+autenticación externa.
 
 
-La prueba debe fallar si el Core vuelve a depender de componentes de Onshape.
+No conservar tests obsoletos solamente para mantener el número de tests.
 
+Conserva y fortalece los tests de:
 
----
-
-18. NO UTILIZAR MOCKS COMO EVIDENCIA
-
-No utilices mocks para afirmar que:
-
-STEP funciona;
-
-CADModel funciona con geometría real;
-
-la aplicación standalone procesa modelos reales.
-
-
-Los mocks pueden utilizarse únicamente para tests unitarios aislados.
-
-Toda afirmación sobre funcionamiento real debe tener evidencia real.
+STEP
+CADModel
+Core
+API standalone
+independencia
 
 
 ---
 
-19. NO AVANZAR A FEA NI TOPOPT
+13. NO UTILIZAR MOCKS PARA OCULTAR ELIMINACIONES
 
-Esta intervención NO tiene como objetivo implementar:
+No hagas esto:
+
+mock_onshape_client
+
+para mantener funcionando código que debería eliminarse.
+
+Tampoco:
+
+mocks de OAuth;
+
+clientes falsos de Onshape;
+
+fallback silencioso;
+
+imports opcionales utilizados para ocultar errores.
+
+
+Si una funcionalidad ya no pertenece al producto:
+
+> eliminarla.
+
+
+
+
+---
+
+14. DEPENDENCIAS PYTHON
+
+Audita los imports después de eliminar Onshape.
+
+Busca dependencias que hayan quedado sin uso.
+
+No elimines una dependencia únicamente por intuición.
+
+Para cada dependencia candidata:
+
+1. buscar todos sus usos;
+
+
+2. confirmar que no tiene utilidad;
+
+
+3. eliminarla si realmente está obsoleta;
+
+
+4. ejecutar tests.
+
+
+
+No agregues dependencias nuevas salvo que sean estrictamente necesarias para reparar la aplicación después de la limpieza.
+
+
+---
+
+15. DOCUMENTACIÓN
+
+Después de eliminar el código, vuelve a buscar referencias a Onshape.
+
+Las referencias restantes pueden existir únicamente si son:
+
+documentación histórica explícitamente identificada;
+
+explicación de decisiones arquitectónicas anteriores;
+
+referencias futuras claramente marcadas como futuras.
+
+
+No debe existir documentación que indique que Onshape es una dependencia actual.
+
+Si existe documentación histórica que pueda confundir a una IA:
+
+> eliminarla o marcarla claramente como HISTÓRICA / OBSOLETA.
+
+
+
+
+---
+
+16. NO MODIFICAR LA ARQUITECTURA STANDALONE
+
+No hagas cambios innecesarios en:
+
+core/
+adapters/
+CADModel
+StepAdapter
+API standalone
+
+La arquitectura actual ya fue migrada.
+
+Solo modifica esos componentes si una dependencia heredada de Onshape todavía existe realmente.
+
+No reescribas componentes que ya funcionan.
+
+
+---
+
+17. NO IMPLEMENTAR FEA
+
+ESTA TAREA NO INCLUYE:
 
 Gmsh;
 
-FEA;
+Tet4;
 
-solver Tet4;
+solver FEA;
+
+SciPy FEA;
+
+SfePy;
+
+cálculo de tensiones;
+
+condiciones de frontera;
+
+cargas;
 
 SIMP;
 
-optimización topológica;
-
-sensibilidades;
-
-compliance;
-
-condiciones de frontera avanzadas.
+TopOpt.
 
 
-Si ya existen componentes relacionados, únicamente audítalos y asegúrate de que no introduzcan dependencias prohibidas.
+Si esos componentes ya existen:
 
-No conviertas esta intervención en una implementación de Hito FEA.
+> no los desarrolles ni los rediseñes.
+
+
+
+Solo asegúrate de que no dependan de Onshape.
 
 
 ---
 
-20. ELIMINAR DOCUMENTACIÓN OBSOLETA
+18. VALIDACIÓN DURANTE LA LIMPIEZA
 
-Elimina o actualiza documentación que presente Onshape como dependencia actual.
+Después de cada bloque importante:
 
-Debe eliminarse especialmente:
-
-plan_implementacion_antigravity.md
-
-No debe existir otro documento que contradiga:
-
-> STANDALONE FIRST.
+1. ejecutar tests relevantes;
 
 
-
-La documentación histórica puede conservarse únicamente si está claramente marcada como histórica y no forma parte de las instrucciones activas del proyecto.
-
-
----
-
-21. README Y METODOLOGÍA
-
-No cambies arbitrariamente README.md ni metodologia.md.
-
-Si durante la implementación detectas una contradicción real:
-
-1. documenta la contradicción;
+2. corregir errores;
 
 
-2. determina cuál es la interpretación correcta según la arquitectura actual;
-
-
-3. corrige únicamente lo necesario;
-
-
-4. registra el cambio.
+3. continuar únicamente cuando el sistema vuelva a estar estable.
 
 
 
-No reescribas estos documentos innecesariamente.
+No acumules cambios sin validar.
 
 
 ---
 
-22. RESUMEN_IMPLEMENTACION.md
+19. VALIDACIÓN FINAL
 
-Al finalizar debes actualizar RESUMEN_IMPLEMENTACION.md.
+Al finalizar ejecuta:
 
-La documentación debe registrar:
+A. Búsqueda global
+
+Buscar nuevamente:
+
+onshape
+Onshape
+ONSHAPE
+oauth
+OAuth
+featurescript
+FeatureScript
+app-extension
+App Extension
+onshape_client
+connectors.onshape
+onshape_session
+
+B. Clasificación
+
+Cada coincidencia restante debe clasificarse:
+
+DOCUMENTACIÓN HISTÓRICA
+REFERENCIA FUTURA
+FALSO POSITIVO
+ERROR
+
+No debe quedar ninguna coincidencia correspondiente a código funcional de Onshape.
+
+
+---
+
+20. PRUEBAS FUNCIONALES OBLIGATORIAS
+
+Ejecuta la suite completa.
+
+Además verifica explícitamente:
+
+1. La aplicación inicia sin credenciales externas.
+2. La API inicia.
+3. El frontend funciona.
+4. Se puede cargar un STEP.
+5. STEPAdapter procesa el STEP.
+6. Se crea CADModel.
+7. El Core procesa CADModel.
+8. Los tests de independencia pasan.
+9. No se necesita Onshape.
+10. No se necesita OAuth.
+11. No se necesita otro CAD.
+
+No declares éxito si alguna de estas pruebas falla.
+
+
+---
+
+21. PRUEBA DE AISLAMIENTO
+
+La prueba definitiva debe comprobar que el proyecto funciona sin:
+
+Onshape
+OAuth
+credenciales externas
+sesión CAD
+CAD instalado
+API CAD externa
+
+El resultado esperado es:
+
+APLICACIÓN
+    ↓
+ARCHIVO STEP LOCAL
+    ↓
+STEP ADAPTER
+    ↓
+CADModel
+    ↓
+CORE
+
+
+---
+
+22. ACTUALIZAR RESUMEN_IMPLEMENTACION.md
+
+Al finalizar actualiza:
+
+RESUMEN_IMPLEMENTACION.md
+
+Documenta:
 
 auditoría inicial;
 
 archivos eliminados;
 
-archivos modificados;
+directorios eliminados;
 
-dependencias eliminadas;
-
-código Onshape eliminado;
+imports eliminados;
 
 OAuth eliminado;
 
+configuración eliminada;
+
 tests eliminados;
 
-tests nuevos;
+tests conservados;
 
-pruebas ejecutadas;
+tests ejecutados;
 
-resultado de cada prueba;
+resultado de las pruebas;
+
+referencias Onshape restantes y su clasificación;
 
 problemas encontrados;
 
-decisiones tomadas;
+problemas resueltos;
 
-estado de cada requisito;
-
-pendientes;
-
-bloqueadores;
-
-siguiente etapa recomendada.
+pendientes reales.
 
 
-No declares COMPLETADO algo que no pueda demostrarse.
+No declares algo como COMPLETADO sin evidencia.
 
 
 ---
 
 23. CRITERIOS DE ACEPTACIÓN
 
-La intervención solo puede declararse COMPLETADA si se cumplen TODOS estos puntos:
+La tarea solamente puede declararse:
 
-Arquitectura
+COMPLETADA
 
-[ ] La aplicación principal es standalone.
+si:
 
-[ ] No necesita ningún CAD externo.
+[ ] connectors/onshape/ fue eliminado si era exclusivamente legado.
 
-[ ] No necesita Onshape.
+[ ] onshape_client.py fue eliminado si era exclusivamente un shim.
 
-[ ] No necesita OAuth.
+[ ] OAuth fue eliminado del código funcional.
 
-[ ] No necesita credenciales externas.
+[ ] No existen endpoints funcionales de Onshape.
 
+[ ] No existen credenciales Onshape requeridas.
 
-Código
+[ ] No existen tests funcionales de Onshape.
 
-[ ] No existe dependencia funcional del código Onshape.
+[ ] geometry_processor.py no conserva compatibilidad innecesaria con Onshape.
 
-[ ] El Core es CAD-agnostic.
+[ ] Frontend no depende de Onshape.
 
-[ ] STEP entra mediante un Adapter.
+[ ] Core sigue siendo independiente.
 
-[ ] CADModel funciona como representación interna.
+[ ] STEP → CADModel sigue funcionando.
 
-[ ] No existen endpoints obligatorios de Onshape.
+[ ] La API standalone sigue funcionando.
 
+[ ] La suite completa de tests pasa.
 
-Configuración
+[ ] La aplicación puede ejecutarse sin servicios externos.
 
-[ ] No existen credenciales Onshape obligatorias.
+[ ] La búsqueda final no encuentra código funcional de Onshape.
 
-[ ] No existen variables OAuth obligatorias.
-
-[ ] El proyecto puede iniciarse sin cuentas externas.
-
-
-Tests
-
-[ ] Tests obsoletos de Onshape/OAuth eliminados.
-
-[ ] Tests standalone ejecutados.
-
-[ ] Importación STEP real verificada.
-
-[ ] STEP → Adapter → CADModel verificado.
-
-[ ] Independencia del Core verificada.
-
-
-Documentación
-
-[ ] README.md sigue alineado.
-
-[ ] metodologia.md sigue alineado.
-
-[ ] prompt.md refleja la tarea actual.
-
-[ ] RESUMEN_IMPLEMENTACION.md actualizado.
-
-[ ] plan_implementacion_antigravity.md eliminado.
-
-[ ] No existen documentos activos que presenten Onshape como dependencia.
+[ ] RESUMEN_IMPLEMENTACION.md está actualizado.
 
 
 
 ---
 
-24. AUDITORÍA FINAL OBLIGATORIA
+24. CONDICIÓN DE BLOQUEO
 
-Antes de declarar la tarea terminada realiza una segunda auditoría completa.
+Si después de la limpieza existe cualquier código que haga que el funcionamiento normal de la aplicación dependa de:
 
-Debes buscar nuevamente en todo el repositorio:
+Onshape
+OAuth
+otro CAD
+API CAD externa
 
-onshape
-oauth
-featurescript
-app extension
-iframe
-client_id
-client_secret
-document id
-workspace id
-element id
+entonces:
 
-Cada coincidencia debe ser clasificada como:
+STANDALONE = BLOQUEADO
 
-NECESARIA
-HISTÓRICA
-DOCUMENTACIÓN
-CÓDIGO OBSOLETO
-ERROR
-
-No debe quedar ninguna dependencia funcional de Onshape.
+No declares la tarea completada.
 
 
 ---
 
-25. PRUEBA FINAL DE AISLAMIENTO
+25. REGLA FINAL
 
-La prueba final debe demostrar que la aplicación puede ejecutarse en un entorno donde:
+No intentes demostrar que la nueva arquitectura funciona conservando la antigua.
 
-no exista Onshape;
+La antigua arquitectura debe desaparecer del producto principal.
 
-no existan credenciales Onshape;
+El resultado final debe ser:
 
-no exista OAuth;
+┌─────────────────────────────┐
+│     APLICACIÓN STANDALONE   │
+├─────────────────────────────┤
+│                             │
+│  STEP → Adapter → CADModel  │
+│              ↓              │
+│             Core            │
+│              ↓              │
+│       Servicios propios     │
+│                             │
+└─────────────────────────────┘
 
-no exista una sesión CAD;
+        SIN ONSHAPE
+        SIN OAUTH
+        SIN CAD EXTERNO
+        SIN PLUGINS
 
-no exista conexión con un CAD externo.
+No avances al desarrollo del Hito 2 durante esta tarea.
 
+Primero deja la arquitectura standalone completamente limpia y verificable.
 
-Debe poder realizar:
+Cuando finalices, informa exactamente:
 
-INICIAR APLICACIÓN
-      ↓
-CARGAR STEP LOCAL
-      ↓
-CREAR CADModel
-      ↓
-PROCESAR MODELO
-
-Si alguna parte del flujo requiere Onshape u otro CAD:
-
-> la migración NO está completada.
-
-
-
-
----
-
-26. ESTADOS FINALES
-
-Al terminar clasifica explícitamente cada requisito:
-
-COMPLETADO
-PARCIAL
-PENDIENTE
-BLOQUEADO
-
-No utilices otros estados.
-
-Si existe cualquier dependencia funcional de Onshape:
-
-> STANDALONE = BLOQUEADO
+1. qué eliminaste;
 
 
-
-Si la importación STEP no funciona realmente:
-
-> IMPORTACIÓN STEP = PARCIAL o BLOQUEADO
+2. qué conservaste y por qué;
 
 
+3. qué modificaste;
 
-Si no existen pruebas suficientes:
 
-> VALIDACIÓN = PARCIAL
+4. qué tests ejecutaste;
+
+
+5. resultados;
+
+
+6. referencias Onshape restantes;
+
+
+7. estado final de cada criterio;
+
+
+8. pendientes reales.
 
 
 
-
----
-
-27. REGLA FINAL
-
-NO avances a FEA, SIMP o TopOpt como siguiente implementación dentro de esta misma tarea.
-
-Primero debe existir una base standalone limpia, verificable y reproducible.
-
-El resultado esperado de esta intervención es:
-
-ARQUITECTURA ANTIGUA
-Onshape + OAuth + CAD externo
-          ↓
-       ELIMINADA
-          ↓
-ARQUITECTURA STANDALONE
-          ↓
-STEP LOCAL
-          ↓
-STEP ADAPTER
-          ↓
-CADModel
-          ↓
-CORE
-
-Solo cuando esta arquitectura esté demostrada mediante código y pruebas podrá comenzar la siguiente etapa de desarrollo.
-
-28. PRINCIPIO SUPREMO
-
-> NO CONFUNDIR CÓDIGO EXISTENTE CON FUNCIONALIDAD VÁLIDA.
-
-
-
-El objetivo no es conservar todo lo que ya existe.
-
-El objetivo es dejar una base técnica limpia, independiente, verificable y preparada para continuar el desarrollo.
-
-La aplicación standalone es el producto.
-
-Las integraciones CAD externas son futuras extensiones opcionales.
-
-No invertir estas prioridades.
-
+No ocultes problemas ni declares éxito anticipadamente.

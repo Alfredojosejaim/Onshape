@@ -51,12 +51,22 @@
   <header class="header">
     <h1>Entorno de Optimización Topológica</h1>
     <div>
-      <span id="connection-status" class="info-text">Comprobando conexión con Onshape...</span>
-      <button id="back-btn" class="btn" style="width:auto; margin-left:16px;">← Selector de Geometría</button>
+      <input type="file" id="step-file-input" accept=".step,.stp" style="display:none;">
+      <button id="import-step-btn" class="btn primary" style="width:auto; margin-left:16px;">📁 Importar STEP</button>
+      <span id="connection-status" class="info-text" style="margin-left:16px;">Modo Standalone</span>
     </div>
   </header>
   
   <aside class="sidebar">
+    <div class="panel">
+      <h3>📁 Importar Modelo</h3>
+      <div class="form-group">
+        <label>Archivo STEP local</label>
+        <button id="import-step-btn-sidebar" class="btn primary">Seleccionar archivo STEP</button>
+        <div id="file-info" class="info-text" style="margin-top:6px;"></div>
+      </div>
+    </div>
+
     <div class="panel">
       <h3>📊 Estado</h3>
       <div id="app-status" class="info-text">Listo para configurar optimización</div>
@@ -489,18 +499,93 @@
   $('run-optimization').addEventListener('click', async () => {
     $('app-status').textContent = 'Hito 1 completado. El solver FEA/TopOpt será acoplado en el siguiente hito (Hito 2).';
   });
-  
-  // Cargar estado inicial
+
+  // Importación STEP Standalone
+  let currentModelId = null;
+
+  function handleStepFileSelect(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    $('file-info').textContent = `Archivo: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+    $('app-status').textContent = 'Leyendo archivo STEP...';
+
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const arrayBuffer = e.target.result;
+        const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+
+        $('app-status').textContent = 'Importando STEP al servidor...';
+        $('loading-overlay').classList.remove('hidden');
+        $('loading-text').textContent = 'Procesando geometría STEP...';
+
+        const response = await fetch('/api/cad/step/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            step_data: base64,
+            model_name: file.name.replace(/\.(step|stp)$/i, '')
+          })
+        });
+
+        const data = await response.json();
+        $('loading-overlay').classList.add('hidden');
+
+        if (data.success) {
+          currentModelId = data.model_id;
+          $('app-status').textContent = `Modelo importado: ${data.model_name}`;
+          $('cad-meta').textContent = `ID: ${data.model_id} | Volumen: ${data.model.total_volume.toFixed(2)} mm³`;
+
+          // Generar teselación automáticamente
+          const tessResponse = await fetch(`/api/cad/models/${data.model_id}/tessellate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model_id: data.model_id,
+              linear_deflection: 0.1,
+              angular_deflection: 0.1
+            })
+          });
+
+          const tessData = await tessResponse.json();
+          if (tessData.success) {
+            loadRealCADGeometry(tessData);
+          }
+        } else {
+          $('app-status').textContent = 'Error al importar STEP: ' + (data.detail || 'Error desconocido');
+        }
+      } catch (err) {
+        $('loading-overlay').classList.add('hidden');
+        $('app-status').textContent = 'Error: ' + err.message;
+      }
+    };
+
+    reader.onerror = () => {
+      $('app-status').textContent = 'Error al leer el archivo';
+      $('loading-overlay').classList.add('hidden');
+    };
+
+    reader.readAsArrayBuffer(file);
+  }
+
+  $('import-step-btn').addEventListener('click', () => {
+    $('step-file-input').click();
+  });
+
+  $('import-step-btn-sidebar').addEventListener('click', () => {
+    $('step-file-input').click();
+  });
+
+  $('step-file-input').addEventListener('change', handleStepFileSelect);
+
+  // Cargar estado inicial (modo standalone)
   async function loadInitialState() {
     try {
-      const authRes = await fetch('/api/auth/status', { credentials: 'include' });
-      const authData = await authRes.json();
-      if (authData.authenticated) {
-        $('connection-status').textContent = '● Conectado a Onshape' + (authData.user ? ` (${authData.user.name})` : '');
-      } else {
-        $('connection-status').textContent = '○ No conectado a Onshape';
-      }
-      
+      // En modo standalone, no verificamos conexión Onshape
+      $('connection-status').textContent = 'Modo Standalone - Importar archivo STEP local';
+
+      // Intentar cargar geometría desde el servidor si existe un modelo previo
       const geoRes = await fetch('/api/geometry/current', { credentials: 'include' });
       const geoData = await geoRes.json();
       if (geoData.status === 'success' && geoData.tessellation) {

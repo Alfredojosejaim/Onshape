@@ -25,7 +25,11 @@
         "displacement_absolute_tolerance": 1e-6,
         "rotation_relative_tolerance": 1e-6,
         "rotation_absolute_tolerance": 1e-6,
-        "max_iteration": 30
+        "max_iteration": 30,
+        "model_import_settings": {
+            "input_type": "mdpa",
+            "input_filename": "model/cantilever_beam"
+        }
     },
     "processes": {
         "constraints_process_list": [
@@ -39,7 +43,8 @@
                     "constrained": true,
                     "value": [0.0, 0.0, 0.0],
                     "mesh_id": 0,
-                    "gravity": [0.0, 0.0, 0.0]
+                    "gravity": [0.0, 0.0, 0.0],
+                    "interval": [0.0, "End"]
                 }
             }
         ],
@@ -54,7 +59,8 @@
                     "constrained": false,
                     "value": [0.0, 0.0, -100.0],
                     "mesh_id": 0,
-                    "gravity": [0.0, 0.0, 0.0]
+                    "gravity": [0.0, 0.0, 0.0],
+                    "interval": [0.0, "End"]
                 }
             }
         ]

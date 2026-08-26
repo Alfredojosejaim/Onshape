@@ -251,7 +251,7 @@
     renderer.render(scene, camera);
   }
   
-  // Renderizar la geometría real descargada del STEP de Onshape
+  // Renderizar la geometría real descargada del STEP local
   function loadRealCADGeometry(tess) {
     if (!tess || !tess.vertices || tess.vertices.length === 0) {
       $('viewer-info').textContent = 'No hay datos de geometría disponibles';
@@ -582,7 +582,7 @@
   // Cargar estado inicial (modo standalone)
   async function loadInitialState() {
     try {
-      // En modo standalone, no verificamos conexión Onshape
+      // En modo standalone, importamos archivo STEP local
       $('connection-status').textContent = 'Modo Standalone - Importar archivo STEP local';
 
       // Intentar cargar geometría desde el servidor si existe un modelo previo
@@ -591,7 +591,7 @@
       if (geoData.status === 'success' && geoData.tessellation) {
         loadRealCADGeometry(geoData.tessellation);
       } else {
-        $('viewer-info').textContent = 'Sin geometría activa. Seleccione una pieza en la App Extension.';
+        $('viewer-info').textContent = 'Sin geometría activa. Importe un archivo STEP local.';
       }
     } catch (err) {
       console.warn('Error al verificar sesión:', err);

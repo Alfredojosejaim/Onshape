@@ -28,45 +28,12 @@ class GeometryProcessor:
 
     def __init__(
         self,
-        onshape_session: Optional[Any] = None,
-        did: Optional[str] = None,
-        wid: Optional[str] = None,
-        eid: Optional[str] = None,
         mesher: Optional[Callable[..., Any]] = None,
     ):
-        # Parameters kept for backward compatibility but no longer used
-        self.session = onshape_session
-        self.did = did
-        self.wid = wid
-        self.eid = eid
-        self.base_url = ""
         self.mesher = mesher
-        self.last_download_error_code: Optional[str] = None
 
         # New standalone service
         self.cad_service = CADService()
-
-    # --- Onshape-specific methods (deprecated, no longer functional) ---
-
-    def get_parts_list(self) -> List[Dict[str, Any]]:
-        """DEPRECATED: Onshape integration removed. Returns empty list."""
-        logger.warning("get_parts_list is deprecated - Onshape integration removed")
-        return []
-
-    def download_part_studio(
-        self,
-        output_format: str = "step",
-        part_ids: Optional[List[str]] = None,
-    ) -> Optional[bytes]:
-        """DEPRECATED: Onshape integration removed. Returns None."""
-        logger.warning("download_part_studio is deprecated - Onshape integration removed")
-        self.last_download_error_code = "ONSHAPE_REMOVED"
-        return None
-
-    def get_part_properties(self) -> Dict[str, Any]:
-        """DEPRECATED: Onshape integration removed. Returns empty dict."""
-        logger.warning("get_part_properties is deprecated - Onshape integration removed")
-        return {}
 
     # --- Standalone STEP processing methods (use services.cad_service instead) ---
 

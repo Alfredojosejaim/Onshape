@@ -1,784 +1,553 @@
-# VALIDACIÓN DEFINITIVA — KRATOS COMO MOTOR FEA + TOPOLOGICAL OPTIMIZATION
+# DIAGNÓSTICO DEFINITIVO — KRATOS / WINDOWS / DLL LOADING
 
 ## OBJETIVO
 
-Este es el ÚLTIMO EXPERIMENTO antes de tomar una decisión arquitectónica sobre Kratos Multiphysics.
+El PoC de Kratos Multiphysics quedó bloqueado antes de poder ejecutar FEA porque:
 
-Debes leer nuevamente:
+    import KratosMultiphysics
 
-- `README.md`
-- `metodología.md`
-- `prompt.md`
-- `RESUMEN_IMPLEMENTACION.md`
+produce un error de Windows relacionado con carga de DLL:
 
-y revisar todo el contenido existente de:
+    DLL load failed while importing Kratos
+    No se puede encontrar el módulo especificado
 
-`experimentos/kratos_topopt_poc/`
+Tu tarea ahora NO es investigar TopOpt, SIMP, FEA ni la arquitectura de la aplicación.
 
-El objetivo NO es investigar nuevamente si Kratos posee determinadas clases o capacidades.
+Tu única tarea es:
 
-El objetivo es DEMOSTRAR MEDIANTE EJECUCIÓN REAL si Kratos puede funcionar como motor de:
+> determinar exactamente por qué KratosMultiphysics no puede cargarse en este entorno Windows y establecer si el problema puede solucionarse mediante una instalación/configuración reproducible.
 
-1. FEA estructural 3D Tet4.
-2. SIMP.
-3. Cálculo de respuesta estructural.
-4. Sensibilidades.
-5. Filtrado.
-6. Actualización de densidades.
-7. Restricción de volumen.
-8. Iteración completa de optimización topológica.
+NO pasar a pruebas FEA/SIMP hasta conseguir que:
 
-Al finalizar debes emitir un VEREDICTO TÉCNICO FINAL que determine si Kratos puede reemplazar el solver FEA + SIMP propio que inicialmente estaba previsto para el proyecto.
+    import KratosMultiphysics
+
+funcione correctamente.
 
 ---
 
-# 1. REGLA FUNDAMENTAL
+# 1. REGLA PRINCIPAL
 
-NO aceptar como evidencia:
+NO declarar:
 
-- que una clase exista;
-- que una API esté documentada;
-- que un ejemplo exista;
-- que un script se haya creado;
-- que una variable cambie;
-- que una prueba termine sin error.
+    "Kratos no es viable"
 
-Una capacidad solamente se considera:
+simplemente porque actualmente no carga.
 
-`PASS / VERIFICADA`
+El resultado puede ser únicamente:
 
-si fue ejecutada realmente y existe evidencia cuantitativa o verificable de su funcionamiento.
+### A — RESUELTO
+Kratos carga correctamente.
 
-Diferenciar estrictamente:
+### B — BLOQUEADO CON CAUSA IDENTIFICADA
+Se identificó una dependencia/configuración concreta que impide la carga, pero no pudo resolverse.
 
-- `PASS — VERIFICADO`
-- `PARTIAL — PARCIALMENTE VERIFICADO`
-- `FAIL — FALLÓ`
-- `NOT VERIFIED — NO VERIFICADO`
-- `NOT APPLICABLE`
+### C — NO RESUELTO
+Después de agotar sistemáticamente el diagnóstico permitido, no se pudo determinar la causa.
 
-NO convertir un `PARTIAL` o `NOT VERIFIED` en `PASS`.
+Solo después de este diagnóstico se podrá decidir si continuar con Kratos o descartarlo.
 
 ---
 
-# 2. AISLAMIENTO ABSOLUTO
+# 2. AISLAMIENTO
 
-Todo trabajo experimental debe permanecer exclusivamente dentro de:
+Trabajar exclusivamente dentro de:
 
-`experimentos/kratos_topopt_poc/`
+    experimentos/kratos_topopt_poc/
 
-Puedes modificar o reemplazar archivos dentro de esa carpeta si es necesario.
+Puedes crear/modificar scripts de diagnóstico dentro de esa carpeta.
 
 NO modificar:
 
-- `README.md`
-- `metodología.md`
-- `prompt.md`
-- arquitectura principal;
-- código productivo;
-- documentación histórica;
-- otros experimentos;
-- archivos fuera del PoC.
+- README.md
+- metodología.md
+- prompt.md
+- código productivo
+- arquitectura principal
+- otros experimentos
 
-La ÚNICA excepción es:
+Puedes actualizar:
 
-`RESUMEN_IMPLEMENTACION.md`
+    RESUMEN_IMPLEMENTACION.md
 
-porque debe contener el resultado final de esta validación.
+únicamente para documentar los resultados de este diagnóstico.
 
 ---
 
-# 3. PRIMER PASO — AUDITORÍA DEL POC EXISTENTE
+# 3. PRIMER PASO — AUDITAR EL ENTORNO REAL
 
-Antes de modificar código:
+Antes de modificar nada, obtener mediante Python y/o comandos de Windows:
 
-1. Leer todos los scripts existentes.
-2. Identificar qué pruebas ya funcionan.
-3. Ejecutar nuevamente las pruebas existentes.
-4. Identificar cuáles son solamente pruebas de disponibilidad de API.
-5. Identificar cuáles son pruebas numéricas reales.
-6. Identificar qué pruebas están incompletas.
-7. No asumir que los resultados anteriores siguen siendo válidos.
+- versión exacta de Windows;
+- arquitectura del sistema;
+- versión de Python;
+- arquitectura de Python;
+- ubicación real de Python;
+- ubicación real de `site-packages`;
+- versión instalada de Kratos;
+- ubicación real de `KratosMultiphysics`;
+- ubicación real de sus DLL;
+- PATH actual;
+- variables relacionadas con Python;
+- Visual C++ Runtime instalado;
+- arquitectura de Visual C++ Runtime.
 
-Documentar internamente el estado inicial antes de corregir nada.
+NO utilizar rutas hardcodeadas como:
 
----
+    C:\Users\XXXX\...
 
-# 4. ENTORNO REAL
-
-Registrar exactamente:
-
-- Sistema operativo.
-- Python.
-- Kratos.
-- StructuralMechanicsApplication.
-- OptimizationApplication.
-- Gmsh.
-- versión de cada dependencia.
-
-Verificar que las pruebas utilizan realmente esas versiones.
-
-No utilizar simulaciones falsas ni mocks para sustituir Kratos.
+El diagnóstico debe descubrir las rutas reales dinámicamente.
 
 ---
 
-# 5. MODELO FÍSICO DEFINITIVO
+# 4. VERIFICAR EL PAQUETE REAL
 
-Utilizar una viga en voladizo 3D.
+Desde el mismo Python que ejecutará el proyecto:
 
-Geometría:
+1. localizar `KratosMultiphysics`;
+2. localizar sus archivos `.pyd`;
+3. localizar sus `.dll`;
+4. identificar sus versiones;
+5. comprobar arquitectura x64/x86;
+6. comprobar que Python y Kratos tengan arquitecturas compatibles.
 
-- L = 100 mm
-- ancho = 10 mm
-- alto = 10 mm
+Generar un informe:
 
-Material:
+    diagnostico_entorno.txt
 
-- E = 68.9 GPa
-- ν = 0.33
-
-Carga:
-
-- Fz = -100 N
-
-La geometría debe estar en unidades coherentes.
-
-Documentar claramente el sistema de unidades utilizado.
+dentro del PoC.
 
 ---
 
-# 6. MALLA DEFINITIVA
+# 5. NO ASUMIR QUE "DLL EXISTE" SIGNIFICA "DLL FUNCIONA"
 
-Generar la malla mediante Gmsh.
+La existencia física de:
 
-Debe ser:
+    KratosCore.dll
 
-- volumétrica;
-- tetraédrica;
-- Tet4;
-- reproducible.
+NO es suficiente.
 
-Registrar:
+Determinar qué dependencia concreta está provocando:
 
-- nodos;
-- elementos;
-- tamaño aproximado;
-- tipo de elemento;
-- grupos físicos.
+    DLL load failed
 
-Verificar que los elementos importados a Kratos sean realmente los elementos utilizados por el solver.
+Utilizar herramientas apropiadas de Windows para analizar dependencias, por ejemplo:
 
-NO aceptar:
+- `dumpbin /DEPENDENTS`, si está disponible;
+- herramientas de análisis de dependencias;
+- PowerShell;
+- Python;
+- otras herramientas locales apropiadas.
 
-"se generó una malla Tet4"
+NO descargar DLL arbitrarias desde Internet.
 
-sin demostrar que esa malla fue la utilizada por el análisis.
+NO copiar DLL desconocidas desde otras instalaciones.
 
----
-
-# 7. PRUEBA 1 — FEA REAL SIN OPTIMIZACIÓN
-
-Esta prueba es OBLIGATORIA.
-
-Ejecutar:
-
-Gmsh
-→ Tet4
-→ Kratos ModelPart
-→ Structural Mechanics
-→ condiciones de contorno
-→ carga
-→ solver
-→ desplazamientos
-
-Debe obtenerse una solución numérica real.
-
-Registrar:
-
-- desplazamiento máximo;
-- desplazamiento en el extremo libre;
-- reacciones;
-- energía/compliance si está disponible.
+NO reemplazar archivos del sistema a ciegas.
 
 ---
 
-# 8. VALIDACIÓN ANALÍTICA
+# 6. IDENTIFICAR LA DLL REALMENTE FALTANTE
 
-Calcular la solución analítica de Euler-Bernoulli:
+Determinar, si es posible, la cadena:
 
-δ = F L³ / (3 E I)
+    KratosMultiphysics
+          ↓
+    KratosCore / .pyd
+          ↓
+    dependencia faltante
+          ↓
+    dependencia secundaria
 
-donde:
+Documentar exactamente:
 
-I = b h³ / 12
+- nombre del archivo;
+- ubicación esperada;
+- si existe;
+- si puede cargarse;
+- qué componente depende de ella.
 
-Comparar:
-
-δ_FEM
-
-contra:
-
-δ_analítica
-
-Calcular:
-
-error_relativo =
-abs(δ_FEM - δ_analítica) / abs(δ_analítica)
-
-IMPORTANTE:
-
-No exigir arbitrariamente menos del 5 % para una única malla Tet4 si la discretización no lo permite.
-
-Si el error supera el 5 %:
-
-1. refinar la malla;
-2. volver a ejecutar;
-3. registrar el comportamiento.
-
-La conclusión debe basarse en convergencia.
+Si el error proviene de una dependencia secundaria, identificarla.
 
 ---
 
-# 9. ESTUDIO DE CONVERGENCIA
+# 7. VERIFICAR VISUAL C++ RUNTIME
 
-Ejecutar al menos tres niveles:
+Comprobar de forma objetiva:
 
-- malla gruesa;
-- malla media;
-- malla fina.
+- qué versión de Microsoft Visual C++ Redistributable está instalada;
+- arquitectura;
+- si corresponde al runtime requerido por la compilación de Kratos;
+- si existe algún conflicto.
 
-Registrar:
+NO asumir que "Visual C++ Redistributable está instalado" significa que el problema está resuelto.
 
-| Malla | Elementos | δ FEM | δ analítica | Error |
-|---|---:|---:|---:|---:|
-
-Determinar si el resultado converge hacia la solución analítica.
-
-Esto es obligatorio para validar el solver.
+Documentar evidencia.
 
 ---
 
-# 10. PRUEBA 2 — SIMP REAL
-
-Después de validar FEA, ejecutar la optimización.
-
-Utilizar la infraestructura REAL de:
-
-`OptimizationApplication`
-
-y preferentemente:
-
-`SimpControl`
-
-si es compatible con el caso.
-
-NO implementar un simulador artificial de SIMP.
-
-NO reducir la prueba a:
-
-ρ = [1.0, 0.5, 0.3...]
-
-sin que esas densidades sean utilizadas por el FEA.
-
-La densidad debe modificar realmente las propiedades estructurales.
-
-Debe cumplirse conceptualmente:
-
-E(ρ) = E0 · ρ^p
-
-con:
-
-p = 3
-
-o el valor equivalente configurado por Kratos.
-
----
-
-# 11. CICLO DE OPTIMIZACIÓN REAL
-
-Demostrar el siguiente ciclo:
-
-ρ
-↓
-FEA
-↓
-respuesta
-↓
-sensibilidad
-↓
-filtro
-↓
-actualización
-↓
-ρ nueva
-↓
-FEA nuevamente
-
-Debe ejecutarse realmente durante varias iteraciones.
-
-Mínimo recomendado:
-
-10 iteraciones.
-
-Preferiblemente continuar hasta que:
-
-- se alcance convergencia;
-- o se alcance un máximo razonable de iteraciones.
-
----
-
-# 12. PRUEBA CRÍTICA — DEMOSTRAR QUE LA DENSIDAD AFECTA AL FEA
-
-Esta prueba es obligatoria.
-
-Seleccionar elementos con densidades distintas.
-
-Demostrar que cambiar:
-
-ρ = 1.0
-
-a:
-
-ρ < 1.0
-
-produce una modificación real de la respuesta estructural.
-
-Registrar:
-
-- densidad;
-- Young efectivo;
-- respuesta;
-- compliance;
-- desplazamiento.
-
-Esto elimina el riesgo de tener una optimización que solamente modifica una variable visual sin afectar el análisis.
-
----
-
-# 13. RESPONSE
-
-Utilizar:
-
-`LinearStrainEnergyResponseFunction`
-
-si es compatible con la configuración.
-
-Demostrar que la respuesta:
-
-- se calcula;
-- cambia cuando cambia el diseño;
-- se utiliza durante la optimización.
-
-Registrar el valor de la función objetivo por iteración.
-
----
-
-# 14. SENSIBILIDADES REALES
-
-Verificar que las sensibilidades se calculan a partir del estado FEA real.
-
-Por cada iteración registrar:
-
-- mínimo;
-- máximo;
-- promedio;
-- cantidad de NaN;
-- cantidad de Inf.
-
-Debe cumplirse:
-
-NaN = 0
-Inf = 0
-
-salvo que exista una explicación numérica específica y documentada.
-
----
-
-# 15. FILTRO
-
-Utilizar un filtro real de OptimizationApplication si es compatible.
-
-Demostrar que:
-
-- existe;
-- se aplica;
-- participa en el ciclo;
-- no es simplemente declarado pero nunca utilizado.
-
-Documentar:
-
-- tipo;
-- parámetros;
-- radio/tamaño;
-- dónde se aplica.
-
----
-
-# 16. RESTRICCIÓN DE VOLUMEN
-
-Esta prueba es OBLIGATORIA.
-
-Objetivo:
-
-fracción volumétrica ≈ 40 %
-
-o el valor técnicamente más apropiado para el modelo.
-
-Registrar:
-
-V_inicial
-
-V_objetivo
-
-V_por_iteración
-
-V_final
-
-error_final
-
-Crear una tabla:
-
-| Iteración | Volumen relativo | Objetivo | Error |
-|---:|---:|---:|---:|
-
-Demostrar que la restricción realmente participa en la optimización.
-
-La existencia de `MassOptResponse` NO constituye evidencia suficiente.
-
----
-
-# 17. TABLA MAESTRA DE ITERACIONES
-
-Generar obligatoriamente:
-
-| Iteración | Objective | Volumen | Min ρ | Max ρ | Mean ρ | Δρ |
-|---:|---:|---:|---:|---:|---:|---:|
-
-Los valores deben proceder de la ejecución real.
-
-NO inventar valores.
-
-NO escribir manualmente una tabla que no provenga de los resultados.
-
----
-
-# 18. CRITERIOS DE CONVERGENCIA
+# 8. VERIFICAR COMPATIBILIDAD PYTHON ↔ KRATOS
 
 Determinar:
 
-- cambio de densidad;
-- cambio de objetivo;
-- estabilidad del volumen.
+- Python utilizado para instalar Kratos;
+- Python utilizado para ejecutar el PoC;
+- versión;
+- arquitectura;
+- ABI cuando corresponda.
 
-Definir criterios explícitos.
+Confirmar que son exactamente compatibles.
+
+Eliminar cualquier ambigüedad entre:
+
+- Python del sistema;
+- Python de VSCode;
+- Python del PATH;
+- Python utilizado por `pip`.
+
+Ejecutar:
+
+    python -m pip ...
+
+en lugar de asumir que `pip` pertenece al mismo Python.
+
+---
+
+# 9. VERIFICAR INSTALACIÓN
+
+Determinar si la instalación actual de Kratos está corrupta o incompleta.
+
+NO reinstalar inmediatamente.
+
+Primero documentar el estado actual.
+
+Después, si corresponde:
+
+1. desinstalar;
+2. limpiar instalación;
+3. instalar nuevamente;
+4. verificar;
+5. probar.
+
+Cada intento debe quedar documentado.
+
+NO realizar una sucesión indiscriminada de instalaciones.
+
+---
+
+# 10. CREAR UN ENTORNO LIMPIO
+
+Si el problema no puede determinarse en el entorno actual:
+
+crear un entorno Python limpio exclusivamente para el PoC.
 
 Por ejemplo:
 
-Δρ < tolerancia
+    .venv_kratos_test/
 
-durante varias iteraciones consecutivas.
+El entorno debe contener únicamente lo necesario.
 
-Si no converge:
+Instalar Kratos mediante:
 
-marcar:
+    python -m pip
 
-`NOT VERIFIED`
+Registrar exactamente:
 
-y explicar por qué.
+- versión de Python;
+- versión de pip;
+- paquetes instalados;
+- versiones.
 
-NO declarar éxito solamente porque se ejecutaron N iteraciones.
+Después ejecutar:
 
----
-
-# 19. RESULTADO VISUAL
-
-Generar un resultado visual de la distribución final de densidad.
-
-El resultado debe proceder de las densidades obtenidas por el optimizador REAL.
-
-Puede utilizarse:
-
-- VTK;
-- ParaView;
-- GiD;
-- cualquier formato verificable.
-
-Debe ser posible comprobar que:
-
-- existen regiones de alta densidad;
-- existen regiones de baja densidad;
-- la distribución corresponde a los datos finales.
+    import KratosMultiphysics
 
 ---
 
-# 20. PRUEBA DE REPRODUCIBILIDAD
+# 11. PRUEBA MÍNIMA OBLIGATORIA
 
-Eliminar resultados temporales si es necesario.
+Crear:
 
-Ejecutar nuevamente:
+    test_kratos_import.py
 
-`python run_poc.py`
+Debe realizar únicamente:
 
-o el comando definitivo.
+1. importar `KratosMultiphysics`;
+2. imprimir versión;
+3. importar `StructuralMechanicsApplication`;
+4. importar `OptimizationApplication`.
 
-Comprobar que:
+No ejecutar FEA.
 
-1. genera la malla;
-2. ejecuta FEA;
-3. ejecuta optimización;
-4. genera resultados;
-5. termina correctamente.
+No ejecutar Gmsh.
 
-Si requiere pasos manuales, documentarlos.
+No ejecutar TopOpt.
 
----
+El objetivo es exclusivamente verificar la carga de las aplicaciones.
 
-# 21. AUDITORÍA DE "FAKE PASS"
+Resultado esperado:
 
-Antes de concluir, revisar específicamente que NO haya:
-
-- densidades modificadas manualmente para aparentar optimización;
-- resultados hardcodeados;
-- respuestas ficticias;
-- matrices ficticias;
-- sensitivities ficticias;
-- resultados copiados de ejemplos;
-- valores escritos manualmente;
-- mocks;
-- simulaciones que no utilizan Kratos;
-- scripts que solamente comprueban que una clase existe.
-
-Si encuentras alguno:
-
-ELIMINARLO O AISLARLO COMO PRUEBA DE API.
-
-Nunca presentarlo como validación del pipeline.
+    [PASS] KratosMultiphysics
+    [PASS] StructuralMechanicsApplication
+    [PASS] OptimizationApplication
 
 ---
 
-# 22. RESULTADO FINAL OBLIGATORIO
+# 12. PRUEBA DE RUTAS DLL
 
-Actualizar:
+Si Python no encuentra automáticamente las DLL necesarias:
 
-`RESUMEN_IMPLEMENTACION.md`
+determinar si es necesario utilizar:
 
-No limitarse a describir qué código se creó.
+    os.add_dll_directory(...)
 
-Debe documentar:
+o una configuración equivalente.
 
-## 22.1 Entorno
+No aplicar soluciones permanentes al sistema operativo sin necesidad.
+
+Determinar cuál sería la configuración correcta para que la futura aplicación pueda cargar Kratos de forma reproducible.
+
+---
+
+# 13. PROBAR DESDE UN PROCESO LIMPIO
+
+Una vez corregido el entorno:
+
+abrir un proceso Python completamente nuevo.
+
+NO confiar únicamente en un proceso que ya tenía módulos cargados.
+
+Ejecutar:
+
+    python test_kratos_import.py
+
+El resultado debe reproducirse.
+
+---
+
+# 14. PROBAR DESDE EL DIRECTORIO DEL PROYECTO
+
+Después probar:
+
+    python test_kratos_import.py
+
+desde:
+
+    experimentos/kratos_topopt_poc/
+
+y comprobar que funciona sin depender de modificaciones manuales temporales del entorno.
+
+---
+
+# 15. PROBAR REPRODUCIBILIDAD
+
+Cerrar terminal.
+
+Abrir una terminal nueva.
+
+Activar el entorno.
+
+Ejecutar nuevamente.
+
+Después reiniciar VSCode si es necesario.
+
+Volver a ejecutar.
+
+Finalmente ejecutar desde una terminal independiente.
+
+Debe funcionar sin:
+
+- copiar DLL manualmente;
+- modificar archivos del sistema;
+- abrir una terminal especial;
+- ejecutar comandos secretos;
+- depender de variables temporales no documentadas.
+
+Si necesita alguna configuración, documentarla explícitamente.
+
+---
+
+# 16. SI SE REQUIERE UNA SOLUCIÓN LOCAL
+
+Si la solución correcta consiste en que nuestra aplicación distribuya o configure las DLL necesarias:
+
+NO implementarlo todavía en la aplicación principal.
+
+Primero demostrar el mecanismo dentro del PoC.
+
+Documentar:
+
+- qué archivos serían necesarios;
+- origen legítimo;
+- licencia;
+- ubicación;
+- mecanismo de carga;
+- impacto sobre distribución;
+- posibles restricciones.
+
+---
+
+# 17. PROHIBICIONES
+
+NO:
+
+- descargar DLL aleatorias;
+- copiar DLL desde otra PC;
+- copiar DLL de Internet sin verificar procedencia/licencia;
+- reemplazar DLL de Windows;
+- modificar el registro sin necesidad;
+- alterar permanentemente PATH del sistema sin documentarlo;
+- ocultar errores;
+- utilizar mocks;
+- falsificar importaciones;
+- editar scripts para simular que Kratos está instalado;
+- concluir viabilidad sin conseguir el import real.
+
+---
+
+# 18. CRITERIO DE ÉXITO
+
+El diagnóstico solo se considera RESUELTO si:
+
+    python test_kratos_import.py
+
+produce correctamente:
+
+    KratosMultiphysics → PASS
+    StructuralMechanicsApplication → PASS
+    OptimizationApplication → PASS
+
+desde un entorno Python reproducible.
+
+---
+
+# 19. SI SE RESUELVE
+
+NO continuar automáticamente con FEA ni TopOpt.
+
+Detenerse después de demostrar:
+
+    import KratosMultiphysics
+
+y documentar:
+
+- causa del problema;
+- solución;
+- pasos reproducibles;
+- versiones;
+- dependencias;
+- configuración necesaria;
+- resultado.
+
+---
+
+# 20. SI NO SE RESUELVE
+
+No declarar automáticamente:
+
+    KRATOS NO VIABLE
+
+En su lugar, determinar cuál de estos casos corresponde:
+
+### CASO 1
+Causa identificada y solución conocida.
+
+### CASO 2
+Causa identificada pero solución incompatible con nuestra aplicación standalone.
+
+### CASO 3
+Dependencia binaria no disponible para nuestro entorno.
+
+### CASO 4
+Problema no diagnosticado después de agotar las pruebas razonables.
+
+Explicar exactamente cuál corresponde.
+
+---
+
+# 21. RESUMEN_IMPLEMENTACION.md
+
+Actualizar exclusivamente:
+
+    RESUMEN_IMPLEMENTACION.md
+
+Crear una sección:
+
+# DIAGNÓSTICO DEFINITIVO DE ENTORNO WINDOWS
+
+Debe contener:
+
+## Entorno
 
 Versiones exactas.
 
-## 22.2 Pruebas realizadas
+## Error original
 
-Lista completa.
+Mensaje completo.
 
-## 22.3 Resultados FEA
+## Investigación
 
-Resultados numéricos.
+Pruebas realizadas.
 
-## 22.4 Convergencia
+## Dependencia problemática
 
-Tabla de mallas.
+Si fue identificada.
 
-## 22.5 SIMP
+## Solución
 
-Evidencia de que la densidad afecta realmente al FEA.
+Pasos exactos.
 
-## 22.6 Sensibilidades
+## Reproducibilidad
 
-Resultados y estadísticas.
+Indicar si funcionó desde un entorno limpio y una terminal nueva.
 
-## 22.7 Filtro
+## Resultado
 
-Configuración y evidencia.
+Uno de:
 
-## 22.8 Volumen
-
-Resultados por iteración.
-
-## 22.9 Optimización
-
-Tabla completa de iteraciones.
-
-## 22.10 Resultado visual
-
-Archivo generado y descripción.
+    RESUELTO
+    BLOQUEADO CON CAUSA IDENTIFICADA
+    NO RESUELTO
 
 ---
 
-# 23. MATRIZ DE VEREDICTO
+# 22. VEREDICTO
 
-Al final de `RESUMEN_IMPLEMENTACION.md` crear exactamente una matriz similar a:
+El documento debe terminar con:
 
-| Capacidad | Estado | Evidencia |
-|---|---|---|
-| Gmsh Tet4 | PASS/PARTIAL/FAIL | ... |
-| Importación a Kratos | ... | ... |
-| FEA 3D | ... | ... |
-| Euler-Bernoulli | ... | ... |
-| Convergencia | ... | ... |
-| SIMP real | ... | ... |
-| Densidad → Young | ... | ... |
-| Response | ... | ... |
-| Sensibilidades | ... | ... |
-| Filtro | ... | ... |
-| Actualización | ... | ... |
-| Restricción de volumen | ... | ... |
-| Iteraciones reales | ... | ... |
-| Convergencia TopOpt | ... | ... |
-| Resultado visual | ... | ... |
-| Reproducibilidad | ... | ... |
+## VEREDICTO DEL DIAGNÓSTICO
+
+Y explicar:
+
+### Si funciona:
+
+> Kratos puede cargarse correctamente en el entorno Windows utilizado. El bloqueo de DLL queda resuelto y el PoC puede continuar hacia la validación FEA + SIMP.
+
+### Si no funciona pero existe una incompatibilidad concreta:
+
+> Kratos no puede utilizarse actualmente bajo las condiciones de distribución/configuración requeridas por la aplicación standalone debido a [causa].
+
+### Si no se identifica la causa:
+
+> El diagnóstico no logró determinar la dependencia responsable. Kratos queda bloqueado experimentalmente, pero no se considera demostrado que sea técnicamente inviable.
 
 ---
 
-# 24. VEREDICTO FINAL
+# 23. REGLA FINAL
 
-El informe DEBE terminar con uno de estos tres veredictos:
+NO ejecutar nuevamente la validación FEA/SIMP.
 
-## VEREDICTO A — VIABLE
+NO modificar el README.
 
-Solamente si:
+NO cambiar la arquitectura.
 
-- FEA funciona;
-- Tet4 funciona;
-- validación analítica es razonable;
-- existe convergencia;
-- SIMP es real;
-- sensitivities son reales;
-- filtro funciona;
-- volumen funciona;
-- las densidades afectan el FEA;
-- existe optimización real;
-- el resultado es reproducible.
+NO implementar el solver propio todavía.
 
-Entonces concluir:
+Este trabajo termina cuando sepamos con evidencia:
 
-> Kratos puede utilizarse como motor FEA + optimización topológica de la aplicación standalone y puede reemplazar el desarrollo de un solver FEA/SIMP propio para esta etapa.
+    ¿POR QUÉ KRATOS NO CARGA?
 
----
+y:
 
-## VEREDICTO B — VIABLE CON LIMITACIONES
+    ¿PODEMOS HACER QUE CARGUE DE FORMA REPRODUCIBLE EN WINDOWS?
 
-Si Kratos funciona pero alguna capacidad crítica requiere desarrollo adicional.
-
-Especificar exactamente:
-
-- qué funciona;
-- qué no;
-- qué debemos implementar nosotros;
-- impacto arquitectónico.
-
----
-
-## VEREDICTO C — NO VIABLE
-
-Si no puede demostrarse el flujo necesario.
-
-Explicar:
-
-- dónde falla;
-- evidencia;
-- causa;
-- alternativa.
-
----
-
-# 25. DECISIÓN ARQUITECTÓNICA
-
-Solamente si el resultado es:
-
-`VIABLE`
-
-o:
-
-`VIABLE CON LIMITACIONES`
-
-indicar qué arquitectura recomienda el experimento.
-
-Ejemplo:
-
-Gmsh
-↓
-Kratos Structural Mechanics
-↓
-Kratos OptimizationApplication
-↓
-SIMP
-↓
-Resultados
-
-y especificar qué componentes seguirían siendo responsabilidad de nuestra aplicación.
-
----
-
-# 26. REGLA SOBRE README
-
-NO modificar `README.md`.
-
-Aunque el resultado sea positivo.
-
-La decisión arquitectónica se realizará posteriormente, después de auditar este informe.
-
----
-
-# 27. AUDITORÍA FINAL DE CAMBIOS
-
-Antes de finalizar:
-
-Ejecutar una revisión equivalente a:
-
-`git diff`
-
-Confirmar que:
-
-- únicamente se modificaron archivos del PoC;
-- `RESUMEN_IMPLEMENTACION.md` es la única excepción;
-- no se modificó README;
-- no se modificó metodología;
-- no se modificó prompt;
-- no se modificó código productivo.
-
-Si existe cualquier cambio fuera de esas ubicaciones:
-
-REVERTIRLO.
-
----
-
-# 28. CONDICIÓN DE TERMINACIÓN
-
-NO declares la tarea completada hasta que:
-
-1. El FEA real haya sido ejecutado.
-2. La validación analítica haya sido realizada.
-3. El estudio de convergencia haya sido ejecutado.
-4. SIMP real haya sido ejecutado.
-5. Las densidades hayan afectado realmente al FEA.
-6. Las sensibilidades hayan sido calculadas.
-7. El filtro haya sido utilizado.
-8. La restricción de volumen haya sido demostrada.
-9. Existan iteraciones reales de optimización.
-10. Exista evidencia numérica.
-11. Exista resultado visual.
-12. El experimento pueda reproducirse.
-13. `RESUMEN_IMPLEMENTACION.md` contenga el veredicto final.
-14. No existan contradicciones entre resultados y conclusión.
-
-Si alguna condición no puede cumplirse:
-
-NO ocultarla.
-
-Marcarla explícitamente como:
-
-`NOT VERIFIED`
-
-y explicar exactamente qué impide su validación.
-
-# OBJETIVO FINAL
-
-Al terminar, debemos poder responder con evidencia y sin especulación:
-
-"¿Kratos Multiphysics puede reemplazar nuestro solver FEA + SIMP propio como motor científico de nuestra aplicación standalone?"
-
-Esta prueba debe producir la evidencia necesaria para tomar esa decisión arquitectónica de forma definitiva.
+Ese es el único objetivo de esta ejecución.

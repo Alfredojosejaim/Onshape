@@ -1,580 +1,650 @@
+# POC TÉCNICO AISLADO — KRATOS + TOPOLOGICAL OPTIMIZATION 3D
 
-````markdown
-# PROMPT — DISEÑO Y ESPECIFICACIÓN DE LA INTERFAZ GRÁFICA
+## OBJETIVO
 
-## 1. OBJETIVO
+Realizar una prueba de concepto técnica, completamente aislada del desarrollo principal del proyecto, para determinar si Kratos Multiphysics puede utilizarse como motor FEA + optimización topológica SIMP para nuestra futura aplicación standalone.
 
-Diseñar la arquitectura funcional y UX/UI de la aplicación **Topología Optimizada**.
+Esta tarea NO consiste en integrar Kratos al proyecto principal.
 
-IMPORTANTE:
+El único objetivo es demostrar mediante código ejecutable y resultados verificables si el siguiente flujo funciona:
 
-En esta etapa NO debes implementar la interfaz gráfica.
-
-El objetivo es producir una especificación técnica suficientemente precisa para que posteriormente pueda implementarse sin decisiones ambiguas.
-
-La aplicación es y seguirá siendo:
-
-> STANDALONE, INDEPENDIENTE DE CUALQUIER SOFTWARE CAD EXTERNO.
-
-No utilizar Onshape ni ningún otro CAD como referencia funcional para la interfaz.
-
----
-
-# 2. DOCUMENTACIÓN OBLIGATORIA
-
-Antes de comenzar:
-
-1. Leer `README.md`.
-2. Leer `metodologia.md`.
-3. Leer `prompt.md`.
-4. Revisar el código actual para comprender:
-   - Core.
-   - CADModel.
-   - adapters.
-   - servicios.
-   - API existente.
-   - flujo actual de importación.
-   - mallado existente.
-   - FEA existente, si lo hubiera.
-   - tests existentes.
-5. Leer `RESUMEN_IMPLEMENTACION.md`.
-
-NO asumir que una funcionalidad existe simplemente porque aparece en la documentación.
-
-La especificación debe basarse en el estado real del repositorio.
+Gmsh
+→ malla volumétrica Tet4
+→ Kratos Structural Mechanics
+→ OptimizationApplication
+→ SIMP
+→ análisis estructural
+→ compliance / strain energy
+→ sensibilidades
+→ actualización de densidades
+→ iteraciones de optimización
+→ resultado optimizado
 
 ---
 
-# 3. REGLA ARQUITECTÓNICA PRINCIPAL
+# 1. REGLAS ABSOLUTAS
 
-La interfaz gráfica debe ser una capa independiente del Core.
+1. Trabaja exclusivamente dentro de una carpeta experimental aislada:
 
-Arquitectura conceptual:
+   `experimentos/kratos_topopt_poc/`
 
-GUI
- ↓
-Application / API Layer
- ↓
-Services
- ↓
-Core
- ↓
-CAD / Mesh / FEA / TopOpt
+2. Si la carpeta no existe, créala.
 
-La GUI NO debe contener:
+3. NO modificar:
+   - código productivo existente;
+   - arquitectura principal;
+   - README;
+   - metodología.md;
+   - prompt.md;
+   - informes de investigación;
+   - documentación histórica;
+   - archivos de configuración del proyecto principal.
 
-- lógica matemática FEA;
-- ensamblaje de matrices;
-- algoritmo SIMP;
-- lógica de mallado;
-- lógica CAD;
-- lógica de optimización;
-- acceso directo a archivos internos del Core.
+4. NO eliminar archivos existentes.
 
-La GUI solamente debe:
+5. NO mover archivos existentes.
 
-- presentar información;
-- recibir interacción del usuario;
-- validar entradas de usuario;
-- solicitar operaciones a los servicios;
-- mostrar estados y resultados.
+6. NO integrar Kratos todavía al pipeline principal.
 
----
+7. NO crear funcionalidades de la aplicación gráfica.
 
-# 4. OBJETIVO DEL PRODUCTO
+8. NO desarrollar todavía el importador STEP definitivo.
 
-Diseñar una aplicación que permita al usuario realizar eventualmente este flujo:
+9. NO implementar conexión con ningún CAD.
 
-IMPORTAR MODELO CAD
-        ↓
-PREPARAR GEOMETRÍA
-        ↓
-GENERAR MALLA
-        ↓
-DEFINIR MATERIAL
-        ↓
-DEFINIR RESTRICCIONES
-        ↓
-DEFINIR CARGAS
-        ↓
-EJECUTAR FEA
-        ↓
-VISUALIZAR RESULTADOS
-        ↓
-CONFIGURAR TOPOLOGÍA
-        ↓
-EJECUTAR OPTIMIZACIÓN
-        ↓
-VISUALIZAR RESULTADO
-        ↓
-EXPORTAR MODELO
+10. NO implementar Onshape, FeatureScript, API de Onshape ni plugins.
 
-La interfaz debe diseñarse teniendo este flujo como objetivo final.
+11. NO asumir que una capacidad funciona simplemente porque existe en la documentación.
+
+Toda capacidad relevante debe probarse mediante código ejecutable o demostrarse directamente mediante código oficial de Kratos.
 
 ---
 
-# 5. NO IMPLEMENTAR FUNCIONES FUTURAS
+# 2. PRIMERA TAREA — AUDITAR EL ENTORNO
 
-Si una funcionalidad todavía no existe en el backend:
+Antes de escribir código:
 
-NO inventar su API.
+1. Revisar el sistema operativo.
+2. Revisar versión de Python disponible.
+3. Verificar si Kratos Multiphysics está instalado.
+4. Verificar versión exacta.
+5. Verificar si `OptimizationApplication` está disponible.
+6. Verificar si `StructuralMechanicsApplication` está disponible.
+7. Verificar si Gmsh está disponible.
+8. Verificar si la API Python de Gmsh está disponible.
 
-NO crear código provisional.
+Si alguna dependencia no está instalada:
 
-NO crear botones funcionales ficticios.
+- NO modificar el entorno global innecesariamente.
+- Preferir un entorno virtual aislado para el PoC.
+- Documentar exactamente qué fue instalado.
+- Registrar las versiones utilizadas.
 
-En la especificación se debe clasificar como:
+Crear, si es necesario:
 
-- DISPONIBLE.
-- EN DESARROLLO.
-- FUTURA.
+`experimentos/kratos_topopt_poc/requirements.txt`
 
-Por ejemplo:
-
-Si SIMP todavía no existe:
-
-`Optimización Topológica` debe aparecer como funcionalidad futura en la especificación.
-
----
-
-# 6. ESTRUCTURA DE LA INTERFAZ
-
-Diseñar como mínimo las siguientes áreas:
-
-## A. Pantalla principal
-
-Debe permitir:
-
-- crear/abrir proyecto;
-- importar modelo;
-- visualizar estado del proyecto;
-- acceder a análisis;
-- acceder a resultados;
-- guardar/exportar.
+o la configuración equivalente que permita reproducir el entorno.
 
 ---
 
-## B. Visor 3D
+# 3. ESTRUCTURA DEL POC
 
-Debe contemplar:
+Crear una estructura clara y mínima similar a:
 
-- modelo CAD;
-- navegación orbital;
-- zoom;
-- pan;
-- selección de geometría;
-- mostrar/ocultar geometría;
-- mostrar/ocultar malla;
-- visualización de resultados FEA;
-- selección visual de caras cuando sea técnicamente posible;
-- modos de visualización.
+experimentos/
+└── kratos_topopt_poc/
+    ├── README.md
+    ├── requirements.txt              (si aplica)
+    ├── run_poc.py
+    ├── generate_mesh.py
+    ├── model/
+    │   └── ...
+    ├── results/
+    │   └── ...
+    └── logs/
+        └── ...
 
-IMPORTANTE:
-
-No asumir una tecnología concreta sin analizar primero las necesidades reales.
-
-Evaluar opciones existentes y recomendar una.
+La estructura puede modificarse si existe una alternativa técnicamente mejor, pero debe mantenerse completamente aislada.
 
 ---
 
-# 7. IMPORTACIÓN CAD
+# 4. MODELO DE PRUEBA
 
-Diseñar el flujo de:
+Construir un modelo estructural 3D extremadamente simple y reproducible.
 
-```text
-Importar archivo
-      ↓
-Validar formato
-      ↓
-Cargar geometría
-      ↓
-Construir CADModel
-      ↓
-Mostrar modelo
-````
+Usar preferentemente una viga en voladizo:
 
-Definir:
+- longitud: 100 mm
+- sección: 10 mm × 10 mm
+- material: aluminio
+- Young: 68.9 GPa
+- Poisson: 0.33
+- carga vertical en el extremo libre: -100 N
 
-* formatos iniciales;
-* mensajes de error;
-* estados de carga;
-* archivos inválidos;
-* geometrías inválidas;
-* modelo vacío;
-* múltiples cuerpos.
+La geometría debe ser suficientemente sencilla para poder comprobar físicamente los resultados.
 
-No agregar soporte a formatos que el backend actual no pueda procesar.
+La prueba debe utilizar elementos tetraédricos lineales de 4 nodos (Tet4), siempre que Kratos permita configurar correctamente el caso.
 
 ---
 
-# 8. MALLADO
+# 5. MALLADO
 
-Diseñar la interfaz para:
+Utilizar Gmsh para generar una malla volumétrica tetraédrica.
 
-* tamaño de elemento;
-* calidad;
-* refinamiento;
-* generación;
-* progreso;
-* errores;
-* estadísticas de malla.
+Verificar explícitamente:
 
-Mostrar, cuando esté disponible:
+- cantidad de nodos;
+- cantidad de elementos;
+- tipo de elemento;
+- conectividad;
+- dimensiones;
+- grupos físicos necesarios.
 
-* número de nodos;
-* número de elementos;
-* calidad;
-* volumen;
-* superficies;
-* tiempo de generación.
+El script debe permitir regenerar la malla.
+
+No utilizar una malla preexistente que impida reproducir el experimento.
 
 ---
 
-# 9. DEFINICIÓN DEL ANÁLISIS FEA
+# 6. IMPORTACIÓN A KRATOS
 
-Diseñar el flujo para:
+Implementar el flujo:
 
-### Material
+Gmsh
+→ modelo FEM
+→ Kratos ModelPart
 
-Como mínimo contemplar:
+Verificar explícitamente que Kratos recibe:
 
-* módulo de Young;
-* coeficiente de Poisson;
-* densidad si resulta necesaria.
+- nodos;
+- elementos;
+- conectividad;
+- propiedades;
+- material;
+- condiciones de contorno;
+- carga.
 
-### Restricciones
-
-Permitir conceptualmente:
-
-* seleccionar caras;
-* seleccionar regiones;
-* seleccionar entidades geométricas compatibles;
-* definir grados de libertad restringidos.
-
-### Cargas
-
-Contemplar:
-
-* fuerza;
-* presión;
-* dirección;
-* magnitud;
-* aplicación sobre geometría.
-
-No inventar implementaciones que todavía no existan.
-
----
-
-# 10. EJECUCIÓN DEL ANÁLISIS
-
-Diseñar un flujo claro:
-
-```text
-Configuración válida
-       ↓
-Preprocesamiento
-       ↓
-Mallado
-       ↓
-Aplicación BC
-       ↓
-Ensamblaje
-       ↓
-Resolución
-       ↓
-Postprocesamiento
-       ↓
-Resultados
-```
-
-La interfaz debe contemplar:
-
-* progreso;
-* cancelación;
-* errores;
-* advertencias;
-* análisis completado;
-* análisis fallido.
-
----
-
-# 11. RESULTADOS FEA
-
-Diseñar una pantalla de resultados que contemple:
-
-* desplazamiento;
-* tensión;
-* Von Mises;
-* deformación;
-* compliancia;
-* reacciones;
-* estadísticas.
-
-El visor 3D debe poder representar resultados mediante mapas de valores sobre la geometría o malla.
-
-Definir:
-
-* leyenda;
-* escala;
-* mínimo;
-* máximo;
-* unidades;
-* deformación amplificada;
-* posibilidad de cambiar resultado visualizado.
-
----
-
-# 12. PREPARACIÓN PARA TOPOLOGÍA OPTIMIZADA
-
-Diseñar la interfaz futura para:
-
-* porcentaje de volumen;
-* densidad mínima;
-* penalización SIMP;
-* filtro;
-* número máximo de iteraciones;
-* criterio de convergencia;
-* restricciones.
-
-PERO:
-
-Si estas funciones todavía no existen:
-
-> especificarlas como FUTURAS.
-
-No implementarlas.
-
----
-
-# 13. EXPORTACIÓN
-
-Diseñar el flujo:
-
-```text
-Resultado
-   ↓
-Seleccionar formato
-   ↓
-Exportar
-```
-
-Determinar qué formatos tienen sentido para:
-
-* geometría;
-* malla;
-* resultados;
-* modelo optimizado.
-
-No asumir que todos estarán disponibles inmediatamente.
-
----
-
-# 14. UX
-
-Definir específicamente:
-
-* navegación;
-* jerarquía visual;
-* estados;
-* mensajes;
-* errores;
-* advertencias;
-* confirmaciones;
-* estados vacíos;
-* progreso;
-* acciones bloqueadas;
-* dependencias entre pasos.
-
-La aplicación debe impedir que el usuario ejecute operaciones inválidas.
+Mostrar en consola un resumen del modelo cargado.
 
 Ejemplo:
 
-```text
-No existe modelo
-→ no permitir mallado
-
-No existe malla
-→ no permitir FEA
-
-FEA no ejecutado
-→ no mostrar resultados
-
-FEA no validado
-→ no permitir iniciar TopOpt
-```
+Nodes: XXXX
+Elements: XXXX
+DOFs: XXXX
+Material: ...
+Element type: ...
 
 ---
 
-# 15. UNIDADES
+# 7. PRUEBA FEA SIN OPTIMIZACIÓN
 
-Diseñar un sistema coherente de unidades.
+ANTES de probar SIMP, demostrar que Kratos puede resolver correctamente el problema estructural básico.
 
-Como mínimo evaluar:
+Resolver:
 
-* mm / m;
-* N;
-* MPa / Pa;
-* kg;
-* etc.
+K u = F
 
-La GUI debe mostrar siempre las unidades de cada entrada y resultado.
+Obtener:
 
-No permitir valores ambiguos.
+- desplazamientos;
+- reacción;
+- strain energy / compliance si está disponible.
 
----
+Registrar:
 
-# 16. ESTADO DEL PROYECTO
+- desplazamiento máximo;
+- ubicación;
+- reacción total;
+- compliance o strain energy.
 
-Diseñar un modelo conceptual de estado:
+Comparar el desplazamiento del extremo libre con la solución analítica de una viga en voladizo.
 
-```text
-EMPTY
- ↓
-MODEL_IMPORTED
- ↓
-MESH_READY
- ↓
-ANALYSIS_CONFIGURED
- ↓
-FEA_COMPLETED
- ↓
-TOPOLOGY_CONFIGURED
- ↓
-OPTIMIZATION_RUNNING
- ↓
-OPTIMIZATION_COMPLETED
- ↓
-EXPORTED
-```
+Calcular:
 
-No es necesario implementarlo todavía.
+error_relativo =
+abs(FEM - analítica) / abs(analítica)
 
-Solo definirlo y explicar las transiciones.
+No declarar éxito únicamente porque Kratos terminó sin errores.
+
+El resultado debe ser numéricamente razonable.
 
 ---
 
-# 17. ARQUITECTURA DE LA GUI
+# 8. PRUEBA DE OPTIMIZATIONAPPLICATION
 
-Evaluar y recomendar la tecnología de interfaz más apropiada considerando:
+Verificar mediante código que la instalación actual de Kratos dispone realmente de:
 
-* Windows;
-* aplicación standalone;
-* visor 3D;
-* rendimiento;
-* integración con Python;
-* mantenimiento;
-* facilidad de distribución;
-* posibilidad futura de empaquetar la aplicación;
-* comunicación con el backend;
-* visualización de mallas y resultados.
+`OptimizationApplication`
 
-Comparar brevemente las alternativas relevantes.
+y de los componentes relacionados con SIMP.
 
-No seleccionar una tecnología simplemente por popularidad.
+Investigar directamente en la instalación/código de Kratos qué clases, controles, responses y algorithms están disponibles.
 
-Justificar técnicamente la elección.
+Prestar especial atención a:
+
+- SimpControl;
+- LinearStrainEnergyResponseFunction;
+- filtros;
+- controles de densidad;
+- sensitivities;
+- algorithms de optimización.
+
+No asumir nombres de clases basándose exclusivamente en documentación antigua.
 
 ---
 
-# 18. ENTREGABLES
+# 9. PRUEBA SIMP
 
-Crear o actualizar únicamente documentación.
+Construir el caso mínimo posible de optimización topológica.
 
-El resultado debe incluir:
+La variable de diseño debe ser una densidad elemental:
 
-## `GUI_SPECIFICATION.md`
+ρ ∈ [ρ_min, 1]
+
+Utilizar una formulación SIMP equivalente a:
+
+E(ρ) = E0 · ρ^p
+
+con:
+
+- p = 3 inicialmente;
+- densidad mínima pequeña para evitar singularidad.
+
+Verificar que el Young efectivo realmente depende de la densidad.
+
+IMPORTANTE:
+
+No implementar manualmente un SIMP paralelo si Kratos ya proporciona `SimpControl`.
+
+La finalidad de esta prueba es precisamente verificar cuánto del ciclo puede realizar Kratos de forma nativa.
+
+---
+
+# 10. RESPONSE
+
+Utilizar, si es compatible con el caso:
+
+`LinearStrainEnergyResponseFunction`
+
+o el mecanismo actual equivalente.
+
+Demostrar que se puede obtener una respuesta estructural apropiada para optimización.
+
+Registrar:
+
+- valor inicial;
+- valor después de cada iteración;
+- valor final.
+
+La respuesta debe mostrar comportamiento físicamente coherente.
+
+---
+
+# 11. SENSIBILIDADES
+
+Verificar que el flujo de optimización puede calcular las sensibilidades necesarias.
+
+Comprobar específicamente:
+
+- sensibilidad respecto de la variable de diseño;
+- propagación a través de SIMP;
+- compatibilidad con el filtro;
+- existencia de valores finitos;
+- ausencia de NaN/Inf.
+
+Mostrar estadísticas:
+
+min
+max
+mean
+cantidad de valores no finitos
+
+---
+
+# 12. FILTRO
+
+Si `OptimizationApplication` permite utilizar un filtro compatible con este caso:
+
+implementarlo.
+
+Verificar:
+
+- que se aplica;
+- que modifica las sensibilidades o variable de diseño según corresponda;
+- que no produce valores inválidos.
+
+Documentar exactamente qué filtro se utilizó y por qué.
+
+---
+
+# 13. ACTUALIZACIÓN DE DENSIDADES
+
+Demostrar que las densidades cambian durante las iteraciones.
+
+Registrar por iteración:
+
+Iteration
+Objective
+Volume fraction
+Min density
+Max density
+Mean density
+Change
+
+Ejemplo:
+
+Iteration 0
+Objective: ...
+Volume: ...
+Mean density: ...
+
+Iteration 1
+...
+
+La optimización debe mostrar evolución real.
+
+NO aceptar como prueba una simulación que simplemente ejecute el solver varias veces sin modificar las densidades.
+
+---
+
+# 14. RESTRICCIÓN DE VOLUMEN
+
+Implementar una restricción de volumen si la infraestructura actual de Kratos lo permite.
+
+Objetivo inicial:
+
+volumen final ≈ 30–50 % del volumen inicial.
+
+Verificar cuantitativamente:
+
+V_final / V_inicial
+
+y registrar el resultado.
+
+Si Kratos no dispone exactamente del mecanismo esperado:
+
+- investigar la alternativa oficial actual;
+- implementarla solamente si es necesario para completar el PoC;
+- documentar claramente qué parte pertenece a Kratos y qué parte fue desarrollada específicamente para la prueba.
+
+---
+
+# 15. ITERACIONES
+
+Ejecutar suficientes iteraciones para comprobar que existe una optimización real.
+
+No es necesario obtener una pieza industrialmente óptima.
+
+El objetivo es demostrar:
+
+ρ inicial
+→ FEA
+→ response
+→ sensitivity
+→ filter
+→ update
+→ ρ nueva
+→ FEA
+→ ...
+
+y comprobar que el objetivo estructural evoluciona.
+
+---
+
+# 16. RESULTADO VISUAL
+
+Generar algún resultado visual mínimo que permita observar la distribución final de densidades.
+
+Puede utilizarse:
+
+- VTK;
+- GiD;
+- ParaView;
+- archivo compatible con herramientas de visualización.
+
+No desarrollar interfaz gráfica.
+
+El objetivo únicamente es poder comprobar visualmente que existe una distribución de material resultante.
+
+---
+
+# 17. VALIDACIÓN
+
+La prueba debe comprobar como mínimo:
+
+### A. FEA
+
+¿Kratos resuelve correctamente el modelo Tet4?
+
+### B. SIMP
+
+¿La rigidez depende realmente de la densidad?
+
+### C. Sensibilidades
+
+¿Se calculan correctamente?
+
+### D. Optimización
+
+¿Las densidades evolucionan?
+
+### E. Volumen
+
+¿Puede controlarse la fracción de material?
+
+### F. Convergencia
+
+¿La función objetivo evoluciona razonablemente?
+
+### G. Resultado
+
+¿La distribución final tiene sentido físico?
+
+---
+
+# 18. PRUEBA DE REPRODUCIBILIDAD
+
+El PoC debe poder ejecutarse desde cero mediante un comando claramente documentado.
+
+Por ejemplo:
+
+`python run_poc.py`
+
+o el mecanismo apropiado.
+
+Una ejecución limpia debe:
+
+1. generar la malla;
+2. cargarla;
+3. ejecutar FEA;
+4. ejecutar optimización;
+5. guardar resultados;
+6. producir logs.
+
+No depender de archivos temporales creados manualmente.
+
+---
+
+# 19. DOCUMENTACIÓN DEL POC
+
+Crear exclusivamente dentro de:
+
+`experimentos/kratos_topopt_poc/README.md`
+
+la documentación del experimento.
 
 Debe contener:
 
-1. Objetivo.
-2. Arquitectura.
-3. Flujo completo del usuario.
-4. Mapa de pantallas.
-5. Componentes.
-6. Visor 3D.
-7. Importación.
-8. Mallado.
-9. Configuración FEA.
-10. Resultados.
-11. Preparación TopOpt.
-12. Exportación.
-13. Estados.
-14. Validaciones.
-15. Errores.
-16. Unidades.
-17. Tecnología recomendada.
-18. Comunicación GUI ↔ backend.
-19. Funcionalidades disponibles/futuras.
-20. Roadmap de implementación de GUI.
+## Entorno
+
+- OS
+- Python
+- Kratos
+- Gmsh
+- versiones
+
+## Componentes probados
+
+Lista exacta de aplicaciones/clases utilizadas.
+
+## Arquitectura del PoC
+
+Explicar el flujo real.
+
+## Resultados
+
+Tabla con:
+
+| Prueba | Resultado | Evidencia |
+|---|---|---|
+| Gmsh Tet4 | PASS/FAIL | ... |
+| Importación Kratos | PASS/FAIL | ... |
+| FEA | PASS/FAIL | ... |
+| SIMP | PASS/FAIL | ... |
+| Sensibilidad | PASS/FAIL | ... |
+| Filtro | PASS/FAIL | ... |
+| Restricción volumen | PASS/FAIL | ... |
+| Iteraciones | PASS/FAIL | ... |
+| Resultado final | PASS/FAIL | ... |
+
+## Limitaciones
+
+Registrar cualquier cosa que no haya podido demostrarse.
+
+## Conclusión
+
+Clasificar el resultado como:
+
+- VIABLE
+- VIABLE CON LIMITACIONES
+- NO VIABLE
+
+No utilizar lenguaje ambiguo.
 
 ---
 
-# 19. RESUMEN_IMPLEMENTACION.md
+# 20. REGLA CRÍTICA SOBRE RESULTADOS
 
-Una vez terminada la especificación, actualizar `RESUMEN_IMPLEMENTACION.md`.
+NO declarar:
 
-Debe registrar:
+"Kratos sirve para nuestro proyecto"
 
-* qué se analizó;
-* qué se decidió;
-* qué documentos se crearon/modificaron;
-* tecnología recomendada;
-* qué NO se implementó;
-* estado de la etapa.
+simplemente porque las APIs existan.
 
-No declarar que la GUI está implementada.
+La conclusión debe basarse exclusivamente en lo que haya sido ejecutado y demostrado.
 
-Debe indicar claramente:
+Distinguir claramente:
 
-> GUI ESPECIFICADA — IMPLEMENTACIÓN PENDIENTE.
+### VERIFICADO
 
----
+Funcionó mediante ejecución real.
 
-# 20. VALIDACIÓN FINAL
+### CONFIRMADO POR CÓDIGO/DOCUMENTACIÓN OFICIAL
 
-Antes de finalizar comprobar:
+Existe en la versión utilizada, pero no fue necesario utilizarlo en el PoC.
 
-* [ ] No se modificó código funcional.
-* [ ] No se modificó el Core.
-* [ ] No se modificaron adapters.
-* [ ] No se modificó FEA.
-* [ ] No se modificó TopOpt.
-* [ ] No se modificaron dependencias salvo que sea estrictamente necesario para documentación; preferentemente ninguna.
-* [ ] No se creó ninguna integración con Onshape.
-* [ ] No se creó ninguna dependencia de otro CAD.
-* [ ] La GUI está diseñada para funcionar standalone.
-* [ ] La especificación distingue claramente funciones existentes y futuras.
-* [ ] No se inventaron APIs inexistentes.
-* [ ] La documentación es coherente con `README.md`.
-* [ ] La documentación respeta `metodologia.md`.
+### NO VERIFICADO
+
+No pudo demostrarse.
+
+### NO DISPONIBLE
+
+La capacidad no existe o no pudo utilizarse.
 
 ---
 
-# 21. REGLA FINAL
+# 21. COMPARACIÓN FINAL
 
-NO PROGRAMAR LA GUI.
+Al terminar, responder dentro del README del PoC:
 
-NO IMPLEMENTAR COMPONENTES.
+### ¿Kratos puede reemplazar nuestro solver FEA propio?
 
-NO INSTALAR FRAMEWORKS PARA "PROBAR".
+### ¿Kratos puede ejecutar Tet4 3D?
 
-NO MODIFICAR EL MOTOR.
+### ¿Kratos puede ejecutar SIMP?
 
-NO IMPLEMENTAR FEA.
+### ¿Kratos puede calcular compliance/strain energy?
 
-NO IMPLEMENTAR SIMP.
+### ¿Kratos puede calcular sensibilidades?
 
-NO AGREGAR ONESHAPE.
+### ¿Kratos puede realizar iteraciones de optimización?
 
-NO AGREGAR PLUGINS.
+### ¿Kratos puede controlar la fracción de volumen?
 
-NO AGREGAR INTEGRACIONES CAD.
+### ¿Qué debemos programar nosotros?
 
-El objetivo exclusivo de esta etapa es:
+### ¿Qué seguiría dependiendo de Gmsh?
 
-> **DISEÑAR Y DOCUMENTAR LA INTERFAZ GRÁFICA DE LA APLICACIÓN STANDALONE PARA QUE SU POSTERIOR IMPLEMENTACIÓN SEA DETERMINISTA Y NO DEPENDA DE SUPOSICIONES.**
+### ¿Qué parte debería quedar dentro de nuestra aplicación?
 
-Al finalizar, entregar un resumen breve de las decisiones tomadas y de los archivos modificados.
+---
 
-```
-```
+# 22. NO TOMAR DECISIONES DE ARQUITECTURA PRINCIPAL
+
+El resultado de este experimento NO debe modificar todavía:
+
+- README principal;
+- metodología;
+- arquitectura;
+- roadmap;
+- Hito 2;
+- Hito 3;
+- dependencias principales;
+- código productivo.
+
+El PoC solamente debe proporcionar evidencia para tomar esa decisión posteriormente.
+
+---
+
+# 23. AUDITORÍA FINAL
+
+Antes de terminar:
+
+1. Revisar `git diff`.
+2. Confirmar que todos los cambios están exclusivamente dentro de:
+
+   `experimentos/kratos_topopt_poc/`
+
+3. Si se modificó accidentalmente cualquier archivo fuera de esa carpeta:
+   - revertir esos cambios;
+   - NO borrar trabajo previo.
+
+4. Confirmar que el PoC puede ejecutarse nuevamente.
+
+5. Confirmar que no existen dependencias ocultas.
+
+6. Confirmar que todos los resultados importantes están documentados.
+
+7. Confirmar que no se modificó ninguna documentación principal.
+
+---
+
+# RESULTADO ESPERADO
+
+Al finalizar debes entregar:
+
+1. PoC funcional aislado.
+2. Código reproducible.
+3. Modelo Tet4 3D.
+4. FEA funcionando.
+5. SIMP probado.
+6. Sensibilidades probadas.
+7. Iteraciones de optimización.
+8. Restricción de volumen, si es técnicamente posible.
+9. Resultados numéricos.
+10. Resultado visual.
+11. README del PoC con toda la evidencia.
+12. Conclusión objetiva sobre la viabilidad de Kratos.
+
+NO integres Kratos al proyecto principal.
+
+NO diseñes la interfaz gráfica.
+
+NO desarrolles plugins.
+
+NO trabajes todavía con Onshape ni con ningún otro CAD.
+
+La única misión es responder con evidencia experimental:
+
+"¿Podemos utilizar Kratos como motor FEA + optimización topológica de nuestra aplicación standalone?"

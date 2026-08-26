@@ -1,38 +1,41 @@
-"""Onshape geometry processor and real CAD/FEM mesh adapter.
+"""Geometry processor - Standalone CAD/FEM mesh adapter.
 
 Provides:
-1. Real STEP export download via Onshape REST API (full studio or specific part IDs).
-2. Part Studio entity querying (parts, bodies, metadata).
-3. B-Rep parsing and tessellation (triangles, vertices, normals, face metadata) for Three.js.
-4. Volumetric finite element mesh generation (nodes and tetrahedral elements).
-5. Geometric boundary condition mapping from CAD B-Rep faces to FEM mesh nodes.
+1. B-Rep parsing and tessellation (triangles, vertices, normals, face metadata) for Three.js.
+2. Volumetric finite element mesh generation (nodes and tetrahedral elements).
+3. Geometric boundary condition mapping from CAD B-Rep faces to FEM mesh nodes.
+
+This is a backward compatibility shim that delegates to the new services layer.
+For new code, use services.cad_service.CADService directly.
 """
 
-import io
 import logging
-import os
-import tempfile
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional
 
-import numpy as np
 import cadquery as cq
 
-from onshape_client import OnshapeAPIError, OnshapeClient
+from services.cad_service import CADService
+from connectors.onshape.client import OnshapeAPIError, OnshapeClient
 
 logger = logging.getLogger(__name__)
 
 
 class GeometryProcessor:
-    """Download Onshape geometry and perform real CAD tessellation, meshing and face mapping."""
+    """Standalone geometry processor for CAD tessellation, meshing and face mapping.
+
+    This class now provides backward compatibility while delegating to the new
+    services layer. For Onshape-specific functionality, use connectors.onshape.service.
+    """
 
     def __init__(
         self,
-        onshape_session: Optional[OnshapeClient],
-        did: str,
-        wid: str,
-        eid: str,
+        onshape_session: Optional[OnshapeClient] = None,
+        did: Optional[str] = None,
+        wid: Optional[str] = None,
+        eid: Optional[str] = None,
         mesher: Optional[Callable[..., Any]] = None,
     ):
+        # Onshape-specific parameters (deprecated, for backward compatibility)
         self.session = onshape_session
         self.did = did
         self.wid = wid
@@ -41,80 +44,45 @@ class GeometryProcessor:
         self.mesher = mesher
         self.last_download_error_code: Optional[str] = None
 
-    @staticmethod
-    def _http_error_code(status_code: int) -> str:
-        return {
-            401: "ONSHAPE_UNAUTHORIZED",
-            403: "ONSHAPE_FORBIDDEN",
-            404: "ONSHAPE_NOT_FOUND",
-            429: "ONSHAPE_RATE_LIMITED",
-        }.get(status_code, "ONSHAPE_HTTP_ERROR")
+        # New standalone service
+        self.cad_service = CADService()
+
+    # --- Onshape-specific methods (deprecated, use connectors.onshape.service) ---
 
     def get_parts_list(self) -> List[Dict[str, Any]]:
-        """Query Onshape REST API for the real list of parts in this Part Studio."""
-        if not self.session:
+        """DEPRECATED: Use connectors.onshape.service.OnshapeService.get_parts_list instead."""
+        if not self.session or not self.did or not self.wid or not self.eid:
+            logger.warning("get_parts_list requires Onshape session and document IDs")
             return []
-        try:
-            url = f"/partstudios/d/{self.did}/w/{self.wid}/e/{self.eid}/parts"
-            response = self.session.get_json(url)
-            if isinstance(response, list):
-                return response
-            return []
-        except Exception:
-            logger.exception("Failed to get parts list from Onshape Part Studio")
-            return []
+
+        from connectors.onshape.service import OnshapeService
+        service = OnshapeService(self.session)
+        return service.get_parts_list(self.did, self.wid, self.eid)
 
     def download_part_studio(
         self,
         output_format: str = "step",
         part_ids: Optional[List[str]] = None,
     ) -> Optional[bytes]:
-        """Download a real Part Studio STEP export from Onshape (full studio or specific part IDs)."""
-        if not self.session:
+        """DEPRECATED: Use connectors.onshape.service.OnshapeService.download_part_studio instead."""
+        if not self.session or not self.did or not self.wid or not self.eid:
             self.last_download_error_code = "NO_ACTIVE_SESSION"
             return None
-        try:
-            url = f"/partstudios/d/{self.did}/w/{self.wid}/e/{self.eid}/export"
-            params: Dict[str, str] = {
-                "formatName": output_format.upper(),
-                "version": "latest",
-            }
-            if part_ids:
-                # Filter out empty or whitespace strings
-                valid_ids = [p.strip() for p in part_ids if p and p.strip()]
-                if valid_ids:
-                    params["partIds"] = ",".join(valid_ids)
 
-            response = self.session.request(
-                "GET",
-                url,
-                params=params,
-                timeout=30,
-            )
-            if response.status_code == 200:
-                logger.info("Part Studio export downloaded (%d bytes)", len(response.content))
-                return response.content
-            self.last_download_error_code = self._http_error_code(response.status_code)
-        except OnshapeAPIError as exc:
-            self.last_download_error_code = exc.code
-            logger.warning("Part Studio export failed: %s", exc.code)
-        except Exception:
-            self.last_download_error_code = "ONSHAPE_REQUEST_FAILED"
-            logger.exception("Part Studio export request failed")
-        return None
+        from connectors.onshape.service import OnshapeService
+        service = OnshapeService(self.session)
+        return service.download_part_studio(self.did, self.wid, self.eid, output_format, part_ids)
 
     def get_part_properties(self) -> Dict[str, Any]:
-        """Get properties from Onshape."""
-        if not self.session:
+        """DEPRECATED: Use connectors.onshape.service instead."""
+        if not self.session or not self.did or not self.wid or not self.eid:
             return {}
+
         try:
             url = f"/partstudios/d/{self.did}/w/{self.wid}/e/{self.eid}/properties"
             response = self.session.request("GET", url, timeout=10)
             if response.status_code != 200:
-                logger.warning(
-                    "Part properties failed: %s",
-                    self._http_error_code(response.status_code),
-                )
+                logger.warning("Part properties failed: HTTP %d", response.status_code)
                 return {}
             data = response.json()
             return {
@@ -126,9 +94,14 @@ class GeometryProcessor:
             logger.exception("Part properties request failed")
             return {}
 
+    # --- Standalone STEP processing methods (use services.cad_service instead) ---
+
     @staticmethod
     def load_shape_from_step(step_data: bytes) -> cq.Shape:
         """Parse STEP binary data into a CadQuery/OCP Shape."""
+        import os
+        import tempfile
+
         if not step_data or len(step_data) == 0:
             raise ValueError("STEP data is empty")
         with tempfile.NamedTemporaryFile(suffix=".step", delete=False) as tmp:
@@ -238,6 +211,7 @@ class GeometryProcessor:
         if self.mesher is not None:
             try:
                 nodes, elements = self.mesher(step_data, target_element_size, element_type)
+                import numpy as np
                 nodes_arr = np.asarray(nodes, dtype=float)
                 elements_arr = np.asarray(elements, dtype=int)
                 return {
@@ -258,102 +232,17 @@ class GeometryProcessor:
                     "error": str(exc),
                 }
 
-        # Solid volumetric tetrahedral / hexahedral discretization
+        # Import STEP to get a model, then use the CAD service
         try:
-            shape = self.load_shape_from_step(step_data)
-            bbox = shape.BoundingBox()
-
-            dx = max(bbox.xmax - bbox.xmin, 1e-4)
-            dy = max(bbox.ymax - bbox.ymin, 1e-4)
-            dz = max(bbox.zmax - bbox.zmin, 1e-4)
-
-            # Determine grid subdivisions based on target element size
-            h = max(target_element_size, min(dx, dy, dz) / 20.0)
-            nx = max(int(np.ceil(dx / h)), 2)
-            ny = max(int(np.ceil(dy / h)), 2)
-            nz = max(int(np.ceil(dz / h)), 2)
-
-            # Limit total grid size for reasonable computation
-            max_grid = 40
-            if max(nx, ny, nz) > max_grid:
-                scale = max_grid / max(nx, ny, nz)
-                nx = max(int(nx * scale), 2)
-                ny = max(int(ny * scale), 2)
-                nz = max(int(nz * scale), 2)
-
-            xs = np.linspace(bbox.xmin, bbox.xmax, nx + 1)
-            ys = np.linspace(bbox.ymin, bbox.ymax, ny + 1)
-            zs = np.linspace(bbox.zmin, bbox.zmax, nz + 1)
-
-            # Grid nodes
-            node_map: Dict[Tuple[int, int, int], int] = {}
-            nodes_list: List[List[float]] = []
-
-            def get_or_add_node(i: int, j: int, k: int) -> int:
-                key = (i, j, k)
-                if key not in node_map:
-                    idx = len(nodes_list)
-                    node_map[key] = idx
-                    nodes_list.append([float(xs[i]), float(ys[j]), float(zs[k])])
-                return node_map[key]
-
-            elements_list: List[List[int]] = []
-
-            for i in range(nx):
-                for j in range(ny):
-                    for k in range(nz):
-                        # Cell center
-                        cx = 0.5 * (xs[i] + xs[i + 1])
-                        cy = 0.5 * (ys[j] + ys[j + 1])
-                        cz = 0.5 * (zs[k] + zs[k + 1])
-
-                        # Check if cell center is inside the CAD solid
-                        center_vec = cq.Vector(cx, cy, cz)
-                        if shape.isInside(center_vec, 1e-3):
-                            # Cell vertices
-                            n000 = get_or_add_node(i, j, k)
-                            n100 = get_or_add_node(i + 1, j, k)
-                            n010 = get_or_add_node(i, j + 1, k)
-                            n110 = get_or_add_node(i + 1, j + 1, k)
-                            n001 = get_or_add_node(i, j, k + 1)
-                            n101 = get_or_add_node(i + 1, j, k + 1)
-                            n011 = get_or_add_node(i, j + 1, k + 1)
-                            n111 = get_or_add_node(i + 1, j + 1, k + 1)
-
-                            if element_type == "hex8":
-                                elements_list.append([n000, n100, n110, n010, n001, n101, n111, n011])
-                            else:
-                                # 5-tetrahedra decomposition of a cube (Kuhn triangulation)
-                                elements_list.append([n000, n100, n010, n001])
-                                elements_list.append([n100, n110, n010, n111])
-                                elements_list.append([n001, n100, n101, n111])
-                                elements_list.append([n001, n010, n011, n111])
-                                elements_list.append([n001, n100, n010, n111])
-
-            if len(elements_list) == 0 or len(nodes_list) == 0:
-                for i in range(2):
-                    for j in range(2):
-                        for k in range(2):
-                            get_or_add_node(i, j, k)
-                n000, n100, n010, n110 = 0, 1, 2, 3
-                n001, n101, n011, n111 = 4, 5, 6, 7
-                elements_list = [
-                    [n000, n100, n010, n001],
-                    [n100, n110, n010, n111],
-                    [n001, n100, n101, n111],
-                    [n001, n010, n011, n111],
-                    [n001, n100, n010, n111],
-                ]
-
-            return {
-                "success": True,
-                "status": "ready",
-                "nodes": nodes_list,
-                "elements": elements_list,
-                "num_nodes": len(nodes_list),
-                "num_elements": len(elements_list),
-                "element_type": element_type,
-            }
+            cad_model = self.cad_service.import_step_from_bytes(
+                step_data,
+                model_name="Temp_for_meshing",
+            )
+            return self.cad_service.generate_mesh(
+                cad_model.id,
+                target_element_size=target_element_size,
+                element_type=element_type,
+            )
         except Exception as exc:
             logger.exception("Volumetric meshing failed")
             return {
@@ -373,41 +262,16 @@ class GeometryProcessor:
     ) -> Dict[str, Any]:
         """Map CAD B-Rep faces to FEM mesh nodes using exact Euclidean distance."""
         try:
-            shape = self.load_shape_from_step(step_data)
-            cad_faces = shape.Faces()
-
-            if not face_indices:
-                face_indices = list(range(len(cad_faces)))
-
-            mapped_faces = []
-            for face_idx in face_indices:
-                if face_idx < 0 or face_idx >= len(cad_faces):
-                    continue
-                face = cad_faces[face_idx]
-                matching_node_indices = []
-
-                for n_idx, node_coord in enumerate(nodes):
-                    v = cq.Vertex.makeVertex(node_coord[0], node_coord[1], node_coord[2])
-                    dist = float(face.distance(v))
-                    if dist <= tolerance:
-                        matching_node_indices.append(n_idx)
-
-                center = face.Center()
-                normal = face.normalAt(center)
-                mapped_faces.append({
-                    "face_index": face_idx,
-                    "center": [float(center.x), float(center.y), float(center.z)],
-                    "normal": [float(normal.x), float(normal.y), float(normal.z)],
-                    "area": float(face.Area()),
-                    "matched_nodes_count": len(matching_node_indices),
-                    "node_indices": matching_node_indices,
-                })
-
-            return {
-                "success": True,
-                "status": "ready",
-                "mapped_faces": mapped_faces,
-            }
+            cad_model = self.cad_service.import_step_from_bytes(
+                step_data,
+                model_name="Temp_for_boundary",
+            )
+            return self.cad_service.map_boundary_conditions(
+                cad_model.id,
+                nodes,
+                face_indices=face_indices,
+                tolerance=tolerance,
+            )
         except Exception as exc:
             logger.exception("Boundary condition mapping failed")
             return {
@@ -419,9 +283,9 @@ class GeometryProcessor:
 
     def reconstruct_step_from_densities(
         self,
-        densities: np.ndarray,
-        nodes: np.ndarray,
-        elements: np.ndarray,
+        densities: Any,  # np.ndarray
+        nodes: Any,  # np.ndarray
+        elements: Any,  # np.ndarray
         threshold: float = 0.5,
     ) -> Dict[str, Any]:
         """Contract for CAD solid reconstruction (Hito 3)."""

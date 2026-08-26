@@ -309,3 +309,32 @@ Core
        ↓
 Servicios de la aplicación
 SIN ONSHAPE SIN OAUTH SIN CAD EXTERNO SIN PLUGINS
+
+---
+
+# LIMPIEZA DOCUMENTAL FINAL
+
+## Arquitectura actual
+Standalone
+
+## Migración
+COMPLETADA
+
+## Limpieza documental
+COMPLETADA
+
+## Documentación histórica eliminada
+- investigación_onshape.md - Documentación de investigación técnica de Onshape
+- PROMPT_INTERFAZ_GRAFICA.md - Documentación futura de FeatureScript/Onshape
+
+## Documentación vigente
+- README.md - Describe la arquitectura standalone actual y futuras integraciones opcionales
+- metodologia.md - Define las reglas obligatorias de desarrollo y validación
+- prompt.md - Estado del proyecto y constancia de que la etapa documental está cerrada
+- RESUMEN_IMPLEMENTACION.md - Registra el estado real del proyecto
+
+## Estado del siguiente hito
+El proyecto queda preparado para continuar con el desarrollo del Hito 2.
+
+No se declara que el Hito 2 está implementado.
+No se declara que el solver FEA está validado si todavía no lo está.

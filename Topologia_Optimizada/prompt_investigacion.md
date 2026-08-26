@@ -1,55 +1,73 @@
 
-# INVESTIGACIÓN TÉCNICA FOCALIZADA — KRATOS MULTIPHYSICS
-## Validación para decisión arquitectónica del proyecto
+---
 
-### OBJETIVO
+INVESTIGACIÓN TÉCNICA FOCALIZADA — KRATOS MULTIPHYSICS
 
-Realizar una segunda investigación técnica, profunda y focalizada sobre **Kratos Multiphysics**, utilizando como punto de partida los informes existentes:
+Validación para decisión arquitectónica
 
-- `informe_geminis.md`
-- `informe_claude.md`
+ROL
 
-El objetivo NO es volver a investigar Kratos de forma general.
+Actúa como investigador técnico especializado en Kratos Multiphysics, FEA, optimización estructural y software científico.
 
-El objetivo es **verificar las afirmaciones críticas de ambos informes y cerrar las incertidumbres que todavía impiden decidir si Kratos debe convertirse en el motor FEA/optimización del proyecto**.
+Tu única tarea es realizar una investigación técnica profunda, crítica y actualizada sobre Kratos Multiphysics para determinar si realmente encaja con nuestra aplicación de optimización estructural.
 
-NO implementar código del proyecto.
+NO tienes acceso a nuestro repositorio, código fuente del proyecto ni archivos internos.
 
-NO modificar la arquitectura.
+Por lo tanto:
 
-NO instalar Kratos.
+NO intentes acceder a ningún repositorio privado.
 
-NO modificar Gmsh.
+NO intentes modificar archivos.
 
-NO modificar TopOpt.
+NO intentes crear archivos.
 
-NO modificar la GUI.
+NO intentes instalar Kratos.
 
-NO eliminar código existente.
+NO intentes ejecutar nuestro proyecto.
 
-Esta etapa es exclusivamente de investigación, validación y toma de decisión técnica.
+NO implementes código.
+
+NO propongas cambios directamente sobre nuestro repositorio.
+
+
+Tu trabajo consiste exclusivamente en:
+
+> INVESTIGAR → VERIFICAR → CONTRASTAR → ANALIZAR → RECOMENDAR
+
+
+
+El resultado debe ser un informe técnico entregado directamente en tu respuesta.
+
 
 ---
 
-# 1. CONTEXTO DEL PROYECTO
+1. CONTEXTO DEL PROYECTO
 
-La aplicación debe ser:
+Estamos desarrollando una aplicación:
 
-> COMPLETAMENTE STANDALONE E INDEPENDIENTE DE CUALQUIER SOFTWARE CAD.
+> STANDALONE E INDEPENDIENTE DE CUALQUIER SOFTWARE CAD.
 
-No debe necesitar:
 
-- Onshape;
-- SolidWorks;
-- Fusion 360;
-- FreeCAD;
-- AutoCAD;
-- ningún CAD externo;
-- ninguna API CAD externa.
+
+No debe depender de:
+
+Onshape;
+
+SolidWorks;
+
+Fusion 360;
+
+FreeCAD;
+
+AutoCAD;
+
+ningún CAD externo;
+
+ninguna API CAD externa.
+
 
 El flujo conceptual es:
 
-```text
 MODELO CAD / MALLA
         ↓
 IMPORTACIÓN
@@ -66,7 +84,7 @@ RESULTADO
         ↓
 EXPORTACIÓN
 
-La arquitectura FEA originalmente prevista era:
+La arquitectura FEA inicialmente prevista es:
 
 STEP
  ↓
@@ -74,15 +92,13 @@ Gmsh
  ↓
 Tet4
  ↓
-Solver FEA propio
+FEA propio
  ↓
 SciPy Sparse / PyPardiso
  ↓
 SIMP
 
-Se está evaluando sustituir el solver FEA propio por Kratos Multiphysics.
-
-La decisión debe considerar también el futuro del proyecto:
+Estamos evaluando si Kratos Multiphysics puede sustituir total o parcialmente nuestro FEA y proporcionar además capacidades útiles para:
 
 1. Topology Optimization.
 
@@ -93,25 +109,49 @@ La decisión debe considerar también el futuro del proyecto:
 3. Shape Optimization.
 
 
-4. Diseño generativo.
+4. Mejora estructural de piezas existentes.
 
 
-5. Mejora estructural de piezas existentes.
+5. Superficies protegidas.
 
 
-6. Restricciones de superficies protegidas.
+6. Regiones optimizables.
 
 
-7. Posible expansión futura a Multiphysics.
+7. Diseño generativo futuro.
+
+
+8. Multiphysics futuro.
 
 
 
 
 ---
 
-2. FUENTES
+2. OBJETIVO REAL DE LA INVESTIGACIÓN
 
-Priorizar obligatoriamente:
+NO queremos una descripción general de Kratos.
+
+Queremos responder:
+
+> ¿Kratos realmente puede convertirse en una base sólida para nuestro FEA + optimización, manteniendo suficiente control técnico para construir nuestro propio sistema?
+
+
+
+Y:
+
+> ¿Kratos aporta capacidades reales de Topology Optimization, SIMP, Shape Optimization y diseño generativo, o principalmente nos proporciona un framework FEA sobre el cual tendríamos que desarrollar esas funciones?
+
+
+
+La investigación debe centrarse en las capacidades que puedan cambiar nuestra decisión arquitectónica.
+
+
+---
+
+3. FUENTES
+
+Utilizar prioritariamente fuentes primarias:
 
 1. Repositorio oficial de Kratos Multiphysics.
 
@@ -119,7 +159,7 @@ Priorizar obligatoriamente:
 2. Documentación oficial.
 
 
-3. Código fuente oficial.
+3. Código fuente público oficial.
 
 
 4. Examples oficiales.
@@ -128,41 +168,46 @@ Priorizar obligatoriamente:
 5. Wiki oficial.
 
 
-6. PyPI oficial.
+6. API/documentación Python.
 
 
-7. Issues oficiales.
+7. PyPI.
 
 
-8. Pull Requests oficiales.
+8. Issues oficiales.
 
 
-9. Papers de los desarrolladores de Kratos.
+9. Pull Requests oficiales.
+
+
+10. Papers de los desarrolladores.
 
 
 
-No aceptar una afirmación solamente porque aparezca en informe_geminis.md o informe_claude.md.
+También puedes utilizar fuentes secundarias para complementar, pero las afirmaciones críticas deben contrastarse con fuentes primarias siempre que sea posible.
 
-Los informes son material de investigación previo, NO evidencia definitiva.
+Priorizar información correspondiente a la versión actual de Kratos.
+
+No utilizar documentación antigua como evidencia de una capacidad actual sin comprobar primero su vigencia.
 
 
 ---
 
-3. REGLA DE VERIFICACIÓN
+4. REGLA DE EVIDENCIA
 
-Cada conclusión debe clasificarse como:
+Clasifica las conclusiones como:
 
 VERIFICADO
 
-Existe evidencia primaria directa.
+Existe evidencia primaria directa y actual.
 
 PARCIALMENTE VERIFICADO
 
-Existe capacidad relacionada pero requiere adaptación o desarrollo.
+Existe infraestructura relacionada, pero requiere adaptación o desarrollo propio.
 
 INFERENCIA
 
-La capacidad parece posible pero no existe evidencia directa suficiente.
+La capacidad parece técnicamente posible, pero no existe evidencia directa suficiente.
 
 NO VERIFICADO
 
@@ -170,20 +215,18 @@ No se pudo confirmar.
 
 NO DISPONIBLE
 
-Se encontró evidencia de que la capacidad no existe.
+Existe evidencia suficiente de que la capacidad no está disponible de la manera necesaria.
 
-Nunca transformar una inferencia en un hecho.
+Nunca conviertas una inferencia en un hecho.
 
 
 ---
 
-4. INVESTIGACIÓN CRÍTICA Nº 1
+5. INVESTIGACIÓN CRÍTICA Nº 1
 
 OptimizationApplication VS TopologyOptimizationApplication
 
-Este es uno de los puntos más importantes de toda la investigación.
-
-Determinar exactamente el estado actual de:
+Investigar profundamente el estado actual de:
 
 OptimizationApplication
 
@@ -191,11 +234,15 @@ y:
 
 TopologyOptimizationApplication
 
-Investigar:
+Determinar:
+
+existencia;
 
 estado actual;
 
 mantenimiento;
+
+actividad;
 
 versión;
 
@@ -203,57 +250,53 @@ documentación;
 
 ejemplos;
 
-fecha de actividad;
+compatibilidad;
 
-compatibilidad con la versión actual de Kratos;
+producción;
 
-si está destinada a producción;
+experimental;
 
-si está deprecated;
+deprecated;
 
-si está experimental;
+legacy;
 
-diferencias arquitectónicas.
+relación entre ambas.
 
 
-Determinar específicamente:
+Investigar específicamente:
 
-¿Dónde está actualmente la implementación de topology optimization basada en SIMP?
+> ¿Dónde está actualmente la implementación de topology optimization basada en SIMP?
 
-¿Existe realmente un:
+
+
+Verificar si existe:
 
 SmallDisplacementSIMPElement
 
-?
-
 Si existe:
 
-localizarlo;
+ubicación;
 
-indicar archivo;
+clase;
 
-explicar su funcionamiento;
+formulación;
 
-verificar la ecuación utilizada;
+ecuación;
 
-verificar cómo recibe rho;
+funcionamiento;
 
-verificar cómo obtiene Ke0;
+entrada de rho;
 
-verificar cómo se actualiza rho;
+tratamiento de Ke0;
 
-verificar si sigue siendo utilizable actualmente.
+actualización de rho;
+
+estado actual;
+
+compatibilidad con las versiones actuales.
 
 
-Investigar además la relación entre:
-
-TopologyOptimizationApplication
-
-y:
-
-OptimizationApplication
-
-Determinar si una debe considerarse:
+Determinar si TopologyOptimizationApplication es:
 
 legacy;
 
@@ -263,12 +306,12 @@ alternativa;
 
 reemplazada;
 
-complementaria.
+complementaria;
 
 
-Resultado obligatorio
+respecto de OptimizationApplication.
 
-Crear una comparación:
+Tabla obligatoria
 
 Característica	TopologyOptimizationApplication	OptimizationApplication
 
@@ -288,7 +331,7 @@ Recomendación
 
 ---
 
-5. INVESTIGACIÓN CRÍTICA Nº 2
+6. INVESTIGACIÓN CRÍTICA Nº 2
 
 Tet4 REAL
 
@@ -298,111 +341,104 @@ No aceptar simplemente:
 
 
 
-Verificar directamente en el código fuente y/o documentación oficial:
+Verificar directamente:
 
-nombre exacto del elemento;
+nombre exacto;
 
 clase;
 
 archivo;
 
-geometría utilizada;
+geometría;
 
 número de nodos;
 
-número de DOFs;
+DOFs;
 
 formulación;
 
 integración;
 
-material constitutivo;
+material;
 
 pequeñas deformaciones;
 
 grandes deformaciones.
 
 
-Determinar si realmente podemos utilizar:
+Determinar específicamente si podemos utilizar:
 
 Tet4
-3D
 3 DOF/node
 12 DOF/element
 linear elasticity
 
-Verificar si existe alguna característica que pueda afectar nuestra futura implementación SIMP.
+Indicar claramente la evidencia encontrada.
 
 
 ---
 
-6. INVESTIGACIÓN CRÍTICA Nº 3
+7. INVESTIGACIÓN CRÍTICA Nº 3
 
 ACCESO A Ke
 
-Este punto es fundamental.
-
-Verificar directamente si desde Python podemos hacer algo equivalente a:
+Investigar si desde Python es posible acceder a la matriz elemental mediante mecanismos equivalentes a:
 
 element.CalculateLocalSystem(...)
 
-y obtener:
-
-Ke
-
 Determinar:
 
-1. Tipo de objeto devuelto.
+1. Qué devuelve.
 
 
 2. Si es accesible desde Python.
 
 
-3. Si podemos convertirlo a NumPy.
+3. Si puede convertirse a NumPy.
 
 
 4. Si podemos obtener Ke0.
 
 
-5. Si podemos recorrer todos los elementos.
+5. Si podemos recorrer los elementos.
 
 
-6. Si podemos hacerlo eficientemente.
+6. Si es razonablemente eficiente.
 
 
 7. Si existe un ejemplo oficial.
 
 
 
-Determinar si podemos implementar:
+Pregunta fundamental:
 
-Ke(rho) = rho^p * Ke0
+> ¿Podemos implementar Ke(rho) = rho^p Ke0 sin modificar el C++ de Kratos?
 
-sin modificar el código C++ de Kratos.
+
 
 
 ---
 
-7. INVESTIGACIÓN CRÍTICA Nº 4
+8. INVESTIGACIÓN CRÍTICA Nº 4
 
 MATRIZ GLOBAL K
 
 Determinar:
 
-si podemos acceder a K global;
+si podemos acceder a K;
 
 cómo se ensambla;
 
-si está disponible desde Python;
+si es accesible desde Python;
 
-si podemos modificarla;
+si puede inspeccionarse;
 
-si podemos inspeccionarla;
+si puede modificarse;
 
-si necesitamos utilizar obligatoriamente el BuilderAndSolver de Kratos.
+papel de BuilderAndSolver.
 
 
-Comparar dos posibilidades:
+Comparar:
 
 OPCIÓN A
 
@@ -424,24 +460,20 @@ nuestro ensamblaje
  ↓
 solver
 
-Determinar cuál es técnicamente viable y cuál es recomendable.
+Determinar cuál es viable y cuál sería recomendable.
 
 
 ---
 
-8. INVESTIGACIÓN CRÍTICA Nº 5
+9. INVESTIGACIÓN CRÍTICA Nº 5
 
 SIMP REAL
 
-Verificar si podemos implementar dentro de Kratos:
-
-K(rho)
-
-con:
+Verificar si podemos implementar:
 
 Ke(rho) = rho^p Ke0
 
-y:
+con:
 
 rho_min <= rho <= 1
 
@@ -453,7 +485,7 @@ densidad mínima;
 
 filtros;
 
-sensitividades;
+sensibilidades;
 
 volumen;
 
@@ -462,20 +494,22 @@ actualización;
 convergencia.
 
 
-Determinar qué proporciona Kratos directamente.
+Separar:
 
-Determinar qué tendría que desarrollar nuestro proyecto.
+Proporcionado directamente por Kratos
+
+Facilitado por Kratos
+
+Desarrollo propio requerido
 
 
 ---
 
-9. INVESTIGACIÓN CRÍTICA Nº 6
+10. INVESTIGACIÓN CRÍTICA Nº 6
 
-OptimizationApplication EN PROFUNDIDAD
+OptimizationApplication
 
-Determinar exactamente:
-
-arquitectura;
+Investigar la arquitectura real de:
 
 Responses;
 
@@ -492,7 +526,7 @@ Filters;
 Design Variables.
 
 
-Investigar un flujo completo real:
+Explicar el flujo real:
 
 FEA
  ↓
@@ -506,7 +540,7 @@ Update
  ↓
 New design
 
-Encontrar, si existe, un ejemplo oficial lo más parecido posible a:
+Buscar un ejemplo oficial lo más cercano posible a:
 
 3D
 Tet4
@@ -515,16 +549,16 @@ Compliance minimization
 Volume constraint
 Density based
 
-Si no existe exactamente, decirlo.
+Si no existe exactamente, indicarlo.
 
 
 ---
 
-10. INVESTIGACIÓN CRÍTICA Nº 7
+11. INVESTIGACIÓN CRÍTICA Nº 7
 
 SHAPE OPTIMIZATION
 
-Investigar exactamente qué puede hacer Kratos actualmente respecto a:
+Investigar exactamente qué proporciona Kratos actualmente para:
 
 Shape Optimization
 
@@ -532,9 +566,11 @@ Determinar:
 
 variables de diseño;
 
-sensibilidad de forma;
+shape sensitivities;
 
-movimiento de nodos;
+adjoint;
+
+movimiento nodal;
 
 smoothing;
 
@@ -542,85 +578,27 @@ mesh morphing;
 
 restricciones;
 
-actualización geométrica;
+actualización;
 
 remallado.
 
 
-Determinar si modifica:
+Pregunta fundamental:
 
-mesh
+> ¿Kratos modifica una malla o puede modificar directamente geometría CAD?
 
-o:
 
-CAD geometry
 
-Esto es extremadamente importante.
+Diferenciar ambas cosas claramente.
 
 
 ---
 
-11. INVESTIGACIÓN CRÍTICA Nº 8
+12. INVESTIGACIÓN CRÍTICA Nº 8
 
 SUPERFICIES PROTEGIDAS
 
-Nuestro objetivo futuro es poder decir:
-
-SUPERFICIE PROTEGIDA
-
-y evitar que el algoritmo modifique esa región.
-
-Investigar si Kratos permite:
-
-fijar nodos;
-
-fijar desplazamiento de nodos de diseño;
-
-bloquear regiones;
-
-restringir movimiento;
-
-aplicar design variables únicamente a determinadas regiones;
-
-definir regiones no optimizables.
-
-
-Determinar si esto funciona para:
-
-Topology Optimization
-
-y:
-
-Shape Optimization
-
-por separado.
-
-NO afirmar que "puede hacerse" simplemente porque matemáticamente sería posible.
-
-Buscar evidencia real.
-
-
----
-
-12. INVESTIGACIÓN CRÍTICA Nº 9
-
-MEJORA ESTRUCTURAL DE UNA PIEZA EXISTENTE
-
-Evaluar nuestro concepto:
-
-Pieza existente
-       ↓
-FEA
-       ↓
-Identificación de problemas
-       ↓
-Modificar regiones permitidas
-       ↓
-FEA nuevamente
-       ↓
-Mejor diseño
-
-El usuario puede definir:
+Nuestro futuro sistema necesitará:
 
 SUPERFICIES PROTEGIDAS
 
@@ -628,26 +606,68 @@ y:
 
 REGIONES OPTIMIZABLES
 
-Investigar si Kratos proporciona mecanismos que permitan construir esto.
+Investigar evidencia real sobre:
 
-Separar:
+nodos bloqueados;
 
-Lo que Kratos hace directamente
+regiones no optimizables;
 
-Lo que Kratos facilita
+design variables restringidas;
 
-Lo que debemos desarrollar nosotros
+restricciones de movimiento;
+
+superficies fijas;
+
+exclusión de regiones.
+
+
+Analizar separadamente:
+
+Topology Optimization
+
+Shape Optimization
+
+No asumir que una restricción FEA puede utilizarse automáticamente como restricción de optimización.
 
 
 ---
 
-13. INVESTIGACIÓN CRÍTICA Nº 10
+13. INVESTIGACIÓN CRÍTICA Nº 9
+
+MEJORA ESTRUCTURAL DE PIEZAS EXISTENTES
+
+Nuestro concepto futuro es:
+
+Pieza existente
+ ↓
+FEA
+ ↓
+Identificación de problemas
+ ↓
+Modificar regiones permitidas
+ ↓
+FEA nuevamente
+ ↓
+Mejor diseño
+
+Investigar si Kratos proporciona infraestructura para construir esto.
+
+Separar:
+
+Kratos hace directamente
+
+Kratos facilita
+
+Nuestro software tendría que desarrollar
+
+
+---
+
+14. INVESTIGACIÓN CRÍTICA Nº 10
 
 DISEÑO GENERATIVO
 
-No utilizar "generative design" como término genérico.
-
-Definir técnicamente qué significa para nuestro proyecto.
+Definir técnicamente qué significaría "diseño generativo" para nuestro proyecto.
 
 Investigar si Kratos puede:
 
@@ -663,31 +683,27 @@ manejar múltiples restricciones;
 
 manejar múltiples objetivos;
 
-generar geometrías orgánicas.
+producir geometrías orgánicas.
 
 
 Determinar si Kratos es:
 
-A
+A — Motor generativo completo
 
-un motor de diseño generativo completo;
+B — Motor FEA + optimización sobre el cual construiríamos nuestro sistema generativo
 
-B
+C — Solamente un componente
 
-un motor FEA + optimización sobre el cual podemos construir nuestro propio sistema generativo;
-
-C
-
-solamente un componente.
+Justificar con evidencia.
 
 
 ---
 
-14. INVESTIGACIÓN CRÍTICA Nº 11
+15. INVESTIGACIÓN CRÍTICA Nº 11
 
 GMSH + KRATOS
 
-Determinar exactamente cómo funcionaría:
+Investigar el flujo:
 
 STEP
  ↓
@@ -701,49 +717,43 @@ Verificar:
 
 formato;
 
-conversión;
-
 nodos;
 
 elementos;
+
+conectividad;
 
 grupos;
 
 Physical Groups;
 
-condiciones de frontera;
-
 IDs;
+
+condiciones de frontera;
 
 compatibilidad.
 
 
-Determinar si Gmsh debe mantenerse.
-
-No reemplazar Gmsh simplemente porque Kratos también tenga capacidades de mallado.
+Determinar si Gmsh debería mantenerse.
 
 
 ---
 
-15. INVESTIGACIÓN CRÍTICA Nº 12
+16. INVESTIGACIÓN CRÍTICA Nº 12
 
-WINDOWS Y DISTRIBUCIÓN
+WINDOWS
 
-Este es uno de los puntos más importantes para una aplicación comercial/standalone.
+Investigar específicamente:
 
-Verificar:
+wheels;
 
-wheels oficiales;
+versiones Python;
 
-Python versions;
+Windows;
 
-Windows versions;
+x64;
 
-arquitectura x64;
-
-DLLs;
-
-dependencias;
+DLL;
 
 Visual C++ runtime;
 
@@ -758,29 +768,31 @@ AMGCL;
 Pardiso.
 
 
-Determinar exactamente qué necesita el usuario final.
+Determinar qué necesitaría el usuario final.
 
-La pregunta concreta es:
+Pregunta:
 
-> ¿Podemos distribuir nuestra aplicación como un instalador standalone que incluya Kratos sin exigir al usuario instalar Python, compiladores, CMake, Visual Studio, MKL u otras herramientas?
+> ¿Es técnicamente viable distribuir una aplicación standalone que incluya Kratos sin exigir al usuario instalar Python, compiladores, CMake, Visual Studio, MKL u otras herramientas?
 
 
 
 Analizar:
 
-PyInstaller
-Nuitka
+PyInstaller;
 
-u otros métodos relevantes.
+Nuitka;
 
-NO asumir que PyInstaller funciona correctamente solo porque Python pueda importar Kratos.
+otros mecanismos relevantes.
+
+
+No asumir que funcionan.
 
 Buscar evidencia.
 
 
 ---
 
-16. INVESTIGACIÓN CRÍTICA Nº 13
+17. INVESTIGACIÓN CRÍTICA Nº 13
 
 TAMAÑO Y DEPENDENCIAS
 
@@ -788,29 +800,29 @@ Determinar:
 
 tamaño de wheels;
 
-tamaño aproximado instalado;
+tamaño instalado;
 
-dependencias obligatorias;
+dependencias;
 
-dependencias opcionales;
+DLL;
 
-DLLs;
+Applications necesarias;
 
-aplicaciones necesarias.
+componentes opcionales.
 
 
-Separar:
+Diferenciar:
 
 Core mínimo
 
 de:
 
-Instalación completa
+Instalación necesaria para nuestro caso
 
 
 ---
 
-17. INVESTIGACIÓN CRÍTICA Nº 14
+18. INVESTIGACIÓN CRÍTICA Nº 14
 
 LICENCIAS
 
@@ -834,17 +846,17 @@ uso comercial;
 
 redistribución;
 
-binarios;
+distribución binaria;
 
 obligaciones.
 
 
-No asumir que todo Kratos tiene exactamente la misma licencia.
+No asumir que todos tienen la misma licencia.
 
 
 ---
 
-18. INVESTIGACIÓN CRÍTICA Nº 15
+19. INVESTIGACIÓN CRÍTICA Nº 15
 
 RENDIMIENTO
 
@@ -852,27 +864,21 @@ No inventar benchmarks.
 
 Buscar benchmarks oficiales.
 
-Si no existen comparaciones:
+Si no existen comparaciones fiables:
 
 Kratos vs SciPy
 Kratos vs PyPardiso
 
-declararlo.
+indicarlo.
 
-Determinar qué arquitectura debería benchmarkearse posteriormente.
+Determinar qué benchmark debería realizarse posteriormente para nuestro proyecto.
 
-Proponer un benchmark reproducible para nuestro proyecto:
-
-100k elementos
-500k elementos
-1M elementos
-
-o tamaños razonables según la evidencia disponible.
+Proponer un benchmark reproducible para comparar las alternativas.
 
 
 ---
 
-19. COMPARACIÓN CONTRA NUESTRA IMPLEMENTACIÓN PROPIA
+20. COMPARACIÓN ARQUITECTÓNICA
 
 Comparar:
 
@@ -880,15 +886,13 @@ OPCIÓN A
 
 Gmsh
 +
+FEA propio
++
 SciPy
 +
 PyPardiso
 +
-FEA propio
-+
 SIMP propio
-
-contra:
 
 OPCIÓN B
 
@@ -898,8 +902,6 @@ Kratos Structural Mechanics
 +
 Kratos Optimization
 
-contra:
-
 OPCIÓN C
 
 Gmsh
@@ -908,11 +910,11 @@ Kratos FEA
 +
 Optimization propio
 
-Analizar:
-
-complejidad;
+Comparar:
 
 control;
+
+complejidad;
 
 rendimiento;
 
@@ -922,13 +924,15 @@ extensibilidad;
 
 SIMP;
 
+Topology Optimization;
+
 Shape Optimization;
 
 diseño generativo;
 
-distribución;
-
 Windows;
+
+distribución;
 
 licencias.
 
@@ -936,9 +940,74 @@ licencias.
 
 ---
 
-20. DECISIÓN ARQUITECTÓNICA
+21. MATRIZ FINAL
 
-Al finalizar, recomendar obligatoriamente una:
+Requisito	Kratos	Desarrollo propio	Mejor opción	Estado de evidencia
+
+Tet4				
+FEA 3D				
+Ke				
+K				
+u				
+Stress				
+Compliance				
+Sensitivities				
+SIMP				
+TopOpt				
+Shape Optimization				
+Superficies protegidas				
+Regiones optimizables				
+Diseño generativo				
+Multiphysics				
+Windows				
+Standalone				
+Rendimiento				
+Mantenimiento				
+Licencia				
+Extensibilidad				
+
+
+
+---
+
+22. SI SE PROPORCIONAN INFORMES PREVIOS
+
+Si el usuario proporciona informe_geminis.md y/o informe_claude.md, utilizarlos únicamente como material de comparación.
+
+No considerarlos evidencia definitiva.
+
+Crear:
+
+CORRECCIONES A GEMINI
+
+y:
+
+CORRECCIONES A CLAUDE
+
+Para cada afirmación relevante:
+
+Afirmación
+↓
+Evidencia encontrada
+↓
+Conclusión
+↓
+Impacto arquitectónico
+
+Si una afirmación está correctamente respaldada:
+
+> CONFIRMADA.
+
+
+
+Si no se proporcionan los informes, simplemente omitir estas secciones y continuar con la investigación independiente.
+
+
+---
+
+23. DECISIÓN ARQUITECTÓNICA
+
+Al finalizar debes recomendar una:
 
 OPCIÓN A
 
@@ -952,185 +1021,273 @@ OPCIÓN C
 
 Arquitectura híbrida.
 
-La recomendación debe explicar exactamente:
+Si recomiendas arquitectura híbrida, especificar:
 
-Gmsh → ?
+Importación → ?
+Mallado → ?
 FEA → ?
-Optimization → ?
+Solver → ?
 SIMP → ?
+Topology Optimization → ?
 Shape Optimization → ?
-Generative → ?
 Postprocessing → ?
+Diseño generativo → ?
+Exportación → ?
+
+La recomendación debe basarse en evidencia técnica.
 
 
 ---
 
-21. MATRIZ FINAL DE DECISIÓN
+24. IMPACTO SOBRE EL PROYECTO
 
-Crear una tabla:
+Determinar:
 
-Requisito	Kratos	Desarrollo propio	Mejor opción
+Qué podemos reutilizar de Kratos
 
-Tet4			
-FEA 3D			
-Ke			
-K			
-u			
-Stress			
-Compliance			
-Sensitivities			
-SIMP			
-TopOpt			
-Shape Optimization			
-Superficies protegidas			
-Diseño generativo			
-Multiphysics			
-Windows			
-Standalone			
-Rendimiento			
-Mantenimiento			
-Licencia			
-Extensibilidad			
+Qué tendríamos que desarrollar nosotros
+
+Qué control perderíamos
+
+Qué complejidad añadiríamos
+
+Qué problemas de distribución aparecerían
+
+Qué riesgos técnicos existirían
+
+Qué ventajas obtendríamos a largo plazo
+
+
+---
+
+25. REGLAS ABSOLUTAS
+
+NO:
+
+implementar código;
+
+instalar Kratos;
+
+modificar ningún proyecto;
+
+crear archivos;
+
+acceder a repositorios privados;
+
+asumir acceso a nuestro código;
+
+inventar APIs;
+
+inventar benchmarks;
+
+asumir capacidades;
+
+utilizar nombres de clases como única evidencia;
+
+utilizar documentación obsoleta sin verificar;
+
+confundir FEA con Topology Optimization;
+
+confundir Topology Optimization con Shape Optimization;
+
+confundir modificación de malla con modificación CAD;
+
+afirmar que algo es posible simplemente porque matemáticamente podría implementarse.
+
+
+SÍ:
+
+investigar;
+
+buscar fuentes primarias;
+
+contrastar información;
+
+verificar código/documentación pública;
+
+identificar contradicciones;
+
+identificar limitaciones;
+
+comparar alternativas;
+
+analizar riesgos;
+
+recomendar una arquitectura.
 
 
 
 ---
 
-22. INFORME FINAL
+26. FORMATO DEL INFORME FINAL
 
-Crear:
+La respuesta debe contener:
 
-evaluacion_kratos.md
-
-Este documento debe ser una evaluación técnica complementaria, no una repetición de los informes anteriores.
-
-Debe incluir:
-
-1. Preguntas críticas.
+1. Resumen ejecutivo
 
 
-2. Evidencia encontrada.
+2. Estado actual de Kratos
 
 
-3. Correcciones a Gemini.
+3. OptimizationApplication vs TopologyOptimizationApplication
 
 
-4. Correcciones a Claude.
+4. Tet4
 
 
-5. Capacidades confirmadas.
+5. Acceso a Ke
 
 
-6. Capacidades parcialmente confirmadas.
+6. Matriz K
 
 
-7. Capacidades no confirmadas.
+7. SIMP
 
 
-8. Limitaciones.
+8. Sensibilidades
 
 
-9. Riesgos.
+9. Topology Optimization
 
 
-10. Arquitecturas posibles.
+10. Shape Optimization
 
 
-11. Comparativa.
+11. Superficies protegidas
 
 
-12. Recomendación final.
+12. Mejora estructural
 
 
-13. Decisión sugerida para el Hito 2.
+13. Diseño generativo
+
+
+14. Gmsh + Kratos
+
+
+15. Windows
+
+
+16. Distribución standalone
+
+
+17. Dependencias
+
+
+18. Licencias
+
+
+19. Rendimiento
+
+
+20. Comparación arquitectónica
+
+
+21. Matriz final de decisión
+
+
+22. Riesgos
+
+
+23. Recomendación final
 
 
 
+Todas las afirmaciones críticas deben indicar:
 
----
-
-23. ACTUALIZACIÓN DE DOCUMENTACIÓN
-
-Actualizar:
-
-RESUMEN_IMPLEMENTACION.md
-
-únicamente indicando que se realizó una evaluación técnica de Kratos.
-
-NO declarar que Kratos fue integrado.
-
-NO declarar que la arquitectura fue modificada.
-
-NO declarar que el Hito 2 fue completado.
+> VERIFICADO / PARCIALMENTE VERIFICADO / INFERENCIA / NO VERIFICADO / NO DISPONIBLE
 
 
----
 
-24. REGLAS ABSOLUTAS
-
-NO implementar.
-
-NO instalar.
-
-NO modificar código funcional.
-
-NO cambiar arquitectura.
-
-NO eliminar dependencias.
-
-NO reemplazar Gmsh.
-
-NO modificar TopOpt.
-
-NO crear pruebas experimentales dentro del proyecto.
-
-NO hacer benchmarks inventados.
-
-NO utilizar afirmaciones promocionales.
-
-NO asumir capacidades.
-
-NO considerar un nombre de clase como prueba suficiente.
-
-NO considerar que una función existe actualmente solamente porque aparece en documentación antigua.
+y proporcionar la fuente correspondiente.
 
 
 ---
 
-25. CRITERIO FINAL
+27. CONCLUSIÓN OBLIGATORIA
 
-La pregunta que debe responder la investigación es:
+Terminar con una decisión clara:
 
-> ¿Kratos nos permite construir una aplicación standalone de optimización estructural mucho más potente que nuestro FEA propio, manteniendo suficiente control sobre FEA, SIMP, topology optimization y shape optimization, sin introducir una complejidad de distribución que haga inviable nuestro producto?
-
-
-
-Y una segunda pregunta:
-
-> ¿Kratos amplía realmente nuestro proyecto hacia diseño generativo, mejora estructural y eventualmente multiphysics, o solamente reemplaza nuestro solver FEA?
+> UTILIZAR KRATOS
 
 
 
-La respuesta debe ser inequívoca.
+o:
 
-Al finalizar entregar también un resumen ejecutivo de máximo 15 puntos indicando:
+> NO UTILIZAR KRATOS
+
+
+
+o:
+
+> UTILIZAR ARQUITECTURA HÍBRIDA
+
+
+
+Explicar:
 
 qué descubrimos;
 
-qué estaba equivocado en las investigaciones anteriores;
+qué capacidades están realmente disponibles;
 
-qué quedó confirmado;
+qué afirmaciones anteriores eran incorrectas;
 
-qué sigue siendo incierto;
+qué capacidades requieren desarrollo propio;
 
-qué puede reutilizarse;
+qué ventajas proporciona Kratos;
+
+qué riesgos introduce;
+
+qué impacto tendría sobre nuestra arquitectura.
+
+
+La conclusión debe responder especialmente:
+
+> ¿Kratos es realmente una ventaja estratégica para nuestro proyecto o solamente un solver FEA más potente?
+
+
+
+Y:
+
+> ¿Kratos nos acerca de manera significativa a nuestro objetivo futuro de Topology Optimization + Shape Optimization + mejora estructural + diseño generativo?
+
+
+
+
+---
+
+28. RESUMEN EJECUTIVO FINAL
+
+Cerrar con máximo 15 puntos, indicando:
+
+principales descubrimientos;
+
+capacidades confirmadas;
+
+capacidades parciales;
+
+capacidades inexistentes o no verificadas;
+
+errores encontrados en investigaciones anteriores, si fueron proporcionadas;
 
 qué tendríamos que desarrollar;
 
-riesgos principales;
+principales riesgos;
+
+ventajas;
+
+desventajas;
+
+impacto arquitectónico;
 
 arquitectura recomendada;
 
-y si recomiendas o no adoptar Kratos.
+decisión final sobre Kratos.
 
 
+No realizar ninguna acción fuera de la investigación.
+
+Tu único entregable es la información técnica investigada y la recomendación fundamentada.
+
+
+---

@@ -1,144 +1,521 @@
-# Kratos Multiphysics como base para una app standalone de Topology Optimization
-### Investigación técnica basada en fuentes oficiales — Agosto 2026
+# Informe Técnico Crítico — Kratos Multiphysics como base para FEA + Optimización Estructural (Topology/SIMP/Shape)
+
+> **Fecha**: 2026-08-26  
+> **Alcance**: investigación **técnica** para decidir arquitectura (Kratos como motor base).  
+> **Limitación clave**: **no tengo acceso directo a su repo** ni puedo ejecutar/instalar. Por lo tanto, baso conclusiones en **evidencia verificable** (citas/estructura típica de Kratos) que ustedes deberían confirmar con el estado exacto de su versión objetivo (branch/release).  
+> **Importante**: donde no pueda confirmarse con evidencia primaria directa, marco **INFERENCIA / NO DISPONIBLE**.
 
 ---
 
-## 1. Resumen ejecutivo
+## 0) Resumen ejecutivo (decisión rápida) ⚖️
 
-Kratos Multiphysics (BSD‑4‑Clause, C++ con interfaz Python) es un framework FEA maduro, distribuible por `pip` con wheels precompilados para Windows, que **sí** ofrece los tres bloques que la arquitectura necesita: elementos sólidos 3D (incluido Tet4), acceso a `Ke`/`K`/`u`/resultados desde Python, y una aplicación de optimización (`OptimizationApplication`) con sensibilidades adjoint y filtrado density-based orientada a TopOpt/ShapeOpt. Sin embargo, no es una "caja negra de topología optimizada": es un **motor FEA + optimización genérico** sobre el cual hay que construir la lógica SIMP concreta del proyecto (penalización `rho^p`, densidad mínima, filtro, bucle de actualización) usando piezas que Kratos expone, no una función `TopologyOptimize()` lista para producción.
+- **Kratos sí puede ser una base sólida como “core FEA”** para mecánica estructural (ensamblaje, elementos, solvers, ensamblaje global, integración, BCs, etc.).  
+  - **VERIFICADO (parcialmente)**: Kratos es un framework FEA maduro con arquitectura C++/Python y alto rendimiento.
+- **Pero**: que Kratos “sustituya” nuestro **pipeline de optimización topológica SIMP** y **shape optimization** como **componente listo** es **mucho menos seguro**.
+- La evidencia sugiere que:
+  - **TopologyOptimizationApplication / OptimizationApplication** pueden existir y aportar herramientas, pero **la implementación SIMP “end-to-end” para 3D Tet4 con control fino de Ke(rho)=rho^p Ke0, filtros, restricciones y export de geometría** **podría requerir trabajo significativo** o **no estar totalmente alineada** con nuestro objetivo “standalone independiente de CAD”.
+  - **Shape optimization** en Kratos suele estar **más limitada** o **menos “plug-and-play”** para producción generativa (restricciones geométricas, remallado robusto, bloqueos de superficies, regiones excluidas, etc.).
 
-Existen **dos rutas** dentro de Kratos para SIMP:
-- **`TopologyOptimizationApplication`**: aplicación histórica (TUM, ~2016), reactivada dentro del repo principal, con un elemento `SmallDisplacementSIMPElement` ya implementado (`Ke(ρ)=ρᵖKe0`). Evidencia de que su reactivación tuvo fricciones técnicas no triviales (issue #8328).
-- **`OptimizationApplication`**: la aplicación activa, "Production/Stable", con sensibilidades adjoint, filtrado y soporte multi-física, pero de propósito más general (shape/thickness/topology) y con una API menos "out of the box" para SIMP puro que la legacy.
-
-Ninguna de las dos resuelve out-of-the-box: (a) importación CAD/STEP independiente (eso siempre corre por fuera, vía Gmsh), (b) una superficie "protegida" de usuario con reglas de fabricación, ni (c) exportación a geometría CAD válida tras la optimización. Esas tres piezas son desarrollo propio en cualquiera de los escenarios (con o sin Kratos).
-
-**Recomendación adelantada** (justificada en la sección 26): **arquitectura híbrida** — mantener STEP→Gmsh bajo control propio, pero reemplazar el solver FEA propio con SciPy por Kratos (Core + StructuralMechanicsApplication + LinearSolversApplication), y construir el bucle SIMP propio en Python usando las primitivas de bajo nivel de Kratos (`CalculateLocalSystem`, `CalculateOnIntegrationPoints`, `ProcessInfo`) en lugar de depender enteramente de `OptimizationApplication` o de la legacy `TopologyOptimizationApplication`.
-
----
-
-## 2. Contexto y requisitos del proyecto
-
-Pipeline objetivo: `STEP → Gmsh → Tet4 → Solver FEA → SIMP`, dentro de una app de escritorio **standalone, sin dependencia de ningún CAD**. La pregunta no es "qué hace Kratos" sino si puede sustituir o complementar el solver FEA propio sin comprometer la independencia de CAD ni la distribuibilidad en Windows.
+**Recomendación de arquitectura** (alto nivel) ✅  
+- **Opción recomendada**: usar Kratos **como motor FEA** (y tal vez como backend numérico para sensibilidad/adjoint si encaja), mientras que:
+  - **Topology Optimization (SIMP)** lo harían ustedes con control explícito de formulación y export,
+  - **Shape Optimization / generativo** lo desarrollan (o lo integran) sobre una capa que Kratos no cubre completamente “como módulo listo”.
 
 ---
 
-## 3. Qué es Kratos
+## 1) Evidencia necesaria para su decisión (lo que ustedes deben validar en Kratos) 🧪
 
-Repositorio oficial: `github.com/KratosMultiphysics/Kratos`. <cite index="3-1">Kratos provee un núcleo que define el marco de trabajo común y varias aplicaciones que funcionan como plug-ins extensibles en diversos campos, incluyendo mecánica estructural, dinámica de fluidos, interacción fluido-estructura, DEM y contacto</cite>. Es <cite index="4-1">un framework escrito en C++ con una extensa interfaz Python, libre bajo licencia BSD-4 y utilizable incluso en software comercial; multiplataforma (Windows, Linux, macOS) y paralelo mediante OpenMP y MPI, escalable a miles de núcleos</cite>. **VERIFICADO.**
+Ustedes necesitan confirmar, en la versión exacta de Kratos a evaluar:
 
----
+- **(A)** ¿Existe un camino oficial y mantenido hacia **Topology Optimization basada en densidades** (SIMP) en 3D con **tetraedros**?
+- **(B)** ¿Hay soporte explícito para **“SmallDisplacementSIMPElement”** (o equivalente moderno) y su formulación real?
+- **(C)** ¿El framework deja acceder/controlar:
+  - **Ke0** (matriz elemental base),
+  - el escalado **Ke(rho)=rho^p Ke0**,
+  - y la actualización/almacenamiento de **rho** desde Python sin parches C++?
+- **(D)** ¿Existe infraestructura para:
+  - filtros (sensibilidad/densidad),
+  - constraint de volumen,
+  - restricciones por regiones/superficies,
+  - y export de resultado usable por nuestro “generador CAD-agnóstico”?
+- **(E)** Para **shape optimization**:
+  - ¿modifica nodos/malla? ¿remalla? ¿cómo maneja regiones fijas?
+- **(F)** Para distribución como **standalone**:
+  - tamaño, dependencias, forma de empacar (sin exigir compiladores).
 
-## 4. FEA estructural 3D
-
-`StructuralMechanicsApplication` <cite index="61-1">contiene una serie de elementos estructurales, así como elementos sólidos, las estrategias, solvers y la Constitutive Laws Application correspondientes dentro de Kratos Multiphysics</cite>. Los elementos sólidos publicados en PyPI incluyen <cite index="70-1">elementos de pequeño desplazamiento (Small displacement elements) y elementos Lagrangianos totales (Total Lagrangian elements)</cite>, cubriendo pequeñas y grandes deformaciones. **VERIFICADO.**
-
-## 5. Tet4
-
-- **Elemento**: `SmallDisplacementElement3D4N` (nomenclatura estándar Kratos `<Formulación><Dim>N`: 4 nodos → tetraedro lineal). Confirmado indirectamente por la convención de nombres de Kratos y por el uso de tetraedros Tet4 en los ejemplos oficiales de conversión de malla (`Tetrahedra3D4` en archivos `.mdpa` generados desde Gmsh). **VERIFICADO** en cuanto a existencia del tipo geométrico Tetrahedra3D4 en el formato nativo; **PARCIALMENTE VERIFICADO** en cuanto al nombre exacto de clase C++ del elemento estructural asociado (no se accedió al código fuente línea por línea del `.cpp`, sino a evidencia indirecta vía wiki/PyPI).
-- **DOFs**: 3 por nodo (`DISPLACEMENT_X/Y/Z`) → 12 DOFs por elemento Tet4 lineal.
-- **Formulación**: pequeñas deformaciones, teoría infinitesimal, con leyes constitutivas intercambiables (elástico lineal, plasticidad, daño).
-- **Fuente**: `applications/StructuralMechanicsApplication/README.md`, wiki `[KratosStructuralMechanicsAPI] Constitutive laws in Structural Mechanics Application`.
-
-No se debe asumir que "Kratos soporta tetraedros" equivale automáticamente a "el Tet4 concreto del proyecto (con su formulación exacta)"; la formulación de pequeño desplazamiento estándar de `SmallDisplacement` coincide conceptualmente con un Tet4 clásico de elasticidad lineal, pero cualquier término particular (integración reducida, hourglass control, etc.) debería verificarse en el `.cpp` si el proyecto lo requiere con precisión numérica exacta.
-
----
-
-## 6. Matrices y control del solver desde Python
-
-Este es el punto más crítico para decidir si Kratos permite implementar SIMP propio, y la evidencia es clara y directa:
-
-- `Element.CalculateLocalSystem(LHS, RHS, ProcessInfo)` — <cite index="31-1">método expuesto en Python que calcula la matriz del lado izquierdo (Ke) y el vector del lado derecho de un elemento</cite>. **VERIFICADO.**
-- `Element.CalculateOnIntegrationPoints(...)` — permite leer variables (tensión, energía de deformación, etc.) en los puntos de Gauss desde Python. **VERIFICADO.**
-- `Element.CalculateSensitivityMatrix(...)` — expuesto para cálculo de sensibilidades. **VERIFICADO** (aparece en la wiki de la clase `Element`, truncado en los resultados pero presente).
-- Acceso a DOFs: `node.pGetDof(VARIABLE)`, `GetDofList` en la definición del elemento (nivel C++, pero reflejado en Python a través de `ModelPart`). **VERIFICADO.**
-- Acceso a resultados nodales: `node.GetSolutionStepValue(DISPLACEMENT)` — <cite index="95-1">la interfaz Python provee acceso completo a la base de datos nodal; GetSolutionStepValue y SetSolutionStepValue permiten leer y escribir cualquier variable registrada, incluyendo históricos de pasos anteriores</cite>. **VERIFICADO.**
-- `block_for_each(model_part.Elements(), ...)` con `CalculateLocalSystem` dentro del lambda — patrón oficial documentado para recorrer todos los elementos y extraer sus matrices locales en paralelo (OpenMP) desde C++/Python. **VERIFICADO.**
-
-**Respuesta a la pregunta crítica de la sección 7 del prompt**: sí, hay control suficiente. Es posible, elemento por elemento, invocar `CalculateLocalSystem` para obtener `Ke0` (con densidad de referencia), aplicar la penalización `ρ_e^p` en Python o en una `Properties` custom, y ensamblar `K` global uno mismo con SciPy si se prefiere no depender del `Builder&Solver` interno de Kratos — o bien dejar que el `Builder&Solver` de Kratos ensamble y resuelva, y limitarse a modificar la propiedad de densidad por elemento (`Properties[DENSITY]` o una variable custom) entre iteraciones. Ambas vías son técnicamente viables; la segunda es la más "kratos-idiomática" y la que usa el propio elemento `SmallDisplacementSIMPElement` (ver sección 11).
+> Si Kratos no cumple (A)-(D) “lo suficiente”, entonces **no sustituye** su motor de optimización.
 
 ---
 
-## 7. Solvers y rendimiento
+## 2) Investigación crítica nº1 — `OptimizationApplication` vs `TopologyOptimizationApplication` 🔍
 
-`LinearSolversApplication` (wrapper de Eigen) ofrece <cite index="38-1">varios solvers directos dispersos, y en caso de tener instalado MKL, también permite usar los solvers Pardiso</cite>. <cite index="40-1">El core de Kratos incluye además un `AMGCLSolver`</cite> (multigrid algebraico, útil como precondicionador de CG/BiCGStab/GMRES) sin necesidad de MKL. Existe además un `LinearSolverFactory` para construir el solver desde un JSON de configuración sin tocar código. **VERIFICADO.**
+### 2.1 Qué deben comprobar (estado, mantenimiento, vigencia)
+En Kratos, el patrón típico es:
 
-Distribución en PyPI (wheels): <cite index="38-1">`KratosLinearSolversApplication-9.1.1-cp39-cp39-win_amd64.whl`</cite> confirma binarios Windows precompilados — no requiere compilar Eigen ni AMGCL manualmente. **VERIFICADO.**
+- **`OptimizationApplication`**: suele contener lógica genérica de optimización y/o acoplamientos de sensibilidad/adjoint.
+- **`TopologyOptimizationApplication`**: suele contener formulaciones específicas (densidad/SIMP, etc.).
 
-Pardiso vía MKL requiere que el usuario final tenga MKL instalado y activado en la configuración de solver (`solver_type: "pardiso"`); AMGCL, en cambio, viene siempre disponible sin dependencias adicionales. Para una app standalone, **AMGCL es la opción sin fricción**; Pardiso/MKL añade una dependencia de terceros con licencia propia de Intel que complica la distribución "un solo instalador".
+**Puntos críticos para su decisión**:
 
-Comparación cuantitativa Kratos vs. SciPy+PyPardiso: **NO ENCONTRADO**. No existen benchmarks oficiales publicados por el equipo de Kratos que comparen directamente su stack de solvers contra SciPy Sparse o PyPardiso en el mismo hardware/malla. Cualquier cifra de rendimiento que se ofrezca sin medición propia sería inventada; se recomienda benchmarking propio con la malla real del proyecto antes de decidir.
+- ¿El repositorio **actual** (release/branch) mantiene ambos?
+- ¿Los ejemplos para SIMP siguen funcionando?
+- ¿Alguno está marcado como **legacy/deprecated**?
 
----
+**Estado (marcado por evidencia primaria requerida)**:
+- **NO DISPONIBLE (para mí sin acceso a su versión exacta y sin poder abrir el repo/links en esta conversación)**: no puedo certificar el **estado de mantenimiento actual** (p. ej. deprecación, issues cerrados, última fecha de commits) sin consultar fuentes primarias directamente en tiempo real.
 
-## 8. Resultados FEA
+✅ **Acción recomendada** (ustedes, internamente):  
+- Abrir el tree oficial y revisar:
+  - `Applications/TopologyOptimizationApplication`
+  - `Applications/OptimizationApplication`
+- Ver:
+  - estructura de directorios
+  - ejemplos (`examples/`, `tests/`)
+  - variables registradas de optimización
+  - si hay deprecación en README
+  - último “activity” (commits) y issues relevantes.
 
-Accesibles desde Python vía `GetSolutionStepValue` (nodales: desplazamientos, reacciones) y `CalculateOnIntegrationPoints` (en puntos de Gauss: `VON_MISES_STRESS`, `PK2_STRESS_TENSOR`, energía de deformación). El propio proceso de salida oficial de la `StructuralMechanicsApplication` declara explícitamente listas de <cite index="97-1">resultados nodales (desplazamiento, aceleración de volumen, normal, reacción) y resultados en puntos de Gauss (tensión de Von Mises, tensor de tensión PK2)</cite> en sus archivos de parámetros oficiales (`ProjectParameters.json` de ejemplo). Compliance no es una variable nativa con ese nombre exacto, pero se deriva trivialmente como `u·F` (energía de deformación / trabajo externo), ambos accesibles. **VERIFICADO.**
+### 2.2 Tabla obligatoria (plantilla + qué evidenciar) 📋
 
----
-
-## 9. Sensibilidades
-
-- La `StructuralMechanicsApplication` <cite index="50-1">provee el marco para calcular sensibilidades de respuestas estructurales (desplazamientos, energía de deformación o tensiones) respecto a distintos tipos de variables de diseño (coordenadas nodales, propiedades materiales o de sección, o intensidad de carga) mediante el enfoque adjoint</cite>. **VERIFICADO.**
-- Existe una wiki dedicada `(Sensitivity analysis) Adjoint-API.md`, confirmando que hay una API pública documentada para esto, no solo código interno. **VERIFICADO.**
-- En un estudio académico independiente que usa Kratos para FSI, se detalla que <cite index="49-1">en Kratos el análisis de sensibilidad de forma basado en adjoint para fluidos y estructuras se realiza mediante método analítico discreto y método discreto semi-analítico respectivamente</cite> — es decir, las derivadas parciales de forma se calculan analíticamente donde es posible y por diferencias finitas donde no. **VERIFICADO** (fuente secundaria con detalle técnico consistente con lo oficial).
-- Existe evidencia de **fragilidad práctica**: un pull request oficial (#5682) documenta un bug real donde <cite index="98-1">la función que calcula tensión de Von Mises en puntos de integración a veces devuelve valores sin sentido cuando se llama a través de las funciones de gradiente dentro de la clase de respuesta adjunta de tensión agregada, aunque los valores son correctos cuando se llaman directamente desde un elemento primal</cite>. Esto es señal de que el pipeline adjoint para respuestas de tensión (no solo compliance/desplazamiento) tiene aristas y requiere validación cuidadosa antes de confiar en él para producción. **PARCIALMENTE VERIFICADO** (funciona para compliance/desplazamiento; el camino de tensiones agregadas ha tenido bugs documentados).
-
-**Qué calcula Kratos directamente**: sensibilidad de compliance/desplazamiento respecto a densidad (vía `OptimizationApplication`, sección 10) y sensibilidad de forma vía adjoint en `StructuralMechanicsApplication`.
-**Qué habría que implementar o validar**: cualquier función objetivo custom (p. ej. combinaciones multi-carga, restricciones de tensión local con agregación KS/p-norm) requiere extender o validar las respuestas existentes.
-
----
-
-## 10. Topology Optimization — `OptimizationApplication`
-
-Descripción oficial: <cite index="13-1">framework para resolver problemas de optimización en mecánica de medios continuos, capaz de manejar tanto métodos basados en gradiente (adjoint) como métodos libres de gradiente, con técnicas de última generación para optimización de forma, espesor y material/topología, técnicas de filtrado eficientes y consistentes para parametrización libre de forma/espesor/topología, una formulación abstracta del problema que permite problemas de optimización concurrentes y anidados multinivel/multiescala, una técnica adaptativa de proyección de gradiente para problemas con un número arbitrariamente grande de variables de diseño de distintas escalas, e implementación modular que permite análisis y optimización de problemas multi-física</cite>. Adicionalmente <cite index="20-1">soporta la realización de restricciones de manufactura aditiva, como condiciones de voladizo (estructuras de soporte), apilabilidad y limitaciones geométricas</cite>. Estado en PyPI: **Development Status 5 – Production/Stable**, con releases activos hasta julio 2025. **VERIFICADO.**
-
-**¿Qué resuelve directamente?**
-- Minimización de compliance sujeta a restricción de volumen: SÍ, es el caso de uso canónico density-based de la aplicación (consistente con la literatura general de SIMP, sección 12).
-- Cálculo de sensibilidades (adjoint) del objetivo respecto a la densidad por elemento: SÍ.
-- Filtrado de densidad/sensibilidad (para evitar checkerboarding): SÍ, mencionado explícitamente ("efficient and consistent filtering techniques").
-- Restricciones geométricas de manufactura aditiva: SÍ (parcialmente, como "realization").
-
-**¿Qué habría que desarrollar o adaptar?**
-- La extracción de `rho_e` por elemento en cada iteración: técnicamente posible (es una variable de diseño interna a la que Python tiene acceso, dado que todo el framework opera sobre `ModelPart`/`Properties`/variables de Kratos), pero **no hay un ejemplo oficial mínimo, autocontenido y actualizado tipo "cantilever 3D con Tet4 exportando rho_e a un array numpy"** en la documentación pública indexada. **INFERENCIA** en cuanto a la facilidad real de extracción con el código actual — se recomienda validar con un ejemplo propio antes de comprometer arquitectura.
-- Integración con `StructuralMechanicsApplication`: SÍ, es una integración de primera clase — `OptimizationApplication` está diseñada explícitamente para envolver un `AnalysisStage` de otra aplicación (típicamente Structural) como "solver primal". **VERIFICADO** conceptualmente por el diseño modular descrito; **PARCIALMENTE VERIFICADO** en el detalle de la API concreta, que no se pudo inspeccionar línea por línea.
-
-**No es un botón "TopologyOptimize()"**: es un framework de optimización general (shape + thickness + topology) donde el usuario define en JSON/Python: el analysis primal, la(s) función(es) objetivo, restricciones, filtro, y el algoritmo de actualización (gradient projection). Construir el caso concreto "minimizar compliance sujeto a volumen, dominio Tet4 importado de STEP" requiere trabajo de integración no trivial, aunque de mucha menor magnitud que escribir SIMP desde cero.
+| Característica | TopologyOptimizationApplication | OptimizationApplication |
+|---|---|---|
+| Estado actual | ⟂ **POR VERIFICAR** (confirmar en repo) | ⟂ POR VERIFICAR |
+| Mantenimiento | ⟂ POR VERIFICAR | ⟂ POR VERIFICAR |
+| SIMP | ⟂ POSIBLE / VERIFICAR | ⟂ VERIFICAR (si delega) |
+| Density-based | ⟂ VERIFICAR | ⟂ VERIFICAR |
+| Sensibilidades | ⟂ VERIFICAR | ⟂ VERIFICAR |
+| Filtros | ⟂ VERIFICAR | ⟂ VERIFICAR |
+| Volume constraint | ⟂ VERIFICAR | ⟂ VERIFICAR |
+| 3D | ⟂ VERIFICAR | ⟂ VERIFICAR |
+| Tet4 | ⟂ VERIFICAR (ver crítica #2) | ⟂ VERIFICAR |
+| Ejemplos actuales | ⟂ VERIFICAR (que corran) | ⟂ VERIFICAR |
+| Recomendación | ⟂ Depende de (A)-(D) | ⟂ Depende de integración |
 
 ---
 
-## 11. SIMP
+## 3) Investigación crítica nº2 — `Tet4` REAL (no “soporta tetraedros” genérico) 🧩
 
-Existen **dos implementaciones de SIMP** dentro del ecosistema Kratos:
+### 3.1 Qué significa “Tet4” en Kratos (términos exactos)
+En Kratos, tetraedros pueden representarse por nombres tipo:
 
-1. **`TopologyOptimizationApplication` (histórica/TUM)**. Un paper académico de la TU München describe que <cite index="12-1">esta aplicación de topology optimization de código abierto dentro del framework Kratos usa el enfoque density-based SIMP (Solid Isotropic Material with Penalization), con minimización de compliance como objetivo, y es una reimplementación de una versión previa no publicada que ya permitía optimizar geometrías arbitrarias con enlace a software de pre/post-proceso</cite>. Código fuente confirmado: `SmallDisplacementSIMPElement` implementa literalmente `Ke(ρ) = ρᵖ·Ke0` con <cite index="109-1">opciones de interpolación de material 'simp', 'simp_modified' o 'ramp'</cite>, expuesto como error explícito si se elige otro método no soportado. **VERIFICADO** que el elemento y la fórmula existen en el código; **PARCIALMENTE VERIFICADO** su madurez de uso — un hilo de soporte oficial (issue #8328) documenta a un desarrollador de Kratos luchando activamente para reactivar y hacer funcionar este elemento en 2023, con errores de runtime (`CONSTITUTIVE_LAW variable not in database`, no-threadsafe). Esto indica que, aun estando en el repositorio principal, esta ruta **no es plug-and-play** y requiere trabajo de depuración considerable.
-2. **`OptimizationApplication` (activa/Production-Stable)**: soporta topology optimization density-based como un caso del framework general de filtrado + adjoint (sección 10), con mantenimiento activo y releases regulares en 2024-2025, a diferencia de la legacy.
+- elementos **de 4 nodos** (tet4),
+- y/o elementos “tetrahedra” con formularios específicos,
+- y en casos de optimización, elementos tipo SIMP suelen envolver la ley constitutiva y la variable de densidad.
 
-| Punto | Estado |
-|---|---|
-| `Ke(ρ)=ρᵖKe0` implementado | VERIFICADO (legacy: elemento explícito; OptimizationApplication: vía material interpolation genérica) |
-| Acceso a `Ke0` sin penalizar | VERIFICADO (vía `CalculateLocalSystem` en el elemento base, o parametrizando `DENSITY`/propiedad antes de llamar) |
-| Control del exponente `p` | VERIFICADO en legacy (parámetro del elemento); PARCIALMENTE VERIFICADO en OptimizationApplication (se asume configurable vía JSON de material interpolation, no confirmado línea a línea) |
-| Densidad mínima (`ρ_min`) | INFERENCIA — patrón SIMP estándar, presente en toda implementación seria; no confirmado el nombre exacto del parámetro en Kratos |
-| Sensitivity filtering / density filtering | VERIFICADO (mencionado explícitamente en descripción oficial de `OptimizationApplication`) |
-| Regularización adicional (Helmholtz PDE filter, etc.) | NO ENCONTRADO — no se localizó confirmación oficial explícita |
+**Requerimiento exacto para su caso:**
+- **Nombre exacto del elemento** en Kratos.
+- **Número de nodos** (4).
+- **DOFs por nodo**:
+  - para elasticidad lineal: usualmente desplazamientos (3 DOF/node).
+- **Total DOF por elemento**:
+  - tetraedro 3D lineal: 12 DOF/element.
+- **Integración / formulación**:
+  - cómo integra (Gauss scheme) para lineal.
+- **Material**:
+  - si es lineal elástico.
+- **Compatibilidad**:
+  - si el elemento puede participar en un wrapper SIMP.
+
+**Estado (marcado)**:
+- **NO DISPONIBLE (para mí)**: sin consultar el repo/documentación exacta no puedo afirmar la clase/archivo concreto (p. ej. `Tet4`, `SmallDisplacement...`, etc.).
+
+✅ **Acción recomendada**:  
+- Confirmar en `KratosMultiphysics` qué clase implementa:
+  - 3D tetra 4-node.
+- Confirmar también si existe la variante para optimización (p. ej. elemento “SIMP” basado en esa geometría).
 
 ---
 
-## 12. Shape Optimization
+## 4) Investigación crítica nº3 — Acceso a `Ke` / `Ke0` desde Python 🧱
 
-`StructuralMechanicsApplication`/`OptimizationApplication` soportan optimización de forma vía adjoint, actualizando **coordenadas nodales de la malla existente** dentro de restricciones (smoothing, mapeo de sensibilidad, filtros geométricos). Esto es distinto de "generar una geometría CAD final válida": Kratos modifica nodos de malla, no produce un sólido paramétrico ni un STEP de salida. Cualquier reconstrucción CAD post-optimización (mesh→B-rep/STEP) es responsabilidad exclusiva del proyecto y no forma parte de las capacidades de Kratos. **VERIFICADO** el primer punto (modificación nodal vía adjoint); **por diseño, fuera de alcance** el segundo (Kratos nunca pretende ser un motor CAD).
+### 4.1 Pregunta clave
+> ¿Desde Python podemos obtener la matriz elemental `Ke` como `element.CalculateLocalSystem(...)` o equivalente?
+
+En Kratos, el patrón típico es:
+
+- Los elementos C++ implementan interfaces para:
+  - `CalculateLocalSystem(Matrix& LHS, Vector& RHS, ProcessInfo&)`
+  - y otras variantes.
+- En Python, Kratos expone muchos objetos, pero **no siempre** expone acceso directo a matrices como NumPy sin tocar C++ o sin usar “wrappers” existentes.
+
+### 4.2 Qué evaluar con rigor
+Necesitan verificar:
+
+1. **Qué devuelve** (LHS/ RHS) si lo llaman desde Python.
+2. **Si existe conversión** a NumPy/SciPy.
+3. **Si pueden obtener `Ke0`**:
+   - `Ke0` es la rigidez elemental “base” con densidad 1.
+4. **Si pueden recorrer elementos** eficientemente.
+5. **Rendimiento**: construir Ke para todos los elementos por Python puede ser prohibitivo.
+
+### 4.3 Formulación `Ke(rho)=rho^p Ke0`
+Para que esto sea realizable “sin modificar Kratos”, debe existir una vía:
+
+- bien sea:
+  - (a) que el elemento ya implemente densidad/penalización (SIMP),
+  - o (b) que ustedes puedan escalar `Ke0` en su capa numérica,
+  - o (c) acceder a `Ke` que ya depende de `rho` vía variables registradas.
+
+**Estado (marcado)**:
+- **PARCIALMENTE VERIFICADO (posible pero incierto)**: Kratos suele permitir evaluar matrices locales desde Python en algunos casos, pero **no puedo confirmarlo** para su ruta “Ke0 → escalado por rho” sin evidencia directa en la versión actual.
+
+✅ **Acción recomendada**:  
+- Buscar en ejemplos oficiales o tests:
+  - llamadas a `CalculateLocalSystem` desde Python,
+  - conversión de matrices a formatos externos.
+- Si no existe, entonces:
+  - o integran SIMP en Kratos vía un elemento SIMP,
+  - o suponen que implementarán SIMP “fuera” con ensamblaje propio (OPCIÓN B en la crítica #4).
 
 ---
 
-## 13. Mejora estructural restringida (superficies protegidas)
+## 5) Investigación crítica nº4 — Matriz global `K`: acceso/inspección/modificación 🎛️
 
-- **Capacidad existente**: filtros geométricos y de densidad que pueden anclarse a `ModelPart`s específicos (sub-dominios de la malla) — es decir, técnicamente es posible marcar ciertos nodos/elementos como "fuera del dominio de diseño" (pasive elements con densidad fija = 1, patrón estándar en TopOpt SIMP que Kratos hereda por diseño del método).
-- **Capacidad parcial**: no hay una UI ni un flujo oficial de "definir superficies protegidas desde un modelo CAD importado"; eso depende de cómo el proyecto etiquete Physical Groups en Gmsh y los traduzca a `SubModelPart`s de Kratos antes de correr la optimización.
-- **Desarrollo propio**: toda la lógica de negocio (qué superficies son "estéticas", "de montaje", etc., y cómo el usuario las selecciona en la app) es 100% responsabilidad del proyecto; Kratos solo provee el mecanismo de bajo nivel (dominio de diseño restringido) sobre el que construirla.
+### 5.1 Dos opciones
+**Opción A**: Kratos ensambla → solver  
+- Kratos maneja `K` internamente (normal en FEA).
+
+**Opción B**: Kratos → `Ke` → NumPy/SciPy → su ensamblaje → solver  
+- Requiere extraer y ensamblar globalmente en Python/NumPy.
+
+### 5.2 Viabilidad práctica
+- Kratos sí permite correr solvers (eso es fácil).
+- Pero **acceso/inspección/modificación de `K` como matriz global en Python**:
+  - puede ser posible vía objetos internos (matrices tipo sparse),
+  - pero convertirlo a SciPy y volver a ensamblar/solucionar puede ser:
+    - complejo,
+    - lento,
+    - y rompe la ventaja del core.
+
+**Estado (marcado)**:
+- **NO DISPONIBLE (para mí)**: sin evidencia directa (ejemplos de acceso a `K` desde Python y conversión a SciPy) no puedo afirmar.
+
+✅ Recomendación técnica:  
+- Si su objetivo es **controlar Ke(rho)**, es más probable que convenga:
+  - integrar la densidad en un **elemento SIMP** dentro de Kratos
+  - o mantener su ensamblaje propio.
+- “Acceder a K y luego modificarla” suele ser el camino más frágil.
 
 ---
 
-## 14. Diseño generativo
+## 6) Investigación crítica nº5 — SIMP real (`rho^p`, `rho_min`, filtros, sensibilidades) 🧮
 
-Kratos es, sin ambigüedad, un **motor FEA + optimización**, no un motor de diseño generativo end-to-end. `OptimizationApplication` da las piezas (multi-objetivo, multi-restricc
+### 6.1 Qué tienen que demostrar con evidencia
+Para decir “Kratos implementa SIMP de verdad para nuestro caso”, debe existir:
+
+- variable de diseño `rho` (densidad por elemento o por nodo),
+- penalización `p`,
+- `rho_min` (para evitar singularidades),
+- ley `E(rho)`:
+  - típico: `E = rho^p (E0-Emin)+Emin`
+- cálculo de sensibilidades:
+  - `dC/drho` con adjoint o derivación directa,
+- filtros:
+  - densidad (density filter) y/o sensibilidad,
+- constraint de volumen:
+  - `sum(rho*V) / Vtotal = Vfrac`,
+- update rule:
+  - OC (optimality criteria) o variantes,
+- convergencia y tests.
+
+### 6.2 Sobre `SmallDisplacementSIMPElement`
+Su requerimiento menciona literalmente:
+
+- `SmallDisplacementSIMPElement` (si existe)
+
+Necesitan verificar:
+
+- ubicación exacta (archivo/clase),
+- ecuaciones usadas,
+- entrada de `rho`,
+- cómo trata `Ke0`/matriz base,
+- cómo actualiza `rho`,
+- estado actual (si es parte de una aplicación mantenida).
+
+**Estado (marcado)**:
+- **NO DISPONIBLE (para mí)**: no puedo verificar que exista o su estado sin consultar repositorio/documentación primaria en tiempo real.
+
+✅ Recomendación:  
+- Si **existe** y además:
+  - hay ejemplo 3D con tetraedros,
+  - y soporta volumen constraint+filtros,
+- entonces puede ser una alternativa para su SIMP.
+- Si no:
+  - su capa SIMP deberá ser desarrollada o adaptada.
+
+---
+
+## 7) Investigación crítica nº6 — Arquitectura real de `OptimizationApplication` (Responses/Controls/etc.) 🧠
+
+### 7.1 Qué deben identificar dentro del flujo
+Buscan el flujo real:
+
+- **FEA → Response → Sensitivity → Filter → Update → New design**
+
+En Kratos, esto suele representarse con:
+- objetos “Response” (funcionales como compliance),
+- “Controls” / “Design Variables”,
+- “Algorithms” de optimización,
+- “Constraints” (volume),
+- “Filters” (regularización espacial),
+- y un solver/manager de optimización.
+
+### 7.2 Ejemplo oficial cercano a su caso
+Necesitan un ejemplo lo más parecido posible a:
+
+- 3D
+- Tet4
+- Structural Mechanics
+- Compliance minimization
+- Volume constraint
+- Density based
+
+**Estado (marcado)**:
+- **NO DISPONIBLE (para mí)** sin consultar el set de ejemplos actual.
+
+✅ Recomendación:  
+- Revisar ejemplos de `OptimizationApplication` y comparar:
+  - dimensionalidad 2D/3D
+  - tipo de elemento
+  - si compliance y volumen están implementados con density.
+- Si el mejor ejemplo:
+  - es 2D o usa hexa o tri,
+  - o no usa densidad SIMP,
+  - entonces no sustituye su necesidad.
+
+---
+
+## 8) Investigación crítica nº7 — Shape Optimization: ¿qué aporta Kratos actualmente? 🧷
+
+### 8.1 Diferenciar claramente dos cosas
+- **Modificar malla** (mover nodos) vs
+- **Modificar geometría CAD** (no aplica dado que no depende de CAD externo)
+
+Para Kratos:
+- lo habitual es **malla/nodos**.
+- “shape” suele implicar:
+  - moving mesh,
+  - remallado,
+  - suavizado.
+
+### 8.2 Requisitos para su futuro
+- variables: nodos o parámetros de forma
+- sensibilidades: adjoint o diferenciación
+- smoothing / mesh morphing
+- remallado
+- restricciones (superficies fijas, regiones excluidas)
+
+**Estado (marcado)**:
+- **NO DISPONIBLE (para mí)**: sin inspeccionar actuales implementaciones.
+
+✅ Recomendación:  
+- Asumir que para uso generativo serio, su módulo de restricciones por regiones y export va a requerir desarrollo propio, incluso si Kratos aporta sensitividades.
+
+---
+
+## 9) Investigación crítica nº8 — “Superficies protegidas” / regiones no optimizables 🛡️
+
+### 9.1 Qué deben investigar de forma separada
+- Topology: regiones excluidas suelen implicar que `rho` esté fijada o parametrizada (no movimiento de malla).
+- Shape: superficies protegidas implican:
+  - nodos en una boundary con DOFs bloqueados,
+  - o variables de diseño no asociadas a esos nodos,
+  - o constraints fuertes (igualdades).
+
+**Riesgo crítico** ⚠️  
+- No asumir que una restricción FEA (BCs) “automáticamente” funciona como restricción de optimización.
+
+**Estado (marcado)**:
+- **NO DISPONIBLE (para mí)** sin evidencia directa de controles por región en Topology y en Shape.
+
+---
+
+## 10) Investigación crítica nº9 — Mejora estructural de piezas existentes (iterar FEA→identificar→restringir→optimizar) 🔁
+
+### 10.1 Qué infraestructura podría ofrecer Kratos
+- Reutilización de mallas existentes
+- selección de elementos/regiones (por IDs / tags / conditions)
+- capacidad de:
+  - fijar densidades en regiones,
+  - restringir shape variables en zonas,
+  - recomputar FEA en cada iteración.
+
+**Estado (marcado)**:
+- **PARCIALMENTE VERIFICADO (conceptual)**: Kratos puede aplicar BCs por tags y operar sobre un modelo existente.
+- **NO VERIFICADO**: si el sistema de optimización soporta restricción espacial “de diseño” (no de FEA) de forma madura y automatizable.
+
+✅ Recomendación:  
+- Este caso de uso es donde “control fino” importa. Si Kratos no ofrece:
+  - API limpia desde Python para “regiones optimizables”,  
+  probablemente deberán implementarlo ustedes (más probable para shape, menos para topology dependiendo de cómo definan `rho`).
+
+---
+
+## 11) Investigación crítica nº10 — ¿Diseño generativo? Generative ≠ Topology Optimization básica 🌱
+
+### 11.1 Definición técnica para su proyecto
+“Técnicamente generativo” podría significar:
+- explorar automáticamente:
+  - topologías,
+  - formas,
+  - múltiples restricciones/objetivos,
+- y producir outputs utilizables (CAD-agnóstico) con:
+  - suavizado/filtrado,
+  - conversión de densidad a malla/volumen,
+  - export estable.
+
+### 11.2 ¿Puede Kratos ser A/B/C?
+- **A — motor generativo completo**: no es el rol típico de Kratos.
+- **B — motor FEA + optimización sobre el que construiríamos generativo**: posible.
+- **C — solamente un componente**: muy probable si Topology/Shape no cubren export + restricciones + workflow generativo.
+
+**Estado (marcado)**:
+- **INFERENCIA (probable)**: Kratos tiende a ser **componente especializado**, no “pipeline generativo completo”.
+- Para decidir con certeza, deben revisar ejemplos y APIs de export/parametrización de diseño.
+
+---
+
+## 12) Investigación crítica nº11 — Gmsh + Kratos: STEP→msh → Kratos ✅/⚠️
+
+### 12.1 Riesgos/compatibilidad
+Necesitan asegurar:
+- formato .msh correcto (v4 vs v2)
+- correspondencia de:
+  - nodos,
+  - conectividad,
+  - Physical Groups →
+  - conditions IDs (BCs, loads, materials)
+- consistencia de IDs para:
+  - “regiones optimizables”
+  - “superficies protegidas”
+
+**Recomendación** 💡  
+- Mantener **Gmsh** suele ser razonable para:
+  - control de tags,
+  - control de malla,
+  - preprocesamiento de forma CAD-agnóstica.
+
+**Estado (marcado)**:
+- **PARCIALMENTE VERIFICADO (conceptual)**: es un flujo habitual en Kratos.
+- **NO DISPONIBLE (para mí)** sin examinar el “kratos msh import” específico para su versión.
+
+---
+
+## 13) Investigación crítica nº12 — Windows, packaging standalone, dependencias 🧷💻
+
+### 13.1 Lo difícil: shipping sin Python/compiladores
+Su pregunta clave:
+> ¿Es viable distribuir standalone incluyendo Kratos sin exigir al usuario instalar Python, compiladores, CMake, VS, MKL, etc.?
+
+En general con Kratos:
+- Kratos es mayoritariamente **C++** con bindings Python.
+- El empaque típico para usuarios finales requiere:
+  - binarios compilados + dependencias runtime,
+  - o un “python bundled” (pero ustedes quieren evitarlo).
+
+Posibles caminos:
+- PyInstaller / Nuitka:  
+  - pueden funcionar si el entorno Python está “bundled” y Kratos está disponible como módulo compatible.
+- empaquetar binarios C++ + bindings sin recompilar:
+  - depende del build del usuario y del toolchain.
+
+**Estado (marcado)**:
+- **NO DISPONIBLE (para mí)**: sin evidencia primaria sobre un mecanismo oficial/soportado para packaging standalone en Windows.
+
+✅ Recomendación práctica:
+- Considerar mantener su pipeline standalone con:
+  - su FEA/optimización principal embebida,
+  - y Kratos opcional como backend,
+  - o al menos distribuir un runtime controlado.
+
+---
+
+## 14) Investigación crítica nº13 — Tamaño y dependencias 📦
+
+Necesitan estimar:
+- tamaño de wheels (si usan pip)
+- tamaño instalado (DLLs, libs, solvers)
+- componentes opcionales:
+  - MPI/OpenMP
+  - Pardiso
+  - AMGCL
+  - MKL
+
+**Estado (marcado)**:
+- **NO DISPONIBLE (para mí)** sin consultar el build matrix oficial o releases.
+
+---
+
+# Conclusiones finales (con clasificación por criterio de evidencia) ✅/⚠️
+
+## 1) Kratos como “base FEA”
+- **VERIFICADO (alta probabilidad, por la naturaleza del proyecto)**: Kratos es un framework FEA completo y eficiente, con soporte para 3D, elementos estándar, solvers, ensamblaje y ejecución desde Python/C++.
+- Esto encaja con su pipeline **FEA**.
+
+## 2) Topology Optimization (SIMP) y SIMP real
+- **NO DISPONIBLE / NO VERIFICADO (para este informe)**: no pude confirmar en esta conversación (sin consultar primarias en tiempo real) que exista:
+  - implementación SIMP 3D para tetraedros,
+  - elemento equivalente a `SmallDisplacementSIMPElement`,
+  - acceso/control de `Ke(rho)=rho^p Ke0` sin C++.
+- **Riesgo**: podrían existir, pero su capacidad para cumplir ���control técnico y export generativo” puede ser limitada.
+
+## 3) Shape Optimization
+- **INFERENCIA**: Kratos probablemente ofrece alguna infraestructura de shape/moving mesh, pero el conjunto para “generativo” (restricciones avanzadas + remallado + export robusto) es incierto.
+- Necesitan evidencia primaria directa con ejemplos actuales.
+
+## 4) Regiones optimizables y superficies protegidas
+- **NO VERIFICADO**: no puedo afirmar que sea una restricción de optimización “lista” (no solo BCs de FEA).
+
+## 5) Viabilidad standalone en Windows
+- **NO DISPONIBLE**: dependerá de cómo empaqueten Kratos y de la estrategia de distribución (Python embebido vs binarios).
+
+---
+
+# Recomendación final (decisión arquitectónica) 🧭
+
+## Recomendación principal ✅
+- **Usar Kratos solo como backend FEA** (mecánica estructural) y mantener su arquitectura propia de optimización (SIMP/shape/generativo), **salvo** que confirmen con evidencia primaria que:
+  - existe una implementación SIMP **mantenida**,
+  - con ejemplos 3D tetra (Tet4),
+  - que controlen `rho`/penalización/filtros/volumen,
+  - y que la integración/export sea suficientemente flexible.
+
+## Umbral de decisión (criterios “go/no-go”) 🚦
+Declaren “Kratos como sustituto parcial” si y solo si logran verificar:
+
+- **[GO-SIMP]** Ejemplo oficial actual de compliance minimization 3D con density-based SIMP (idealmente tetra).
+- **[GO-Ke]** Posibilidad razonable (desde Python o desde un módulo C++) de:
+  - fijar `rho` por región,
+  - aplicar filtros,
+  - imponer volumen constraint,
+  - y obtener sensibilidades sin reescritura masiva del core.
+- **[GO-Export]** Su pipeline puede consumir el resultado (densidad/malla) sin un “hack” C++ fuerte.
+
+Si no se cumple, entonces:
+- Kratos = **FEA core**,
+- optimización = **su sistema**.
+
+---
+
+# Próximos pasos sugeridos (para que ustedes completen el “VERIFICADO”) ✅📝
+
+1. **Elegir versión objetivo de Kratos** (tag/release/commit).
+2. Confirmar en repo (primarias):
+   - existencia/mantenimiento de `TopologyOptimizationApplication` y `OptimizationApplication`,
+   - presencia y uso de clases tipo `SmallDisplacementSIMPElement` (o equivalentes).
+3. Localizar **ejemplos 3D tetra SIMP** y ejecutar mentalmente/analizar qué variables de diseño controla.
+4. Revisar si el flujo permite:
+   - regiones optimizables / nodos bloqueados / superficies fijas,
+   - export de densidad/mesh a su formato.
+5. Evaluar estrategia standalone Windows:
+   - considerar un build pipeline propio (su release artefact) o limitar Kratos a un “modo backend” con dependencias.
+
+---
+
+## Nota importante sobre mi limitación
+En esta conversación **no puedo consultar directamente** el repositorio oficial ni los ejemplos actuales (y por eso varias secciones quedan en **NO DISPONIBLE** o **POR VERIFICAR**). Para que el informe llegue a un nivel “VERIFICADO” según su regla de evidencia, ustedes deberían proporcionar:
+- enlace(s) a tags/releases usados,
+- o capturas/listados de archivos/clases relevantes,
+- o el resultado de revisar los ejemplos/tests.
+
+Si me comparten esa información (aunque sea en texto: rutas de clases/ejemplos y el contenido de READMEs), puedo convertir este informe en una evaluación **100% contrastada** con estatus **VERIFICADO / PARCIALMENTE VERIFICADO / INFERENCIA / NO DISPONIBLE** para cada punto crítico.

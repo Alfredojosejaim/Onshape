@@ -15,7 +15,6 @@ from typing import Any, Callable, Dict, List, Optional
 import cadquery as cq
 
 from services.cad_service import CADService
-from connectors.onshape.client import OnshapeAPIError, OnshapeClient
 
 logger = logging.getLogger(__name__)
 
@@ -24,75 +23,50 @@ class GeometryProcessor:
     """Standalone geometry processor for CAD tessellation, meshing and face mapping.
 
     This class now provides backward compatibility while delegating to the new
-    services layer. For Onshape-specific functionality, use connectors.onshape.service.
+    services layer. It does NOT depend on Onshape or any external CAD platform.
     """
 
     def __init__(
         self,
-        onshape_session: Optional[OnshapeClient] = None,
+        onshape_session: Optional[Any] = None,
         did: Optional[str] = None,
         wid: Optional[str] = None,
         eid: Optional[str] = None,
         mesher: Optional[Callable[..., Any]] = None,
     ):
-        # Onshape-specific parameters (deprecated, for backward compatibility)
+        # Parameters kept for backward compatibility but no longer used
         self.session = onshape_session
         self.did = did
         self.wid = wid
         self.eid = eid
-        self.base_url = "https://cad.onshape.com/api"
+        self.base_url = ""
         self.mesher = mesher
         self.last_download_error_code: Optional[str] = None
 
         # New standalone service
         self.cad_service = CADService()
 
-    # --- Onshape-specific methods (deprecated, use connectors.onshape.service) ---
+    # --- Onshape-specific methods (deprecated, no longer functional) ---
 
     def get_parts_list(self) -> List[Dict[str, Any]]:
-        """DEPRECATED: Use connectors.onshape.service.OnshapeService.get_parts_list instead."""
-        if not self.session or not self.did or not self.wid or not self.eid:
-            logger.warning("get_parts_list requires Onshape session and document IDs")
-            return []
-
-        from connectors.onshape.service import OnshapeService
-        service = OnshapeService(self.session)
-        return service.get_parts_list(self.did, self.wid, self.eid)
+        """DEPRECATED: Onshape integration removed. Returns empty list."""
+        logger.warning("get_parts_list is deprecated - Onshape integration removed")
+        return []
 
     def download_part_studio(
         self,
         output_format: str = "step",
         part_ids: Optional[List[str]] = None,
     ) -> Optional[bytes]:
-        """DEPRECATED: Use connectors.onshape.service.OnshapeService.download_part_studio instead."""
-        if not self.session or not self.did or not self.wid or not self.eid:
-            self.last_download_error_code = "NO_ACTIVE_SESSION"
-            return None
-
-        from connectors.onshape.service import OnshapeService
-        service = OnshapeService(self.session)
-        return service.download_part_studio(self.did, self.wid, self.eid, output_format, part_ids)
+        """DEPRECATED: Onshape integration removed. Returns None."""
+        logger.warning("download_part_studio is deprecated - Onshape integration removed")
+        self.last_download_error_code = "ONSHAPE_REMOVED"
+        return None
 
     def get_part_properties(self) -> Dict[str, Any]:
-        """DEPRECATED: Use connectors.onshape.service instead."""
-        if not self.session or not self.did or not self.wid or not self.eid:
-            return {}
-
-        try:
-            url = f"/partstudios/d/{self.did}/w/{self.wid}/e/{self.eid}/properties"
-            response = self.session.request("GET", url, timeout=10)
-            if response.status_code != 200:
-                logger.warning("Part properties failed: HTTP %d", response.status_code)
-                return {}
-            data = response.json()
-            return {
-                key: data.get(key)
-                for key in ("volume", "area", "mass", "centroid", "bounds")
-                if key in data
-            }
-        except (OnshapeAPIError, ValueError):
-            logger.exception("Part properties request failed")
-            return {}
+        """DEPRECATED: Onshape integration removed. Returns empty dict."""
+        logger.warning("get_part_properties is deprecated - Onshape integration removed")
+        return {}
 
     # --- Standalone STEP processing methods (use services.cad_service instead) ---
 

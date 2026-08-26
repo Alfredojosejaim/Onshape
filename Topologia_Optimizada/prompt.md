@@ -1,650 +1,784 @@
-# POC TÉCNICO AISLADO — KRATOS + TOPOLOGICAL OPTIMIZATION 3D
+# VALIDACIÓN DEFINITIVA — KRATOS COMO MOTOR FEA + TOPOLOGICAL OPTIMIZATION
 
 ## OBJETIVO
 
-Realizar una prueba de concepto técnica, completamente aislada del desarrollo principal del proyecto, para determinar si Kratos Multiphysics puede utilizarse como motor FEA + optimización topológica SIMP para nuestra futura aplicación standalone.
+Este es el ÚLTIMO EXPERIMENTO antes de tomar una decisión arquitectónica sobre Kratos Multiphysics.
 
-Esta tarea NO consiste en integrar Kratos al proyecto principal.
+Debes leer nuevamente:
 
-El único objetivo es demostrar mediante código ejecutable y resultados verificables si el siguiente flujo funciona:
+- `README.md`
+- `metodología.md`
+- `prompt.md`
+- `RESUMEN_IMPLEMENTACION.md`
 
-Gmsh
-→ malla volumétrica Tet4
-→ Kratos Structural Mechanics
-→ OptimizationApplication
-→ SIMP
-→ análisis estructural
-→ compliance / strain energy
-→ sensibilidades
-→ actualización de densidades
-→ iteraciones de optimización
-→ resultado optimizado
+y revisar todo el contenido existente de:
 
----
+`experimentos/kratos_topopt_poc/`
 
-# 1. REGLAS ABSOLUTAS
+El objetivo NO es investigar nuevamente si Kratos posee determinadas clases o capacidades.
 
-1. Trabaja exclusivamente dentro de una carpeta experimental aislada:
+El objetivo es DEMOSTRAR MEDIANTE EJECUCIÓN REAL si Kratos puede funcionar como motor de:
 
-   `experimentos/kratos_topopt_poc/`
+1. FEA estructural 3D Tet4.
+2. SIMP.
+3. Cálculo de respuesta estructural.
+4. Sensibilidades.
+5. Filtrado.
+6. Actualización de densidades.
+7. Restricción de volumen.
+8. Iteración completa de optimización topológica.
 
-2. Si la carpeta no existe, créala.
-
-3. NO modificar:
-   - código productivo existente;
-   - arquitectura principal;
-   - README;
-   - metodología.md;
-   - prompt.md;
-   - informes de investigación;
-   - documentación histórica;
-   - archivos de configuración del proyecto principal.
-
-4. NO eliminar archivos existentes.
-
-5. NO mover archivos existentes.
-
-6. NO integrar Kratos todavía al pipeline principal.
-
-7. NO crear funcionalidades de la aplicación gráfica.
-
-8. NO desarrollar todavía el importador STEP definitivo.
-
-9. NO implementar conexión con ningún CAD.
-
-10. NO implementar Onshape, FeatureScript, API de Onshape ni plugins.
-
-11. NO asumir que una capacidad funciona simplemente porque existe en la documentación.
-
-Toda capacidad relevante debe probarse mediante código ejecutable o demostrarse directamente mediante código oficial de Kratos.
+Al finalizar debes emitir un VEREDICTO TÉCNICO FINAL que determine si Kratos puede reemplazar el solver FEA + SIMP propio que inicialmente estaba previsto para el proyecto.
 
 ---
 
-# 2. PRIMERA TAREA — AUDITAR EL ENTORNO
+# 1. REGLA FUNDAMENTAL
 
-Antes de escribir código:
+NO aceptar como evidencia:
 
-1. Revisar el sistema operativo.
-2. Revisar versión de Python disponible.
-3. Verificar si Kratos Multiphysics está instalado.
-4. Verificar versión exacta.
-5. Verificar si `OptimizationApplication` está disponible.
-6. Verificar si `StructuralMechanicsApplication` está disponible.
-7. Verificar si Gmsh está disponible.
-8. Verificar si la API Python de Gmsh está disponible.
+- que una clase exista;
+- que una API esté documentada;
+- que un ejemplo exista;
+- que un script se haya creado;
+- que una variable cambie;
+- que una prueba termine sin error.
 
-Si alguna dependencia no está instalada:
+Una capacidad solamente se considera:
 
-- NO modificar el entorno global innecesariamente.
-- Preferir un entorno virtual aislado para el PoC.
-- Documentar exactamente qué fue instalado.
-- Registrar las versiones utilizadas.
+`PASS / VERIFICADA`
 
-Crear, si es necesario:
+si fue ejecutada realmente y existe evidencia cuantitativa o verificable de su funcionamiento.
 
-`experimentos/kratos_topopt_poc/requirements.txt`
+Diferenciar estrictamente:
 
-o la configuración equivalente que permita reproducir el entorno.
+- `PASS — VERIFICADO`
+- `PARTIAL — PARCIALMENTE VERIFICADO`
+- `FAIL — FALLÓ`
+- `NOT VERIFIED — NO VERIFICADO`
+- `NOT APPLICABLE`
 
----
-
-# 3. ESTRUCTURA DEL POC
-
-Crear una estructura clara y mínima similar a:
-
-experimentos/
-└── kratos_topopt_poc/
-    ├── README.md
-    ├── requirements.txt              (si aplica)
-    ├── run_poc.py
-    ├── generate_mesh.py
-    ├── model/
-    │   └── ...
-    ├── results/
-    │   └── ...
-    └── logs/
-        └── ...
-
-La estructura puede modificarse si existe una alternativa técnicamente mejor, pero debe mantenerse completamente aislada.
+NO convertir un `PARTIAL` o `NOT VERIFIED` en `PASS`.
 
 ---
 
-# 4. MODELO DE PRUEBA
+# 2. AISLAMIENTO ABSOLUTO
 
-Construir un modelo estructural 3D extremadamente simple y reproducible.
+Todo trabajo experimental debe permanecer exclusivamente dentro de:
 
-Usar preferentemente una viga en voladizo:
+`experimentos/kratos_topopt_poc/`
 
-- longitud: 100 mm
-- sección: 10 mm × 10 mm
-- material: aluminio
-- Young: 68.9 GPa
-- Poisson: 0.33
-- carga vertical en el extremo libre: -100 N
+Puedes modificar o reemplazar archivos dentro de esa carpeta si es necesario.
 
-La geometría debe ser suficientemente sencilla para poder comprobar físicamente los resultados.
+NO modificar:
 
-La prueba debe utilizar elementos tetraédricos lineales de 4 nodos (Tet4), siempre que Kratos permita configurar correctamente el caso.
+- `README.md`
+- `metodología.md`
+- `prompt.md`
+- arquitectura principal;
+- código productivo;
+- documentación histórica;
+- otros experimentos;
+- archivos fuera del PoC.
 
----
+La ÚNICA excepción es:
 
-# 5. MALLADO
+`RESUMEN_IMPLEMENTACION.md`
 
-Utilizar Gmsh para generar una malla volumétrica tetraédrica.
-
-Verificar explícitamente:
-
-- cantidad de nodos;
-- cantidad de elementos;
-- tipo de elemento;
-- conectividad;
-- dimensiones;
-- grupos físicos necesarios.
-
-El script debe permitir regenerar la malla.
-
-No utilizar una malla preexistente que impida reproducir el experimento.
+porque debe contener el resultado final de esta validación.
 
 ---
 
-# 6. IMPORTACIÓN A KRATOS
+# 3. PRIMER PASO — AUDITORÍA DEL POC EXISTENTE
 
-Implementar el flujo:
+Antes de modificar código:
 
-Gmsh
-→ modelo FEM
-→ Kratos ModelPart
+1. Leer todos los scripts existentes.
+2. Identificar qué pruebas ya funcionan.
+3. Ejecutar nuevamente las pruebas existentes.
+4. Identificar cuáles son solamente pruebas de disponibilidad de API.
+5. Identificar cuáles son pruebas numéricas reales.
+6. Identificar qué pruebas están incompletas.
+7. No asumir que los resultados anteriores siguen siendo válidos.
 
-Verificar explícitamente que Kratos recibe:
+Documentar internamente el estado inicial antes de corregir nada.
+
+---
+
+# 4. ENTORNO REAL
+
+Registrar exactamente:
+
+- Sistema operativo.
+- Python.
+- Kratos.
+- StructuralMechanicsApplication.
+- OptimizationApplication.
+- Gmsh.
+- versión de cada dependencia.
+
+Verificar que las pruebas utilizan realmente esas versiones.
+
+No utilizar simulaciones falsas ni mocks para sustituir Kratos.
+
+---
+
+# 5. MODELO FÍSICO DEFINITIVO
+
+Utilizar una viga en voladizo 3D.
+
+Geometría:
+
+- L = 100 mm
+- ancho = 10 mm
+- alto = 10 mm
+
+Material:
+
+- E = 68.9 GPa
+- ν = 0.33
+
+Carga:
+
+- Fz = -100 N
+
+La geometría debe estar en unidades coherentes.
+
+Documentar claramente el sistema de unidades utilizado.
+
+---
+
+# 6. MALLA DEFINITIVA
+
+Generar la malla mediante Gmsh.
+
+Debe ser:
+
+- volumétrica;
+- tetraédrica;
+- Tet4;
+- reproducible.
+
+Registrar:
 
 - nodos;
 - elementos;
-- conectividad;
-- propiedades;
-- material;
-- condiciones de contorno;
-- carga.
+- tamaño aproximado;
+- tipo de elemento;
+- grupos físicos.
 
-Mostrar en consola un resumen del modelo cargado.
+Verificar que los elementos importados a Kratos sean realmente los elementos utilizados por el solver.
 
-Ejemplo:
+NO aceptar:
 
-Nodes: XXXX
-Elements: XXXX
-DOFs: XXXX
-Material: ...
-Element type: ...
+"se generó una malla Tet4"
+
+sin demostrar que esa malla fue la utilizada por el análisis.
 
 ---
 
-# 7. PRUEBA FEA SIN OPTIMIZACIÓN
+# 7. PRUEBA 1 — FEA REAL SIN OPTIMIZACIÓN
 
-ANTES de probar SIMP, demostrar que Kratos puede resolver correctamente el problema estructural básico.
+Esta prueba es OBLIGATORIA.
 
-Resolver:
+Ejecutar:
 
-K u = F
+Gmsh
+→ Tet4
+→ Kratos ModelPart
+→ Structural Mechanics
+→ condiciones de contorno
+→ carga
+→ solver
+→ desplazamientos
 
-Obtener:
-
-- desplazamientos;
-- reacción;
-- strain energy / compliance si está disponible.
+Debe obtenerse una solución numérica real.
 
 Registrar:
 
 - desplazamiento máximo;
-- ubicación;
-- reacción total;
-- compliance o strain energy.
+- desplazamiento en el extremo libre;
+- reacciones;
+- energía/compliance si está disponible.
 
-Comparar el desplazamiento del extremo libre con la solución analítica de una viga en voladizo.
+---
+
+# 8. VALIDACIÓN ANALÍTICA
+
+Calcular la solución analítica de Euler-Bernoulli:
+
+δ = F L³ / (3 E I)
+
+donde:
+
+I = b h³ / 12
+
+Comparar:
+
+δ_FEM
+
+contra:
+
+δ_analítica
 
 Calcular:
 
 error_relativo =
-abs(FEM - analítica) / abs(analítica)
+abs(δ_FEM - δ_analítica) / abs(δ_analítica)
 
-No declarar éxito únicamente porque Kratos terminó sin errores.
+IMPORTANTE:
 
-El resultado debe ser numéricamente razonable.
+No exigir arbitrariamente menos del 5 % para una única malla Tet4 si la discretización no lo permite.
+
+Si el error supera el 5 %:
+
+1. refinar la malla;
+2. volver a ejecutar;
+3. registrar el comportamiento.
+
+La conclusión debe basarse en convergencia.
 
 ---
 
-# 8. PRUEBA DE OPTIMIZATIONAPPLICATION
+# 9. ESTUDIO DE CONVERGENCIA
 
-Verificar mediante código que la instalación actual de Kratos dispone realmente de:
+Ejecutar al menos tres niveles:
+
+- malla gruesa;
+- malla media;
+- malla fina.
+
+Registrar:
+
+| Malla | Elementos | δ FEM | δ analítica | Error |
+|---|---:|---:|---:|---:|
+
+Determinar si el resultado converge hacia la solución analítica.
+
+Esto es obligatorio para validar el solver.
+
+---
+
+# 10. PRUEBA 2 — SIMP REAL
+
+Después de validar FEA, ejecutar la optimización.
+
+Utilizar la infraestructura REAL de:
 
 `OptimizationApplication`
 
-y de los componentes relacionados con SIMP.
+y preferentemente:
 
-Investigar directamente en la instalación/código de Kratos qué clases, controles, responses y algorithms están disponibles.
+`SimpControl`
 
-Prestar especial atención a:
+si es compatible con el caso.
 
-- SimpControl;
-- LinearStrainEnergyResponseFunction;
-- filtros;
-- controles de densidad;
-- sensitivities;
-- algorithms de optimización.
+NO implementar un simulador artificial de SIMP.
 
-No asumir nombres de clases basándose exclusivamente en documentación antigua.
+NO reducir la prueba a:
 
----
+ρ = [1.0, 0.5, 0.3...]
 
-# 9. PRUEBA SIMP
+sin que esas densidades sean utilizadas por el FEA.
 
-Construir el caso mínimo posible de optimización topológica.
+La densidad debe modificar realmente las propiedades estructurales.
 
-La variable de diseño debe ser una densidad elemental:
-
-ρ ∈ [ρ_min, 1]
-
-Utilizar una formulación SIMP equivalente a:
+Debe cumplirse conceptualmente:
 
 E(ρ) = E0 · ρ^p
 
 con:
 
-- p = 3 inicialmente;
-- densidad mínima pequeña para evitar singularidad.
+p = 3
 
-Verificar que el Young efectivo realmente depende de la densidad.
-
-IMPORTANTE:
-
-No implementar manualmente un SIMP paralelo si Kratos ya proporciona `SimpControl`.
-
-La finalidad de esta prueba es precisamente verificar cuánto del ciclo puede realizar Kratos de forma nativa.
+o el valor equivalente configurado por Kratos.
 
 ---
 
-# 10. RESPONSE
+# 11. CICLO DE OPTIMIZACIÓN REAL
 
-Utilizar, si es compatible con el caso:
+Demostrar el siguiente ciclo:
 
-`LinearStrainEnergyResponseFunction`
+ρ
+↓
+FEA
+↓
+respuesta
+↓
+sensibilidad
+↓
+filtro
+↓
+actualización
+↓
+ρ nueva
+↓
+FEA nuevamente
 
-o el mecanismo actual equivalente.
+Debe ejecutarse realmente durante varias iteraciones.
 
-Demostrar que se puede obtener una respuesta estructural apropiada para optimización.
+Mínimo recomendado:
+
+10 iteraciones.
+
+Preferiblemente continuar hasta que:
+
+- se alcance convergencia;
+- o se alcance un máximo razonable de iteraciones.
+
+---
+
+# 12. PRUEBA CRÍTICA — DEMOSTRAR QUE LA DENSIDAD AFECTA AL FEA
+
+Esta prueba es obligatoria.
+
+Seleccionar elementos con densidades distintas.
+
+Demostrar que cambiar:
+
+ρ = 1.0
+
+a:
+
+ρ < 1.0
+
+produce una modificación real de la respuesta estructural.
 
 Registrar:
 
-- valor inicial;
-- valor después de cada iteración;
-- valor final.
+- densidad;
+- Young efectivo;
+- respuesta;
+- compliance;
+- desplazamiento.
 
-La respuesta debe mostrar comportamiento físicamente coherente.
-
----
-
-# 11. SENSIBILIDADES
-
-Verificar que el flujo de optimización puede calcular las sensibilidades necesarias.
-
-Comprobar específicamente:
-
-- sensibilidad respecto de la variable de diseño;
-- propagación a través de SIMP;
-- compatibilidad con el filtro;
-- existencia de valores finitos;
-- ausencia de NaN/Inf.
-
-Mostrar estadísticas:
-
-min
-max
-mean
-cantidad de valores no finitos
+Esto elimina el riesgo de tener una optimización que solamente modifica una variable visual sin afectar el análisis.
 
 ---
 
-# 12. FILTRO
+# 13. RESPONSE
 
-Si `OptimizationApplication` permite utilizar un filtro compatible con este caso:
+Utilizar:
 
-implementarlo.
+`LinearStrainEnergyResponseFunction`
 
-Verificar:
+si es compatible con la configuración.
 
-- que se aplica;
-- que modifica las sensibilidades o variable de diseño según corresponda;
-- que no produce valores inválidos.
+Demostrar que la respuesta:
 
-Documentar exactamente qué filtro se utilizó y por qué.
+- se calcula;
+- cambia cuando cambia el diseño;
+- se utiliza durante la optimización.
 
----
-
-# 13. ACTUALIZACIÓN DE DENSIDADES
-
-Demostrar que las densidades cambian durante las iteraciones.
-
-Registrar por iteración:
-
-Iteration
-Objective
-Volume fraction
-Min density
-Max density
-Mean density
-Change
-
-Ejemplo:
-
-Iteration 0
-Objective: ...
-Volume: ...
-Mean density: ...
-
-Iteration 1
-...
-
-La optimización debe mostrar evolución real.
-
-NO aceptar como prueba una simulación que simplemente ejecute el solver varias veces sin modificar las densidades.
+Registrar el valor de la función objetivo por iteración.
 
 ---
 
-# 14. RESTRICCIÓN DE VOLUMEN
+# 14. SENSIBILIDADES REALES
 
-Implementar una restricción de volumen si la infraestructura actual de Kratos lo permite.
+Verificar que las sensibilidades se calculan a partir del estado FEA real.
 
-Objetivo inicial:
+Por cada iteración registrar:
 
-volumen final ≈ 30–50 % del volumen inicial.
+- mínimo;
+- máximo;
+- promedio;
+- cantidad de NaN;
+- cantidad de Inf.
 
-Verificar cuantitativamente:
+Debe cumplirse:
 
-V_final / V_inicial
+NaN = 0
+Inf = 0
 
-y registrar el resultado.
-
-Si Kratos no dispone exactamente del mecanismo esperado:
-
-- investigar la alternativa oficial actual;
-- implementarla solamente si es necesario para completar el PoC;
-- documentar claramente qué parte pertenece a Kratos y qué parte fue desarrollada específicamente para la prueba.
-
----
-
-# 15. ITERACIONES
-
-Ejecutar suficientes iteraciones para comprobar que existe una optimización real.
-
-No es necesario obtener una pieza industrialmente óptima.
-
-El objetivo es demostrar:
-
-ρ inicial
-→ FEA
-→ response
-→ sensitivity
-→ filter
-→ update
-→ ρ nueva
-→ FEA
-→ ...
-
-y comprobar que el objetivo estructural evoluciona.
+salvo que exista una explicación numérica específica y documentada.
 
 ---
 
-# 16. RESULTADO VISUAL
+# 15. FILTRO
 
-Generar algún resultado visual mínimo que permita observar la distribución final de densidades.
+Utilizar un filtro real de OptimizationApplication si es compatible.
+
+Demostrar que:
+
+- existe;
+- se aplica;
+- participa en el ciclo;
+- no es simplemente declarado pero nunca utilizado.
+
+Documentar:
+
+- tipo;
+- parámetros;
+- radio/tamaño;
+- dónde se aplica.
+
+---
+
+# 16. RESTRICCIÓN DE VOLUMEN
+
+Esta prueba es OBLIGATORIA.
+
+Objetivo:
+
+fracción volumétrica ≈ 40 %
+
+o el valor técnicamente más apropiado para el modelo.
+
+Registrar:
+
+V_inicial
+
+V_objetivo
+
+V_por_iteración
+
+V_final
+
+error_final
+
+Crear una tabla:
+
+| Iteración | Volumen relativo | Objetivo | Error |
+|---:|---:|---:|---:|
+
+Demostrar que la restricción realmente participa en la optimización.
+
+La existencia de `MassOptResponse` NO constituye evidencia suficiente.
+
+---
+
+# 17. TABLA MAESTRA DE ITERACIONES
+
+Generar obligatoriamente:
+
+| Iteración | Objective | Volumen | Min ρ | Max ρ | Mean ρ | Δρ |
+|---:|---:|---:|---:|---:|---:|---:|
+
+Los valores deben proceder de la ejecución real.
+
+NO inventar valores.
+
+NO escribir manualmente una tabla que no provenga de los resultados.
+
+---
+
+# 18. CRITERIOS DE CONVERGENCIA
+
+Determinar:
+
+- cambio de densidad;
+- cambio de objetivo;
+- estabilidad del volumen.
+
+Definir criterios explícitos.
+
+Por ejemplo:
+
+Δρ < tolerancia
+
+durante varias iteraciones consecutivas.
+
+Si no converge:
+
+marcar:
+
+`NOT VERIFIED`
+
+y explicar por qué.
+
+NO declarar éxito solamente porque se ejecutaron N iteraciones.
+
+---
+
+# 19. RESULTADO VISUAL
+
+Generar un resultado visual de la distribución final de densidad.
+
+El resultado debe proceder de las densidades obtenidas por el optimizador REAL.
 
 Puede utilizarse:
 
 - VTK;
-- GiD;
 - ParaView;
-- archivo compatible con herramientas de visualización.
+- GiD;
+- cualquier formato verificable.
 
-No desarrollar interfaz gráfica.
+Debe ser posible comprobar que:
 
-El objetivo únicamente es poder comprobar visualmente que existe una distribución de material resultante.
-
----
-
-# 17. VALIDACIÓN
-
-La prueba debe comprobar como mínimo:
-
-### A. FEA
-
-¿Kratos resuelve correctamente el modelo Tet4?
-
-### B. SIMP
-
-¿La rigidez depende realmente de la densidad?
-
-### C. Sensibilidades
-
-¿Se calculan correctamente?
-
-### D. Optimización
-
-¿Las densidades evolucionan?
-
-### E. Volumen
-
-¿Puede controlarse la fracción de material?
-
-### F. Convergencia
-
-¿La función objetivo evoluciona razonablemente?
-
-### G. Resultado
-
-¿La distribución final tiene sentido físico?
+- existen regiones de alta densidad;
+- existen regiones de baja densidad;
+- la distribución corresponde a los datos finales.
 
 ---
 
-# 18. PRUEBA DE REPRODUCIBILIDAD
+# 20. PRUEBA DE REPRODUCIBILIDAD
 
-El PoC debe poder ejecutarse desde cero mediante un comando claramente documentado.
+Eliminar resultados temporales si es necesario.
 
-Por ejemplo:
+Ejecutar nuevamente:
 
 `python run_poc.py`
 
-o el mecanismo apropiado.
+o el comando definitivo.
 
-Una ejecución limpia debe:
+Comprobar que:
 
-1. generar la malla;
-2. cargarla;
-3. ejecutar FEA;
-4. ejecutar optimización;
-5. guardar resultados;
-6. producir logs.
+1. genera la malla;
+2. ejecuta FEA;
+3. ejecuta optimización;
+4. genera resultados;
+5. termina correctamente.
 
-No depender de archivos temporales creados manualmente.
+Si requiere pasos manuales, documentarlos.
 
 ---
 
-# 19. DOCUMENTACIÓN DEL POC
+# 21. AUDITORÍA DE "FAKE PASS"
 
-Crear exclusivamente dentro de:
+Antes de concluir, revisar específicamente que NO haya:
 
-`experimentos/kratos_topopt_poc/README.md`
+- densidades modificadas manualmente para aparentar optimización;
+- resultados hardcodeados;
+- respuestas ficticias;
+- matrices ficticias;
+- sensitivities ficticias;
+- resultados copiados de ejemplos;
+- valores escritos manualmente;
+- mocks;
+- simulaciones que no utilizan Kratos;
+- scripts que solamente comprueban que una clase existe.
 
-la documentación del experimento.
+Si encuentras alguno:
 
-Debe contener:
+ELIMINARLO O AISLARLO COMO PRUEBA DE API.
 
-## Entorno
+Nunca presentarlo como validación del pipeline.
 
-- OS
-- Python
-- Kratos
-- Gmsh
-- versiones
+---
 
-## Componentes probados
+# 22. RESULTADO FINAL OBLIGATORIO
 
-Lista exacta de aplicaciones/clases utilizadas.
+Actualizar:
 
-## Arquitectura del PoC
+`RESUMEN_IMPLEMENTACION.md`
 
-Explicar el flujo real.
+No limitarse a describir qué código se creó.
 
-## Resultados
+Debe documentar:
 
-Tabla con:
+## 22.1 Entorno
 
-| Prueba | Resultado | Evidencia |
+Versiones exactas.
+
+## 22.2 Pruebas realizadas
+
+Lista completa.
+
+## 22.3 Resultados FEA
+
+Resultados numéricos.
+
+## 22.4 Convergencia
+
+Tabla de mallas.
+
+## 22.5 SIMP
+
+Evidencia de que la densidad afecta realmente al FEA.
+
+## 22.6 Sensibilidades
+
+Resultados y estadísticas.
+
+## 22.7 Filtro
+
+Configuración y evidencia.
+
+## 22.8 Volumen
+
+Resultados por iteración.
+
+## 22.9 Optimización
+
+Tabla completa de iteraciones.
+
+## 22.10 Resultado visual
+
+Archivo generado y descripción.
+
+---
+
+# 23. MATRIZ DE VEREDICTO
+
+Al final de `RESUMEN_IMPLEMENTACION.md` crear exactamente una matriz similar a:
+
+| Capacidad | Estado | Evidencia |
 |---|---|---|
-| Gmsh Tet4 | PASS/FAIL | ... |
-| Importación Kratos | PASS/FAIL | ... |
-| FEA | PASS/FAIL | ... |
-| SIMP | PASS/FAIL | ... |
-| Sensibilidad | PASS/FAIL | ... |
-| Filtro | PASS/FAIL | ... |
-| Restricción volumen | PASS/FAIL | ... |
-| Iteraciones | PASS/FAIL | ... |
-| Resultado final | PASS/FAIL | ... |
-
-## Limitaciones
-
-Registrar cualquier cosa que no haya podido demostrarse.
-
-## Conclusión
-
-Clasificar el resultado como:
-
-- VIABLE
-- VIABLE CON LIMITACIONES
-- NO VIABLE
-
-No utilizar lenguaje ambiguo.
+| Gmsh Tet4 | PASS/PARTIAL/FAIL | ... |
+| Importación a Kratos | ... | ... |
+| FEA 3D | ... | ... |
+| Euler-Bernoulli | ... | ... |
+| Convergencia | ... | ... |
+| SIMP real | ... | ... |
+| Densidad → Young | ... | ... |
+| Response | ... | ... |
+| Sensibilidades | ... | ... |
+| Filtro | ... | ... |
+| Actualización | ... | ... |
+| Restricción de volumen | ... | ... |
+| Iteraciones reales | ... | ... |
+| Convergencia TopOpt | ... | ... |
+| Resultado visual | ... | ... |
+| Reproducibilidad | ... | ... |
 
 ---
 
-# 20. REGLA CRÍTICA SOBRE RESULTADOS
+# 24. VEREDICTO FINAL
 
-NO declarar:
+El informe DEBE terminar con uno de estos tres veredictos:
 
-"Kratos sirve para nuestro proyecto"
+## VEREDICTO A — VIABLE
 
-simplemente porque las APIs existan.
+Solamente si:
 
-La conclusión debe basarse exclusivamente en lo que haya sido ejecutado y demostrado.
+- FEA funciona;
+- Tet4 funciona;
+- validación analítica es razonable;
+- existe convergencia;
+- SIMP es real;
+- sensitivities son reales;
+- filtro funciona;
+- volumen funciona;
+- las densidades afectan el FEA;
+- existe optimización real;
+- el resultado es reproducible.
 
-Distinguir claramente:
+Entonces concluir:
 
-### VERIFICADO
-
-Funcionó mediante ejecución real.
-
-### CONFIRMADO POR CÓDIGO/DOCUMENTACIÓN OFICIAL
-
-Existe en la versión utilizada, pero no fue necesario utilizarlo en el PoC.
-
-### NO VERIFICADO
-
-No pudo demostrarse.
-
-### NO DISPONIBLE
-
-La capacidad no existe o no pudo utilizarse.
+> Kratos puede utilizarse como motor FEA + optimización topológica de la aplicación standalone y puede reemplazar el desarrollo de un solver FEA/SIMP propio para esta etapa.
 
 ---
 
-# 21. COMPARACIÓN FINAL
+## VEREDICTO B — VIABLE CON LIMITACIONES
 
-Al terminar, responder dentro del README del PoC:
+Si Kratos funciona pero alguna capacidad crítica requiere desarrollo adicional.
 
-### ¿Kratos puede reemplazar nuestro solver FEA propio?
+Especificar exactamente:
 
-### ¿Kratos puede ejecutar Tet4 3D?
-
-### ¿Kratos puede ejecutar SIMP?
-
-### ¿Kratos puede calcular compliance/strain energy?
-
-### ¿Kratos puede calcular sensibilidades?
-
-### ¿Kratos puede realizar iteraciones de optimización?
-
-### ¿Kratos puede controlar la fracción de volumen?
-
-### ¿Qué debemos programar nosotros?
-
-### ¿Qué seguiría dependiendo de Gmsh?
-
-### ¿Qué parte debería quedar dentro de nuestra aplicación?
+- qué funciona;
+- qué no;
+- qué debemos implementar nosotros;
+- impacto arquitectónico.
 
 ---
 
-# 22. NO TOMAR DECISIONES DE ARQUITECTURA PRINCIPAL
+## VEREDICTO C — NO VIABLE
 
-El resultado de este experimento NO debe modificar todavía:
+Si no puede demostrarse el flujo necesario.
 
-- README principal;
-- metodología;
-- arquitectura;
-- roadmap;
-- Hito 2;
-- Hito 3;
-- dependencias principales;
-- código productivo.
+Explicar:
 
-El PoC solamente debe proporcionar evidencia para tomar esa decisión posteriormente.
+- dónde falla;
+- evidencia;
+- causa;
+- alternativa.
 
 ---
 
-# 23. AUDITORÍA FINAL
+# 25. DECISIÓN ARQUITECTÓNICA
 
-Antes de terminar:
+Solamente si el resultado es:
 
-1. Revisar `git diff`.
-2. Confirmar que todos los cambios están exclusivamente dentro de:
+`VIABLE`
 
-   `experimentos/kratos_topopt_poc/`
+o:
 
-3. Si se modificó accidentalmente cualquier archivo fuera de esa carpeta:
-   - revertir esos cambios;
-   - NO borrar trabajo previo.
+`VIABLE CON LIMITACIONES`
 
-4. Confirmar que el PoC puede ejecutarse nuevamente.
+indicar qué arquitectura recomienda el experimento.
 
-5. Confirmar que no existen dependencias ocultas.
+Ejemplo:
 
-6. Confirmar que todos los resultados importantes están documentados.
+Gmsh
+↓
+Kratos Structural Mechanics
+↓
+Kratos OptimizationApplication
+↓
+SIMP
+↓
+Resultados
 
-7. Confirmar que no se modificó ninguna documentación principal.
+y especificar qué componentes seguirían siendo responsabilidad de nuestra aplicación.
 
 ---
 
-# RESULTADO ESPERADO
+# 26. REGLA SOBRE README
 
-Al finalizar debes entregar:
+NO modificar `README.md`.
 
-1. PoC funcional aislado.
-2. Código reproducible.
-3. Modelo Tet4 3D.
-4. FEA funcionando.
-5. SIMP probado.
-6. Sensibilidades probadas.
-7. Iteraciones de optimización.
-8. Restricción de volumen, si es técnicamente posible.
-9. Resultados numéricos.
-10. Resultado visual.
-11. README del PoC con toda la evidencia.
-12. Conclusión objetiva sobre la viabilidad de Kratos.
+Aunque el resultado sea positivo.
 
-NO integres Kratos al proyecto principal.
+La decisión arquitectónica se realizará posteriormente, después de auditar este informe.
 
-NO diseñes la interfaz gráfica.
+---
 
-NO desarrolles plugins.
+# 27. AUDITORÍA FINAL DE CAMBIOS
 
-NO trabajes todavía con Onshape ni con ningún otro CAD.
+Antes de finalizar:
 
-La única misión es responder con evidencia experimental:
+Ejecutar una revisión equivalente a:
 
-"¿Podemos utilizar Kratos como motor FEA + optimización topológica de nuestra aplicación standalone?"
+`git diff`
+
+Confirmar que:
+
+- únicamente se modificaron archivos del PoC;
+- `RESUMEN_IMPLEMENTACION.md` es la única excepción;
+- no se modificó README;
+- no se modificó metodología;
+- no se modificó prompt;
+- no se modificó código productivo.
+
+Si existe cualquier cambio fuera de esas ubicaciones:
+
+REVERTIRLO.
+
+---
+
+# 28. CONDICIÓN DE TERMINACIÓN
+
+NO declares la tarea completada hasta que:
+
+1. El FEA real haya sido ejecutado.
+2. La validación analítica haya sido realizada.
+3. El estudio de convergencia haya sido ejecutado.
+4. SIMP real haya sido ejecutado.
+5. Las densidades hayan afectado realmente al FEA.
+6. Las sensibilidades hayan sido calculadas.
+7. El filtro haya sido utilizado.
+8. La restricción de volumen haya sido demostrada.
+9. Existan iteraciones reales de optimización.
+10. Exista evidencia numérica.
+11. Exista resultado visual.
+12. El experimento pueda reproducirse.
+13. `RESUMEN_IMPLEMENTACION.md` contenga el veredicto final.
+14. No existan contradicciones entre resultados y conclusión.
+
+Si alguna condición no puede cumplirse:
+
+NO ocultarla.
+
+Marcarla explícitamente como:
+
+`NOT VERIFIED`
+
+y explicar exactamente qué impide su validación.
+
+# OBJETIVO FINAL
+
+Al terminar, debemos poder responder con evidencia y sin especulación:
+
+"¿Kratos Multiphysics puede reemplazar nuestro solver FEA + SIMP propio como motor científico de nuestra aplicación standalone?"
+
+Esta prueba debe producir la evidencia necesaria para tomar esa decisión arquitectónica de forma definitiva.

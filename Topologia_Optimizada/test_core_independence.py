@@ -1,7 +1,7 @@
 """Test de independencia del Core.
 
 Verifica que el Core puede utilizarse sin:
-- onshape_client
+- Onshape
 - OAuth
 - credenciales externas
 - red

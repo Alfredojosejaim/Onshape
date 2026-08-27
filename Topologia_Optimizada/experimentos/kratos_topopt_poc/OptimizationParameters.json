@@ -1,0 +1,153 @@
+{
+    "problem_data": {
+        "echo_level": 1
+    },
+    "model_parts": [
+        {
+            "model_part_name": "Structure",
+            "settings": {
+                "type": "mdpa_model_part_controller",
+                "model_part_name": "Structure",
+                "input_filename": "model/cantilever_beam.mdpa",
+                "domain_size": 3,
+                "read_data": true
+            }
+        }
+    ],
+    "analyses": [
+        {
+            "name": "structural_mechanics_analysis",
+            "settings": {
+                "type": "kratos_analysis_execution_policy",
+                "model_part_names": ["Structure"],
+                "analysis_module": "KratosMultiphysics.StructuralMechanicsApplication",
+                "analysis_type": "StructuralMechanicsAnalysis",
+                "analysis_settings": {
+                    "problem_data": {
+                        "problem_name": "cantilever_beam",
+                        "parallel_type": "OpenMP",
+                        "echo_level": 1,
+                        "start_time": 0.0,
+                        "end_time": 1.0
+                    },
+                    "solver_settings": {
+                        "solver_type": "static",
+                        "analysis_type": "linear",
+                        "echo_level": 1,
+                        "model_part_name": "Structure",
+                        "domain_size": 3,
+                        "model_import_settings": {
+                            "input_type": "use_input_model_part"
+                        },
+                        "material_import_settings": {
+                            "materials_filename": "MaterialParameters.json"
+                        },
+                        "time_stepping": {
+                            "time_step": 1.0
+                        },
+                        "max_iteration": 30,
+                        "convergence_criterion": "displacement_criterion",
+                        "displacement_relative_tolerance": 1e-6,
+                        "displacement_absolute_tolerance": 1e-6,
+                        "residual_relative_tolerance": 1e-6,
+                        "residual_absolute_tolerance": 1e-6,
+                        "linear_solver_settings": {
+                            "solver_type": "skyline_lu_factorization",
+                            "scaling": false,
+                            "tolerance": 1e-6
+                        },
+                        "compute_reactions": true,
+                        "move_mesh_flag": true
+                    },
+                    "processes": {
+                        "constraints_process_list": [],
+                        "loads_process_list": []
+                    }
+                },
+                "analysis_output_settings": {
+                    "element_properties_value_variables": ["YOUNG_MODULUS", "DENSITY"]
+                }
+            }
+        }
+    ],
+    "responses": [
+        {
+            "name": "compliance",
+            "settings": {
+                "type": "linear_strain_energy",
+                "primal_analysis_name": "structural_mechanics_analysis",
+                "perturbation_size": 1e-8,
+                "evaluated_model_part_names": ["Structure"]
+            }
+        },
+        {
+            "name": "mass",
+            "settings": {
+                "type": "mass",
+                "perturbation_size": 1e-6,
+                "evaluated_model_part_names": ["Structure"]
+            }
+        }
+    ],
+    "controls": [
+        {
+            "name": "simp_density_control",
+            "settings": {
+                "type": "simp",
+                "controlled_model_part_names": ["Structure"],
+                "list_of_materials": [
+                    {
+                        "density": 0.001,
+                        "young_modulus": 68.9e6
+                    },
+                    {
+                        "density": 1.0,
+                        "young_modulus": 68.9e9
+                    }
+                ],
+                "filter_settings": {
+                    "filter_type": "explicit_filter",
+                    "filter_radius_settings": {
+                        "filter_radius_type": "constant",
+                        "filter_radius": 1.5
+                    }
+                }
+            }
+        }
+    ],
+    "algorithm_settings": {
+        "module": "KratosMultiphysics.OptimizationApplication.algorithms",
+        "type": "algorithm_gradient_projection",
+        "objective": {
+            "response_expression": "compliance",
+            "type": "minimization",
+            "scaling": 1.0
+        },
+        "constraints": [
+            {
+                "response_expression": "mass",
+                "type": "<=",
+                "scaling": 1.0,
+                "violation_scaling": 1.0,
+                "scaled_ref_value": 0.4
+            }
+        ],
+        "controls": ["simp_density_control"],
+        "echo_level": 1,
+        "settings": {
+            "echo_level": 1,
+            "line_search": {},
+            "conv_settings": {
+                "max_iter": 50
+            },
+            "linear_solver_settings": {
+                "solver_type": "LinearSolversApplication.dense_col_piv_householder_qr"
+            },
+            "correction_size": 0.0
+        }
+    },
+    "processes": {
+        "kratos_processes": {},
+        "optimization_data_processes": {}
+    }
+}

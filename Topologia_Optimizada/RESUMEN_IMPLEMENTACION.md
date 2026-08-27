@@ -2051,6 +2051,10 @@ Y en tu flujo principal de test (`test_kratos_direct.py`), el orden de pasos deb
 7. setup_solver_and_strategy()
 ```
 
+
+
+***
+
 Esto confirma la sospecha: en Kratos, la lista de variables nodales históricas (VariablesList) es fija por nodo desde el momento en que ese nodo se crea. La documentación oficial (wiki "How to Access DataBase") lo dice explícitamente:
 
 el usuario debe proveer antes de crear la lista de nodos los comandos AddNodalSolutionStepVariable(...).
@@ -2132,6 +2136,4 @@ Y en tu flujo principal de test (test_kratos_direct.py), el orden de pasos deber
 6. Restricciones / cargas
 7. setup_solver_and_strategy()
 
-
-//
 Un detalle importante que probablemente te salga como bloqueo-005 si no lo cubres ahora: el error de LUSkylineFactorization::factorize: Error zero sum que aparece justo antes en tu traceback normalmente es consecuencia de este mismo problema (el sistema queda mal condicionado porque los DOFs no se registraron correctamente), no un bloqueo independiente — así que es probable que se resuelva solo en cuanto arregles el orden de AddNodalSolutionStepVariable/AddDof. Si persiste después de corregir esto, ahí sí sería indicio de que faltan restricciones (nodos sin fijar → matriz singular) y sería un bloqueo genuinamente distinto.

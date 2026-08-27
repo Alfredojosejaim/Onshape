@@ -13,8 +13,7 @@
         "model_part_name": "Structure",
         "domain_size": 3,
         "model_import_settings": {
-            "input_type": "mdpa",
-            "input_filename": "model/cantilever_beam"
+            "input_type": "use_input_model_part"
         },
         "material_import_settings": {
             "materials_filename": "MaterialParameters.json"

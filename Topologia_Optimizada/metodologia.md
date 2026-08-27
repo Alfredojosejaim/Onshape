@@ -1,1385 +1,325 @@
+## PROTOCOLO OBLIGATORIO DE BLOQUEO TÉCNICO E INVESTIGACIÓN EXTERNA
 
-# METODOLOGÍA ESTRICTA DE DESARROLLO Y VALIDACIÓN
+Este protocolo es de cumplimiento OBLIGATORIO para cualquier problema técnico que aparezca durante la implementación, especialmente cuando intervengan bibliotecas, frameworks, APIs, motores de cálculo, dependencias externas o tecnologías cuya documentación no esté completamente disponible en el contexto actual.
 
-## 1. PROPÓSITO
+### 1. Principio fundamental
 
-Este archivo define las reglas obligatorias que toda IA o desarrollador debe seguir al modificar el proyecto **Topología Optimizada**.
+La IA ejecutora NO debe resolver problemas complejos mediante ensayo y error ilimitado.
 
-El proyecto tiene como arquitectura principal:
+El ciclo:
 
-> **STANDALONE FIRST**
+    ERROR → hipótesis → modificación → ERROR → nueva hipótesis → modificación → ...
 
-La aplicación debe desarrollarse como un producto independiente de cualquier programa, plataforma o servicio CAD externo.
+queda PROHIBIDO cuando la causa del problema no pueda determinarse con suficiente certeza.
 
-Estas reglas tienen como objetivo impedir:
-
-- implementaciones incompletas;
-- falsas conclusiones de cumplimiento;
-- funcionalidades simuladas;
-- dependencias innecesarias;
-- avance sobre etapas que todavía tienen dependencias sin resolver;
-- incorporación prematura de integraciones CAD externas;
-- duplicación de funcionalidades;
-- regresiones;
-- documentación que no represente el estado real del código.
-
-Estas reglas son obligatorias.
+El objetivo no es producir rápidamente otra versión del código, sino identificar correctamente la causa del bloqueo antes de modificar nuevamente la implementación.
 
 ---
 
-# 2. ARQUITECTURA FUNDAMENTAL
+### 2. Corrección autónoma permitida
 
-La aplicación principal debe funcionar de forma completamente independiente.
+Cuando aparezca un error, la IA ejecutora podrá realizar UNA única corrección autónoma únicamente si:
 
-La arquitectura actual es:
+- la causa es evidente;
+- la solución está respaldada por el código existente;
+- la solución está respaldada por documentación ya disponible;
+- no requiere especulación;
+- no implica cambiar la arquitectura;
+- y puede verificarse mediante una prueba concreta.
 
-```text
-ARCHIVO STEP LOCAL
-       ↓
-  STEP ADAPTER
-       ↓
-    CADModel
-       ↓
-      CORE
-       ↓
- ┌─────┼─────┐
- ↓     ↓     ↓
-MALLA  FEA  TOP. OPT.
-       ↓
-   RESULTADOS
-       ↓
-    EXPORTACIÓN
-
-La aplicación no debe depender de:
-
-Onshape;
-
-SolidWorks;
-
-Fusion;
-
-FreeCAD;
-
-AutoCAD;
-
-ningún otro CAD;
-
-APIs externas de CAD;
-
-OAuth de plataformas CAD;
-
-cuentas externas;
-
-plugins;
-
-extensiones externas.
-
-
+Después de aplicar la corrección, deberá volver a ejecutar la prueba.
 
 ---
 
-3. REGLA ABSOLUTA DE INDEPENDENCIA
+### 3. Regla de bloqueo inmediato
 
-Una implementación solo es válida si la aplicación puede funcionar en una computadora donde:
+Si la corrección autónoma falla, o si desde el primer momento la causa no es evidente, la IA debe:
 
-no exista ningún programa CAD instalado;
+1. DETENER inmediatamente la implementación relacionada con el problema.
+2. NO generar otro enfoque alternativo por ensayo y error.
+3. NO crear múltiples scripts intentando encontrar una solución por fuerza bruta.
+4. NO modificar la arquitectura para esquivar el problema.
+5. NO reemplazar una biblioteca o tecnología sin autorización.
+6. NO declarar que una tecnología es incompatible únicamente porque una implementación haya fallado.
+7. NO continuar desarrollando funcionalidades que dependan del componente bloqueado.
 
-no exista una cuenta de una plataforma CAD;
+El estado debe pasar inmediatamente a:
 
-no exista una sesión de CAD abierta;
-
-no exista conexión con un servicio CAD externo.
-
-
-El modelo de entrada inicial debe provenir de un archivo local.
-
-El formato prioritario actual es:
-
-STEP
-.stp
-.step
-
-La funcionalidad standalone debe ser siempre prioritaria frente a cualquier integración externa.
-
+    BLOQUEADO — REQUIERE INVESTIGACIÓN
 
 ---
 
-4. FUTURAS INTEGRACIONES CAD
+### 4. Tracker obligatorio del bloqueo
 
-Las integraciones con CAD externos son funcionalidades futuras.
+El bloqueo debe documentarse DENTRO de `resumen_implementacion.md`.
 
-Podrán existir posteriormente:
+NO crear un archivo independiente para cada error.
 
-Onshape
-SolidWorks
-Fusion
-FreeCAD
-otros CAD
+El tracker debe contener como mínimo:
 
-mediante módulos, plugins, conectores o adaptadores.
+#### Identificación
 
-Sin embargo:
+- componente afectado;
+- funcionalidad que se intentaba implementar;
+- fecha;
+- estado actual.
 
-> NINGUNA INTEGRACIÓN CAD EXTERNA FORMA PARTE DE LAS DEPENDENCIAS DEL PRODUCTO ACTUAL.
+#### Entorno
 
+- sistema operativo;
+- versión de Python;
+- versión de la biblioteca o framework;
+- versiones de dependencias relevantes;
+- entorno virtual utilizado;
+- arquitectura del sistema cuando sea relevante.
 
+#### Reproducción
 
-No desarrollar estas integraciones durante las etapas standalone salvo que prompt.md lo indique explícitamente.
+- comando exacto ejecutado;
+- script utilizado;
+- archivo afectado;
+- función o sección;
+- línea aproximada del error;
+- condiciones necesarias para reproducirlo.
 
-Una futura integración debe conectarse a la aplicación, nunca convertirse en requisito de funcionamiento del Core.
+#### Evidencia
 
+- traceback COMPLETO;
+- mensaje de error COMPLETO;
+- salida relevante de consola;
+- resultado de las pruebas anteriores;
+- archivos o configuraciones involucradas.
 
----
+No resumir el error si el resumen elimina información útil para diagnosticarlo.
 
-5. JERARQUÍA DE DOCUMENTOS
+#### Acciones realizadas
 
-El proyecto utiliza como mínimo los siguientes documentos:
+Registrar cronológicamente:
 
-README.md
+1. qué se intentó;
+2. qué se modificó;
+3. qué resultado produjo;
+4. qué hipótesis quedó descartada.
 
-Define:
+No ocultar intentos fallidos.
 
-visión del producto;
+#### Hipótesis
 
-arquitectura general;
+Separar claramente:
 
-objetivos;
+- hechos comprobados;
+- hipótesis;
+- información desconocida.
 
-alcance;
+La IA NO debe presentar una hipótesis como hecho.
 
-prioridades;
+#### Pregunta de investigación
 
-futuras integraciones;
-
-definición de éxito.
-
-
-Es la referencia arquitectónica general del proyecto.
-
-
----
-
-prompt.md
-
-Define:
-
-requisitos de la etapa actual;
-
-objetivos;
-
-arquitectura específica de implementación;
-
-restricciones;
-
-comportamiento esperado;
-
-tareas que deben ejecutarse.
-
-
-Es la especificación técnica de la intervención actual.
-
-
----
-
-metodologia.md
-
-Define:
-
-cómo debe trabajar la IA;
-
-cómo debe auditar;
-
-cómo debe implementar;
-
-cómo debe probar;
-
-cómo debe verificar;
-
-cómo debe documentar;
-
-cuándo puede declarar un requisito cumplido.
-
-
-Es el reglamento obligatorio de desarrollo.
-
-
----
-
-resumen_implementacion.md
-
-Registra:
-
-qué se hizo realmente;
-
-qué se verificó;
-
-qué quedó pendiente;
-
-qué problemas aparecieron;
-
-qué decisiones se tomaron;
-
-cuál es el estado real;
-
-cuál es el siguiente paso.
-
-
-Es el registro del estado real del proyecto.
-
-
----
-
-6. JERARQUÍA EN CASO DE CONFLICTO
-
-Cuando exista una contradicción entre documentos:
-
-1. README.md define la arquitectura y visión general.
-
-
-2. prompt.md define los requisitos concretos de la etapa actual.
-
-
-3. metodologia.md define las reglas obligatorias de ejecución y validación.
-
-
-4. resumen_implementacion.md informa el estado real, pero no modifica los requisitos.
-
-
-
-Si existe una contradicción real que impida continuar:
-
-> NO asumir.
-
-
-
-Debe documentarse y solicitar una decisión antes de implementar una arquitectura contradictoria.
-
-
----
-
-7. AUDITORÍA PREVIA OBLIGATORIA
-
-Antes de modificar cualquier código, la IA debe:
-
-1. Leer README.md.
-
-
-2. Leer prompt.md.
-
-
-3. Leer metodologia.md.
-
-
-4. Leer resumen_implementacion.md.
-
-
-5. Revisar la estructura actual del repositorio.
-
-
-6. Identificar componentes existentes.
-
-
-7. Identificar dependencias.
-
-
-8. Identificar código heredado.
-
-
-9. Identificar mocks y simulaciones.
-
-
-10. Identificar funcionalidades parcialmente implementadas.
-
-
-11. Identificar pruebas existentes.
-
-
-12. Determinar qué requisitos están realmente cumplidos.
-
-
-
-La IA NO debe asumir que la documentación anterior es correcta.
-
-Debe contrastar:
-
-DOCUMENTACIÓN
-      ↓
-CÓDIGO
-      ↓
-PRUEBAS
-      ↓
-FUNCIONAMIENTO REAL
-
-
----
-
-8. DETECCIÓN DE ARQUITECTURA HEREDADA
-
-Durante cada auditoría se debe buscar explícitamente:
-
-referencias a Onshape;
-
-OAuth;
-
-FeatureScript;
-
-App Extension;
-
-iframe de Onshape;
-
-REST API de Onshape;
-
-Document ID;
-
-Workspace ID;
-
-Element ID;
-
-credenciales CAD;
-
-conectores CAD;
-
-plugins;
-
-endpoints que dependan de plataformas CAD;
-
-código muerto;
-
-módulos abandonados;
-
-dependencias innecesarias.
-
-
-Encontrar una referencia a una tecnología anterior NO significa automáticamente que deba eliminarse.
-
-La IA debe determinar:
-
-1. si todavía es necesaria;
-
-
-2. si es código heredado;
-
-
-3. si es documentación histórica;
-
-
-4. si debe migrarse;
-
-
-5. si debe eliminarse.
-
-
-
-Toda decisión debe documentarse.
-
-
----
-
-9. CICLO OBLIGATORIO DE TRABAJO
-
-Toda intervención debe seguir este orden:
-
-1. AUDITAR
-      ↓
-2. PLANIFICAR
-      ↓
-3. IMPLEMENTAR
-      ↓
-4. PROBAR
-      ↓
-5. VERIFICAR
-      ↓
-6. DOCUMENTAR
-      ↓
-7. AUDITAR NUEVAMENTE
-      ↓
-8. DETERMINAR ESTADO
-
-No se debe saltar directamente a la implementación.
-
-
----
-
-10. REGLA FUNDAMENTAL DE CUMPLIMIENTO
-
-La existencia de código NO demuestra el cumplimiento de un requisito.
-
-No es evidencia suficiente:
-
-una función;
-
-una clase;
-
-un endpoint;
-
-una interfaz;
-
-un botón;
-
-un comentario;
-
-un mock;
-
-un fallback;
-
-una estructura de datos;
-
-un archivo creado;
-
-un test que pruebe únicamente datos simulados;
-
-documentación que afirme que una funcionalidad existe.
-
-
-El cumplimiento debe ser:
-
-> FUNCIONAL + VERIFICABLE + REPRODUCIBLE
-
-
-
-
----
-
-11. ESTADOS OFICIALES
-
-Cada requisito debe clasificarse únicamente como:
-
-COMPLETADO
-
-Solo cuando:
-
-está implementado;
-
-funciona;
-
-cumple la especificación;
-
-fue probado;
-
-existe evidencia suficiente;
-
-no presenta dependencias ocultas incompatibles.
-
-
-
----
-
-PARCIAL
-
-Cuando:
-
-existe parte de la implementación;
-
-pero todavía falta una condición necesaria.
-
-
-
----
-
-PENDIENTE
-
-Cuando:
-
-todavía no existe una implementación funcional.
-
-
-
----
-
-BLOQUEADO
-
-Cuando:
-
-existe una dependencia técnica;
-
-existe una limitación externa;
-
-falta un requisito previo;
-
-o no puede completarse legítimamente en el estado actual del proyecto.
-
-
-Nunca utilizar COMPLETADO para una funcionalidad teórica.
-
-
----
-
-12. PROHIBICIÓN DE SIMULACIONES
-
-Está prohibido utilizar simulaciones para aparentar cumplimiento.
-
-No utilizar como sustituto de funcionalidad real:
-
-datos ficticios;
-
-geometría ficticia;
-
-mallas ficticias;
-
-resultados FEA ficticios;
-
-resultados TopOpt ficticios;
-
-IDs inventados;
-
-respuestas simuladas;
-
-mocks;
-
-fallbacks que oculten errores.
-
-
-Los mocks y datos sintéticos pueden utilizarse exclusivamente para:
-
-tests unitarios;
-
-pruebas de componentes aislados;
-
-desarrollo temporal claramente identificado.
-
-
-Nunca pueden utilizarse como evidencia de funcionamiento real del sistema.
-
-
----
-
-13. GEOMETRÍA REAL
-
-La aplicación debe trabajar progresivamente con geometría real importada desde archivos.
-
-La geometría sintética puede utilizarse para:
-
-tests unitarios;
-
-validaciones matemáticas;
-
-pruebas de componentes;
-
-debugging.
-
-
-Pero no puede utilizarse para afirmar que el pipeline de importación CAD funciona.
+El tracker debe terminar indicando exactamente qué debe investigarse.
 
 Ejemplo:
 
-Cubo generado por código
+    ¿Cuál es la forma oficialmente soportada de inicializar X
+    utilizando la versión Y de la biblioteca Z?
 
-puede validar el solver.
-
-Pero no demuestra:
-
-STEP
- ↓
-STEP Adapter
- ↓
-CADModel
-
-funcionando correctamente.
-
+La pregunta debe ser lo suficientemente precisa para que otra IA pueda investigarla directamente en documentación oficial, ejemplos oficiales, repositorios oficiales o fuentes técnicas confiables.
 
 ---
 
-14. IMPORTACIÓN STEP
+### 5. Investigación externa
 
-La primera entrada CAD oficial del producto es STEP.
+Cuando el problema quede bloqueado, la investigación debe realizarse como una actividad separada de la implementación.
 
-Cuando una tarea involucre importación STEP, la prueba debe utilizar un archivo STEP real.
+La IA investigadora debe determinar:
 
-Debe verificarse como mínimo:
+- causa real del problema;
+- API o mecanismo correcto;
+- compatibilidad de versiones;
+- configuración necesaria;
+- limitaciones reales de la tecnología;
+- solución recomendada;
+- referencias utilizadas.
 
-apertura del archivo;
+La investigación NO debe modificar el repositorio.
 
-lectura de geometría;
-
-detección de cuerpos;
-
-extracción de geometría relevante;
-
-conversión al modelo interno;
-
-manejo de errores;
-
-modelos inválidos;
-
-archivos inexistentes;
-
-archivos corruptos.
-
-
-No declarar el importador completado solamente porque el parser pueda abrir un archivo de prueba trivial.
-
+Su función es producir conocimiento y una solución técnicamente fundamentada.
 
 ---
 
-15. CADModel
+### 6. Separación estricta de roles
 
-El modelo interno debe ser independiente del formato de entrada.
+Se establece la siguiente separación:
 
-El Core no debe conocer detalles específicos del archivo STEP.
+    IA EJECUTORA
+    ↓
+    implementa, ejecuta y verifica
 
-El flujo correcto es:
+    IA INVESTIGADORA
+    ↓
+    investiga documentación, causa y solución
 
-STEP
- ↓
-STEP Adapter
- ↓
-CADModel
- ↓
-Core
+La IA ejecutora NO debe intentar sustituir una investigación externa mediante múltiples intentos especulativos.
 
-No:
-
-STEP
- ↓
-Core
- ↓
-lógica específica STEP
-
-El mismo principio permitirá incorporar formatos adicionales en el futuro.
-
+La IA investigadora NO debe modificar directamente la implementación salvo que se le solicite expresamente.
 
 ---
 
-16. MALLADO
+### 7. Fuentes para resolver bloqueos
 
-El mallado debe utilizar geometría real cuando se valide el pipeline completo.
+Cuando sea necesaria investigación externa, se debe priorizar:
 
-Las pruebas deben distinguir claramente:
+1. documentación oficial;
+2. documentación de la versión específica utilizada;
+3. ejemplos oficiales;
+4. repositorio oficial;
+5. issues oficiales;
+6. fuentes técnicas secundarias únicamente cuando las anteriores no sean suficientes.
 
-Test unitario
-
-Puede utilizar geometría sintética.
-
-Test de integración
-
-Debe verificar:
-
-CADModel
- ↓
-Mallador
- ↓
-Malla real
-
-Test E2E
-
-Debe utilizar:
-
-STEP real
- ↓
-CADModel
- ↓
-Malla
-
-La existencia de una malla generada artificialmente no demuestra que el pipeline CAD → malla funcione.
-
+No utilizar una solución encontrada en Internet como definitiva sin comprobar su compatibilidad con las versiones utilizadas por el proyecto.
 
 ---
 
-17. FEA
+### 8. Prohibición de declarar incompatibilidad prematuramente
 
-El solver FEA debe validarse de manera independiente del CAD.
+Un error de:
 
-Esto permite separar:
+- implementación;
+- configuración;
+- API;
+- versión;
+- dependencia;
+- importación;
+- inicialización;
+- uso incorrecto;
+- documentación incompleta;
 
-VALIDACIÓN GEOMÉTRICA
+NO constituye evidencia de que una tecnología sea incompatible con el proyecto.
 
-de:
+Para declarar:
 
-VALIDACIÓN NUMÉRICA
+    TECNOLOGÍA NO VIABLE
+    o
+    TECNOLOGÍA INCOMPATIBLE
 
-El solver debe poder recibir una malla válida independientemente de su procedencia.
+debe existir evidencia técnica suficiente que demuestre una limitación real.
 
-Debe validarse inicialmente con problemas conocidos.
+La documentación debe distinguir siempre entre:
 
-El objetivo inicial es:
+    ERROR DE IMPLEMENTACIÓN
 
-Malla Tet4
- ↓
-Ke
- ↓
-K
- ↓
-F
- ↓
-Condiciones de frontera
- ↓
-K·u=F
- ↓
-u
- ↓
-Tensiones
- ↓
-Compliance
+    ERROR DE CONFIGURACIÓN
 
+    ERROR DE INTEGRACIÓN
 
----
+    LIMITACIÓN DOCUMENTAL
 
-18. VALIDACIÓN NUMÉRICA FEA
+    LIMITACIÓN DE LA TECNOLOGÍA
 
-Antes de considerar el solver funcional debe superar, como mínimo:
-
-18.1 Viga en voladizo
-
-Comparar:
-
-Resultado FEM
-      VS
-Solución analítica
-
-Debe registrarse:
-
-geometría;
-
-material;
-
-carga;
-
-condiciones de frontera;
-
-tamaño de malla;
-
-desplazamiento obtenido;
-
-desplazamiento analítico;
-
-error relativo.
-
-
+    INFORMACIÓN NO DETERMINADA
 
 ---
 
-18.2 Patch Test
+### 9. Prohibición de acumulación de experimentos improductivos
 
-Validar el comportamiento del elemento Tet4 ante un campo conocido.
+Cuando varios intentos consecutivos persigan resolver el MISMO error sin nueva información técnica, deben detenerse.
 
+No se permite crear:
 
----
+- scripts alternativos innecesarios;
+- pruebas duplicadas;
+- implementaciones paralelas;
+- soluciones temporales sin justificación;
+- archivos de diagnóstico redundantes.
 
-18.3 Convergencia de malla
+Antes de crear un nuevo experimento debe existir una pregunta técnica concreta que dicho experimento pueda responder.
 
-Ejecutar diferentes resoluciones.
-
-Registrar:
-
-tamaño de malla
-resultado
-error
-
-El comportamiento debe ser coherente con la convergencia esperada.
-
+Si no existe una pregunta concreta, NO se crea el experimento.
 
 ---
 
-19. TOPOLOGÍA OPTIMIZADA
+### 10. Reanudación después de un bloqueo
 
-La optimización topológica no debe considerarse funcional hasta que el FEA subyacente esté validado.
+La IA ejecutora solo podrá continuar cuando se disponga de una solución técnicamente fundamentada.
 
-Dependencia obligatoria:
+Antes de implementar deberá:
 
-MALLA
- ↓
-FEA VALIDADO
- ↓
-SENSIBILIDADES
- ↓
-SIMP
- ↓
-OPTIMIZACIÓN
+1. leer nuevamente el tracker;
+2. revisar la solución obtenida;
+3. identificar exactamente qué debe modificarse;
+4. implementar únicamente la corrección necesaria;
+5. ejecutar nuevamente la prueba que produjo el bloqueo;
+6. verificar que el error desapareció;
+7. comprobar que no se introdujeron regresiones.
 
-No implementar TopOpt sobre resultados FEA ficticios.
+Si la solución investigada vuelve a fallar, NO se inicia automáticamente otro ciclo de ensayo y error.
 
-
----
-
-20. PREPARACIÓN PARA SIMP
-
-La arquitectura FEA debe permitir posteriormente:
-
-Ke(ρ) = ρᵖ · Ke₀
-
-El solver debe proporcionar los datos necesarios para:
-
-desplazamientos;
-
-compliance;
-
-energía elemental;
-
-sensibilidades;
-
-actualización de densidades.
-
-
-La implementación debe diseñarse para evitar reescribir el solver durante la integración de SIMP.
-
+Se vuelve a aplicar este protocolo desde el punto 3.
 
 ---
 
-21. TESTING
+### 11. Cierre obligatorio del bloqueo
 
-Todo requisito debe probarse con el nivel apropiado.
+Un bloqueo solo puede cambiar de:
 
-Unitario
+    BLOQUEADO
 
-Valida componentes individuales.
+a:
 
-Integración
+    RESUELTO
 
-Valida interacción entre componentes.
+cuando exista evidencia ejecutable que demuestre que:
 
-E2E
+1. la causa fue identificada;
+2. la solución fue aplicada;
+3. la prueba original ahora funciona;
+4. el resultado es reproducible;
+5. la solución está documentada.
 
-Valida el flujo completo.
-
-Manual
-
-Se utiliza cuando la interacción requiere intervención humana.
-
-Una prueba unitaria nunca puede presentarse como prueba E2E.
-
+El resumen de implementación debe conservar el historial suficiente para entender qué ocurrió y cómo se resolvió.
 
 ---
 
-22. EVIDENCIA
+### 12. Principio de economía de tokens y recursos
 
-Todo requisito marcado como COMPLETADO debe tener evidencia.
+La IA debe priorizar:
 
-La evidencia puede ser:
+    DIAGNÓSTICO → EVIDENCIA → INVESTIGACIÓN → SOLUCIÓN → EJECUCIÓN
 
-test automatizado;
+y evitar:
 
-test de integración;
+    ERROR → CÓDIGO ALEATORIO → ERROR → CÓDIGO ALEATORIO
 
-test E2E;
+El consumo de tokens, tiempo de ejecución y generación de archivos debe considerarse un recurso limitado.
 
-prueba manual reproducible;
-
-resultado numérico verificable;
-
-archivo de salida verificable.
-
-
-La evidencia debe registrarse en:
-
-resumen_implementacion.md
-
+Una investigación externa correctamente planteada es preferible a múltiples intentos especulativos.
 
 ---
 
-23. GATES DE CADA ETAPA
+### 13. Regla de autoridad
 
-Una etapa no puede considerarse finalizada hasta cumplir:
+En caso de conflicto entre una suposición de la IA ejecutora y evidencia obtenida posteriormente de documentación oficial, prevalece la evidencia documentada.
 
-[ ] Requisitos analizados.
-
-[ ] Arquitectura revisada.
-
-[ ] Implementación realizada.
-
-[ ] Errores controlados.
-
-[ ] Tests realizados.
-
-[ ] Integración verificada.
-
-[ ] Evidencia disponible.
-
-[ ] Documentación actualizada.
-
-[ ] Auditoría final realizada.
-
-[ ] No existen dependencias ocultas.
-
-[ ] No existen funcionalidades críticas simuladas.
-
-
-Si alguno de estos puntos no se cumple:
-
-> La etapa permanece abierta.
-
-
-
+Toda corrección importante derivada de una investigación externa debe quedar registrada en `resumen_implementacion.md`.
 
 ---
 
-24. DEPENDENCIAS ENTRE ETAPAS
-
-No se debe avanzar sobre una etapa que dependa de una funcionalidad incompleta.
-
-El flujo actual de dependencias es:
-
-STEP
- ↓
-CADModel
- ↓
-MALLA
- ↓
-FEA
- ↓
-VALIDACIÓN FEA
- ↓
-SIMP / TOPOPT
- ↓
-RESULTADO
- ↓
-EXPORTACIÓN
-
-Ejemplos:
-
-Si STEP no funciona:
-
-> No declarar completo el pipeline de importación.
-
-
-
-Si CADModel no está correctamente construido:
-
-> No declarar completa la integración con el Core.
-
-
-
-Si la malla real no existe:
-
-> No declarar FEA integrado.
-
-
-
-Si FEA no está validado:
-
-> No declarar TopOpt funcional.
-
-
-
-
----
-
-25. CONTROL DEL ALCANCE
-
-La IA debe trabajar únicamente sobre los requisitos de la etapa actual.
-
-No debe implementar funcionalidades futuras solo porque sean técnicamente posibles.
-
-Si descubre una mejora futura:
-
-1. documentarla;
-
-
-2. clasificarla;
-
-
-3. no implementarla;
-
-
-4. continuar con el objetivo actual.
-
-
-
-
----
-
-26. REGLA ESPECÍFICA SOBRE CAD EXTERNO
-
-Durante el desarrollo standalone:
-
-NO implementar:
-
-Onshape;
-
-FeatureScript;
-
-OAuth;
-
-App Extension;
-
-iframe de Onshape;
-
-conectores;
-
-plugins;
-
-sincronización CAD;
-
-selección desde viewport de un CAD externo;
-
-APIs de plataformas CAD.
-
-
-Excepto si el prompt.md de una etapa futura lo solicita explícitamente.
-
-La existencia de código heredado de estas tecnologías no implica que deba mantenerse.
-
-Debe auditarse y clasificarse.
-
-
----
-
-27. CONTROL DEL CÓDIGO HEREDADO
-
-Cuando existan componentes pertenecientes a una arquitectura anterior:
-
-1. identificar el componente;
-
-
-2. determinar su función;
-
-
-3. comprobar si sigue siendo necesario;
-
-
-4. comprobar si viola la arquitectura standalone;
-
-
-5. decidir:
-
-conservar;
-
-adaptar;
-
-aislar;
-
-eliminar;
-
-
-
-6. documentar la decisión.
-
-
-
-No borrar código automáticamente sin comprender sus dependencias.
-
-Pero tampoco mantener código heredado únicamente por miedo a eliminarlo.
-
-
----
-
-28. NO REGRESIÓN
-
-Toda nueva implementación debe preservar las funcionalidades previamente verificadas.
-
-Antes de finalizar una modificación:
-
-ejecutar los tests relevantes;
-
-ejecutar tests existentes;
-
-agregar nuevos tests cuando corresponda;
-
-verificar integración;
-
-comprobar que no se hayan introducido dependencias nuevas.
-
-
-Si una modificación rompe una funcionalidad existente:
-
-> No declarar la etapa completada.
-
-
-
-Debe corregirse o documentarse como bloqueador.
-
-
----
-
-29. PROHIBICIÓN DE FALSEAR EL ESTADO
-
-La IA nunca debe:
-
-ocultar errores;
-
-minimizar fallos;
-
-cambiar criterios de aceptación;
-
-reinterpretar requisitos para declarar éxito;
-
-eliminar tests que fallen sin justificarlo;
-
-sustituir funcionalidad real por mocks;
-
-ocultar dependencias;
-
-declarar una funcionalidad completa por intención futura.
-
-
-La precisión del estado es más importante que aparentar progreso.
-
-
----
-
-30. DOCUMENTACIÓN OBLIGATORIA
-
-Después de cada intervención significativa debe actualizarse:
-
-resumen_implementacion.md
-
-Debe incluir:
-
-fecha;
-
-iteración;
-
-objetivo;
-
-auditoría inicial;
-
-archivos modificados;
-
-implementación realizada;
-
-dependencias modificadas;
-
-tests ejecutados;
-
-resultados;
-
-errores encontrados;
-
-problemas;
-
-decisiones;
-
-estado final;
-
-pendientes;
-
-bloqueadores;
-
-próximo paso.
-
-
-
----
-
-31. REGISTRO DE DECISIONES
-
-Cuando una solución sea descartada, debe documentarse.
-
-Ejemplo:
-
-> Se descarta el método X porque no cumple los requisitos de precisión establecidos para la generación de malla.
-
-
-
-Esto evita volver a implementar soluciones previamente rechazadas.
-
-
----
-
-32. DOCUMENTACIÓN DE ACCIONES DE LA IA
-
-La IA debe documentar las acciones significativas realizadas.
-
-Debe poder responder:
-
-¿Qué modificó?
-¿Por qué lo modificó?
-¿Qué archivos afectó?
-¿Qué dependencias cambió?
-¿Qué pruebas ejecutó?
-¿Qué resultados obtuvo?
-¿Qué quedó pendiente?
-
-No se debe documentar únicamente el resultado final.
-
-Debe existir trazabilidad suficiente para reconstruir el proceso.
-
-
----
-
-33. AUDITORÍA FINAL
-
-Antes de declarar finalizada una iteración:
-
-1. Comparar implementación contra README.md.
-
-
-2. Comparar implementación contra prompt.md.
-
-
-3. Comprobar cumplimiento de metodologia.md.
-
-
-4. Revisar código modificado.
-
-
-5. Ejecutar tests.
-
-
-6. Revisar resultados.
-
-
-7. Comprobar evidencia.
-
-
-8. Actualizar resumen_implementacion.md.
-
-
-9. Clasificar cada requisito.
-
-
-10. Identificar bloqueadores.
-
-
-11. Identificar el siguiente paso.
-
-
-
-La IA debe presentar explícitamente:
-
-COMPLETADO
-PARCIAL
-PENDIENTE
-BLOQUEADO
-
-
----
-
-34. REGLA DE HONESTIDAD TÉCNICA
-
-Cuando exista duda entre:
-
-COMPLETADO
-
-y:
-
-PARCIAL / PENDIENTE
-
-debe elegirse:
-
-PARCIAL / PENDIENTE
-
-Es preferible declarar una funcionalidad incompleta y continuar trabajando que declarar como terminada una funcionalidad que no puede demostrarse.
-
-
----
-
-35. REGLA DE NO SOBREDISEÑO
-
-No implementar infraestructura únicamente porque podría ser necesaria en el futuro.
-
-Especialmente:
-
-múltiples CAD;
-
-plugins;
-
-conectores;
-
-APIs externas;
-
-sistemas distribuidos;
-
-abstracciones innecesarias;
-
-funcionalidades de integración futura.
-
-
-Primero debe funcionar correctamente:
-
-STEP
- ↓
-CADModel
- ↓
-Malla
- ↓
-FEA
- ↓
-TopOpt
-
-Después se amplía.
-
-
----
-
-36. CRITERIO DE PROGRESO REAL
-
-El progreso del proyecto se mide mediante:
-
-FUNCIONALIDAD REAL
-+
-PRUEBAS
-+
-EVIDENCIA
-+
-DOCUMENTACIÓN
-
-No mediante:
-
-cantidad de archivos;
-
-cantidad de código;
-
-cantidad de endpoints;
-
-cantidad de clases;
-
-cantidad de commits;
-
-interfaces visualmente terminadas.
-
-
-
----
-
-37. OBJETIVO FINAL DE LA METODOLOGÍA
-
-El proyecto debe avanzar mediante funcionalidad real y verificable:
-
-AUDITAR
-   ↓
-PLANIFICAR
-   ↓
-IMPLEMENTAR
-   ↓
-PROBAR
-   ↓
-VERIFICAR
-   ↓
-DOCUMENTAR
-   ↓
-AUDITAR
-   ↓
-APROBAR
-   ↓
-AVANZAR
-
-Nunca:
-
-IMPLEMENTAR
-   ↓
-ASUMIR QUE FUNCIONA
-   ↓
-DOCUMENTAR COMO COMPLETO
-   ↓
-AVANZAR
-
-
----
-
-38. PRINCIPIO SUPREMO
-
-> TOPología Optimizada es primero una aplicación standalone.
-
-
-
-Toda decisión técnica debe respetar este principio.
-
-El producto debe poder existir, ejecutarse y cumplir su función principal sin depender de ninguna aplicación CAD externa.
-
-Las futuras integraciones CAD serán únicamente:
-
-MÓDULOS OPCIONALES
-       ↓
-IMPORTAR / EXPORTAR / INTERCAMBIAR DATOS
-       ↓
-APLICACIÓN STANDALONE
-
-Nunca:
-
-CAD EXTERNO
-       ↓
-DEPENDENCIA OBLIGATORIA
-       ↓
-APLICACIÓN
-
-La aplicación standalone siempre debe permanecer como el núcleo y producto principal del proyecto.
+### 14. Regla final
+
+ANTE UN BLOQUEO COMPLEJO:
+
+    NO ADIVINAR.
+    NO INSISTIR INDEFINIDAMENTE.
+    NO MULTIPLICAR SCRIPTS.
+    NO CAMBIAR LA ARQUITECTURA.
+    NO DECLARAR INCOMPATIBILIDAD SIN EVIDENCIA.
+
+    DETENER.
+    DOCUMENTAR.
+    CREAR TRACKER.
+    INVESTIGAR.
+    OBTENER SOLUCIÓN.
+    EJECUTAR.
+    VERIFICAR.
+    CONTINUAR.
+
+Este protocolo tiene prioridad sobre cualquier instrucción de "continuar intentando" cuando el problema no pueda resolverse con evidencia suficiente.

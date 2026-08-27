@@ -2,34 +2,34 @@
     "problem_data": {
         "problem_name": "cantilever_beam",
         "parallel_type": "OpenMP",
-        "start_time": 0.0,
-        "end_time": 1.0,
-        "time_step": 1.0
+        "echo_level": 1
     },
     "solver_settings": {
         "solver_type": "Static",
         "echo_level": 1,
-        "analysis_type": "linear",
         "model_part_name": "Structure",
         "domain_size": 3,
-        "time_integration_method": "Static",
-        "scheme": "Static",
+        "model_import_settings": {
+            "input_type": "mdpa",
+            "input_filename": "model/cantilever_beam"
+        },
         "material_import_settings": {
             "materials_filename": "MaterialParameters.json"
         },
-        "linear_solver_settings": {
-            "solver_type": "skyline_lu_factorization"
-        },
+        "max_iteration": 30,
         "convergence_criterion": "Displacement_criterion",
         "displacement_relative_tolerance": 1e-6,
         "displacement_absolute_tolerance": 1e-6,
         "rotation_relative_tolerance": 1e-6,
         "rotation_absolute_tolerance": 1e-6,
-        "max_iteration": 30,
-        "model_import_settings": {
-            "input_type": "mdpa",
-            "input_filename": "model/cantilever_beam"
-        }
+        "linear_solver_settings": {
+            "solver_type": "skyline_lu_factorization",
+            "scaling": false,
+            "tolerance": 1e-6
+        },
+        "scheme": "Static",
+        "compute_reactions": true,
+        "move_mesh_flag": true
     },
     "processes": {
         "constraints_process_list": [
@@ -64,31 +64,5 @@
                 }
             }
         ]
-    },
-    "output_processes": {
-        "gid_output": {
-            "python_module": "gid_output_process",
-            "kratos_module": "KratosMultiphysics",
-            "process_name": "GiDOutputProcess",
-            "Parameters": {
-                "model_part_name": "Structure",
-                "output_name": "cantilever_beam",
-                "postprocess_parameters": {
-                    "result_file_configuration": {
-                        "gidpost_flags": {
-                            "GiDPostMode": "GiDPostBinary",
-                            "WriteDeformedMeshFlag": "WriteDeformed",
-                            "WriteConditionsFlag": "WriteConditions",
-                            "MultiFileFlag": "SingleFile"
-                        },
-                        "file_label": "time_step",
-                        "output_control_type": "step",
-                        "output_frequency": 1.0,
-                        "nodal_results": ["DISPLACEMENT", "REACTION"],
-                        "gauss_point_results": []
-                    }
-                }
-            }
-        }
     }
 }

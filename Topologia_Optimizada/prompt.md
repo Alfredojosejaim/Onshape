@@ -1,660 +1,640 @@
 
-# AUDITORÍA DE INTEGRACIÓN KRATOS — EXTRACCIÓN Y REGISTRO DE BLOQUEOS
+
+# VALIDACIÓN E2E DEL MOTOR FEA — KRATOS
 
 ## OBJETIVO
 
-La etapa anterior de integración de Kratos Multiphysics ya fue ejecutada.
+La integración de Kratos Multiphysics en el Core ya fue implementada hasta la Etapa I.
 
-Esta intervención NO tiene como objetivo solucionar problemas.
+Las etapas A–I deben considerarse implementadas según el estado documentado actualmente.
 
-Su único objetivo es:
+El objetivo de esta intervención es exclusivamente:
 
-> **AUDITAR EL ESTADO ACTUAL DE LA INTEGRACIÓN, IDENTIFICAR LOS BLOQUEOS EXISTENTES Y DOCUMENTARLOS CON TODA LA INFORMACIÓN NECESARIA PARA REALIZAR POSTERIORMENTE UNA INVESTIGACIÓN TÉCNICA FOCALIZADA.**
+> **EJECUTAR Y VALIDAR EL PIPELINE FEA COMPLETO DE EXTREMO A EXTREMO.**
 
-Kratos ya fue evaluado y adoptado.
+No realizar una nueva implementación arquitectónica.
 
-NO investigar nuevamente su viabilidad.
+No volver a investigar la viabilidad de Kratos.
 
-NO implementar soluciones nuevas.
+No repetir los experimentos anteriores.
 
-NO realizar refactorizaciones.
-
-NO continuar desarrollando funcionalidades.
+No modificar funcionalidades que no sean necesarias para ejecutar esta validación.
 
 ---
 
 # 1. LECTURA OBLIGATORIA
 
-Antes de realizar cualquier acción:
+Antes de ejecutar cualquier prueba:
 
 1. Leer `README.md`.
 2. Leer `prompt.md`.
 3. Leer `metodologia.md`.
-4. Leer completamente `resumen_implementacion.md`.
-5. Revisar la estructura actual del repositorio.
-6. Revisar el código relacionado con la integración de Kratos.
+4. Leer `resumen_implementacion.md`.
+5. Revisar la implementación actual de las etapas A–I.
+6. Revisar la solución aplicada para la Etapa I.
 7. Revisar las pruebas existentes.
-8. Revisar los resultados de las pruebas.
-9. Revisar los experimentos y documentación previa de Kratos.
-10. Identificar qué partes de la integración ya fueron implementadas.
-11. Identificar qué problemas ya fueron resueltos.
-12. Identificar qué problemas continúan abiertos.
+8. Identificar el procedimiento correcto para ejecutar el pipeline completo.
 
-NO asumir que la documentación representa necesariamente el estado real.
+No asumir que la documentación está actualizada.
 
-Contrastar:
+Contrastar documentación, código y pruebas.
+
+---
+
+# 2. OBJETIVO DE LA PRUEBA
+
+Ejecutar el flujo real completo:
 
 ```text
-DOCUMENTACIÓN
-      ↓
-CÓDIGO
-      ↓
-PRUEBAS
-      ↓
-RESULTADOS
-
-
----
-
-2. AUDITAR EL PIPELINE ACTUAL
-
-Analizar el estado real de:
-
-STEP
- ↓
+ARCHIVO STEP REAL
+        ↓
 STEP ADAPTER
- ↓
+        ↓
 CADModel
- ↓
+        ↓
 MALLA
- ↓
+        ↓
 KRATOS
- ↓
-FEA
- ↓
-RESULTADOS
- ↓
+        ↓
+MODEL / MODELPART
+        ↓
+MATERIAL
+        ↓
+CONDICIONES DE FRONTERA
+        ↓
+CARGAS
+        ↓
+SOLVER FEA
+        ↓
+DESPLAZAMIENTOS
+        ↓
+TENSIONES / RESULTADOS
+        ↓
+COMPLIANCE
+        ↓
+RESULTADOS ELEMENTALES
+        ↓
 CORE
 
-Para cada componente determinar:
-
-qué existe;
-
-qué funciona;
-
-qué fue probado;
-
-qué evidencia existe;
-
-qué está incompleto;
-
-qué falla;
-
-qué depende de otro componente;
-
-qué está bloqueado.
-
-
-Clasificar cada componente como:
-
-COMPLETADO
-PARCIAL
-PENDIENTE
-BLOQUEADO
-
-No utilizar COMPLETADO si no existe evidencia suficiente.
+La prueba debe utilizar, cuando el pipeline lo permita, datos reales y no mocks.
 
 
 ---
 
-3. EJECUTAR ÚNICAMENTE PRUEBAS DE VERIFICACIÓN
+3. PREPARACIÓN
 
-Se permite ejecutar pruebas existentes y pruebas mínimas necesarias para confirmar el estado actual.
+Antes de ejecutar:
 
-El objetivo de estas pruebas es:
-
-> REPRODUCIR Y CARACTERIZAR LOS PROBLEMAS EXISTENTES.
+1. Verificar el entorno.
 
 
-
-NO crear nuevas implementaciones para intentar solucionarlos.
-
-NO modificar el código para hacer que una prueba pase.
-
-NO cambiar la arquitectura.
-
-NO introducir dependencias nuevas.
+2. Verificar la versión de Python.
 
 
----
+3. Verificar la versión de Kratos.
 
-4. REGLA ABSOLUTA ANTE UN ERROR
 
-Cuando aparezca un error:
+4. Verificar que las dependencias necesarias estén disponibles.
 
-SI LA CAUSA ES OBVIA
 
-NO corregirlo.
+5. Verificar que el código actual pueda ejecutarse.
 
-En esta etapa tampoco se permite aplicar la corrección autónoma.
 
-El objetivo actual es exclusivamente documentar el problema.
+6. Identificar el archivo STEP de prueba utilizado.
 
-SI LA CAUSA NO ES OBVIA
 
-DETENER la investigación inmediatamente.
+7. Verificar que dicho archivo sea válido.
 
-NO intentar otro enfoque.
 
-NO modificar código.
+8. Registrar cualquier condición especial necesaria para reproducir la prueba.
 
-NO generar otro script.
 
-NO probar otra API.
 
-NO cambiar parámetros al azar.
-
-NO realizar ensayo y error.
+No modificar el entorno innecesariamente.
 
 
 ---
 
-5. PROHIBICIÓN DE RESOLUCIÓN
+4. EJECUCIÓN DEL PIPELINE
 
-Durante esta intervención está TERMINANTEMENTE PROHIBIDO intentar resolver los problemas encontrados.
+Ejecutar el pipeline real en el orden correspondiente.
 
-NO hacer:
+Verificar individualmente:
 
-ERROR
- ↓
-HIPÓTESIS
- ↓
-CAMBIO
- ↓
-ERROR
- ↓
-OTRO CAMBIO
- ↓
-ERROR
+4.1 STEP
 
-NO hacer múltiples intentos.
+Confirmar:
 
-NO buscar una solución improvisada.
+apertura correcta;
 
-NO instalar bibliotecas adicionales para intentar solucionar el problema.
+lectura de geometría;
 
-NO modificar versiones.
+detección de cuerpos;
 
-NO cambiar Kratos por otra tecnología.
+generación del modelo interno.
 
-NO modificar la arquitectura para evitar el error.
-
-La resolución de los bloqueos será una etapa posterior.
 
 
 ---
 
-6. IDENTIFICACIÓN DEL BLOQUEO
+4.2 CADModel
 
-Cada problema que impida avanzar debe convertirse en un registro técnico independiente dentro de:
+Confirmar:
+
+creación correcta;
+
+datos geométricos disponibles;
+
+ausencia de dependencia directa del Core respecto del formato STEP.
+
+
+
+---
+
+4.3 MALLA
+
+Confirmar:
+
+generación de la malla;
+
+nodos;
+
+elementos;
+
+conectividad;
+
+transferencia correcta hacia Kratos.
+
+
+
+---
+
+4.4 KRATOS
+
+Confirmar:
+
+creación de Model;
+
+creación de ModelPart;
+
+nodos;
+
+elementos;
+
+propiedades;
+
+DOFs;
+
+material.
+
+
+
+---
+
+4.5 CONDICIONES DE FRONTERA
+
+Confirmar que las restricciones sean transferidas correctamente.
+
+Verificar que los grados de libertad correspondientes queden correctamente fijados.
+
+
+---
+
+4.6 CARGAS
+
+Confirmar que las cargas lleguen correctamente al modelo de Kratos.
+
+Verificar:
+
+magnitud;
+
+dirección;
+
+ubicación;
+
+tipo de carga.
+
+
+
+---
+
+4.7 SOLVER
+
+Ejecutar el solver real.
+
+Registrar:
+
+configuración;
+
+convergencia;
+
+errores;
+
+tiempo de ejecución, si está disponible;
+
+estado final.
+
+
+
+---
+
+4.8 RESULTADOS
+
+Extraer y verificar, según lo implementado:
+
+desplazamientos;
+
+tensiones;
+
+compliance;
+
+energía elemental;
+
+cualquier otro resultado disponible para el Core.
+
+
+Confirmar que los valores sean numéricamente válidos.
+
+No aceptar:
+
+NaN;
+
+Inf;
+
+valores faltantes;
+
+resultados vacíos;
+
+resultados desconectados del cálculo real.
+
+
+
+---
+
+4.9 RETORNO AL CORE
+
+Verificar específicamente la Etapa I.
+
+Los resultados obtenidos por Kratos deben regresar correctamente al Core mediante la interfaz/adaptador implementado.
+
+Confirmar que el Core pueda consumir los resultados sin acceder innecesariamente a detalles internos de Kratos.
+
+
+---
+
+5. VALIDACIÓN DE EXTREMO A EXTREMO
+
+La prueba se considera exitosa únicamente si puede demostrarse:
+
+STEP REAL
+   ↓
+CADModel
+   ↓
+MALLA
+   ↓
+KRATOS
+   ↓
+FEA
+   ↓
+RESULTADOS
+   ↓
+CORE
+
+No es suficiente que cada componente funcione individualmente.
+
+Debe demostrarse que los datos atraviesan correctamente todo el pipeline.
+
+
+---
+
+6. VALIDACIONES NUMÉRICAS
+
+Comparar los resultados con las referencias disponibles de las pruebas anteriores.
+
+Cuando exista una referencia conocida:
+
+comparar desplazamientos;
+
+comparar compliance;
+
+comparar resultados relevantes;
+
+calcular diferencia o error cuando sea posible.
+
+
+No inventar tolerancias.
+
+Utilizar las tolerancias ya establecidas en la documentación existente.
+
+Si no existe una referencia aplicable, indicarlo explícitamente.
+
+
+---
+
+7. REGLA ESTRICTA ANTE ERRORES
+
+Esta es una VALIDACIÓN, no una sesión de ensayo y error.
+
+Si aparece un error:
+
+ERROR EVIDENTE Y YA CONOCIDO
+
+Si corresponde exactamente a un problema cuya solución ya fue investigada y documentada:
+
+aplicar únicamente la solución ya conocida;
+
+ejecutar nuevamente la prueba;
+
+documentar el resultado.
+
+
+No buscar otra solución.
+
+ERROR NUEVO
+
+Si aparece un problema que no está contemplado:
+
+> DETENER.
+
+
+
+No intentar múltiples soluciones.
+
+No cambiar arbitrariamente el código.
+
+No crear scripts alternativos.
+
+No instalar dependencias para probar soluciones.
+
+No cambiar versiones.
+
+No modificar la arquitectura.
+
+Registrar el problema siguiendo el protocolo de metodologia.md.
+
+
+---
+
+8. REGISTRO DE ERRORES
+
+Todo error nuevo que impida completar la prueba debe registrarse en:
 
 resumen_implementacion.md
 
-NO crear archivos nuevos para cada problema.
+Incluir como mínimo:
 
-NO duplicar trackers en múltiples documentos.
+componente;
 
+comando;
 
----
-
-7. FORMATO OBLIGATORIO DEL TRACKER
-
-Para cada bloqueo utilizar esta estructura:
-
-## BLOQUEO KRATOS — [ID]
-
-### Estado
-
-BLOQUEADO — REQUIERE INVESTIGACIÓN
-
-### Componente
-
-[Componente afectado]
-
-### Funcionalidad
-
-[Qué se intenta hacer]
-
-### Objetivo
-
-[Qué debería ocurrir]
-
-### Resultado actual
-
-[Qué ocurre realmente]
-
-### Entorno
-
-- Sistema operativo:
-- Python:
-- Kratos:
-- Compilación/instalación:
-- Arquitectura:
-- Otras versiones relevantes:
-
-### Archivo
-
-[Ruta exacta]
-
-### Función / clase
-
-[Nombre exacto]
-
-### Punto de ejecución
-
-[Dónde ocurre el problema]
-
-### Comando ejecutado
-
-[Comando completo]
-
-### Entrada utilizada
-
-[Datos, archivos, malla, parámetros, etc.]
-
-### Salida obtenida
-
-[Salida relevante completa]
-
-### Traceback
-
-[Traceback completo, si existe]
-
-### Resultado esperado
-
-[Qué debería suceder]
-
-### Resultado observado
-
-[Qué sucedió]
-
-### Hechos comprobados
-
-[Únicamente hechos demostrados]
-
-### Hipótesis
-
-[Posibles causas, claramente marcadas como hipótesis]
-
-### Información desconocida
-
-[Qué todavía no sabemos]
-
-### Intentos realizados previamente
-
-[Únicamente intentos que realmente existan en el historial]
-
-### Soluciones anteriores relacionadas
-
-[Si existe alguna documentada]
-
-### Pregunta técnica para investigación
-
-[Pregunta concreta que deberá responder la investigación]
-
-### Dependencias
-
-[Qué componentes están bloqueados por este problema]
-
-### Prioridad
-
-CRÍTICA / ALTA / MEDIA / BAJA
-
-
----
-
-8. TRACEBACK COMPLETO
-
-Cuando exista un traceback:
-
-NO resumirlo.
-
-NO eliminar líneas relevantes.
-
-NO reemplazarlo por:
-
-> "Kratos dio un error."
-
-
-
-Conservar el traceback completo.
-
-También registrar:
-
-comando exacto;
-
-versión;
+entorno;
 
 archivo;
 
 función;
 
-entrada utilizada;
+entrada;
 
-salida relevante.
+salida;
 
+traceback completo;
 
-La finalidad es que otra persona o IA pueda investigar el problema sin tener que reproducir primero todo el contexto.
+resultado esperado;
 
+resultado observado;
 
----
+hechos comprobados;
 
-9. DIFERENCIAR HECHOS DE HIPÓTESIS
+hipótesis;
 
-Esto es obligatorio.
-
-Ejemplo:
-
-HECHO:
-Kratos lanza RuntimeError al ejecutar X.
-
-HIPÓTESIS:
-La configuración Y podría ser incompatible con Z.
-
-NO CONFIRMADO:
-No sabemos todavía si Y es realmente la causa.
-
-NO presentar una hipótesis como causa confirmada.
-
-
----
-
-10. AGRUPACIÓN Y DEPENDENCIAS
-
-Si varios errores derivan claramente del mismo bloqueo raíz:
-
-No crear múltiples trackers redundantes.
-
-Identificar:
-
-BLOQUEO RAÍZ
-      ↓
- ┌────┴────┐
- ↓         ↓
-ERROR A   ERROR B
-
-Si existen bloqueos independientes:
-
-BLOQUEO A
-BLOQUEO B
-BLOQUEO C
-
-registrarlos por separado.
-
-
----
-
-11. PRIORIZACIÓN
-
-Asignar prioridad según impacto:
-
-CRÍTICA
-
-Impide continuar con prácticamente toda la integración.
-
-ALTA
-
-Impide completar un componente fundamental.
-
-MEDIA
-
-Afecta una funcionalidad importante pero permite continuar parcialmente.
-
-BAJA
-
-Problema secundario que no bloquea el desarrollo inmediato.
-
-Después determinar el orden recomendado de investigación.
-
-
----
-
-12. NO CREAR DOCUMENTACIÓN INNECESARIA
-
-No crear:
-
-nuevos informes;
-
-nuevos archivos de investigación;
-
-nuevos README;
-
-nuevas carpetas;
-
-documentos temporales;
-
-copias de los resultados.
-
-
-Utilizar exclusivamente:
-
-resumen_implementacion.md
-
-para registrar los bloqueos actuales.
-
-La documentación existente de las pruebas de Kratos debe permanecer como referencia.
-
-
----
-
-13. NO MODIFICAR EL CÓDIGO PARA SOLUCIONAR
-
-Durante esta intervención, las modificaciones al código están prohibidas salvo que sean estrictamente necesarias para:
-
-instrumentación temporal;
-
-obtener información diagnóstica;
-
-reproducir un error existente.
-
-
-Si se realiza una modificación diagnóstica:
-
-1. documentarla;
-
-
-2. utilizarla únicamente para obtener evidencia;
-
-
-3. revertirla después, salvo que sea claramente necesaria y permanente.
-
-
-
-NO convertir una modificación diagnóstica en una implementación.
-
-
----
-
-14. REGLA DE DETENCIÓN
-
-Cuando todos los problemas reproducibles hayan sido:
-
-identificados;
-
-caracterizados;
-
-registrados;
-
-clasificados;
-
-priorizados;
-
-
-DETENERSE.
-
-No comenzar a resolverlos.
-
-No continuar desarrollando.
-
-No realizar investigación técnica externa en esta etapa.
-
-
----
-
-15. AUDITORÍA FINAL
-
-Antes de terminar:
-
-1. Revisar nuevamente el código relevante.
-
-
-2. Revisar las pruebas ejecutadas.
-
-
-3. Revisar los resultados.
-
-
-4. Revisar todos los trackers.
-
-
-5. Verificar que cada bloqueo tenga suficiente información.
-
-
-6. Verificar que no existan hipótesis presentadas como hechos.
-
-
-7. Verificar que los traceback estén completos.
-
-
-8. Verificar que los comandos puedan reproducirse.
-
-
-9. Verificar que no se hayan introducido cambios innecesarios.
-
-
-10. Actualizar resumen_implementacion.md.
-
-
-
-
----
-
-16. INFORME FINAL
-
-Al finalizar, presentar exclusivamente:
-
-ESTADO DE LA INTEGRACIÓN
-
-COMPLETADO:
-[...]
-
-PARCIAL:
-[...]
-
-PENDIENTE:
-[...]
-
-BLOQUEADO:
-[...]
-
-BLOQUEOS ENCONTRADOS
-
-Para cada bloqueo indicar:
-
-ID;
-
-componente;
-
-prioridad;
+información desconocida;
 
 impacto;
 
-dependencia;
-
-pregunta técnica que debe investigarse.
+prioridad.
 
 
-ORDEN RECOMENDADO DE INVESTIGACIÓN
+Estado:
 
-Indicar:
+> BLOQUEADO — REQUIERE INVESTIGACIÓN
 
-1. BLOQUEO [...]
-2. BLOQUEO [...]
-3. BLOQUEO [...]
 
-explicando brevemente por qué ese orden.
 
-CAMBIOS REALIZADOS
+No crear documentos adicionales.
 
-Indicar los archivos modificados.
 
-Si no hubo modificaciones:
+---
 
-> No se realizaron modificaciones funcionales.
+9. NO ALTERAR EL ALCANCE
+
+Durante esta intervención NO implementar:
+
+TopOpt;
+
+diseño generativo;
+
+GUI;
+
+integraciones CAD;
+
+nuevos motores;
+
+nuevas bibliotecas;
+
+funcionalidades futuras.
+
+
+El objetivo es únicamente:
+
+> VALIDAR EL MOTOR FEA ACTUAL COMPLETO.
 
 
 
 
 ---
 
-17. CRITERIO DE ÉXITO
+10. CRITERIO DE ÉXITO
 
-Esta intervención será exitosa si:
+El motor FEA será considerado validado E2E si:
 
-el estado real de la integración está claramente determinado;
+el STEP real es procesado;
 
-todos los bloqueos relevantes están identificados;
+el CADModel se genera correctamente;
 
-cada bloqueo tiene un tracker completo;
+la malla se genera;
 
-los problemas pueden investigarse sin repetir todo el proceso;
+la malla llega a Kratos;
 
-no se desperdiciaron recursos en intentos especulativos;
+el modelo FEA se configura;
 
-no se introdujeron soluciones no investigadas;
+material, cargas y restricciones se aplican;
 
-no se crearon archivos innecesarios;
+el solver ejecuta;
 
-el repositorio queda listo para la siguiente etapa de investigación focalizada.
+los resultados se generan;
 
+los resultados son válidos;
+
+los resultados regresan al Core;
+
+el pipeline completo puede reproducirse.
+
+
+
+---
+
+11. DOCUMENTACIÓN
+
+Actualizar resumen_implementacion.md después de la prueba.
+
+Registrar:
+
+fecha;
+
+prueba E2E;
+
+archivo utilizado;
+
+entorno;
+
+versiones;
+
+comando;
+
+etapas ejecutadas;
+
+resultados;
+
+validaciones numéricas;
+
+errores;
+
+bloqueos;
+
+estado final.
+
+
+No reescribir innecesariamente la documentación histórica.
+
+
+---
+
+12. AUDITORÍA FINAL
+
+Al terminar:
+
+1. Revisar el resultado completo.
+
+
+2. Confirmar que todas las etapas A–I participaron.
+
+
+3. Confirmar que no existieron mocks en el pipeline real.
+
+
+4. Confirmar que los resultados provienen del solver real.
+
+
+5. Confirmar que los resultados llegaron al Core.
+
+
+6. Revisar cualquier error.
+
+
+7. Actualizar resumen_implementacion.md.
+
+
+
+Clasificar:
+
+MOTOR FEA E2E
+
+COMPLETADO
+PARCIAL
+BLOQUEADO
+
+
+---
+
+13. INFORME FINAL
+
+Al finalizar, presentar:
+
+PIPELINE
+
+STEP → CADModel → Malla → Kratos → FEA → Resultados → Core
+
+Indicar el estado de cada etapa.
+
+RESULTADOS
+
+Indicar los valores principales obtenidos.
+
+VALIDACIÓN
+
+Indicar las comparaciones realizadas y sus errores.
+
+PROBLEMAS
+
+Indicar cualquier error encontrado.
+
+BLOQUEOS
+
+Indicar únicamente los bloqueos que realmente impidieron completar alguna parte.
+
+VEREDICTO
+
+Responder claramente:
+
+> ¿El motor FEA de Topología Optimizada funciona actualmente de extremo a extremo?
+
+
+
+Responder:
+
+SÍ
+NO
+PARCIALMENTE
+
+y justificarlo únicamente mediante evidencia obtenida durante esta prueba.
 
 
 ---
 
 REGLA SUPREMA
 
-ESTA INTERVENCIÓN NO RESUELVE PROBLEMAS.
+Esta intervención tiene una finalidad:
 
-ESTA INTERVENCIÓN IDENTIFICA Y DOCUMENTA PROBLEMAS.
+> DEMOSTRAR, NO SUPONER, QUE EL MOTOR FEA FUNCIONA.
 
-El flujo obligatorio es:
 
-AUDITAR
-   ↓
-REPRODUCIR
-   ↓
-CARACTERIZAR
-   ↓
-REGISTRAR
-   ↓
-PRIORIZAR
-   ↓
-DETENER
 
-Después de esta etapa:
+No declarar éxito porque cada componente exista.
 
-TRACKER COMPLETO
-      ↓
-INVESTIGACIÓN TÉCNICA
-      ↓
-SOLUCIÓN FUNDAMENTADA
-      ↓
-NUEVO PROMPT DE IMPLEMENTACIÓN
+No declarar éxito porque las pruebas individuales hayan funcionado.
 
-No intentes solucionar ningún bloqueo durante esta intervención.
+El éxito requiere:
 
-No realices ensayo y error.
+ENTRADA REAL
+    ↓
+PIPELINE COMPLETO
+    ↓
+SOLVER REAL
+    ↓
+RESULTADOS REALES
+    ↓
+CORE
 
-No generes archivos adicionales.
+Si funciona:
 
-No avances a la siguiente funcionalidad hasta que los bloqueos que la afectan estén correctamente identificados y documentados.
+> documentar evidencia y cerrar la validación E2E.
+
+
+
+Si falla:
+
+> registrar el bloqueo y detenerse.
+
+
+
+No convertir esta validación en otra sesión de ensayo y error.

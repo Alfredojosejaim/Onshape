@@ -747,19 +747,22 @@ La configuración del solver de Kratos está bloqueada por un problema de compat
 - Cargas de presión (implementación simplificada) funcionales
 - Compatibilidad con restricciones verificada
 
-**ETAPA G - Solver:** ❌ **BLOQUEADO**
-- LinearSolverFactory.Create() presenta error de compatibilidad de API
-- Múltiples intentos de configuración fallaron
-- Requiere investigación técnica específica de documentación oficial Kratos 10.4.3
-- **NO SE DEBE CONTINUAR CON ESPECULACIÓN**
+**ETAPA G - Solver:** ✅ **COMPLETADO** (2026-08-27)
+- LinearSolverFactory.Create() resuelto usando python_linear_solver_factory
+- ResidualBasedLinearStrategy resuelto usando patrón oficial con BuilderAndSolver
+- Ley constitutiva resuelta asignando LinearElastic3DLaw a Properties
+- Solver puede configurarse y ejecutarse correctamente
+- Tres bloqueos consecutivos resueltos con investigación técnica focalizada
 
-**ETAPA H - Resultados:** ⏳ **PENDIENTE**
-- Depende de resolución de Etapa G
-- No puede implementarse sin solver funcional
+**ETAPA H - Resultados:** ✅ **COMPLETADO** (2026-08-27)
+- Extracción de desplazamientos implementada y verificada
+- Cálculo de compliance implementado
+- Extracción de energías elementales implementada
+- Análisis se ejecuta correctamente y resultados se extraen
 
 **ETAPA I - Retorno al Core:** ⏳ **PENDIENTE**
-- Depende de resolución de Etapa G y H
-- No puede implementarse sin pipeline funcional
+- Etapa H ahora está funcional
+- Puede implementarse integrando resultados con solver_interface.py
 
 ### Comparación con Objetivos del Prompt
 
@@ -1165,6 +1168,752 @@ El PoC puede ahora continuar con la validación completa del pipeline FEA + SIMP
 
 ---
 
+## AUDITORÍA DE INTEGRACIÓN KRATOS (2026-08-27)
+
+### Objetivo de la Auditoría
+
+Esta intervención NO tiene como objetivo solucionar problemas. Su único objetivo es:
+> **AUDITAR EL ESTADO ACTUAL DE LA INTEGRACIÓN, IDENTIFICAR LOS BLOQUEOS EXISTENTES Y DOCUMENTARLOS CON TODA LA INFORMACIÓN NECESARIA PARA REALIZAR POSTERIORMENTE UNA INVESTIGACIÓN TÉCNICA FOCALIZADA.**
+
+### Pruebas de Verificación Ejecutadas (2026-08-27)
+
+**Prueba Directa de Kratos Adapter:**
+- ✅ Importación KratosMultiphysics: FUNCIONAL
+- ✅ Importación StructuralMechanicsApplication: FUNCIONAL
+- ✅ Importación OptimizationApplication: FUNCIONAL
+- ✅ KratosAdapter inicialización: FUNCIONAL
+- ✅ ModelPart creación: FUNCIONAL
+- ✅ Importación de malla: FUNCIONAL (4 nodos, 1 elemento)
+- ✅ Configuración de material: FUNCIONAL
+- ✅ Aplicación de restricciones: FUNCIONAL
+- ✅ Aplicación de cargas: FUNCIONAL
+- ❌ Configuración de solver: BLOQUEADO (LinearSolverFactory.Create())
+
+**Reproducción del Bloqueo Principal:**
+```
+Error: Create(): incompatible function arguments. The following argument types are supported:
+    1. (self: Kratos.LinearSolverFactory, arg0: Kratos::Parameters) -> Kratos.LinearSolver
+
+Invoked with: <Kratos.Parameters object at 0x000001CC16619D30>
+```
+
+### Estado Verificado de las Etapas
+
+**ETAPA A - Inicialización de Kratos:** ✅ **COMPLETADO** (verificado 2026-08-27)
+- KratosMultiphysics, StructuralMechanicsApplication, OptimizationApplication importan correctamente
+- Adaptador Kratos crea e inicializa correctamente
+- Verificación de aplicaciones disponible
+
+**ETAPA B - Modelo/ModelPart:** ✅ **COMPLETADO** (verificado 2026-08-27)
+- ModelPart puede crearse y configurarse correctamente
+- Integración con CADModel del Core implementada
+- Configuración para análisis estructural funcional
+- DOFs configurables
+
+**ETAPA C - Malla:** ✅ **COMPLETADO** (verificado 2026-08-27)
+- Importación desde formato Core funcional
+- Importación desde Gmsh funcional (verificado en PoC)
+- Integración con meshing del Core funcional
+- Configuración de DOFs en malla importada
+
+**ETAPA D - Material:** ✅ **COMPLETADO** (verificado 2026-08-27)
+- Configuración desde Material del Core funcional
+- Configuración manual de propiedades funcional
+- Materiales estándar (steel, aluminum, titanium) funcionales
+- Mapeo completo de propiedades a Kratos
+
+**ETAPA E - Condiciones de frontera:** ✅ **COMPLETADO** (verificado 2026-08-27)
+- Restricciones fijas funcionales
+- Restricciones empotradas funcionales
+- Integración con ConstraintDefinition del Core funcional
+- Múltiples restricciones aplicables simultáneamente
+
+**ETAPA F - Cargas:** ✅ **COMPLETADO** (verificado 2026-08-27)
+- Cargas puntuales funcionales
+- Cargas distribuidas funcionales
+- Integración con LoadDefinition del Core funcional
+- Cargas de presión (implementación simplificada) funcionales
+- Compatibilidad con restricciones verificada
+
+**ETAPA G - Solver:** ❌ **BLOQUEADO** (verificado 2026-08-27)
+- LinearSolverFactory.Create() presenta error de compatibilidad de API
+- El error fue reproducido exitosamente en la auditoría
+- El bloqueo es consistente con lo documentado anteriormente
+- Requiere investigación técnica específica de documentación oficial Kratos 10.4.3
+
+**ETAPA H - Resultados:** ⏳ **PENDIENTE**
+- Depende de resolución de Etapa G
+- No puede implementarse sin solver funcional
+
+**ETAPA I - Retorno al Core:** ⏳ **PENDIENTE**
+- Depende de resolución de Etapa G y H
+- No puede implementarse sin pipeline funcional
+
+### Observaciones de la Auditoría
+
+1. **Estado de la Integración:** La infraestructura básica de Kratos está completamente funcional (etapas A-F), pero la ejecución de análisis está bloqueada por un problema específico de API en la configuración del solver.
+
+2. **Problema Identificado:** El bloqueo está localizado específicamente en `LinearSolverFactory.Create()` en `core/kratos_adapter.py`, función `setup_solver_and_strategy()`.
+
+3. **Reproducibilidad:** El bloqueo fue reproducido exitosamente, confirmando que es un problema real y no un artefacto de documentación.
+
+4. **Dependencias:** No se encontraron nuevos bloqueos adicionales. Las etapas A-F funcionan correctamente sin dependencias faltantes.
+
+5. **Arquitectura:** La arquitectura de integración respetada correctamente (standalone, sin dependencias CAD externas).
+
+### Conclusión de la Auditoría
+
+El estado de la integración Kratos es consistente con lo documentado en resumen_implementacion.md. No hay cambios ni nuevos bloqueos desde la última auditoría. El único bloqueo sigue siendo la configuración del solver lineal de Kratos.
+
+---
+
+## BLOQUEO KRATOS — SOLVER LINEAR FACTORY (RESUELTO 2026-08-27)
+
+### Estado
+
+RESUELTO — SOLUCIÓN APLICADA Y VERIFICADA
+
+### Componente
+
+Kratos LinearSolverFactory en `core/kratos_adapter.py`
+
+### Funcionalidad
+
+Configuración de solver lineal para análisis estructural de Kratos
+
+### Objetivo
+
+Crear y configurar un LinearSolver de Kratos Multiphysics usando la API de Python para ejecutar análisis estructurales
+
+### Resultado actual
+
+LinearSolverFactory.Create() fue resuelto usando python_linear_solver_factory.ConstructSolver()
+
+### Solución aplicada
+
+**Causa raíz identificada por investigación técnica:**
+LinearSolverFactory es una clase C++ expuesta vía pybind11, no un módulo con métodos estáticos. El método Create() es un método de instancia, no estático.
+
+**Solución implementada:**
+Uso del wrapper oficial Python python_linear_solver_factory en lugar de LinearSolverFactory directo.
+
+```python
+import KratosMultiphysics.python_linear_solver_factory as python_linear_solver_factory
+linear_solver = python_linear_solver_factory.ConstructSolver(solver_settings)
+```
+
+### Verificación
+
+- Fecha de resolución: 2026-08-27
+- Prueba de verificación: test_linear_solver_repro.py ejecutado exitosamente
+- Resultado: SkylineLUFactorizationSolver creado correctamente
+- Tipo de solver: <class 'Kratos.SkylineLUFactorizationSolver'>
+
+### Dependencias
+
+- Este bloqueo ya no bloquea las etapas posteriores
+- Sin embargo, apareció un nuevo bloqueo en ResidualBasedLinearStrategy (ver BLOQUEO-002)
+
+---
+
+## BLOQUEO KRATOS — RESIDUAL BASED LINEAR STRATEGY (RESUELTO 2026-08-27)
+
+### Estado
+
+RESUELTO — SOLUCIÓN APLICADA Y VERIFICADA
+
+### Componente
+
+Kratos ResidualBasedLinearStrategy en `core/kratos_adapter.py`
+
+### Funcionalidad
+
+Configuración de estrategia de solución para análisis estructural de Kratos
+
+### Objetivo
+
+Crear y configurar ResidualBasedLinearStrategy con LinearSolver y Scheme para ejecutar análisis estructurales
+
+### Resultado actual
+
+ResidualBasedLinearStrategy se configuró correctamente usando el patrón oficial con BuilderAndSolver explícito
+
+### Solución aplicada
+
+**Causa raíz identificada por investigación técnica:**
+ResidualBasedLinearStrategy requiere un Scheme como segundo argumento, no un LinearSolver directamente. El código actual no seguía el patrón oficial de Kratos.
+
+**Solución implementada:**
+Uso del patrón oficial de Kratos con BuilderAndSolver explícito (firma #4 del constructor):
+
+```python
+time_scheme = Kratos.ResidualBasedIncrementalUpdateStaticScheme()
+builder_and_solver = Kratos.ResidualBasedBlockBuilderAndSolver(linear_solver)
+
+strategy = Kratos.ResidualBasedLinearStrategy(
+    model_part,
+    time_scheme,
+    linear_solver,
+    builder_and_solver,
+    False,  # compute_reactions
+    False,  # reform_dofs_at_each_step
+    True,   # calculate_norm_dx
+    False   # move_mesh_flag
+)
+strategy.SetEchoLevel(0)
+strategy.Initialize()
+```
+
+### Verificación
+
+- Fecha de resolución: 2026-08-27
+- Prueba de verificación: test_kratos_direct.py ejecutado
+- Resultado: ResidualBasedLinearStrategy se creó e inicializó correctamente
+- Apareció nuevo bloqueo diferente sobre ley constitutiva (ver BLOQUEO-003)
+
+### Dependencias
+
+- Este bloqueo ya no bloquea las etapas posteriores
+- Sin embargo, apareció un nuevo bloqueo en configuración de ley constitutiva (ver BLOQUEO-003)
+
+---
+
+## BLOQUEO KRATOS — LEY CONSTITUTIVA (RESUELTO 2026-08-27)
+
+### Estado
+
+RESUELTO — SOLUCIÓN APLICADA Y VERIFICADA
+
+### Componente
+
+Kratos SmallDisplacementElement3D4N (ley constitutiva) en `core/kratos_adapter.py`
+
+### Funcionalidad
+
+Configuración de ley constitutiva para elementos estructurales de Kratos
+
+### Objetivo
+
+Especificar correctamente la ley constitutiva para que los elementos SmallDisplacementElement3D4N puedan inicializarse
+
+### Resultado actual
+
+SmallDisplacementElement3D4N inicializa correctamente con la ley constitutiva LinearElastic3DLaw especificada
+
+### Solución aplicada
+
+**Causa raíz identificada por investigación técnica:**
+Las propiedades del material solo incluían variables numéricas (YOUNG_MODULUS, POISSON_RATIO, DENSITY) pero no una ley constitutiva explícita. Kratos requiere un objeto ConstitutiveLaw asignado a la variable CONSTITUTIVE_LAW en las Properties.
+
+**Solución implementada:**
+Importación de StructuralMechanicsApplication y asignación de LinearElastic3DLaw a las Properties:
+
+```python
+from KratosMultiphysics import StructuralMechanicsApplication as SMA
+constitutive_law = SMA.LinearElastic3DLaw()
+material_properties.SetValue(Kratos.CONSTITUTIVE_LAW, constitutive_law)
+```
+
+Se aplicó en las funciones:
+- `configure_material_from_core()`
+- `configure_material_manually()`
+
+### Verificación
+
+- Fecha de resolución: 2026-08-27
+- Prueba de verificación: test_kratos_direct.py ejecutado
+- Resultado: Strategy.Initialize() funcionó correctamente
+- Solver configurado exitosamente por primera vez
+- No aparecieron nuevos bloqueos
+
+### Dependencias
+
+- Este bloqueo ya no bloquea las etapas posteriores
+- La Etapa G (Solver) ahora está completamente funcional
+
+### Componente
+
+Kratos SmallDisplacementElement3D4N (ley constitutiva) en `core/kratos_adapter.py`
+
+### Funcionalidad
+
+Configuración de ley constitutiva para elementos estructurales de Kratos
+
+### Objetivo
+
+Especificar correctamente la ley constitutiva para que los elementos SmallDisplacementElement3D4N puedan inicializarse
+
+### Resultado actual
+
+SmallDisplacementElement3D4N falla durante la inicialización porque no tiene una ley constitutiva especificada
+
+### Entorno
+
+- Sistema operativo: Windows 10 (versión 10.0.19045)
+- Python: 3.11.9 (tags/v3.11.9:de54cf5, Apr 2 2024)
+- Kratos: 10.4.3 (Compiled for Windows and Python3.11 with MSVC-1929)
+- Compilación/instalación: pip install KratosMultiphysics
+- Arquitectura: AMD64
+- Otras versiones relevantes: KratosStructuralMechanicsApplication 10.4.3, KratosOptimizationApplication 10.4.3
+
+### Archivo
+
+`core/kratos_adapter.py`
+
+### Función / clase
+
+`KratosAdapter.setup_solver_and_strategy()` y `KratosAdapter.configure_material_from_core()`
+
+### Punto de ejecución
+
+Línea 706: `strategy.Initialize()` - la inicialización de la estrategia intenta inicializar los elementos, lo que falla por falta de ley constitutiva
+
+### Comando ejecutado
+
+```python
+strategy.Initialize()
+```
+
+### Entrada utilizada
+
+- ModelPart con malla (4 nodos, 1 elemento Tet4)
+- Material configurado con Young modulus y Poisson ratio
+- Elementos SmallDisplacementElement3D4N creados
+- Strategy creada con Scheme, LinearSolver y BuilderAndSolver
+
+### Salida obtenida
+
+```
+Error: The following errors occured in a parallel region!
+Thread #0 caught exception: Error: A constitutive law needs to be specified for the element with ID 1
+
+in applications/StructuralMechanicsApplication/custom_elements/solid_elements/base_solid_element.cpp:249: BaseSolidElement::InitializeMaterial
+   applications/StructuralMechanicsApplication/custom_elements/solid_elements/base_solid_element.cpp:251: BaseSolidElement::InitializeMaterial
+   applications/StructuralMechanicsApplication/custom_elements/solid_elements/base_solid_element.cpp:77: BaseSolidElement::Initialize
+
+in kratos/utilities/parallel_utilities.h:195: BlockPartition<class boost::iterators::indirect_iterator<class _Vector_iterator<class _Vector_val<struct _Simple_types<class intrusive_ptr<class Element> > > >,...>,128>::for_each
+   kratos/utilities/entities_utilities.h:272: EntitiesUtilities::InitializeEntities
+   kratos/solving_strategies/schemes/scheme.h:238: Scheme<class UblasSpace<double,class boost::numeric::ublas::compressed_matrix<...>,class boost::numeric::Vector >,class UblasSpace<double,class boost::numeric::ublas::matrix<double,...>,class boost::numeric::Vector > >::InitializeElements
+   kratos/solving_strategies/strategies/residualbased_linear_strategy.h:451: ResidualBasedLinearStrategy<class UblasSpace<double,class boost::numeric::ublas::compressed_matrix<...>,class boost::numeric::Vector >,...>::Initialize
+```
+
+### Traceback
+
+```
+Failed to setup solver and strategy: Error: The following errors occured in a parallel region!
+Thread #0 caught exception: Error: A constitutive law needs to be specified for the element with ID 1
+
+[... stack trace from Kratos C++ code ...]
+```
+
+### Resultado esperado
+
+Los elementos SmallDisplacementElement3D4N deberían inicializarse correctamente con la ley constitutiva especificada en las propiedades del material
+
+### Resultado observado
+
+Los elementos SmallDisplacementElement3D4N fallan durante la inicialización porque las propiedades del material no incluyen una ley constitutiva
+
+### Hechos comprobados
+
+1. LinearSolver se crea correctamente usando python_linear_solver_factory
+2. ResidualBasedLinearStrategy se crea e inicializa correctamente con el patrón oficial
+3. SmallDisplacementElement3D4N se crean correctamente en el ModelPart
+4. Las propiedades del material se configuran con Young modulus y Poisson ratio
+5. Las propiedades del material NO incluyen una ley constitutiva explícita
+6. Kratos requiere una ley constitutiva para inicializar elementos estructurales
+7. Este es un problema diferente a los bloqueos anteriores (API de solver y estrategia)
+8. Apareció después de resolver los bloqueos de LinearSolverFactory y ResidualBasedLinearStrategy
+
+### Hipótesis
+
+1. Las propiedades del material necesitan una ley constitutiva explícita (SmallStrainIsotropic3D o similar)
+2. El código actual solo configura propiedades numéricas (E, ν, ρ) pero no la ley constitutiva
+3. Kratos requiere que la ley constitutiva esté en las Properties antes de inicializar elementos
+4. Puede requerirse importar y configurar ConstitutiveLaw desde StructuralMechanicsApplication
+
+### Información desconocida
+
+1. La forma correcta de especificar una ley constitutiva en Kratos 10.4.3
+2. Qué ley constitutiva debe usarse para análisis lineal elástico isotrópico
+3. Cómo asignar la ley constitutiva a las Properties del material
+4. Si hay wrappers Python oficiales para configurar leyes constitutivas
+
+### Intentos realizados previamente
+
+1. Intento actual: Solo configurar propiedades numéricas (E, ν, ρ) - Insuficiente
+2. Auditoría 2026-08-27: Apareció después de resolver LinearSolverFactory y ResidualBasedLinearStrategy
+
+### Soluciones anteriores relacionadas
+
+Resolución de LinearSolverFactory usando python_linear_solver_factory fue exitosa
+Resolución de ResidualBasedLinearStrategy usando patrón oficial con BuilderAndSolver fue exitosa
+
+### Pregunta técnica para investigación
+
+¿Cuál es la forma oficialmente soportada de especificar una ley constitutiva (ConstitutiveLaw) en las Properties de Kratos Multiphysics 10.4.3 para elementos SmallDisplacementElement3D4N en análisis lineal elástico isotrópico?
+
+### Dependencias
+
+- Etapa H - Resultados: BLOQUEADA por este problema
+- Etapa I - Retorno al Core: BLOQUEADA por este problema
+- Integración final con solver_interface.py: BLOQUEADA por este problema
+- Validación completa del pipeline FEA: BLOQUEADA por este problema
+
+### Prioridad
+
+CRÍTICA
+
+Este bloqueo impide completar la integración de Kratos como motor FEA funcional. Aunque se resolvieron los problemas de LinearSolverFactory y ResidualBasedLinearStrategy, la configuración de la ley constitutiva sigue bloqueada.
+
+---
+
+## BLOQUEO KRATOS — VARIABLES DE NODOS (RESUELTO 2026-08-27)
+
+### Estado
+
+RESUELTO — SOLUCIÓN APLICADA Y VERIFICADA
+
+### Componente
+
+Kratos ModelPart variables en `core/kratos_adapter.py`
+
+### Funcionalidad
+
+Configuración de variables de nodos (DISPLACEMENT_X, FORCE_X, etc.) en ModelPart
+
+### Objetivo
+
+Configurar correctamente las variables de solución necesarias para que el solver pueda acceder a DISPLACEMENT_X, FORCE_X, etc.
+
+### Resultado actual
+
+Las variables se configuran correctamente siguiendo el orden oficial de Kratos
+
+### Solución aplicada
+
+**Causa raíz identificada por investigación técnica:**
+En Kratos, la lista de variables nodales históricas (`VariablesList`) es fija por nodo desde el momento en que ese nodo se crea. Las variables deben agregarse con `AddNodalSolutionStepVariable()` ANTES de crear/importar nodos, no después.
+
+**Solución implementada:**
+1. Crear función `add_nodal_variables()` que agrega variables antes de crear nodos
+2. Reordenar el flujo de inicialización:
+   - `add_nodal_variables()` → ANTES de crear nodos
+   - `import_mesh()` → crea nodos
+   - `add_displacement_dofs()` → DESPUÉS de tener nodos
+3. Modificar pruebas para seguir el orden correcto
+
+### Verificación
+
+- Fecha de resolución: 2026-08-27
+- Prueba de verificación: test_kratos_results.py ejecutado
+- Resultado: Análisis se ejecutó correctamente
+- Resultados extraídos exitosamente: 4 desplazamientos, compliance calculado
+- No aparecieron nuevos bloqueos
+
+### Dependencias
+
+- Este bloqueo ya no bloquea las etapas posteriores
+- La Etapa H (Resultados) ahora está completamente funcional
+
+### Componente
+
+Kratos ModelPart variables en `core/kratos_adapter.py`
+
+### Funcionalidad
+
+Configuración de variables de nodos (DISPLACEMENT_X, FORCE_X, etc.) en ModelPart
+
+### Objetivo
+
+Configurar correctamente las variables de solución necesarias para que el solver pueda acceder a DISPLACEMENT_X, FORCE_X, etc.
+
+### Resultado actual
+
+Kratos rechaza las variables agregadas con error de "variables list doesn't have this variable"
+
+### Entorno
+
+- Sistema operativo: Windows 10 (versión 10.0.19045)
+- Python: 3.11.9 (tags/v3.11.9:de54cf5, Apr 2 2024)
+- Kratos: 10.4.3 (Compiled for Windows and Python3.11 with MSVC-1929)
+- Compilación/instalación: pip install KratosMultiphysics
+- Arquitectura: AMD64
+- Otras versiones relevantes: KratosStructuralMechanicsApplication 10.4.3, KratosOptimizationApplication 10.4.3
+
+### Archivo
+
+`core/kratos_adapter.py`
+
+### Función / clase
+
+`KratosAdapter.setup_model_part_for_structural_analysis()`
+
+### Punto de ejecución
+
+Línea 83-92: Agregado de variables con `AddNodalSolutionStepVariable()`
+
+### Comando ejecutado
+
+```python
+model_part.AddNodalSolutionStepVariable(Kratos.DISPLACEMENT_X)
+model_part.AddNodalSolutionStepVariable(Kratos.DISPLACEMENT_Y)
+model_part.AddNodalSolutionStepVariable(Kratos.DISPLACEMENT_Z)
+model_part.AddNodalSolutionStepVariable(Kratos.FORCE_X)
+model_part.AddNodalSolutionStepVariable(Kratos.FORCE_Y)
+model_part.AddNodalSolutionStepVariable(Kratos.FORCE_Z)
+model_part.AddNodalSolutionStepVariable(Kratos.REACTION_X)
+model_part.AddNodalSolutionStepVariable(Kratos.REACTION_Y)
+model_part.AddNodalSolutionStepVariable(Kratos.REACTION_Z)
+```
+
+### Entrada utilizada
+
+- ModelPart vacío recién creado
+- Variables agregadas antes de crear nodos y elementos
+
+### Salida obtenida
+
+```
+Error: This container only can store the variables specified in its variables list. The variables list doesn't have this variable:DISPLACEMENT_X variable #513250944DISPLACEMENT_X variable #513250944 component 0 of DISPLACEMENT #513250944
+
+in kratos/containers/variables_list_data_value_container.h:293: VariablesListDataValueContainer::GetValue
+```
+
+### Traceback
+
+```
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! LUSkylineFactorization::factorize: Error zero sum
+Analysis failed: Error: The following errors occured in a parallel region!
+Thread #0 caught exception: Error: This container only can store the variables specified in its variables list. The variables list doesn't have this variable:DISPLACEMENT_X variable #513250944DISPLACEMENT_X variable #513250944 component 0 of DISPLACEMENT #513250944
+
+in kratos/containers/variables_list_data_value_container.h:293: VariablesListDataValueContainer::GetValue
+Thread #1 caught exception: Error: This container only can store the variables specified in its variables list. The variables list doesn't have this variable:DISPLACEMENT_X variable #513250944DISPLACEMENT_X variable #513250944 component 0 of DISPLACEMENT #513250944
+
+in kratos/utilities/parallel_utilities.h:195: BlockPartition<class boost::iterators::indirect_iterator<class _Vector_iterator<class _Vector_val<struct _Simple_types<class Dof *> > >,...>,128>::for_each
+   kratos/solving_strategies/schemes/residualbased_incrementalupdate_static_scheme.h:164: ResidualBasedIncrementalUpdateStaticScheme<class UblasSpace<double,class boost::numeric::ublas::compressed_matrix<...>,class boost::numeric::Vector >,class UblasSpace<double,class boost::numeric::ublas::matrix<double,...>,class boost::numeric::Vector > >::Update
+```
+
+### Resultado esperado
+
+Las variables agregadas con AddNodalSolutionStepVariable() deberían estar disponibles para el solver
+
+### Resultado observado
+
+El solver no puede acceder a las variables a pesar de que fueron agregadas al ModelPart
+
+### Hechos comprobados
+
+1. Las variables se agregan con AddNodalSolutionStepVariable() antes de crear nodos
+2. El solver intenta acceder a DISPLACEMENT_X durante la actualización del esquema
+3. Kratos indica que DISPLACEMENT_X no está en la lista de variables del contenedor
+4. Este es un problema diferente a los bloqueos anteriores (solver, estrategia, ley constitutiva)
+5. Apareció durante la implementación de Etapa H (Resultados)
+6. El error ocurre en ResidualBasedIncrementalUpdateStaticScheme.Update()
+
+### Hipótesis
+
+1. Las variables deben agregarse después de crear los nodos, no antes
+2. Kratos requiere un orden específico de inicialización de variables
+3. Puede requerirse usar un método diferente para agregar variables
+4. Puede haber un problema con cómo el Scheme accede a las variables
+5. Puede requerirse configuración adicional del ProcessInfo del ModelPart
+
+### Información desconocida
+
+1. El orden correcto de inicialización de variables en Kratos 10.4.3
+2. Cómo debe configurarse la lista de variables del ModelPart
+3. Si requiere configuración específica del ProcessInfo
+4. El patrón oficial de Kratos para configurar variables en Python
+
+### Intentos realizados previamente
+
+1. Intento actual: Agregar variables antes de crear nodos - Falló
+2. Intento con variables de componente individual (DISPLACEMENT_X vs DISPLACEMENT) - Falló
+3. Auditoría 2026-08-27: Apareció durante implementación de Etapa H
+
+### Soluciones anteriores relacionadas
+
+Resolución de los tres bloqueos anteriores fue exitosa usando investigación técnica focalizada
+
+### Pregunta técnica para investigación
+
+¿Cuál es la forma oficialmente soportada de configurar las variables de solución (DISPLACEMENT_X, FORCE_X, etc.) en un ModelPart de Kratos Multiphysics 10.4.3 usando la API de Python, específicamente el orden correcto de inicialización y el método apropiado?
+
+### Dependencias
+
+- Etapa H - Resultados: BLOQUEADA por este problema
+- Etapa I - Retorno al Core: BLOQUEADA por este problema
+- Integración final con solver_interface.py: BLOQUEADA por este problema
+- Validación completa del pipeline FEA: BLOQUEADA por este problema
+
+### Prioridad
+
+CRÍTICA
+
+Este bloqueo impide completar la Etapa H (Resultados) y por tanto la integración completa de Kratos. Aunque el solver, la estrategia y la ley constitutiva están funcionales, la configuración de variables impide que el análisis se ejecute correctamente.
+
+### Componente
+
+Kratos ResidualBasedLinearStrategy en `core/kratos_adapter.py`
+
+### Funcionalidad
+
+Configuración de estrategia de solución para análisis estructural de Kratos
+
+### Objetivo
+
+Crear y configurar ResidualBasedLinearStrategy con LinearSolver y Scheme para ejecutar análisis estructurales
+
+### Resultado actual
+
+ResidualBasedLinearStrategy.__init__() falla con error de incompatibilidad de argumentos del constructor
+
+### Entorno
+
+- Sistema operativo: Windows 10 (versión 10.0.19045)
+- Python: 3.11.9 (tags/v3.11.9:de54cf5, Apr 2 2024)
+- Kratos: 10.4.3 (Compiled for Windows and Python3.11 with MSVC-1929)
+- Compilación/instalación: pip install KratosMultiphysics
+- Arquitectura: AMD64
+- Otras versiones relevantes: KratosStructuralMechanicsApplication 10.4.3, KratosOptimizationApplication 10.4.3
+
+### Archivo
+
+`core/kratos_adapter.py`
+
+### Función / clase
+
+`KratosAdapter.setup_solver_and_strategy()`
+
+### Punto de ejecución
+
+Línea 674: `builder_and_solver = ResidualBasedLinearStrategy(model_part, linear_solver, False)`
+
+### Comando ejecutado
+
+```python
+from KratosMultiphysics import ResidualBasedLinearStrategy
+builder_and_solver = ResidualBasedLinearStrategy(
+    model_part,
+    linear_solver,
+    False  # compute_reactions
+)
+```
+
+### Entrada utilizada
+
+- ModelPart con malla, material, restricciones y cargas
+- LinearSolver SkylineLUFactorizationSolver (creado exitosamente)
+- Parámetro booleano False para compute_reactions
+
+### Salida obtenida
+
+```
+__init__(): incompatible constructor arguments. The following argument types are supported:
+    1. Kratos.ResidualBasedLinearStrategy(arg0: Kratos.ModelPart, arg1: Kratos::Parameters)
+    2. Kratos.ResidualBasedLinearStrategy(arg0: Kratos.ModelPart, arg1: Kratos.Scheme, arg2: Kratos.LinearSolver, arg3: bool, arg4: bool, arg5: bool, arg6: bool)
+    3. Kratos.ResidualBasedLinearStrategy(arg0: Kratos.ModelPart, arg1: Kratos.Scheme, arg2: Kratos.BuilderAndSolver, arg3: bool, arg4: bool, arg5: bool, arg6: bool)
+    4. Kratos.ResidualBasedLinearStrategy(arg0: Kratos.ModelPart, arg1: Kratos.Scheme, arg2: Kratos.LinearSolver, arg3: Kratos.BuilderAndSolver, arg4: bool, arg5: bool, arg6: bool, arg7: bool)
+
+Invoked with: <Kratos.ModelPart object at 0x000002BE77C81BB0>, <Kratos.SkylineLUFactorizationSolver object at 0x000002BE77C046B0>, False
+```
+
+### Traceback
+
+```
+Traceback (most recent call last):
+  File "test_kratos_direct.py", line 122, in <module>
+    print("  - Importación Kratos: FUNCIONAL")
+  [...]
+Failed to setup solver and strategy: __init__(): incompatible constructor arguments. The following argument types are supported:
+    1. Kratos.ResidualBasedLinearStrategy(arg0: Kratos.ModelPart, arg1: Kratos::Parameters)
+    2. Kratos.ResidualBasedLinearStrategy(arg0: Kratos.ModelPart, arg1: Kratos.Scheme, arg2: Kratos.LinearSolver, arg3: bool, arg4: bool, arg5: bool, arg6: bool)
+    3. Kratos.ResidualBasedLinearStrategy(arg0: Kratos.ModelPart, arg1: Kratos.Scheme, arg2: Kratos.BuilderAndSolver, arg3: bool, arg4: bool, arg5: bool, arg6: bool)
+    4. Kratos.ResidualBasedLinearStrategy(arg0: Kratos.ModelPart, arg1: Kratos.Scheme, arg2: Kratos.LinearSolver, arg3: Kratos.BuilderAndSolver, arg4: bool, arg5: bool, arg6: bool, arg7: bool)
+
+Invoked with: <Kratos.ModelPart object at 0x000002BE77C81BB0>, <Kratos.SkylineLUFactorizationSolver object at 0x000002BE77C046B0>, False
+```
+
+### Resultado esperado
+
+ResidualBasedLinearStrategy debería aceptar (ModelPart, LinearSolver, bool) según el código actual
+
+### Resultado observado
+
+ResidualBasedLinearStrategy requiere un Scheme como segundo argumento, no un LinearSolver directamente
+
+### Hechos comprobados
+
+1. LinearSolver ahora se crea correctamente usando python_linear_solver_factory
+2. ResidualBasedLinearStrategy requiere un Scheme como segundo argumento (opciones 2, 3, 4 del constructor)
+3. El código actual pasa LinearSolver directamente como segundo argumento
+4. Las firmas del constructor indican que requiere (ModelPart, Scheme, LinearSolver, ...) en lugar de (ModelPart, LinearSolver, ...)
+5. Este es un problema de API diferente al de LinearSolverFactory
+6. Apareció después de resolver el bloqueo de LinearSolverFactory
+
+### Hipótesis
+
+1. La API de ResidualBasedLinearStrategy requiere un Scheme explícito como segundo argumento
+2. Puede requerirse crear un ResidualBasedIncrementalUpdateStaticScheme antes de crear la estrategia
+3. Puede haber cambios en la API entre versiones de Kratos
+4. El código actual no sigue el patrón oficial de Kratos para crear estrategias
+
+### Información desconocida
+
+1. La forma correcta de crear ResidualBasedLinearStrategy en Kratos 10.4.3
+2. Qué Scheme debe usarse para análisis estático lineal
+3. El orden correcto de argumentos del constructor
+4. Si hay wrappers Python oficiales para crear estrategias
+
+### Intentos realizados previamente
+
+1. Intento actual: ResidualBasedLinearStrategy(model_part, linear_solver, False) - Firma incorrecta
+2. Auditoría 2026-08-27: Apareció después de resolver LinearSolverFactory
+
+### Soluciones anteriores relacionadas
+
+Resolución de LinearSolverFactory usando python_linear_solver_factory fue exitosa
+
+### Pregunta técnica para investigación
+
+¿Cuál es la forma oficialmente soportada de crear ResidualBasedLinearStrategy en Kratos Multiphysics 10.4.3 usando la API de Python, específicamente el orden correcto de argumentos y qué Scheme debe proporcionarse?
+
+### Dependencias
+
+- Etapa H - Resultados: BLOQUEADA por este problema
+- Etapa I - Retorno al Core: BLOQUEADA por este problema
+- Integración final con solver_interface.py: BLOQUEADA por este problema
+- Validación completa del pipeline FEA: BLOQUEADA por este problema
+
+### Prioridad
+
+CRÍTICA
+
+Este bloqueo impide completar la integración de Kratos como motor FEA funcional. Aunque se resolvió el problema de LinearSolverFactory, la configuración de la estrategia de solución sigue bloqueada.
+
+### Traceback Completo (Actualizado 2026-08-27)
+
+```
+Traceback (most recent call last):
+  File "C:\Users\Pets48_2\Music\Github\Onshape\Topologia_Optimizada\test_kratos_direct.py", line 122, in <module>
+    print("  - Importación Kratos: FUNCIONAL")
+  File "C:\Users\Pets48_2\AppData\Local\Programs\Python\Python311\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2705' in position 24: character maps to <undefined>
+
+Failed to setup solver and strategy: __init__(): incompatible constructor arguments. The following argument types are supported:
+    1. Kratos.ResidualBasedLinearStrategy(arg0: Kratos.ModelPart, arg1: Kratos::Parameters)
+    2. Kratos.ResidualBasedLinearStrategy(arg0: Kratos.ModelPart, arg1: Kratos.Scheme, arg2: Kratos.LinearSolver, arg3: bool, arg4: bool, arg5: bool, arg6: bool)
+    3. Kratos.ResidualBasedLinearStrategy(arg0: Kratos.ModelPart, arg1: Kratos.Scheme, arg2: Kratos.BuilderAndSolver, arg3: bool, arg4: bool, arg5: bool, arg6: bool)
+    4. Kratos.ResidualBasedLinearStrategy(arg0: Kratos.ModelPart, arg1: Kratos.Scheme, arg2: Kratos.LinearSolver, arg3: Kratos.BuilderAndSolver, arg4: bool, arg5: bool, arg6: bool, arg7: bool)
+
+Invoked with: <Kratos.ModelPart object at 0x00000276E8AF1BB0>, <Kratos.SkylineLUFactorizationSolver object at 0x00000276E8B0FD30>, False>
+```
+
+---
+
 ## ACTUALIZACIÓN DE RESULTADOS DE PRUEBAS FEA Y SIMP
 
 ### Pruebas Ejecutadas (2026-08-26)
@@ -1205,3 +1954,6 @@ El PoC puede ahora continuar con la validación completa del pipeline FEA + SIMP
 1. Configurar correctamente la ley constitutiva para FEA completo
 2. Integrar componentes de optimización con FEA real
 3. Validar convergencia y resultados cuantitativos
+
+
+//ejecutar nuevamente la etapa I porque hubo un error y quedo a medias 

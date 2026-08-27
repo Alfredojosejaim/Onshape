@@ -1,0 +1,37 @@
+{
+    "problem_data": {
+        "problem_name": "cantilever_beam",
+        "parallel_type": "OpenMP",
+        "echo_level": 1
+    },
+    "solver_settings": {
+        "solver_type": "static",
+        "analysis_type": "linear",
+        "echo_level": 1,
+        "model_part_name": "Structure",
+        "domain_size": 3,
+        "model_import_settings": {
+            "input_type": "mdpa",
+            "input_filename": "model/cantilever_beam"
+        },
+
+        "time_stepping": {
+            "time_step": 1.0
+        },
+        "max_iteration": 30,
+        "convergence_criterion": "displacement_criterion",
+        "displacement_relative_tolerance": 1e-6,
+        "displacement_absolute_tolerance": 1e-6,
+        "linear_solver_settings": {
+            "solver_type": "skyline_lu_factorization",
+            "scaling": false,
+            "tolerance": 1e-6
+        },
+        "compute_reactions": true,
+        "move_mesh_flag": true
+    },
+    "processes": {
+        "constraints_process_list": [],
+        "loads_process_list": []
+    }
+}

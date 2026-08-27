@@ -1,524 +1,875 @@
-# PRUEBA DECISIVA DE KRATOS MULTIPHYSICS
-## Validación FEA 3D + preparación real para SIMP
 
-### OBJETIVO
 
-Determinar experimentalmente si Kratos Multiphysics puede ser utilizado como núcleo FEA de nuestra aplicación standalone de optimización topológica.
+# INTEGRACIÓN DE KRATOS MULTIPHYSICS EN EL PROYECTO
 
-Esta es una prueba de DECISIÓN ARQUITECTÓNICA.
+## OBJETIVO
 
-El resultado debe permitir decidir:
+Kratos Multiphysics ya fue evaluado y se considera **VIABLE** como motor FEA del proyecto.
 
-    ¿ADOPTAMOS KRATOS COMO SOLVER FEA?
-    
-o:
+La etapa de evaluación queda oficialmente **CERRADA**.
 
-    ¿DESCARTAMOS KRATOS Y DESARROLLAMOS NUESTRO PROPIO SOLVER?
+A partir de este momento, Kratos deja de ser una tecnología experimental y pasa a formar parte de la arquitectura de producción de **Topología Optimizada**.
 
-NO modificar la arquitectura principal todavía.
+El objetivo de esta intervención es:
 
-NO desarrollar funcionalidades de la aplicación.
+> **INTEGRAR KRATOS REALMENTE EN EL PROYECTO Y PREPARARLO COMO MOTOR FEA DEL CORE.**
 
-NO implementar la interfaz gráfica.
+NO volver a investigar si Kratos es viable.
 
-NO integrar Onshape ni ningún otro CAD.
+NO repetir experimentos generales de viabilidad.
 
-Trabajar exclusivamente dentro de:
-
-    experimentos/kratos_topopt_poc/
+NO crear una nueva fase de investigación.
 
 ---
 
-# 1. REGLA FUNDAMENTAL
+# 0. INICIALIZACIÓN DEL REGISTRO DE LA NUEVA ETAPA
 
-No declarar que Kratos es viable simplemente porque:
+Antes de comenzar la implementación, preparar `resumen_implementacion.md` para que funcione como registro exclusivo de esta nueva etapa.
 
-- importa correctamente;
-- ejecuta un ejemplo;
-- genera una malla;
-- resuelve un problema FEA.
+## 0.1 Lectura previa obligatoria
 
-La decisión debe basarse en si Kratos permite construir nuestro flujo:
+Antes de modificarlo:
 
-    CAD/STEP
-       ↓
-    Gmsh
-       ↓
-    Tet4
-       ↓
-    Kratos FEA
-       ↓
-    desplazamientos
-       ↓
-    tensiones
-       ↓
-    compliance
-       ↓
-    sensibilidades
-       ↓
-    actualización de densidades
-       ↓
-    SIMP
+1. Leer completamente `resumen_implementacion.md`.
+2. Identificar la información histórica existente.
+3. Determinar qué información ya está documentada en otros archivos.
+4. Conservar cualquier información histórica que no exista en otro lugar y que sea necesaria para comprender decisiones técnicas anteriores.
 
-y si podemos acceder a los datos necesarios sin introducir una arquitectura excesivamente compleja o incompatible con nuestra aplicación standalone.
+## 0.2 Limpieza controlada
 
----
+Una vez comprendido el contenido:
 
-# 2. PRIMERA PRUEBA — GMSH → KRATOS
+- eliminar del resumen operativo la información histórica que ya esté documentada en otros archivos;
+- evitar duplicaciones;
+- no eliminar documentación técnica de las pruebas de Kratos;
+- no eliminar scripts experimentales útiles como referencia;
+- no eliminar evidencia utilizada para determinar que Kratos es viable.
 
-Utilizar Gmsh para generar una malla volumétrica Tet4.
+El objetivo NO es borrar la historia del proyecto.
 
-La geometría debe ser independiente de Onshape.
+El objetivo es separar:
 
-Utilizar una geometría sencilla y reproducible.
+```text
+DOCUMENTACIÓN HISTÓRICA
+        ↓
+REFERENCIA TÉCNICA
 
-Por ejemplo:
+de:
 
-    viga en voladizo rectangular.
+RESUMEN_IMPLEMENTACION.md
+        ↓
+REGISTRO OPERATIVO ACTUAL
 
-Verificar:
+0.3 Nuevo punto de partida
 
-- nodos;
-- conectividad;
-- elementos tetraédricos;
-- condiciones de frontera;
-- carga.
+resumen_implementacion.md debe quedar preparado como punto cero de:
 
-El flujo debe ser:
+> INTEGRACIÓN DE KRATOS EN PRODUCCIÓN
 
-    Gmsh
-      ↓
-    malla Tet4
-      ↓
-    Kratos
 
-No utilizar formatos intermedios innecesarios si pueden evitarse.
 
-Documentar exactamente cómo se realiza la conversión.
+Debe registrar inicialmente:
 
----
+fecha;
 
-# 3. SEGUNDA PRUEBA — FEA 3D REAL
+nombre de la etapa;
 
-Resolver en Kratos una viga en voladizo 3D.
+decisión previa: KRATOS VIABLE / ADOPTADO;
 
-Geometría:
+documentación de pruebas utilizada como referencia;
 
-    L = 100 mm
-    sección = 10 mm × 10 mm
+objetivo de la integración;
 
-Material:
+estado inicial del proyecto.
 
-    Aluminio
-    E = 68.9 GPa
-    ν = 0.33
 
-Carga:
+A partir de ese momento, registrar allí únicamente:
 
-    Fz = -100 N
+acciones realizadas;
 
-Condición de frontera:
+archivos modificados;
 
-    una cara completamente restringida.
+pruebas ejecutadas;
 
-Resolver mediante elementos Tet4.
+resultados;
 
-Obtener:
+errores actuales;
 
-- desplazamientos nodales;
-- desplazamiento máximo;
-- tensiones;
-- energía de deformación;
-- compliance.
+bloqueos actuales;
+
+investigaciones solicitadas;
+
+soluciones aplicadas;
+
+decisiones tomadas;
+
+estado real;
+
+pendientes actuales.
+
+
 
 ---
 
-# 4. VALIDACIÓN ANALÍTICA
+1. LECTURA OBLIGATORIA
 
-Comparar el desplazamiento máximo obtenido por Kratos contra la solución analítica correspondiente.
+Antes de modificar código:
 
-Calcular:
+1. Leer README.md.
 
-    error_relativo =
-    |δ_FEA - δ_analítica| / |δ_analítica|
 
-No modificar parámetros para forzar coincidencia.
+2. Leer prompt.md.
 
-Documentar:
 
-- valor analítico;
-- valor FEA;
-- error;
-- tamaño de malla;
-- número de nodos;
-- número de elementos.
+3. Leer metodologia.md.
 
----
 
-# 5. PRUEBA DE CONVERGENCIA
+4. Leer resumen_implementacion.md después de su preparación.
 
-Ejecutar al menos tres niveles de refinamiento:
 
-    malla gruesa
-    malla media
-    malla fina
+5. Revisar la estructura actual del repositorio.
 
-Para cada una registrar:
 
-- número de nodos;
-- número de Tet4;
-- desplazamiento máximo;
-- error relativo.
+6. Revisar la documentación existente de las pruebas de Kratos.
 
-Determinar si el resultado converge hacia la solución analítica.
 
-No declarar éxito únicamente porque una malla produce <5% de error.
+7. Revisar los scripts experimentales utilizados durante la validación.
 
-Debe observarse una tendencia razonable de convergencia.
+
+8. Revisar los resultados obtenidos.
+
+
+9. Identificar las soluciones que ya fueron encontradas.
+
+
+10. Identificar qué conocimiento de esos experimentos debe reutilizarse.
+
+
+
+NO asumir que un script experimental debe copiarse directamente al proyecto.
+
 
 ---
 
-# 6. ACCESO A LOS DATOS INTERNOS
+2. PRINCIPIO DE REUTILIZACIÓN
 
-Esta es una de las pruebas MÁS IMPORTANTES.
+Las pruebas anteriores de Kratos ya demostraron su viabilidad.
 
-Determinar si desde Python podemos obtener directamente:
+Utilizar esa documentación como referencia para la integración.
 
-    K
-    u
-    F
+Analizar específicamente:
 
-o, como mínimo, todos los datos necesarios para reconstruir las cantidades necesarias para SIMP.
+inicialización;
 
-Investigar experimentalmente el acceso a:
+módulos utilizados;
 
-- grados de libertad;
-- desplazamientos;
-- fuerzas;
-- matriz de rigidez;
-- contribuciones elementales;
-- energía de deformación;
-- tensiones;
-- variables de elemento.
+Model;
 
-NO asumir que una API existe simplemente porque aparece en documentación.
+ModelPart;
 
-Demostrarlo mediante código ejecutado.
+nodos;
 
----
+elementos;
 
-# 7. PRUEBA CRÍTICA — ENERGÍA POR ELEMENTO
+propiedades;
 
-Para SIMP necesitamos evaluar:
+materiales;
 
-    ce = ueᵀ Ke ue
+condiciones de frontera;
 
-para cada elemento.
+cargas;
 
-Determinar si Kratos permite obtener:
+DOFs;
 
-- ue;
-- Ke;
-- energía elemental;
-- o una cantidad equivalente suficiente para calcular la sensibilidad.
+solver;
 
-La prueba debe realizarse sobre una malla real.
+estrategias;
 
-Documentar exactamente:
+resultados;
 
-    ¿qué objeto de Kratos proporciona el dato?
+extracción de resultados;
 
-y:
+configuración;
 
-    ¿cómo se obtiene desde Python?
+versiones;
+
+problemas encontrados;
+
+soluciones encontradas.
+
+
+NO repetir investigaciones que ya fueron resueltas.
+
+NO crear nuevos experimentos simplemente para volver a demostrar que Kratos funciona.
+
 
 ---
 
-# 8. PRUEBA DE SENSIBILIDAD
+3. ARQUITECTURA OBJETIVO
 
-Determinar si podemos calcular la sensibilidad de compliance necesaria para SIMP:
+La integración debe respetar estrictamente la arquitectura standalone.
 
-    dc/dρe
+El flujo objetivo es:
 
-Utilizar la formulación correspondiente al método SIMP.
+STEP
+ ↓
+STEP ADAPTER
+ ↓
+CADModel
+ ↓
+MALLA
+ ↓
+KRATOS
+ ↓
+FEA
+ ↓
+RESULTADOS
+ ↓
+CORE
 
-No es suficiente con mencionar una función de Kratos.
+Kratos debe actuar como motor FEA interno.
 
-Debe existir una demostración ejecutable.
+La aplicación NO debe depender de:
 
-Comparar, cuando sea posible, la sensibilidad analítica con una aproximación por diferencias finitas:
+Onshape;
 
-    dc/dρ ≈ [c(ρ+Δρ)-c(ρ-Δρ)]/(2Δρ)
+SolidWorks;
 
-para uno o varios elementos.
+Fusion;
 
-Documentar el error.
+FreeCAD;
 
----
+AutoCAD;
 
-# 9. PRUEBA DE ACTUALIZACIÓN DE DENSIDADES
+APIs CAD externas;
 
-Implementar dentro del PoC un experimento mínimo donde:
+OAuth;
 
-    ρe
+plugins;
 
-pueda modificarse entre iteraciones.
+extensiones;
 
-No es necesario realizar todavía una optimización topológica completa.
+servicios CAD externos.
 
-El objetivo es demostrar que podemos:
 
-1. definir densidades;
-2. modificar la rigidez efectiva;
-3. resolver nuevamente;
-4. obtener compliance;
-5. obtener sensibilidad.
-
-Por ejemplo:
-
-    ρ = 1.0
-
-después:
-
-    ρ = 0.8
-
-y posteriormente:
-
-    ρ = 0.5
-
-Comprobar que el comportamiento estructural cambia coherentemente.
 
 ---
 
-# 10. PRUEBA DE BUCLE SIMP MÍNIMO
+4. ANALIZAR LA ARQUITECTURA EXISTENTE
 
-Si las pruebas anteriores funcionan, implementar un pequeño bucle:
+Antes de implementar, determinar:
 
-    inicializar ρ
-          ↓
-    aplicar penalización
-          ↓
-    resolver FEA
-          ↓
-    calcular compliance
-          ↓
-    calcular sensibilidad
-          ↓
-    actualizar ρ
-          ↓
-    repetir
+dónde debe integrarse Kratos;
 
-No buscar todavía un resultado industrial.
+qué componente será responsable del FEA;
 
-El objetivo es demostrar que Kratos puede participar REALMENTE en el ciclo SIMP.
+cómo recibe la malla;
 
----
+cómo recibe materiales;
 
-# 11. RESTRICCIÓN DE VOLUMEN
+cómo recibe cargas;
 
-Demostrar que el vector:
+cómo recibe condiciones de frontera;
 
-    ρ
+cómo devuelve resultados al Core.
 
-puede actualizarse respetando aproximadamente una fracción de volumen objetivo.
 
-Ejemplo:
+Si la arquitectura existente ya proporciona una interfaz adecuada, reutilizarla.
 
-    volumen_objetivo = 40%
+Si es necesario crear una interfaz/adaptador, hacerlo de forma simple y justificada.
 
-No es necesario implementar el algoritmo de optimización definitivo.
+NO crear abstracciones innecesarias para futuros motores FEA.
 
-Solo demostrar que el flujo de densidades es técnicamente compatible con una restricción de volumen.
 
 ---
 
-# 12. EVALUAR PERFORMANCE
+5. INTEGRACIÓN PROGRESIVA
+
+Implementar en este orden:
+
+ETAPA A — Inicialización
+
+Integrar correctamente Kratos dentro del entorno real del proyecto.
+
+Verificar que los módulos requeridos puedan importarse y utilizarse.
+
+
+---
+
+ETAPA B — Modelo
+
+Crear correctamente el Model / ModelPart necesario para el cálculo.
+
+
+---
+
+ETAPA C — Malla
+
+Transferir una malla válida desde la arquitectura del proyecto hacia Kratos.
+
+
+---
+
+ETAPA D — Material
+
+Configurar propiedades y material de acuerdo con la arquitectura del proyecto.
+
+
+---
+
+ETAPA E — Condiciones de frontera
+
+Transferir correctamente las restricciones.
+
+
+---
+
+ETAPA F — Cargas
+
+Transferir correctamente las cargas.
+
+
+---
+
+ETAPA G — Solver
+
+Configurar y ejecutar el solver correspondiente.
+
+
+---
+
+ETAPA H — Resultados
+
+Extraer resultados relevantes, como:
+
+desplazamientos;
+
+tensiones;
+
+energía;
+
+compliance;
+
+
+según corresponda a la implementación actual.
+
+
+---
+
+ETAPA I — Retorno al Core
+
+Los resultados deben poder ser utilizados por el Core sin depender directamente de detalles innecesarios de Kratos.
+
+
+---
+
+6. VALIDACIÓN
+
+Cada etapa debe probarse antes de continuar.
+
+Las pruebas deben demostrar funcionamiento real.
+
+NO utilizar como evidencia:
+
+mocks;
+
+resultados inventados;
+
+geometría ficticia para demostrar integración real;
+
+fallbacks que oculten errores;
+
+datos falsificados.
+
+
+La geometría sintética puede utilizarse únicamente para validar componentes aislados cuando sea técnicamente apropiado.
+
+Cuando se valide integración real, utilizar datos reales del pipeline correspondiente.
+
+
+---
+
+7. NO REHACER LA VALIDACIÓN DE VIABILIDAD
+
+La pregunta:
+
+> "¿Kratos funciona?"
+
+
+
+ya está respondida.
+
+La pregunta actual es:
+
+> "¿Cómo integramos correctamente Kratos en nuestra arquitectura?"
+
+
+
+Los experimentos existentes son evidencia y referencia.
+
+No deben convertirse nuevamente en una fase de investigación.
+
+
+---
+
+8. PROTOCOLO OBLIGATORIO ANTE ERRORES
+
+Aplicar estrictamente el protocolo establecido en metodologia.md.
+
+Corrección autónoma permitida
+
+Si aparece un error y la causa es completamente evidente, se permite:
+
+> UNA única corrección fundamentada.
+
+
+
+Después debe ejecutarse nuevamente la prueba.
+
+Si funciona
+
+Continuar.
+
+Si falla
+
+DETENERSE.
+
+Si la causa no es evidente
+
+DETENERSE inmediatamente.
+
+Está prohibido iniciar una cadena de intentos especulativos.
+
+NO hacer:
+
+ERROR
+ ↓
+nuevo script
+ ↓
+ERROR
+ ↓
+otro enfoque
+ ↓
+ERROR
+ ↓
+otra modificación
+
+
+---
+
+9. REGISTRO OBLIGATORIO DE BLOQUEOS
+
+Cuando exista un problema que no pueda resolverse mediante la corrección autónoma permitida, registrarlo inmediatamente en:
+
+resumen_implementacion.md
+
+NO crear un archivo independiente para cada problema.
+
+El registro debe contener:
+
+fecha;
+
+componente afectado;
+
+funcionalidad;
+
+entorno;
+
+versión de Kratos;
+
+versión de Python;
+
+comando ejecutado;
+
+archivo;
+
+función;
+
+traceback completo;
+
+salida relevante;
+
+modificación realizada;
+
+resultado;
+
+hechos comprobados;
+
+hipótesis;
+
+información desconocida;
+
+pregunta técnica concreta que debe investigarse.
+
+
+Clasificarlo como:
+
+> BLOQUEADO — REQUIERE INVESTIGACIÓN
+
+
+
+
+---
+
+10. REGLA DE NO DESPERDICIO
+
+Una vez registrado un bloqueo:
+
+NO continuar modificando código relacionado con ese problema mediante especulación.
+
+NO generar múltiples scripts alternativos.
+
+NO cambiar de enfoque arbitrariamente.
+
+NO intentar "forzar" una solución.
+
+El objetivo es conservar un tracker técnico preciso que pueda entregarse posteriormente para investigación externa.
+
+
+---
+
+11. INVESTIGACIÓN EXTERNA
+
+Cuando exista un bloqueo, formular una pregunta técnica concreta.
+
+La investigación deberá priorizar:
+
+1. documentación oficial de Kratos;
+
+
+2. documentación de la versión instalada;
+
+
+3. ejemplos oficiales;
+
+
+4. repositorio oficial;
+
+
+5. issues oficiales;
+
+
+6. fuentes técnicas confiables cuando sean necesarias.
+
+
+
+La investigación debe buscar:
+
+causa;
+
+comportamiento esperado;
+
+API correcta;
+
+restricciones;
+
+solución compatible con nuestra versión;
+
+ejemplo funcional cuando exista.
+
+
+La solución encontrada debe poder relacionarse directamente con el tracker registrado.
+
+
+---
+
+12. EJECUCIÓN DE LA SOLUCIÓN
+
+Una vez obtenida una solución fundamentada:
+
+1. Leer nuevamente el tracker.
+
+
+2. Comprender la solución.
+
+
+3. Aplicar únicamente los cambios necesarios.
+
+
+4. Ejecutar nuevamente la prueba original.
+
+
+5. Verificar el resultado.
+
+
+6. Ejecutar las pruebas relevantes de regresión.
+
+
+7. Actualizar el tracker.
+
+
+8. Cambiar el estado del bloqueo únicamente cuando exista evidencia.
+
+
+
+
+---
+
+13. NO OCULTAR ERRORES
+
+Está prohibido:
+
+ocultar errores;
+
+minimizar errores;
+
+eliminar tests que fallen;
+
+reemplazar errores por mocks;
+
+introducir fallbacks silenciosos;
+
+marcar como completado algo que no funciona;
+
+cambiar los criterios de aceptación;
+
+modificar la arquitectura únicamente para evitar un error.
+
+
+La precisión del estado es prioritaria.
+
+
+---
+
+14. CRITERIO DE COMPLETADO
+
+Una parte de la integración solo puede marcarse como:
+
+> COMPLETADO
+
+
+
+cuando:
+
+está implementada;
+
+funciona;
+
+fue probada;
+
+existe evidencia;
+
+es reproducible;
+
+respeta la arquitectura standalone;
+
+no depende de mocks;
+
+no contiene dependencias ocultas;
+
+no rompe funcionalidades previamente verificadas.
+
+
+Si no se cumplen estas condiciones:
+
+> PARCIAL / PENDIENTE / BLOQUEADO
+
+
+
+según corresponda.
+
+
+---
+
+15. NO REGRESIÓN
+
+Antes de finalizar:
+
+ejecutar las pruebas existentes relevantes;
+
+ejecutar las nuevas pruebas;
+
+verificar integración;
+
+comprobar que no se introdujeron dependencias incompatibles;
+
+comprobar que no se rompieron funcionalidades existentes.
+
+
+Si aparece una regresión:
+
+> NO declarar la etapa completada.
+
+
+
+
+---
+
+16. CONTROL DEL ALCANCE
+
+Durante esta intervención NO implementar:
+
+interfaz gráfica definitiva;
+
+Onshape;
+
+plugins CAD;
+
+extensiones;
+
+conectores CAD;
+
+otros CAD;
+
+otros motores FEA;
+
+diseño generativo;
+
+funcionalidades futuras no necesarias;
+
+nuevas bibliotecas no justificadas.
+
+
+El objetivo exclusivo es:
+
+> INTEGRAR KRATOS COMO MOTOR FEA REAL DEL PROYECTO.
+
+
+
+
+---
+
+17. DOCUMENTACIÓN
+
+Actualizar resumen_implementacion.md durante toda la intervención.
 
 Registrar:
 
-- número de elementos;
-- tiempo de mallado;
-- tiempo FEA;
-- tiempo de extracción de resultados;
-- tiempo de actualización de densidades;
-- tiempo total por iteración.
+objetivo;
 
-No optimizar prematuramente.
+auditoría inicial;
 
-El objetivo es detectar si la arquitectura es razonablemente viable.
+análisis de las pruebas existentes;
 
----
+decisiones;
 
-# 13. EVALUAR COMPLEJIDAD DE INTEGRACIÓN
+archivos modificados;
 
-Documentar honestamente:
+implementación;
 
-### Ventajas
+pruebas;
 
-Qué nos aporta Kratos.
+resultados;
 
-### Desventajas
+errores;
 
-Qué debemos adaptar.
+bloqueos;
 
-### Dependencias
+investigaciones;
 
-Qué necesita la aplicación.
+soluciones;
 
-### Acceso Python
+estado;
 
-Qué podemos controlar directamente.
+pendientes.
 
-### SIMP
 
-Qué partes podemos implementar nosotros y cuáles puede proporcionar Kratos.
+NO duplicar innecesariamente la documentación histórica de los experimentos.
 
-### Escalabilidad
-
-Qué ocurre al aumentar la cantidad de elementos.
-
-### Distribución
-
-Qué implicaría distribuir Kratos junto con nuestra aplicación standalone.
 
 ---
 
-# 14. CRITERIOS DE DECISIÓN
+18. AUDITORÍA FINAL
 
-Evaluar los siguientes puntos:
+Antes de finalizar la intervención:
 
-| Criterio | Resultado requerido |
-|---|---|
-| FEA 3D Tet4 | Debe funcionar |
-| Condiciones de frontera | Debe funcionar |
-| Cargas | Debe funcionar |
-| Desplazamientos | Accesibles |
-| Tensiones | Accesibles |
-| Compliance | Calculable |
-| Datos elementales | Accesibles |
-| Sensibilidades SIMP | Calculables |
-| Actualización de densidades | Posible |
-| Bucle iterativo | Posible |
-| Restricción de volumen | Posible |
-| Gmsh → Kratos | Reproducible |
-| Python | Control suficiente |
-| Rendimiento | Aceptable |
-| Integración standalone | Razonable |
+1. Comparar implementación con README.md.
 
----
 
-# 15. CLASIFICACIÓN FINAL
+2. Comparar implementación con prompt.md.
 
-El resultado debe clasificarse exclusivamente como:
 
-## A — ADOPTAR KRATOS
+3. Verificar cumplimiento de metodologia.md.
 
-Si cumple las necesidades FEA + SIMP y su integración es razonable.
 
-## B — ADOPTAR KRATOS CON LIMITACIONES
+4. Revisar código modificado.
 
-Si cumple las necesidades principales pero requiere una adaptación importante y conocida.
 
-## C — DESCARTAR KRATOS
+5. Ejecutar tests relevantes.
 
-Solo si existe una limitación técnica concreta que impida utilizarlo como núcleo FEA/SIMP de nuestra aplicación.
 
-NO clasificarlo como C por:
+6. Revisar resultados.
 
-- dificultad de aprendizaje;
-- documentación imperfecta;
-- necesidad de escribir código adicional;
-- preferencias personales;
-- que un ejemplo sea complejo.
 
-Debe existir una incompatibilidad técnica real.
+7. Revisar bloqueos.
+
+
+8. Actualizar resumen_implementacion.md.
+
+
+9. Clasificar cada componente.
+
+
+10. Identificar pendientes reales.
+
+
+
+Presentar:
+
+COMPLETADO
+PARCIAL
+PENDIENTE
+BLOQUEADO
+
 
 ---
 
-# 16. REGLA CONTRA FALSOS POSITIVOS
+19. RESULTADO ESPERADO
 
-Un ejemplo estándar de Kratos NO cuenta como demostración de compatibilidad SIMP.
+Al terminar, Kratos debe haber pasado de:
 
-Cada capacidad crítica debe probarse mediante código ejecutado.
+TECNOLOGÍA VALIDADA
 
-Distinguir claramente:
+a:
 
-    DOCUMENTADO
+TECNOLOGÍA INTEGRADA EN EL PROYECTO
 
-    INFERIDO
+No es necesario que todo el sistema FEA esté terminado en una sola intervención.
 
-    PROBADO
+Lo importante es construir progresivamente una integración real, verificable y limpia.
 
-    NO PROBADO
-
----
-
-# 17. DOCUMENTACIÓN
-
-Crear o actualizar dentro del PoC:
-
-    RESUMEN_DECISION_KRATOS.md
-
-Debe contener:
-
-1. objetivo;
-2. entorno;
-3. metodología;
-4. pruebas realizadas;
-5. resultados;
-6. errores;
-7. tiempos;
-8. limitaciones;
-9. acceso a datos;
-10. compatibilidad con SIMP;
-11. problemas encontrados;
-12. decisión final.
-
-Incluir referencias a los scripts y resultados utilizados como evidencia.
 
 ---
 
-# 18. AISLAMIENTO ABSOLUTO
+REGLA SUPREMA
 
-NO modificar:
+KRATOS YA FUE VALIDADO COMO VIABLE.
 
-- README.md
-- metodología.md
-- prompt.md
-- código productivo
-- arquitectura principal.
+NO volver a investigar su viabilidad.
 
-NO crear todavía:
+NO repetir experimentos innecesarios.
 
-- integración con Onshape;
-- plugin CAD;
-- interfaz gráfica;
-- backend definitivo;
-- API definitiva;
-- sistema de importación definitivo.
+A partir de ahora:
 
-Todo debe permanecer dentro del PoC.
+ANALIZAR PRUEBAS EXISTENTES
+        ↓
+INTEGRAR
+        ↓
+PROBAR
+        ↓
+¿ERROR?
+   ├── CAUSA EVIDENTE
+   │      ↓
+   │   UNA CORRECCIÓN
+   │      ↓
+   │   PROBAR
+   │      ↓
+   │   FALLA → BLOQUEAR
+   │
+   └── CAUSA NO EVIDENTE
+          ↓
+       BLOQUEAR
+          ↓
+       REGISTRAR
+          ↓
+       INVESTIGAR
+          ↓
+       SOLUCIÓN
+          ↓
+       IMPLEMENTAR
+          ↓
+       VERIFICAR
 
----
+La prioridad es funcionalidad real, trazabilidad y eficiencia.
 
-# 19. VEREDICTO FINAL
-
-Al terminar, escribir claramente:
-
-# VEREDICTO
-
-    A — ADOPTAR KRATOS
-
-o
-
-    B — ADOPTAR KRATOS CON LIMITACIONES
-
-o
-
-    C — DESCARTAR KRATOS
-
-Después explicar en términos técnicos EXACTAMENTE por qué.
-
-El objetivo de esta prueba no es demostrar que Kratos es bueno.
-
-El objetivo
+No se permite desperdiciar tiempo, tokens ni archivos mediante ciclos de ensayo y error especulativo.

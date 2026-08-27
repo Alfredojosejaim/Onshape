@@ -2,10 +2,13 @@
     "problem_data": {
         "problem_name": "cantilever_beam",
         "parallel_type": "OpenMP",
-        "echo_level": 1
+        "echo_level": 1,
+        "start_time": 0.0,
+        "end_time": 1.0
     },
     "solver_settings": {
-        "solver_type": "Static",
+        "solver_type": "static",
+        "analysis_type": "linear",
         "echo_level": 1,
         "model_part_name": "Structure",
         "domain_size": 3,
@@ -16,53 +19,25 @@
         "material_import_settings": {
             "materials_filename": "MaterialParameters.json"
         },
+        "time_stepping": {
+            "time_step": 1.0
+        },
         "max_iteration": 30,
-        "convergence_criterion": "Displacement_criterion",
+        "convergence_criterion": "displacement_criterion",
         "displacement_relative_tolerance": 1e-6,
         "displacement_absolute_tolerance": 1e-6,
-        "rotation_relative_tolerance": 1e-6,
-        "rotation_absolute_tolerance": 1e-6,
+        "residual_relative_tolerance": 1e-6,
+        "residual_absolute_tolerance": 1e-6,
         "linear_solver_settings": {
             "solver_type": "skyline_lu_factorization",
             "scaling": false,
             "tolerance": 1e-6
         },
-        "scheme": "Static",
         "compute_reactions": true,
         "move_mesh_flag": true
     },
     "processes": {
-        "constraints_process_list": [
-            {
-                "python_module": "assign_vector_variable_process",
-                "kratos_module": "KratosMultiphysics",
-                "process_name": "AssignVectorVariableProcess",
-                "Parameters": {
-                    "model_part_name": "Structure",
-                    "variable_name": "DISPLACEMENT",
-                    "constrained": true,
-                    "value": [0.0, 0.0, 0.0],
-                    "mesh_id": 0,
-                    "gravity": [0.0, 0.0, 0.0],
-                    "interval": [0.0, "End"]
-                }
-            }
-        ],
-        "loads_process_list": [
-            {
-                "python_module": "assign_vector_variable_process",
-                "kratos_module": "KratosMultiphysics",
-                "process_name": "AssignVectorVariableProcess",
-                "Parameters": {
-                    "model_part_name": "Structure",
-                    "variable_name": "FORCE",
-                    "constrained": false,
-                    "value": [0.0, 0.0, -100.0],
-                    "mesh_id": 0,
-                    "gravity": [0.0, 0.0, 0.0],
-                    "interval": [0.0, "End"]
-                }
-            }
-        ]
+        "constraints_process_list": [],
+        "loads_process_list": []
     }
 }

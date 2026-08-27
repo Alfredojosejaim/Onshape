@@ -1957,3 +1957,181 @@ Invoked with: <Kratos.ModelPart object at 0x00000276E8AF1BB0>, <Kratos.SkylineLU
 
 
 //ejecutar nuevamente la etapa I porque hubo un error y quedo a medias 
+
+Esto confirma la sospecha: en Kratos, la lista de variables nodales históricas (`VariablesList`) es **fija por nodo desde el momento en que ese nodo se crea**. La documentación oficial (wiki "How to Access DataBase") lo dice explícitamente:
+
+> el usuario debe proveer **antes de crear la lista de nodos** los comandos `AddNodalSolutionStepVariable(...)`.
+
+Y todos los ejemplos oficiales (tutorial de lectura de ModelPart, `pure_diffusion_solver.py`, el tutorial de Nodes/Nodal Data) siguen sin excepción este orden:
+
+```
+1. AddNodalSolutionStepVariable(...)   ← primero, sobre el ModelPart vacío
+2. Crear/leer los nodos (ModelPartIO, ReadModelPart, o creación manual)
+3. AddDof(...) sobre esos nodos
+4. SetBufferSize(...)
+```
+
+## Causa raíz de tu bloqueo-004
+
+Cada `Node` en Kratos reserva su bloque de memoria histórica (`VariablesListDataValueContainer`) apuntando a la `VariablesList` del `ModelPart` **en el instante en que el nodo es creado**. Si `DISPLACEMENT` se agrega con `AddNodalSolutionStepVariable(DISPLACEMENT)` **después** de que los 4 nodos del Tet4 ya existen (por ejemplo, si en tu `kratos_adapter.py` primero se llama a "Importando malla" — paso 4 en tu log, que crea los nodos — y solo después, en `setup_solver_and_strategy()`, se agregan las variables), esos nodos quedan con una lista de variables "congelada" que no incluye `DISPLACEMENT`. De ahí el error exacto:
+
+```
+This container only can store the variables specified in its variables list.
+The variables list doesn't have this variable: DISPLACEMENT_X
+```
+
+Mirando tu log de pasos anteriores:
+
+```
+3. Creando ModelPart...        [PASS]
+4. Importando malla simple...  [PASS]   ← nodos creados aquí
+5. Configurando material...    [PASS]
+...
+8. Configurando solver...      (aquí es donde se agregan variables/DOFs, demasiado tarde)
+```
+
+Este es exactamente el patrón que rompe la regla de Kratos: las variables se están añadiendo **después** de haber importado la malla.
+
+## Solución
+
+Mover `AddNodalSolutionStepVariable()` al inicio del flujo, **antes** de `ImportModelPart` / de crear cualquier nodo — igual que hace el propio Kratos en sus solvers oficiales (`AddVariables()` siempre se llama antes de `ImportModelPart()`):
+
+```python
+# 1. PRIMERO: registrar variables sobre el ModelPart vacío (sin nodos aún)
+model_part.AddNodalSolutionStepVariable(Kratos.DISPLACEMENT)
+model_part.AddNodalSolutionStepVariable(Kratos.REACTION)
+model_part.AddNodalSolutionStepVariable(Kratos.VOLUME_ACCELERATION)  # si usas gravedad/body force
+# ...cualquier otra variable que tus elementos/condiciones necesiten
+
+# 2. DESPUÉS: crear/importar la malla (nodos, elementos)
+#    -> aquí es donde tu adaptador actualmente hace "Importando malla simple"
+
+# 3. DESPUÉS de tener nodos: registrar los DOFs
+for node in model_part.Nodes:
+    node.AddDof(Kratos.DISPLACEMENT_X, Kratos.REACTION_X)
+    node.AddDof(Kratos.DISPLACEMENT_Y, Kratos.REACTION_Y)
+    node.AddDof(Kratos.DISPLACEMENT_Z, Kratos.REACTION_Z)
+
+# 4. Fijar buffer size (mínimo 2 para esquemas incrementales estáticos)
+model_part.SetBufferSize(2)
+```
+
+## Refactor recomendado en `kratos_adapter.py`
+
+Dado que este es el mismo patrón de "orden de inicialización" que ya rompió el bloqueo-003 (material antes de `Initialize()`), te conviene reordenar `KratosAdapter` siguiendo exactamente el esqueleto que usa Kratos internamente en todos sus solvers (`AddVariables()` → `ImportModelPart()` → `AddDofs()` → resto):
+
+```python
+class KratosAdapter:
+    def add_variables(self):
+        """Debe llamarse ANTES de crear/importar la malla."""
+        self.model_part.AddNodalSolutionStepVariable(Kratos.DISPLACEMENT)
+        self.model_part.AddNodalSolutionStepVariable(Kratos.REACTION)
+
+    def import_mesh(self):
+        """Aquí SÍ se crean los nodos — solo después de add_variables()."""
+        ...
+
+    def add_dofs(self):
+        """Debe llamarse DESPUÉS de tener nodos creados."""
+        for node in self.model_part.Nodes:
+            node.AddDof(Kratos.DISPLACEMENT_X, Kratos.REACTION_X)
+            node.AddDof(Kratos.DISPLACEMENT_Y, Kratos.REACTION_Y)
+            node.AddDof(Kratos.DISPLACEMENT_Z, Kratos.REACTION_Z)
+```
+
+Y en tu flujo principal de test (`test_kratos_direct.py`), el orden de pasos debería quedar así:
+
+```
+1. Crear ModelPart
+2. add_variables()          ← NUEVO, debe insertarse aquí
+3. import_mesh()            ← lo que hoy es el paso 4
+4. add_dofs()                ← NUEVO, después de tener nodos
+5. Configurar material (constitutive law, paso 5 actual)
+6. Restricciones / cargas
+7. setup_solver_and_strategy()
+```
+
+Esto confirma la sospecha: en Kratos, la lista de variables nodales históricas (VariablesList) es fija por nodo desde el momento en que ese nodo se crea. La documentación oficial (wiki "How to Access DataBase") lo dice explícitamente:
+
+el usuario debe proveer antes de crear la lista de nodos los comandos AddNodalSolutionStepVariable(...).
+
+Y todos los ejemplos oficiales (tutorial de lectura de ModelPart, pure_diffusion_solver.py, el tutorial de Nodes/Nodal Data) siguen sin excepción este orden:
+
+1. AddNodalSolutionStepVariable(...)   ← primero, sobre el ModelPart vacío
+2. Crear/leer los nodos (ModelPartIO, ReadModelPart, o creación manual)
+3. AddDof(...) sobre esos nodos
+4. SetBufferSize(...)
+Causa raíz de tu bloqueo-004
+
+Cada Node en Kratos reserva su bloque de memoria histórica (VariablesListDataValueContainer) apuntando a la VariablesList del ModelPart en el instante en que el nodo es creado. Si DISPLACEMENT se agrega con AddNodalSolutionStepVariable(DISPLACEMENT) después de que los 4 nodos del Tet4 ya existen (por ejemplo, si en tu kratos_adapter.py primero se llama a "Importando malla" — paso 4 en tu log, que crea los nodos — y solo después, en setup_solver_and_strategy(), se agregan las variables), esos nodos quedan con una lista de variables "congelada" que no incluye DISPLACEMENT. De ahí el error exacto:
+
+This container only can store the variables specified in its variables list.
+The variables list doesn't have this variable: DISPLACEMENT_X
+
+Mirando tu log de pasos anteriores:
+
+3. Creando ModelPart...        [PASS]
+4. Importando malla simple...  [PASS]   ← nodos creados aquí
+5. Configurando material...    [PASS]
+...
+8. Configurando solver...      (aquí es donde se agregan variables/DOFs, demasiado tarde)
+
+Este es exactamente el patrón que rompe la regla de Kratos: las variables se están añadiendo después de haber importado la malla.
+
+Solución
+
+Mover AddNodalSolutionStepVariable() al inicio del flujo, antes de ImportModelPart / de crear cualquier nodo — igual que hace el propio Kratos en sus solvers oficiales (AddVariables() siempre se llama antes de ImportModelPart()):
+
+python
+# 1. PRIMERO: registrar variables sobre el ModelPart vacío (sin nodos aún)
+model_part.AddNodalSolutionStepVariable(Kratos.DISPLACEMENT)
+model_part.AddNodalSolutionStepVariable(Kratos.REACTION)
+model_part.AddNodalSolutionStepVariable(Kratos.VOLUME_ACCELERATION)  # si usas gravedad/body force
+# ...cualquier otra variable que tus elementos/condiciones necesiten
+
+# 2. DESPUÉS: crear/importar la malla (nodos, elementos)
+#    -> aquí es donde tu adaptador actualmente hace "Importando malla simple"
+
+# 3. DESPUÉS de tener nodos: registrar los DOFs
+for node in model_part.Nodes:
+    node.AddDof(Kratos.DISPLACEMENT_X, Kratos.REACTION_X)
+    node.AddDof(Kratos.DISPLACEMENT_Y, Kratos.REACTION_Y)
+    node.AddDof(Kratos.DISPLACEMENT_Z, Kratos.REACTION_Z)
+
+# 4. Fijar buffer size (mínimo 2 para esquemas incrementales estáticos)
+model_part.SetBufferSize(2)
+Refactor recomendado en kratos_adapter.py
+
+Dado que este es el mismo patrón de "orden de inicialización" que ya rompió el bloqueo-003 (material antes de Initialize()), te conviene reordenar KratosAdapter siguiendo exactamente el esqueleto que usa Kratos internamente en todos sus solvers (AddVariables() → ImportModelPart() → AddDofs() → resto):
+
+python
+class KratosAdapter:
+    def add_variables(self):
+        """Debe llamarse ANTES de crear/importar la malla."""
+        self.model_part.AddNodalSolutionStepVariable(Kratos.DISPLACEMENT)
+        self.model_part.AddNodalSolutionStepVariable(Kratos.REACTION)
+
+    def import_mesh(self):
+        """Aquí SÍ se crean los nodos — solo después de add_variables()."""
+        ...
+
+    def add_dofs(self):
+        """Debe llamarse DESPUÉS de tener nodos creados."""
+        for node in self.model_part.Nodes:
+            node.AddDof(Kratos.DISPLACEMENT_X, Kratos.REACTION_X)
+            node.AddDof(Kratos.DISPLACEMENT_Y, Kratos.REACTION_Y)
+            node.AddDof(Kratos.DISPLACEMENT_Z, Kratos.REACTION_Z)
+
+Y en tu flujo principal de test (test_kratos_direct.py), el orden de pasos debería quedar así:
+
+1. Crear ModelPart
+2. add_variables()          ← NUEVO, debe insertarse aquí
+3. import_mesh()            ← lo que hoy es el paso 4
+4. add_dofs()                ← NUEVO, después de tener nodos
+5. Configurar material (constitutive law, paso 5 actual)
+6. Restricciones / cargas
+7. setup_solver_and_strategy()
+
+
+//
+Un detalle importante que probablemente te salga como bloqueo-005 si no lo cubres ahora: el error de LUSkylineFactorization::factorize: Error zero sum que aparece justo antes en tu traceback normalmente es consecuencia de este mismo problema (el sistema queda mal condicionado porque los DOFs no se registraron correctamente), no un bloqueo independiente — así que es probable que se resuelva solo en cuanto arregles el orden de AddNodalSolutionStepVariable/AddDof. Si persiste después de corregir esto, ahí sí sería indicio de que faltan restricciones (nodos sin fijar → matriz singular) y sería un bloqueo genuinamente distinto.

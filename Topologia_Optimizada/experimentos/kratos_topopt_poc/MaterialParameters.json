@@ -3,13 +3,13 @@
         {
             "properties_id": 1,
             "Material": {
-                "Variables": {
-                    "YOUNG_MODULUS": 68.9e9,
-                    "POISSON_RATIO": 0.33,
-                    "DENSITY": 2700.0
-                },
-                "ConstitutiveLaw": {
+                "constitutive_law": {
                     "name": "LinearElastic3DLaw"
+                },
+                "Variables": {
+                    "DENSITY": 2700.0,
+                    "YOUNG_MODULUS": 68.9e9,
+                    "POISSON_RATIO": 0.33
                 }
             }
         }

@@ -68,10 +68,37 @@ class KratosAdapter:
             logger.error(f"Failed to create ModelPart {name}: {e}")
             raise
     
+    def add_nodal_variables(self, model_part: Any) -> None:
+        """Add nodal solution step variables to ModelPart BEFORE creating nodes.
+        
+        This must be called BEFORE any nodes are created/imported.
+        
+        Args:
+            model_part: Kratos ModelPart (should be empty, no nodes yet)
+        """
+        try:
+            # Add nodal variables BEFORE creating nodes (Kratos requirement)
+            model_part.AddNodalSolutionStepVariable(Kratos.DISPLACEMENT_X)
+            model_part.AddNodalSolutionStepVariable(Kratos.DISPLACEMENT_Y)
+            model_part.AddNodalSolutionStepVariable(Kratos.DISPLACEMENT_Z)
+            model_part.AddNodalSolutionStepVariable(Kratos.REACTION_X)
+            model_part.AddNodalSolutionStepVariable(Kratos.REACTION_Y)
+            model_part.AddNodalSolutionStepVariable(Kratos.REACTION_Z)
+            model_part.AddNodalSolutionStepVariable(Kratos.FORCE_X)
+            model_part.AddNodalSolutionStepVariable(Kratos.FORCE_Y)
+            model_part.AddNodalSolutionStepVariable(Kratos.FORCE_Z)
+            
+            logger.info("Nodal variables added to ModelPart (before node creation)")
+            
+        except Exception as e:
+            logger.error(f"Failed to add nodal variables: {e}")
+            raise
+    
     def setup_model_part_for_structural_analysis(self, model_part: Any) -> None:
         """Configure ModelPart for structural mechanics analysis.
         
-        This sets up the necessary variables and buffer sizes for structural analysis.
+        This sets up the necessary buffer sizes for structural analysis.
+        Note: Variables must be added BEFORE creating nodes (use add_nodal_variables()).
         
         Args:
             model_part: Kratos ModelPart to configure
@@ -80,7 +107,6 @@ class KratosAdapter:
             # Set up buffer size for variables
             model_part.SetBufferSize(2)  # Current and previous step
             
-            # Add displacement DOFs to all nodes (will be added when nodes are created)
             logger.info("ModelPart configured for structural analysis")
             
         except Exception as e:
@@ -341,6 +367,11 @@ class KratosAdapter:
             material_properties.SetValue(Kratos.POISSON_RATIO, float(material.poisson_ratio))
             material_properties.SetValue(Kratos.DENSITY, float(material.density))
             
+            # Add constitutive law (required for structural elements)
+            from KratosMultiphysics import StructuralMechanicsApplication as SMA
+            constitutive_law = SMA.LinearElastic3DLaw()
+            material_properties.SetValue(Kratos.CONSTITUTIVE_LAW, constitutive_law)
+            
             # Add yield strength as a custom property (not standard in Kratos but useful)
             try:
                 material_properties.SetValue(Kratos.YIELD_STRESS, float(material.yield_strength))
@@ -378,6 +409,11 @@ class KratosAdapter:
             material_properties.SetValue(Kratos.YOUNG_MODULUS, float(young_modulus))
             material_properties.SetValue(Kratos.POISSON_RATIO, float(poisson_ratio))
             material_properties.SetValue(Kratos.DENSITY, float(density))
+            
+            # Add constitutive law (required for structural elements)
+            from KratosMultiphysics import StructuralMechanicsApplication as SMA
+            constitutive_law = SMA.LinearElastic3DLaw()
+            material_properties.SetValue(Kratos.CONSTITUTIVE_LAW, constitutive_law)
             
             # Update all elements to use the new material properties
             for element in model_part.Elements:
@@ -654,8 +690,8 @@ class KratosAdapter:
             logger.info("Setting up solver and solution strategy")
             
             # Import Kratos solvers and parameters
-            from KratosMultiphysics import LinearSolverFactory
             import KratosMultiphysics as Kratos
+            import KratosMultiphysics.python_linear_solver_factory as python_linear_solver_factory
             
             # Create solver parameters using the correct format from PoC
             solver_settings = Kratos.Parameters("""
@@ -666,27 +702,39 @@ class KratosAdapter:
             }
             """)
             
-            # Create linear solver using parameters
-            linear_solver = LinearSolverFactory.Create(solver_settings)
+            # Create linear solver using the official Python wrapper
+            linear_solver = python_linear_solver_factory.ConstructSolver(solver_settings)
             
-            # Create builder and solver
-            from KratosMultiphysics import ResidualBasedLinearStrategy
-            builder_and_solver = ResidualBasedLinearStrategy(
-                model_part,
-                linear_solver,
-                False  # compute_reactions
-            )
-            
-            # Set up scheme
+            # Set up time scheme (for linear static analysis)
             from KratosMultiphysics import ResidualBasedIncrementalUpdateStaticScheme
-            scheme = ResidualBasedIncrementalUpdateStaticScheme()
+            time_scheme = ResidualBasedIncrementalUpdateStaticScheme()
+            
+            # Create builder and solver explicitly (official Kratos pattern)
+            from KratosMultiphysics import ResidualBasedBlockBuilderAndSolver
+            builder_and_solver = ResidualBasedBlockBuilderAndSolver(linear_solver)
+            
+            # Create strategy with correct argument order (signature #4)
+            from KratosMultiphysics import ResidualBasedLinearStrategy
+            strategy = ResidualBasedLinearStrategy(
+                model_part,
+                time_scheme,
+                linear_solver,
+                builder_and_solver,
+                False,  # compute_reactions
+                False,  # reform_dofs_at_each_step
+                True,   # calculate_norm_dx
+                False   # move_mesh_flag
+            )
+            strategy.SetEchoLevel(0)
+            strategy.Initialize()
             
             logger.info("Solver and strategy setup completed")
             
             return {
                 "linear_solver": linear_solver,
                 "builder_and_solver": builder_and_solver,
-                "scheme": scheme,
+                "scheme": time_scheme,
+                "strategy": strategy,
                 "status": "configured"
             }
             
@@ -715,10 +763,15 @@ class KratosAdapter:
                     if node_id <= model_part.NumberOfNodes():
                         node = model_part.Nodes[node_id]
                         # Apply force as a load on the node
-                        # This is a simplified approach - in full implementation would use proper conditions
-                        node.SetSolutionStepValue(Kratos.FORCE_X, 0, force_vector[0])
-                        node.SetSolutionStepValue(Kratos.FORCE_Y, 0, force_vector[1])
-                        node.SetSolutionStepValue(Kratos.FORCE_Z, 0, force_vector[2])
+                        # Note: This is a simplified approach for testing
+                        # In production, use proper Kratos conditions
+                        try:
+                            # Try to set force values directly
+                            node.SetSolutionStepValue(Kratos.FORCE_X, 0, force_vector[0])
+                            node.SetSolutionStepValue(Kratos.FORCE_Y, 0, force_vector[1])
+                            node.SetSolutionStepValue(Kratos.FORCE_Z, 0, force_vector[2])
+                        except Exception as e:
+                            logger.warning(f"Could not set force on node {node_id}: {e}")
                 
                 logger.info("External loads applied successfully")
             else:
@@ -755,22 +808,21 @@ class KratosAdapter:
                     "message": "Solver setup failed"
                 }
             
-            builder_and_solver = solver_setup["builder_and_solver"]
-            scheme = solver_setup["scheme"]
+            strategy = solver_setup["strategy"]
             
-            # Initialize
-            builder_and_solver.SetScheme(scheme)
-            builder_and_solver.Initialize()
-            
-            # Solve
-            builder_and_solver.Solve()
+            # Solve (strategy already initialized in setup_solver_and_strategy)
+            strategy.Solve()
             
             logger.info("Analysis completed successfully")
+            
+            # Extract results from the solved ModelPart
+            results = self.extract_analysis_results(model_part)
             
             return {
                 "success": True,
                 "status": "completed",
                 "message": "Analysis completed successfully",
+                "results": results,
                 "solver_info": {
                     "nodes": model_part.NumberOfNodes(),
                     "elements": model_part.NumberOfElements(),
@@ -789,6 +841,75 @@ class KratosAdapter:
                 "error": str(e),
                 "message": "Analysis execution failed"
             }
+    
+    def extract_analysis_results(self, model_part: Any) -> Dict[str, Any]:
+        """Extract analysis results from a solved ModelPart.
+        
+        Args:
+            model_part: Kratos ModelPart with solved analysis
+            
+        Returns:
+            Dictionary with displacements, stresses, and compliance
+        """
+        try:
+            logger.info("Extracting analysis results")
+            
+            # Extract displacements
+            displacements = []
+            for node in model_part.Nodes:
+                if node.HasDofFor(Kratos.DISPLACEMENT_X):
+                    disp_x = node.GetSolutionStepValue(Kratos.DISPLACEMENT_X)
+                    disp_y = node.GetSolutionStepValue(Kratos.DISPLACEMENT_Y)
+                    disp_z = node.GetSolutionStepValue(Kratos.DISPLACEMENT_Z)
+                    displacements.append([disp_x, disp_y, disp_z])
+            
+            # Calculate compliance (external work = F^T * u)
+            compliance = 0.0
+            model_part_name = str(model_part.Name)
+            
+            if model_part_name in self.external_loads:
+                for node_id, force_vector in self.external_loads[model_part_name].items():
+                    if node_id <= model_part.NumberOfNodes():
+                        node = model_part.Nodes[node_id]
+                        if node.HasDofFor(Kratos.DISPLACEMENT_X):
+                            disp_x = node.GetSolutionStepValue(Kratos.DISPLACEMENT_X)
+                            disp_y = node.GetSolutionStepValue(Kratos.DISPLACEMENT_Y)
+                            disp_z = node.GetSolutionStepValue(Kratos.DISPLACEMENT_Z)
+                            # Compliance contribution: F · u
+                            compliance += (force_vector[0] * disp_x + 
+                                         force_vector[1] * disp_y + 
+                                         force_vector[2] * disp_z)
+            
+            # Extract stresses (if available from elements)
+            # Note: Stress calculation requires post-processing in Kratos
+            # For now, we'll return element strain energy if available
+            element_energies = []
+            try:
+                for element in model_part.Elements:
+                    # Try to get strain energy from element
+                    if element.Has(Kratos.STRAIN_ENERGY):
+                        energy = element.GetValue(Kratos.STRAIN_ENERGY)
+                        element_energies.append(energy)
+            except Exception as e:
+                logger.warning(f"Could not extract element energies: {e}")
+                element_energies = []
+            
+            results = {
+                "displacements": displacements,
+                "num_nodes_with_displacement": len(displacements),
+                "compliance": compliance,
+                "element_energies": element_energies,
+                "num_elements_with_energy": len(element_energies),
+                "max_displacement": max([max([abs(coord) for coord in d]) for d in displacements]) if displacements else 0.0
+            }
+            
+            logger.info(f"Results extracted: {len(displacements)} displacements, compliance={compliance:.6e}")
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Failed to extract analysis results: {e}")
+            raise
     
     def get_kratos_version(self) -> str:
         """Get Kratos version information.

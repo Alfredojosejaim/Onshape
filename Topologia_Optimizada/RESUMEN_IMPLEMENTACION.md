@@ -1,14 +1,828 @@
-# VALIDACIÓN DEFINITIVA — KRATOS COMO MOTOR FEA + TOPOLOGICAL OPTIMIZATION
+# INTEGRACIÓN DE KRATOS MULTIPHYSICS EN PRODUCCIÓN
 
 ## Información General
 
-**Fecha:** 2026-08-26  
-**Objetivo:** Validación definitiva para determinar si Kratos Multiphysics puede utilizarse como motor FEA + optimización topológica SIMP  
-**Ubicación:** `experimentos/kratos_topopt_poc/`
+**Fecha:** 2026-08-27  
+**Objetivo:** Integrar Kratos Multiphysics como motor FEA del proyecto Topología Optimizada  
+**Ubicación:** `experimentos/kratos_topopt_poc/` → `core/` (integración)
 
-## Resumen Ejecutivo
+## Decisión Previa
 
-**ACTUALIZACIÓN 2026-08-26:** El diagnóstico definitivo del entorno Windows ha determinado que **Kratos Multiphysics 10.4.3** carga correctamente en este entorno. El problema de DLL ha sido **RESUELTO**. KratosMultiphysics, StructuralMechanicsApplication y OptimizationApplication se importan exitosamente.
+**KRATOS VIABLE / ADOPTADO**
+
+Basado en la etapa de validación finalizada el 2026-08-26, Kratos Multiphysics fue determinado como **VIABLE** para ser utilizado como motor FEA del proyecto. La etapa de evaluación quedó oficialmente **CERRADA**.
+
+## Documentación de Pruebas de Referencia
+
+La siguiente documentación de pruebas se mantiene como referencia técnica para la integración:
+
+- `experimentos/kratos_topopt_poc/README.md` - Resumen técnico del PoC
+- `experimentos/kratos_topopt_poc/RESUMEN_DECISION_KRATOS.md` - Decisión de viabilidad
+- `experimentos/kratos_topopt_poc/VERIFICACION_IMPORTACION_KRATOS.md` - Verificación de importación
+- `experimentos/kratos_topopt_poc/KRATOS_FIX_DOCUMENTATION.md` - Documentación de correcciones
+- `experimentos/kratos_topopt_poc/OPTIMIZATION_PARAMETERS_DOCUMENTATION.md` - Parámetros de optimización
+
+## Objetivo de la Integración
+
+> **INTEGRAR KRATOS REALMENTE EN EL PROYECTO Y PREPARARLO COMO MOTOR FEA DEL CORE.**
+
+Flujo objetivo:
+```
+STEP → STEP ADAPTER → CADModel → MALLA → KRATOS → FEA → RESULTADOS → CORE
+```
+
+## Estado Inicial del Proyecto
+
+- **Arquitectura actual:** Standalone, sin dependencias de CAD externos
+- **Motor FEA actual:** Interfaz sin implementación (`core/solver_interface.py`)
+- **Mallado actual:** Implementación provisional (`core/meshing.py`)
+- **Kratos:** Validado como viable, pero aún no integrado en el core
+
+## Registro Operativo de Integración
+
+---
+
+## ANÁLISIS DE PRUEBAS EXISTENTES DE KRATOS PARA REUTILIZACIÓN
+
+### Scripts Experimentales Analizados
+
+**1. Importación de Kratos (`test_kratos_import.py`)**
+- ✅ Importación básica funcional: `import KratosMultiphysics as Kratos`
+- ✅ KratosMultiphysics 10.4.3 se carga correctamente
+- ✅ No se requieren configuraciones especiales para importación básica
+
+**2. Generación de Malla (`generate_mesh.py`)**
+- ✅ Gmsh genera mallas Tet4 de alta calidad
+- ✅ Malla de prueba: 1736 nodos, 6451 elementos Tet4
+- ✅ Exporta a múltiples formatos: UNV, MSH, VTK
+- ✅ Define grupos físicos para condiciones de contorno (FixedFace, LoadedFace)
+- ✅ Geometría: viga en voladizo 100mm × 10mm × 10mm
+
+**3. Importación de Malla a Kratos (`import_mesh.py`)**
+- ✅ Crea Model y ModelPart correctamente
+- ✅ Importa nodos desde Gmsh manualmente
+- ✅ Importa elementos Tet4 con conectividad
+- ✅ Configura propiedades de material (Young modulus, Poisson ratio)
+- ✅ Usa elemento "SmallDisplacementElement3D4N"
+- ✅ Configura DOFs (DISPLACEMENT_X, DISPLACEMENT_Y, DISPLACEMENT_Z)
+- ✅ Total DOFs calculados correctamente (5208 DOFs para 1736 nodos)
+
+**4. Verificación de Componentes de Optimización (`check_optimization.py`)**
+- ✅ OptimizationApplication importado exitosamente
+- ✅ Variables de densidad disponibles
+- ✅ Variables de sensibilidad disponibles
+- ✅ Variables de strain energy disponibles
+- ✅ Múltiples componentes de response, control, filtros disponibles
+
+### Conocimiento Técnico Reutilizable
+
+**Inicialización de Kratos:**
+```python
+import KratosMultiphysics as Kratos
+from KratosMultiphysics import StructuralMechanicsApplication
+from KratosMultiphysics import OptimizationApplication
+
+Kratos.Logger.GetDefaultOutput().SetSeverity(Kratos.Logger.Severity.WARNING)
+model = Kratos.Model()
+model_part = model.CreateModelPart("MainModelPart")
+```
+
+**Configuración de Material:**
+```python
+material_properties = Kratos.Properties(1)
+material_properties.SetValue(Kratos.YOUNG_MODULUS, Young_modulus)
+material_properties.SetValue(Kratos.POISSON_RATIO, Poisson_ratio)
+```
+
+**Configuración de DOFs:**
+```python
+for node in model_part.Nodes:
+    node.AddDof(Kratos.DISPLACEMENT_X)
+    node.AddDof(Kratos.DISPLACEMENT_Y)
+    node.AddDof(Kratos.DISPLACEMENT_Z)
+```
+
+**Creación de Elementos:**
+```python
+element_name = "SmallDisplacementElement3D4N"
+model_part.CreateNewElement(element_name, elem_id, node_ids, material_properties)
+```
+
+### Problemas Conocidos y Soluciones
+
+**Problema:** Configuración de solver directo en Python es compleja
+**Solución conocida:** Usar archivos de configuración JSON y StructuralMechanicsAnalysis
+
+**Problema:** Configuración de leyes constitutivas
+**Solución conocida:** Requiere configuración específica en MaterialParameters.json
+
+**Problema:** Validación de procesos de condiciones de contorno
+**Solución conocida:** Requiere formato específico de parámetros en ProjectParameters.json
+
+### Componentes Kratos Disponibles
+
+**FEA:**
+- ✅ SmallDisplacementElement3D4N (elemento Tet4)
+- ✅ StructuralMechanicsApplication
+- ✅ Propiedades de material (Young modulus, Poisson ratio)
+- ✅ DOFs de desplazamiento
+
+**Optimización:**
+- ✅ OptimizationApplication
+- ✅ Variables de densidad
+- ✅ Variables de sensibilidad
+- ✅ Variables de strain energy
+- ✅ Componentes de response
+- ✅ Componentes de control
+- ✅ Componentes de filtros
+
+---
+
+## ANÁLISIS DE ARQUITECTURA EXISTENTE DEL PROYECTO
+
+### Estructura Actual del Proyecto
+
+**Componentes Principales:**
+- `adapters/cad/` - Adaptadores CAD (step_adapter.py)
+- `core/` - Core del proyecto
+  - `models.py` - Modelos CAD internos (CADModel, CADSolid, etc.)
+  - `materials.py` - Definiciones de materiales (Material, STANDARD_MATERIALS)
+  - `meshing.py` - Generación de mallas (ProvisionalTet4Mesher)
+  - `solver_interface.py` - Interfaz de solver FEA (TopOptSolver sin implementación real)
+  - `study.py` - Definiciones de estudios (LoadDefinition, ConstraintDefinition, Study)
+  - `boundary.py` - Mapeo de condiciones de frontera (BoundaryConditionMapper)
+- `services/` - Servicios de la aplicación
+
+### Flujo Arquitectónico Actual
+
+```
+STEP → STEP ADAPTER → CADModel → MALLA (provisional) → SOLVER_INTERFACE (sin implementación) → CORE
+```
+
+### Punto de Integración de Kratos
+
+**Ubicación:** `core/solver_interface.py`
+
+**Estado actual:** 
+- `TopOptSolver` es una interfaz sin implementación FEA real
+- Devuelve `not_implemented` cuando no hay `fea_solver` configurado
+- Requiere un adaptador FEA externo para funcionar
+
+**Integración objetivo:**
+- Kratos debe implementar el `fea_solver` que `TopOptSolver` requiere
+- Kratos debe recibir mallas desde `core/meshing.py` (o reemplazarlo con Gmsh)
+- Kratos debe recibir materiales desde `core/materials.py`
+- Kratos debe recibir cargas/restricciones desde `core/study.py`
+- Kratos debe devolver resultados al Core sin dependencias de Kratos
+
+### Responsabilidades de Cada Componente
+
+**CADModel (`core/models.py`):**
+- Representación interna agnóstica del CAD
+- No debe modificarse para integración de Kratos
+
+**Materials (`core/materials.py`):**
+- Propiedades de materiales estándar (young_modulus, poisson_ratio, density)
+- Debe mapearse a propiedades de Kratos (Kratos.YOUNG_MODULUS, Kratos.POISSON_RATIO)
+
+**Meshing (`core/meshing.py`):**
+- Implementación provisional actual (ProvisionalTet4Mesher)
+- Debe reemplazarse o complementarse con Gmsh para producción
+- Kratos puede recibir mallas en formato interno o desde archivos
+
+**Study (`core/study.py`):**
+- Definiciones de cargas (LoadDefinition)
+- Definiciones de restricciones (ConstraintDefinition)
+- Objetivos de optimización (Objectives)
+- Deben mapearse a condiciones de contorno de Kratos
+
+**Boundary (`core/boundary.py`):**
+- Mapeo de caras CAD a nodos de malla
+- Útil para aplicar condiciones de contorno en nodos específicos
+
+**Solver Interface (`core/solver_interface.py`):**
+- Punto de integración principal de Kratos
+- Debe implementar `fea_solver` que use Kratos internamente
+- Debe mantener interfaz agnóstica al motor FEA
+
+### Estrategia de Integración
+
+**Enfoque:** Integración progresiva siguiendo las etapas definidas en prompt.md
+
+**Etapa A - Inicialización:**
+- Verificar que Kratos puede importarse en el entorno del proyecto principal
+- Crear módulo `core/kratos_adapter.py` o similar
+
+**Etapa B - Modelo:**
+- Implementar creación de Model/ModelPart de Kratos
+- Integrar con estructuras de datos del Core
+
+**Etapa C - Malla:**
+- Transferir mallas desde meshing.py o Gmsh hacia Kratos
+- Mantener compatibilidad con formato interno del proyecto
+
+**Etapa D - Material:**
+- Mapear Material del Core a propiedades de Kratos
+- Configurar leyes constitutivas correctamente
+
+**Etapa E - Condiciones de frontera:**
+- Transferir restricciones desde Study hacia Kratos
+- Usar BoundaryConditionMapper para identificar nodos
+
+**Etapa F - Cargas:**
+- Transferir cargas desde Study hacia Kratos
+- Aplicar en nodos mapeados
+
+**Etapa G - Solver:**
+- Configurar y ejecutar solver de Kratos
+- Usar enfoque JSON o API según corresponda
+
+**Etapa H - Resultados:**
+- Extraer desplazamientos, tensiones, compliance
+- Formatear para consumo del Core
+
+**Etapa I - Retorno al Core:**
+- Implementar adaptador en solver_interface.py
+- Mantener interfaz agnóstica
+
+### Dependencias Existentes
+
+**Gmsh:** Ya validado en PoC de Kratos
+- Genera mallas Tet4 de alta calidad
+- Compatible con Kratos
+- Debe integrarse en meshing.py para producción
+
+**Python 3.11.9:** Entorno validado en PoC
+- Compatible con Kratos 10.4.3
+- Debe verificarse compatibilidad con entorno principal
+
+---
+
+## ETAPA A - INICIALIZACIÓN DE KRATOS
+
+### Objetivo
+Integrar correctamente Kratos dentro del entorno real del proyecto y verificar que los módulos requeridos puedan importarse y utilizarse.
+
+### Acciones Realizadas
+
+**1. Verificación de Importación en Entorno Principal**
+- ✅ KratosMultiphysics se importa correctamente en el proyecto principal
+- ✅ StructuralMechanicsApplication se importa correctamente
+- ✅ OptimizationApplication se importa correctamente
+- ✅ Entorno Python 3.14.7 compatible con Kratos 10.4.3
+
+**2. Creación de Adaptador Kratos**
+- ✅ Creado módulo `core/kratos_adapter.py`
+- ✅ Implementada clase `KratosAdapter` como interfaz principal
+- ✅ Implementado manejo de errores de importación
+- ✅ Implementada verificación de disponibilidad de Kratos
+- ✅ Configurado logger de Kratos para reducir verbosidad
+
+**3. Pruebas de Inicialización**
+- ✅ Creado script de prueba `test_kratos_adapter_initialization.py`
+- ✅ Verificada importación directa de módulos Kratos
+- ✅ Verificada creación de adaptador
+- ✅ Verificada creación de ModelPart
+- ✅ Verificada disponibilidad de aplicaciones críticas
+
+### Resultados
+
+**Prueba de Inicialización:**
+```
+=== RESULTADO: ETAPA A COMPLETADA ===
+Kratos está correctamente inicializado en el entorno del proyecto principal
+Componentes verificados:
+  - Importación de KratosMultiphysics: OK
+  - Importación de StructuralMechanicsApplication: OK
+  - Importación de OptimizationApplication: OK
+  - Creación de adaptador: OK
+  - Creación de ModelPart: OK
+  - Verificación de aplicaciones: OK
+```
+
+### Archivos Modificados
+
+- `core/kratos_adapter.py` - Nuevo módulo de adaptador Kratos
+- `test_kratos_adapter_initialization.py` - Script de prueba de inicialización
+
+### Estado
+
+**ETAPA A: COMPLETADA** ✅
+
+Kratos está correctamente integrado en el entorno del proyecto principal y todos los módulos requeridos están disponibles y funcionales.
+
+---
+
+## ETAPA B - MODELO/MODELPART
+
+### Objetivo
+Crear correctamente el Model/ModelPart necesario para el cálculo, integrándolo con las estructuras de datos del Core.
+
+### Acciones Realizadas
+
+**1. Implementación de Funciones de ModelPart**
+- ✅ Implementado `setup_model_part_for_structural_analysis()` para configuración estructural
+- ✅ Implementado `add_displacement_dofs()` para configurar grados de libertad
+- ✅ Implementado `create_model_part_from_cad_model()` para integración con CADModel del Core
+- ✅ Implementado `get_model_part_info()` para obtener información de ModelPart
+
+**2. Integración con Estructuras del Core**
+- ✅ ModelPart puede asociarse con CAD model IDs del Core
+- ✅ Información de ModelPart puede obtenerse en formato compatible con Core
+- ✅ Configuración de buffer size para análisis transitorio
+- ✅ Configuración de DOMAIN_SIZE para análisis 3D
+
+**3. Pruebas de ModelPart**
+- ✅ Verificada creación de ModelPart básico
+- ✅ Verificada configuración para análisis estructural
+- ✅ Verificada configuración de DOFs
+- ✅ Verificada integración con CAD model
+- ✅ Verificada obtención de información
+- ✅ Verificada creación de ModelPart con nodos
+
+### Resultados
+
+**Prueba de ModelPart:**
+```
+=== RESULTADO: ETAPA B COMPLETADA ===
+ModelPart puede crearse y configurarse correctamente
+Componentes verificados:
+  - Creación de ModelPart básico: OK
+  - Configuración para análisis estructural: OK
+  - Configuración de DOFs: OK
+  - Integración con CAD model del Core: OK
+  - Obtención de información de ModelPart: OK
+  - ModelPart con nodos y DOFs: OK
+```
+
+### Archivos Modificados
+
+- `core/kratos_adapter.py` - Extendido con funciones de ModelPart
+- `test_kratos_model_part.py` - Script de prueba de ModelPart
+
+### Estado
+
+**ETAPA B: COMPLETADA** ✅
+
+El Model/ModelPart de Kratos puede crearse y configurarse correctamente, con integración completa con las estructuras de datos del Core.
+
+---
+
+## ETAPA C - MALLA
+
+### Objetivo
+Transferir una malla válida desde la arquitectura del proyecto hacia Kratos.
+
+### Acciones Realizadas
+
+**1. Implementación de Importación de Mallas**
+- ✅ Implementado `import_mesh_from_core_format()` para importar desde formato interno del Core
+- ✅ Implementado `import_mesh_from_gmsh()` para importar desde archivos Gmsh (basado en PoC)
+- ✅ Implementado `import_mesh_from_mesh_result()` para integración directa con MeshResult
+- ✅ Mapeo de tipos de elementos (tet4 → SmallDisplacementElement3D4N)
+
+**2. Integración con Fuentes de Malla**
+- ✅ Importación desde nodos/elementos del Core
+- ✅ Importación desde archivos .msh de Gmsh
+- ✅ Integración con ProvisionalTet4Mesher del Core
+- ✅ Creación de materiales placeholder (se configurará correctamente en Etapa D)
+
+**3. Pruebas de Importación de Malla**
+- ✅ Verificada importación desde formato Core (5 nodos, 2 elementos)
+- ✅ Verificada configuración de DOFs en malla importada
+- ✅ Verificada importación desde Gmsh (1736 nodos, 6451 elementos)
+- ✅ Verificada integración con meshing del Core (27 nodos, 40 elementos)
+
+### Resultados
+
+**Prueba de Importación de Malla:**
+```
+=== RESULTADO: ETAPA C COMPLETADA ===
+Mallas pueden importarse correctamente desde múltiples fuentes
+Componentes verificados:
+  - Importación desde formato Core: OK
+  - Configuración de DOFs en malla importada: OK
+  - Importación desde Gmsh: OK (si archivo disponible)
+  - Integración con meshing del Core: OK
+```
+
+**Resultados Cuantitativos:**
+- Importación Core: 5 nodos, 2 elementos Tet4 ✅
+- Importación Gmsh: 1736 nodos, 6451 elementos Tet4 ✅
+- Integración Core meshing: 27 nodos, 40 elementos Tet4 ✅
+
+### Archivos Modificados
+
+- `core/kratos_adapter.py` - Extendido con funciones de importación de malla
+- `test_kratos_mesh_import.py` - Script de prueba de importación de malla
+
+### Estado
+
+**ETAPA C: COMPLETADA** ✅
+
+Las mallas pueden transferirse correctamente desde múltiples fuentes (formato Core, Gmsh, meshing del Core) hacia Kratos ModelPart, con configuración adecuada de DOFs.
+
+---
+
+## ETAPA D - MATERIAL
+
+### Objetivo
+Configurar propiedades y material de acuerdo con la arquitectura del proyecto.
+
+### Acciones Realizadas
+
+**1. Implementación de Configuración de Materiales**
+- ✅ Implementado `configure_material_from_core()` para configurar desde Material del Core
+- ✅ Implementado `configure_material_manually()` para configuración manual de propiedades
+- ✅ Implementado `apply_standard_material()` para materiales estándar
+- ✅ Mapeo de propiedades: Young modulus, Poisson ratio, density, yield strength
+- ✅ Actualización de funciones de importación de malla para aceptar propiedades de material
+
+**2. Integración con Sistema de Materiales del Core**
+- ✅ Mapeo de Material del Core a Kratos Properties
+- ✅ Soporte para materiales estándar (steel, aluminum, titanium)
+- ✅ Configuración de unidades consistentes (SI)
+- ✅ Manejo de propiedades opcionales (yield strength)
+
+**3. Pruebas de Configuración de Material**
+- ✅ Verificada configuración desde Material del Core (Structural Steel)
+- ✅ Verificada configuración manual (Aluminio)
+- ✅ Verificada aplicación de materiales estándar (steel, aluminum, titanium)
+- ✅ Verificada configuración con malla real Gmsh (1736 nodos, 6451 elementos)
+
+### Resultados
+
+**Prueba de Configuración de Material:**
+```
+=== RESULTADO: ETAPA D COMPLETADA ===
+Materiales pueden configurarse correctamente desde múltiples fuentes
+Componentes verificados:
+  - Configuración desde Material del Core: OK
+  - Configuración manual de propiedades: OK
+  - Aplicación de materiales estándar: OK
+  - Configuración con malla real: OK (si archivo disponible)
+```
+
+**Resultados Cuantitativos:**
+- Material Core: E=2.10e+11 Pa, ν=0.3 ✅
+- Material manual: E=6.89e+10 Pa, ν=0.33 ✅
+- Materiales estándar: steel, aluminum, titanium ✅
+- Malla real con material: 1736 nodos, 6451 elementos ✅
+
+### Archivos Modificados
+
+- `core/kratos_adapter.py` - Extendido con funciones de configuración de material
+- `test_kratos_material.py` - Script de prueba de configuración de material
+
+### Estado
+
+**ETAPA D: COMPLETADA** ✅
+
+Los materiales pueden configurarse correctamente desde múltiples fuentes (Core, manual, estándar) con mapeo completo de propiedades a Kratos.
+
+---
+
+## ETAPA E - CONDICIONES DE FRONTERA
+
+### Objetivo
+Transferir correctamente las restricciones desde el Core hacia Kratos.
+
+### Acciones Realizadas
+
+**1. Implementación de Aplicación de Restricciones**
+- ✅ Implementado `apply_fixed_constraint()` para restricciones fijas (todos los DOFs = 0)
+- ✅ Implementado `apply_pinned_constraint()` para restricciones empotradas (translations fijas)
+- ✅ Implementado `apply_constraint_from_core()` para ConstraintDefinition del Core
+- ✅ Implementado `apply_constraints_by_face_mapping()` para mapeo de caras a nodos
+- ✅ Mapeo de tipos de restricciones del Core a Kratos
+
+**2. Integración con Sistema de Restricciones del Core**
+- ✅ Soporte para ConstraintType.FIXED
+- ✅ Soporte para ConstraintType.PINNED
+- ✅ Conversión de índices de nodos (0-based Core → 1-based Kratos)
+- ✅ Integración con BoundaryConditionMapper (demonstración)
+
+**3. Pruebas de Condiciones de Frontera**
+- ✅ Verificada aplicación de restricción fija (1 nodo)
+- ✅ Verificada aplicación de restricción empotrada (2 nodos)
+- ✅ Verificada aplicación desde ConstraintDefinition del Core
+- ✅ Verificada aplicación de múltiples restricciones (3 fijos, 2 empotrados)
+- ✅ Verificada aplicación con malla real Gmsh (10 nodos fijos de 1736)
+
+### Resultados
+
+**Prueba de Condiciones de Frontera:**
+```
+=== RESULTADO: ETAPA E COMPLETADA ===
+Condiciones de frontera pueden aplicarse correctamente
+Componentes verificados:
+  - Aplicación de restricción fija: OK
+  - Aplicación de restricción empotrada: OK
+  - Aplicación desde ConstraintDefinition del Core: OK
+  - Aplicación de múltiples restricciones: OK
+  - Restricciones con malla real: OK (si archivo disponible)
+```
+
+**Resultados Cuantitativos:**
+- Restricción fija: 1 nodo ✅
+- Restricción empotrada: 2 nodos ✅
+- Restricción Core: ConstraintType.FIXED ✅
+- Múltiples restricciones: 3 fijos, 2 empotrados ✅
+- Malla real: 10 nodos fijos de 1736 ✅
+
+### Archivos Modificados
+
+- `core/kratos_adapter.py` - Extendido con funciones de condiciones de frontera
+- `test_kratos_constraints.py` - Script de prueba de condiciones de frontera
+
+### Estado
+
+**ETAPA E: COMPLETADA** ✅
+
+Las condiciones de frontera pueden aplicarse correctamente desde múltiples fuentes (directa, Core, mapeo de caras) con soporte para diferentes tipos de restricciones.
+
+---
+
+## ETAPA F - CARGAS
+
+### Objetivo
+Transferir correctamente las cargas desde el Core hacia Kratos.
+
+### Acciones Realizadas
+
+**1. Implementación de Aplicación de Cargas**
+- ✅ Implementado `apply_point_load()` para cargas puntuales en nodos específicos
+- ✅ Implementado `apply_distributed_load()` para cargas distribuidas en múltiples nodos
+- ✅ Implementado `apply_load_from_core()` para LoadDefinition del Core
+- ✅ Implementado `apply_pressure_load()` para cargas de presión (implementación simplificada)
+- ✅ Sistema de almacenamiento de cargas externas en el adaptador
+
+**2. Integración con Sistema de Cargas del Core**
+- ✅ Soporte para LoadType.POINT
+- ✅ Soporte para LoadType.DISTRIBUTED
+- ✅ Soporte para LoadType.PRESSURE (simplificado)
+- ✅ Mapeo de vectores de dirección del Core a Kratos
+- ✅ Distribución automática de cargas entre nodos
+
+**3. Pruebas de Cargas**
+- ✅ Verificada aplicación de carga puntual (1000 N en nodo 3)
+- ✅ Verificada aplicación de carga distribuida (5000 N en 4 nodos)
+- ✅ Verificada aplicación desde LoadDefinition del Core (1000 N)
+- ✅ Verificada aplicación de carga de presión (1000 Pa en 3 nodos)
+- ✅ Verificada aplicación combinada con restricciones
+
+### Resultados
+
+**Prueba de Cargas:**
+```
+=== RESULTADO: ETAPA F COMPLETADA ===
+Cargas pueden aplicarse correctamente en múltiples modalidades
+Componentes verificados:
+  - Aplicación de carga puntual: OK
+  - Aplicación de carga distribuida: OK
+  - Aplicación desde LoadDefinition del Core: OK
+  - Aplicación de carga de presión: OK
+  - Aplicación combinada con restricciones: OK
+```
+
+**Resultados Cuantitativos:**
+- Carga puntual: 1000 N ✅
+- Carga distribuida: 5000 N en 4 nodos ✅
+- Carga Core: 1000 N ✅
+- Carga de presión: 1000 Pa en 3 nodos ✅
+- Combinada con restricciones: funcional ✅
+
+### Archivos Modificados
+
+- `core/kratos_adapter.py` - Extendido con funciones de cargas y sistema de almacenamiento
+- `test_kratos_loads.py` - Script de prueba de cargas
+
+### Estado
+
+**ETAPA F: COMPLETADA** ✅
+
+Las cargas pueden aplicarse correctamente desde múltiples fuentes (puntual, distribuida, presión, Core) con distribución automática y compatibilidad con restricciones.
+
+---
+
+## ETAPA G - SOLVER
+
+### Objetivo
+Configurar y ejecutar el solver correspondiente.
+
+### Acciones Realizadas
+
+**1. Implementación de Configuración de Solver**
+- ✅ Implementado `setup_solver_and_strategy()` para configuración de solver y estrategia
+- ✅ Implementado `apply_external_loads_to_model_part()` para aplicar cargas almacenadas
+- ✅ Implementado `run_analysis()` para ejecución del análisis
+- ✅ Sistema de manejo de errores para análisis fallidos
+
+**2. Intentos de Configuración**
+- ❌ Intento 1: LinearSolverFactory.Create("skyline_lu_solver") - Argumentos incompatibles
+- ❌ Intento 2: LinearSolverFactory.Create(Kratos.Parameters(...)) - Argumentos incompatibles
+- ❌ Intento 3: LinearSolverFactory.Create(Kratos.Parameters con "skyline_lu_factorization") - Argumentos incompatibles
+
+### Bloqueo Técnico
+
+**Estado:** BLOQUEADO — REQUIERE INVESTIGACIÓN
+
+**Componente afectado:** Kratos LinearSolverFactory
+
+**Funcionalidad:** Configuración de solver lineal para análisis estructural
+
+**Entorno:**
+- Sistema: Windows
+- Python: 3.14.7
+- Kratos Multiphysics: 10.4.3
+- KratosCompiledFor: Windows y Python3.14 con MSVC-1929
+
+**Comando ejecutado:**
+```python
+from KratosMultiphysics import LinearSolverFactory
+import KratosMultiphysics as Kratos
+
+solver_settings = Kratos.Parameters("""
+{
+    "solver_type": "skyline_lu_factorization",
+    "scaling": false,
+    "tolerance": 1e-6
+}
+""")
+
+linear_solver = LinearSolverFactory.Create(solver_settings)
+```
+
+**Archivo:** `core/kratos_adapter.py`, función `setup_solver_and_strategy()`
+
+**Traceback completo:**
+```
+Failed to setup solver and strategy: Create(): incompatible function arguments. The following argument types are supported:
+    1. (self: Kratos.LinearSolverFactory, arg0: Kratos::Parameters) -> Kratos.LinearSolver
+
+Invoked with: <Kratos.Parameters object at 0x0000018D834E80B0>
+```
+
+**Salida relevante:**
+El error indica que LinearSolverFactory.Create() espera un argumento Kratos::Parameters pero el objeto proporcionado no es compatible.
+
+**Modificación realizada:**
+Intentos múltiples de formato de parámetros según documentación existente del PoC.
+
+**Resultado:**
+Todos los intentos fallaron con el mismo error de tipos incompatibles.
+
+**Hechos comprobados:**
+1. LinearSolverFactory.Create() existe y está disponible
+2. Kratos.Parameters puede crearse exitosamente
+3. La firma del método indica que acepta Kratos::Parameters
+4. El objeto Kratos.Parameters creado no es compatible con la firma esperada
+5. La configuración de ProjectParameters.json del PoC usa "skyline_lu_factorization"
+
+**Hipótesis:**
+1. Puede haber un cambio en la API entre versiones de Kratos
+2. Puede requerirse un método diferente de creación de Parameters
+3. Puede requerirse uso de LinearSolver directo en lugar de Factory
+4. Puede haber dependencias de módulos específicos no importados
+
+**Información desconocida:**
+1. La forma correcta de crear un solver lineal en Kratos 10.4.3
+2. Si requiere importación de módulos adicionales
+3. Si hay métodos alternativos recomendados en la documentación oficial
+4. La diferencia entre la API documentada y la implementación actual
+
+**Pregunta técnica concreta que debe investigarse:**
+¿Cuál es la forma oficialmente soportada de crear y configurar un LinearSolver en Kratos Multiphysics 10.4.3 usando la API de Python, específicamente para skyline_lu_factorization?
+
+### Archivos Modificados
+
+- `core/kratos_adapter.py` - Extendido con funciones de solver (bloqueado por error de API)
+- `test_kratos_solver.py` - Script de prueba de solver (no funcional)
+
+### Estado
+
+**ETAPA G: BLOQUEADA** ❌
+
+La configuración del solver de Kratos está bloqueada por un problema de compatibilidad de API en LinearSolverFactory.Create(). Requiere investigación técnica específica de la documentación oficial de Kratos 10.4.3.
+
+---
+
+## AUDITORÍA FINAL DE LA INTEGRACIÓN KRATOS
+
+### Resumen de Estado por Etapas
+
+**ETAPA A - Inicialización de Kratos:** ✅ **COMPLETADO**
+- KratosMultiphysics, StructuralMechanicsApplication, OptimizationApplication importan correctamente
+- Adaptador Kratos creado y funcional
+- Verificación de aplicaciones disponible
+
+**ETAPA B - Modelo/ModelPart:** ✅ **COMPLETADO**
+- ModelPart puede crearse y configurarse correctamente
+- Integración con CADModel del Core implementada
+- Configuración para análisis estructural funcional
+- DOFs configurables
+
+**ETAPA C - Malla:** ✅ **COMPLETADO**
+- Importación desde formato Core funcional
+- Importación desde Gmsh funcional (1736 nodos, 6451 elementos)
+- Integración con meshing del Core funcional
+- Configuración de DOFs en malla importada
+
+**ETAPA D - Material:** ✅ **COMPLETADO**
+- Configuración desde Material del Core funcional
+- Configuración manual de propiedades funcional
+- Materiales estándar (steel, aluminum, titanium) funcionales
+- Mapeo completo de propiedades a Kratos
+
+**ETAPA E - Condiciones de frontera:** ✅ **COMPLETADO**
+- Restricciones fijas funcionales
+- Restricciones empotradas funcionales
+- Integración con ConstraintDefinition del Core funcional
+- Múltiples restricciones aplicables simultáneamente
+
+**ETAPA F - Cargas:** ✅ **COMPLETADO**
+- Cargas puntuales funcionales
+- Cargas distribuidas funcionales
+- Integración con LoadDefinition del Core funcional
+- Cargas de presión (implementación simplificada) funcionales
+- Compatibilidad con restricciones verificada
+
+**ETAPA G - Solver:** ❌ **BLOQUEADO**
+- LinearSolverFactory.Create() presenta error de compatibilidad de API
+- Múltiples intentos de configuración fallaron
+- Requiere investigación técnica específica de documentación oficial Kratos 10.4.3
+- **NO SE DEBE CONTINUAR CON ESPECULACIÓN**
+
+**ETAPA H - Resultados:** ⏳ **PENDIENTE**
+- Depende de resolución de Etapa G
+- No puede implementarse sin solver funcional
+
+**ETAPA I - Retorno al Core:** ⏳ **PENDIENTE**
+- Depende de resolución de Etapa G y H
+- No puede implementarse sin pipeline funcional
+
+### Comparación con Objetivos del Prompt
+
+**Objetivo principal del prompt:**
+> INTEGRAR KRATOS REALMENTE EN EL PROYECTO Y PREPARARLO COMO MOTOR FEA DEL CORE.
+
+**Estado actual:**
+- ✅ Kratos está completamente integrado en el entorno del proyecto
+- ✅ Infraestructura básica (Model, Malla, Material, Condiciones, Cargas) está funcional
+- ❌ Ejecución de análisis está bloqueada por problema de API de solver
+- ❌ No puede completarse como motor FEA funcional sin resolver bloqueo
+
+### Cumplimiento de Arquitectura Standalone
+
+**Cumplimiento:** ✅ **PARCIAL**
+- ✅ No hay dependencias de CAD externos en la implementación
+- ✅ Integración respetada con arquitectura existente del Core
+- ✅ Módulo aislado (`core/kratos_adapter.py`)
+- ❌ Funcionalidad FEA completa no disponible debido a bloqueo
+
+### Archivos Creados/Modificados
+
+**Nuevos archivos:**
+- `core/kratos_adapter.py` - Adaptador principal de Kratos (344 líneas)
+- `test_kratos_adapter_initialization.py` - Pruebas Etapa A
+- `test_kratos_model_part.py` - Pruebas Etapa B
+- `test_kratos_mesh_import.py` - Pruebas Etapa C
+- `test_kratos_material.py` - Pruebas Etapa D
+- `test_kratos_constraints.py` - Pruebas Etapa E
+- `test_kratos_loads.py` - Pruebas Etapa F
+- `test_kratos_solver.py` - Pruebas Etapa G (no funcional)
+
+**Archivos modificados:**
+- `resumen_implementacion.md` - Registro completo de la integración
+
+### Decisiones Tomadas
+
+1. **Kratos como tecnología:** ADOPTADO (según validación previa del PoC)
+2. **Arquitectura de integración:** Respetada estrictamente (standalone, sin dependencias CAD)
+3. **Metodología:** Seguida estrictamente (progresiva, validada, sin especulación)
+4. **Protocolo de bloqueo:** Aplicado correctamente (detención, registro, sin intentos especulativos)
+
+### Pendientes Reales
+
+1. **CRÍTICO:** Resolver el problema de API de LinearSolverFactory.Create() en Kratos 10.4.3
+2. Una vez resuelto el solver: completar Etapas H (Resultados) e I (Retorno al Core)
+3. Validación completa del pipeline FEA con Kratos
+4. Integración final con `core/solver_interface.py`
+
+### Clasificación Final del Proyecto
+
+**Estado general:** ⚠️ **PARCIALMENTE COMPLETADO**
+
+**Componentes clasificados:**
+- Infraestructura Kratos: ✅ COMPLETADO
+- Integración de datos: ✅ COMPLETADO  
+- Ejecución de análisis: ❌ BLOQUEADO
+- Motor FEA funcional: ❌ NO DISPONIBLE
+
+**Próximo paso requerido:**
+Investigación técnica específica de la documentación oficial de Kratos Multiphysics 10.4.3 para resolver el problema de LinearSolverFactory.Create().
+
+---
 
 ## 22.1 Entorno
 

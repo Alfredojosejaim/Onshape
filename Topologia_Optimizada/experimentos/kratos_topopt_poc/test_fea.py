@@ -32,6 +32,7 @@ def run_basic_fea():
     model_part.AddNodalSolutionStepVariable(Kratos.FORCE)
     model_part.AddNodalSolutionStepVariable(Kratos.REACTION)
     model_part.AddNodalSolutionStepVariable(Kratos.VELOCITY)
+    model_part.AddNodalSolutionStepVariable(Kratos.ACCELERATION)
     
     # Cargar malla desde Gmsh
     gmsh.initialize()
@@ -72,16 +73,20 @@ def run_basic_fea():
             
             # Agregar ley constitutiva (constitutive law) usando el método correcto
             try:
-                # Intentar diferentes formas de crear la ley constitutiva
-                constitutive_law = Kratos.ConstitutiveLaw()
+                # Usar la ley constitutiva isótropa lineal 3D de StructuralMechanicsApplication
+                constitutive_law = StructuralMechanicsApplication.SmallStrainIsotropic3D()
                 material_properties.SetValue(Kratos.CONSTITUTIVE_LAW, constitutive_law)
-            except:
+                print("Ley constitutiva configurada correctamente")
+            except Exception as e:
+                print(f"Error configurando ley constitutiva: {e}")
+                # Intentar método alternativo
                 try:
-                    # Método alternativo usando el registro de leyes constitutivas
-                    constitutive_law = Kratos.KratosGlobals.GetRegistry("ConstitutiveLaw")
+                    constitutive_law = StructuralMechanicsApplication.LinearElastic3DLaw()
                     material_properties.SetValue(Kratos.CONSTITUTIVE_LAW, constitutive_law)
-                except:
-                    print("Advertencia: No se pudo configurar ley constitutiva, intentando sin ella")
+                    print("Ley constitutiva alternativa configurada")
+                except Exception as e2:
+                    print(f"Error con ley constitutiva alternativa: {e2}")
+                    raise Exception("No se pudo configurar ley constitutiva")
             
             for i in range(0, len(tet_elements), 4):
                 elem_id = i//4 + 1

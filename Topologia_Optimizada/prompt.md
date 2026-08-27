@@ -1,403 +1,156 @@
 
-
-# VALIDACIÓN E2E DEL MOTOR FEA — KRATOS
+# PRUEBA E2E — MOTOR FEA COMPLETO
 
 ## OBJETIVO
 
-La integración de Kratos Multiphysics en el Core ya fue implementada hasta la Etapa I.
+Ejecutar el motor FEA completo de extremo a extremo utilizando una entrada real.
 
-Las etapas A–I deben considerarse implementadas según el estado documentado actualmente.
+La finalidad de esta intervención es comprobar si el sistema puede realizar correctamente todo el flujo de procesamiento desde la entrada hasta la obtención y entrega de los resultados.
 
-El objetivo de esta intervención es exclusivamente:
-
-> **EJECUTAR Y VALIDAR EL PIPELINE FEA COMPLETO DE EXTREMO A EXTREMO.**
-
-No realizar una nueva implementación arquitectónica.
-
-No volver a investigar la viabilidad de Kratos.
-
-No repetir los experimentos anteriores.
-
-No modificar funcionalidades que no sean necesarias para ejecutar esta validación.
+La prueba debe realizarse sobre la implementación actual del proyecto.
 
 ---
 
-# 1. LECTURA OBLIGATORIA
+## 1. PREPARACIÓN
 
-Antes de ejecutar cualquier prueba:
+Antes de ejecutar:
 
 1. Leer `README.md`.
 2. Leer `prompt.md`.
 3. Leer `metodologia.md`.
 4. Leer `resumen_implementacion.md`.
-5. Revisar la implementación actual de las etapas A–I.
-6. Revisar la solución aplicada para la Etapa I.
-7. Revisar las pruebas existentes.
-8. Identificar el procedimiento correcto para ejecutar el pipeline completo.
+5. Identificar el procedimiento actual para ejecutar el motor completo.
+6. Identificar el archivo STEP real disponible para la prueba.
+7. Verificar que el entorno necesario esté disponible.
 
-No asumir que la documentación está actualizada.
-
-Contrastar documentación, código y pruebas.
+No modificar el código durante esta preparación.
 
 ---
 
-# 2. OBJETIVO DE LA PRUEBA
+## 2. EJECUCIÓN
 
-Ejecutar el flujo real completo:
+Ejecutar el flujo completo utilizando un archivo STEP real.
+
+El procesamiento debe realizarse de forma integral:
 
 ```text
 ARCHIVO STEP REAL
-        ↓
-STEP ADAPTER
-        ↓
-CADModel
-        ↓
-MALLA
-        ↓
-KRATOS
-        ↓
-MODEL / MODELPART
-        ↓
-MATERIAL
-        ↓
-CONDICIONES DE FRONTERA
-        ↓
-CARGAS
-        ↓
-SOLVER FEA
-        ↓
-DESPLAZAMIENTOS
-        ↓
-TENSIONES / RESULTADOS
-        ↓
-COMPLIANCE
-        ↓
-RESULTADOS ELEMENTALES
-        ↓
-CORE
+       ↓
+IMPORTACIÓN
+       ↓
+MODELO INTERNO
+       ↓
+MALLADO
+       ↓
+ANÁLISIS FEA
+       ↓
+SOLVER
+       ↓
+RESULTADOS
+       ↓
+SALIDA DEL MOTOR
 
-La prueba debe utilizar, cuando el pipeline lo permita, datos reales y no mocks.
+No sustituir ninguna parte del flujo por datos ficticios o resultados simulados.
+
+No utilizar mocks como sustituto de componentes reales.
 
 
 ---
 
-3. PREPARACIÓN
+3. COMPROBACIÓN
 
-Antes de ejecutar:
+Al finalizar la ejecución determinar:
 
-1. Verificar el entorno.
+si el archivo STEP fue procesado correctamente;
 
+si el modelo pudo atravesar todo el flujo;
 
-2. Verificar la versión de Python.
+si se generó la malla necesaria;
 
+si se ejecutó realmente el análisis FEA;
 
-3. Verificar la versión de Kratos.
+si el solver produjo resultados;
 
+si los resultados son válidos;
 
-4. Verificar que las dependencias necesarias estén disponibles.
-
-
-5. Verificar que el código actual pueda ejecutarse.
-
-
-6. Identificar el archivo STEP de prueba utilizado.
+si los resultados pudieron ser entregados correctamente por el motor.
 
 
-7. Verificar que dicho archivo sea válido.
-
-
-8. Registrar cualquier condición especial necesaria para reproducir la prueba.
-
-
-
-No modificar el entorno innecesariamente.
+La prueba debe evaluar el funcionamiento del sistema como un conjunto.
 
 
 ---
 
-4. EJECUCIÓN DEL PIPELINE
-
-Ejecutar el pipeline real en el orden correspondiente.
-
-Verificar individualmente:
-
-4.1 STEP
-
-Confirmar:
-
-apertura correcta;
-
-lectura de geometría;
-
-detección de cuerpos;
-
-generación del modelo interno.
-
-
-
----
-
-4.2 CADModel
-
-Confirmar:
-
-creación correcta;
-
-datos geométricos disponibles;
-
-ausencia de dependencia directa del Core respecto del formato STEP.
-
-
-
----
-
-4.3 MALLA
-
-Confirmar:
-
-generación de la malla;
-
-nodos;
-
-elementos;
-
-conectividad;
-
-transferencia correcta hacia Kratos.
-
-
-
----
-
-4.4 KRATOS
-
-Confirmar:
-
-creación de Model;
-
-creación de ModelPart;
-
-nodos;
-
-elementos;
-
-propiedades;
-
-DOFs;
-
-material.
-
-
-
----
-
-4.5 CONDICIONES DE FRONTERA
-
-Confirmar que las restricciones sean transferidas correctamente.
-
-Verificar que los grados de libertad correspondientes queden correctamente fijados.
-
-
----
-
-4.6 CARGAS
-
-Confirmar que las cargas lleguen correctamente al modelo de Kratos.
-
-Verificar:
-
-magnitud;
-
-dirección;
-
-ubicación;
-
-tipo de carga.
-
-
-
----
-
-4.7 SOLVER
-
-Ejecutar el solver real.
+4. EVIDENCIA
 
 Registrar:
 
-configuración;
+archivo utilizado;
 
-convergencia;
+comando exacto;
 
-errores;
+entorno de ejecución;
 
-tiempo de ejecución, si está disponible;
+versiones relevantes;
 
-estado final.
+resultado de la ejecución;
 
+resultados obtenidos;
 
+errores producidos, si existen;
 
----
-
-4.8 RESULTADOS
-
-Extraer y verificar, según lo implementado:
-
-desplazamientos;
-
-tensiones;
-
-compliance;
-
-energía elemental;
-
-cualquier otro resultado disponible para el Core.
+archivos de salida generados, si corresponde.
 
 
-Confirmar que los valores sean numéricamente válidos.
-
-No aceptar:
-
-NaN;
-
-Inf;
-
-valores faltantes;
-
-resultados vacíos;
-
-resultados desconectados del cálculo real.
-
+La evidencia debe permitir reproducir posteriormente la prueba.
 
 
 ---
 
-4.9 RETORNO AL CORE
+5. REGLA ANTE ERRORES
 
-Verificar específicamente la Etapa I.
-
-Los resultados obtenidos por Kratos deben regresar correctamente al Core mediante la interfaz/adaptador implementado.
-
-Confirmar que el Core pueda consumir los resultados sin acceder innecesariamente a detalles internos de Kratos.
-
-
----
-
-5. VALIDACIÓN DE EXTREMO A EXTREMO
-
-La prueba se considera exitosa únicamente si puede demostrarse:
-
-STEP REAL
-   ↓
-CADModel
-   ↓
-MALLA
-   ↓
-KRATOS
-   ↓
-FEA
-   ↓
-RESULTADOS
-   ↓
-CORE
-
-No es suficiente que cada componente funcione individualmente.
-
-Debe demostrarse que los datos atraviesan correctamente todo el pipeline.
-
-
----
-
-6. VALIDACIONES NUMÉRICAS
-
-Comparar los resultados con las referencias disponibles de las pruebas anteriores.
-
-Cuando exista una referencia conocida:
-
-comparar desplazamientos;
-
-comparar compliance;
-
-comparar resultados relevantes;
-
-calcular diferencia o error cuando sea posible.
-
-
-No inventar tolerancias.
-
-Utilizar las tolerancias ya establecidas en la documentación existente.
-
-Si no existe una referencia aplicable, indicarlo explícitamente.
-
-
----
-
-7. REGLA ESTRICTA ANTE ERRORES
-
-Esta es una VALIDACIÓN, no una sesión de ensayo y error.
+Esta intervención es exclusivamente de validación.
 
 Si aparece un error:
 
-ERROR EVIDENTE Y YA CONOCIDO
+DETENERSE.
 
-Si corresponde exactamente a un problema cuya solución ya fue investigada y documentada:
+No intentar solucionarlo.
 
-aplicar únicamente la solución ya conocida;
+No modificar el código.
 
-ejecutar nuevamente la prueba;
+No cambiar parámetros arbitrariamente.
 
-documentar el resultado.
+No probar enfoques alternativos.
 
-
-No buscar otra solución.
-
-ERROR NUEVO
-
-Si aparece un problema que no está contemplado:
-
-> DETENER.
-
-
-
-No intentar múltiples soluciones.
-
-No cambiar arbitrariamente el código.
-
-No crear scripts alternativos.
-
-No instalar dependencias para probar soluciones.
+No instalar dependencias nuevas.
 
 No cambiar versiones.
 
-No modificar la arquitectura.
+No ejecutar ciclos de ensayo y error.
 
-Registrar el problema siguiendo el protocolo de metodologia.md.
+El error debe registrarse utilizando el protocolo establecido en metodologia.md.
 
 
 ---
 
-8. REGISTRO DE ERRORES
+6. REGISTRO DE BLOQUEOS
 
-Todo error nuevo que impida completar la prueba debe registrarse en:
+Si el flujo no puede completarse, registrar el problema en:
 
 resumen_implementacion.md
 
-Incluir como mínimo:
+El registro debe contener como mínimo:
 
-componente;
+punto exacto donde ocurrió;
 
-comando;
+comando ejecutado;
 
-entorno;
+entrada utilizada;
 
-archivo;
+salida obtenida;
 
-función;
-
-entrada;
-
-salida;
-
-traceback completo;
+traceback completo, si existe;
 
 resultado esperado;
 
@@ -405,236 +158,130 @@ resultado observado;
 
 hechos comprobados;
 
-hipótesis;
+hipótesis, separadas claramente de los hechos;
 
 información desconocida;
 
-impacto;
-
-prioridad.
+impacto del problema.
 
 
-Estado:
+Después de registrar el bloqueo:
 
-> BLOQUEADO — REQUIERE INVESTIGACIÓN
-
-
-
-No crear documentos adicionales.
-
-
----
-
-9. NO ALTERAR EL ALCANCE
-
-Durante esta intervención NO implementar:
-
-TopOpt;
-
-diseño generativo;
-
-GUI;
-
-integraciones CAD;
-
-nuevos motores;
-
-nuevas bibliotecas;
-
-funcionalidades futuras.
-
-
-El objetivo es únicamente:
-
-> VALIDAR EL MOTOR FEA ACTUAL COMPLETO.
+> DETENERSE.
 
 
 
 
 ---
 
-10. CRITERIO DE ÉXITO
+7. CRITERIO DE ÉXITO
 
-El motor FEA será considerado validado E2E si:
+La prueba se considera exitosa únicamente si una entrada STEP real puede recorrer el flujo completo y producir resultados FEA reales.
 
-el STEP real es procesado;
+Debe demostrarse:
 
-el CADModel se genera correctamente;
+ENTRADA REAL
+     ↓
+PROCESAMIENTO
+     ↓
+MALLADO
+     ↓
+FEA REAL
+     ↓
+RESULTADOS REALES
+     ↓
+SALIDA
 
-la malla se genera;
+No declarar éxito porque determinados componentes funcionen individualmente.
 
-la malla llega a Kratos;
-
-el modelo FEA se configura;
-
-material, cargas y restricciones se aplican;
-
-el solver ejecuta;
-
-los resultados se generan;
-
-los resultados son válidos;
-
-los resultados regresan al Core;
-
-el pipeline completo puede reproducirse.
-
+El criterio es que el flujo completo funcione conjuntamente.
 
 
 ---
 
-11. DOCUMENTACIÓN
+8. DOCUMENTACIÓN DEL RESULTADO
 
-Actualizar resumen_implementacion.md después de la prueba.
+Actualizar resumen_implementacion.md.
 
-Registrar:
+Si la prueba fue exitosa, registrar:
 
-fecha;
+## VALIDACIÓN E2E — MOTOR FEA
 
-prueba E2E;
+Estado: COMPLETADO
 
-archivo utilizado;
+Entrada:
+[archivo utilizado]
 
-entorno;
+Comando:
+[comando exacto]
 
-versiones;
+Resultado:
+[resultado obtenido]
 
-comando;
+Evidencia:
+[evidencia disponible]
 
-etapas ejecutadas;
+Conclusión:
+El motor FEA ejecutó correctamente el flujo completo de extremo a extremo.
 
-resultados;
+Si la prueba falla:
 
-validaciones numéricas;
+Estado: BLOQUEADO
 
-errores;
+y registrar el bloqueo correspondiente.
 
-bloqueos;
-
-estado final.
-
-
-No reescribir innecesariamente la documentación histórica.
-
-
----
-
-12. AUDITORÍA FINAL
-
-Al terminar:
-
-1. Revisar el resultado completo.
-
-
-2. Confirmar que todas las etapas A–I participaron.
-
-
-3. Confirmar que no existieron mocks en el pipeline real.
-
-
-4. Confirmar que los resultados provienen del solver real.
-
-
-5. Confirmar que los resultados llegaron al Core.
-
-
-6. Revisar cualquier error.
-
-
-7. Actualizar resumen_implementacion.md.
-
-
-
-Clasificar:
-
-MOTOR FEA E2E
-
-COMPLETADO
-PARCIAL
-BLOQUEADO
+No crear archivos adicionales.
 
 
 ---
 
-13. INFORME FINAL
+9. INFORME FINAL
 
-Al finalizar, presentar:
+Al finalizar indicar:
 
-PIPELINE
+RESULTADO
 
-STEP → CADModel → Malla → Kratos → FEA → Resultados → Core
+ÉXITO / FALLO / BLOQUEADO
 
-Indicar el estado de cada etapa.
+ENTRADA
+
+Archivo utilizado.
+
+EJECUCIÓN
+
+Comando utilizado.
 
 RESULTADOS
 
-Indicar los valores principales obtenidos.
+Resultados principales obtenidos.
 
-VALIDACIÓN
+EVIDENCIA
 
-Indicar las comparaciones realizadas y sus errores.
+Archivos, registros o resultados que demuestren la ejecución.
 
-PROBLEMAS
+CONCLUSIÓN
 
-Indicar cualquier error encontrado.
-
-BLOQUEOS
-
-Indicar únicamente los bloqueos que realmente impidieron completar alguna parte.
-
-VEREDICTO
-
-Responder claramente:
-
-> ¿El motor FEA de Topología Optimizada funciona actualmente de extremo a extremo?
-
-
-
-Responder:
-
-SÍ
-NO
-PARCIALMENTE
-
-y justificarlo únicamente mediante evidencia obtenida durante esta prueba.
+Determinar claramente si el motor FEA funciona actualmente de extremo a extremo.
 
 
 ---
 
 REGLA SUPREMA
 
-Esta intervención tiene una finalidad:
+La finalidad de esta intervención es una sola:
 
-> DEMOSTRAR, NO SUPONER, QUE EL MOTOR FEA FUNCIONA.
-
-
-
-No declarar éxito porque cada componente exista.
-
-No declarar éxito porque las pruebas individuales hayan funcionado.
-
-El éxito requiere:
-
-ENTRADA REAL
-    ↓
-PIPELINE COMPLETO
-    ↓
-SOLVER REAL
-    ↓
-RESULTADOS REALES
-    ↓
-CORE
-
-Si funciona:
-
-> documentar evidencia y cerrar la validación E2E.
+> COMPROBAR MEDIANTE UNA EJECUCIÓN REAL QUE EL MOTOR FEA COMPLETO FUNCIONA DE EXTREMO A EXTREMO.
 
 
 
-Si falla:
+No realizar investigación.
 
-> registrar el bloqueo y detenerse.
+No implementar funcionalidades nuevas.
 
+No solucionar errores durante la prueba.
 
+No realizar ensayo y error.
 
-No convertir esta validación en otra sesión de ensayo y error.
+Ejecutar → observar → documentar → determinar resultado.
+
+Ahora sí: **no hay ninguna referencia a etapas anteriores ni a G/H/I**. La IA recibe una única misión: **poner el motor completo a funcionar y demostrar qué ocurre**.

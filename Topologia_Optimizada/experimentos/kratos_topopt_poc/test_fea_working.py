@@ -33,6 +33,9 @@ def run_corrected_fea():
     model_part.AddNodalSolutionStepVariable(Kratos.REACTION)
     model_part.AddNodalSolutionStepVariable(Kratos.VELOCITY)
     model_part.AddNodalSolutionStepVariable(Kratos.ACCELERATION)
+    # Variables adicionales que SmallDisplacementElement3D4N necesita
+    model_part.AddNodalSolutionStepVariable(Kratos.PRESSURE)
+    model_part.AddNodalSolutionStepVariable(Kratos.TEMPERATURE)
     
     # Cargar malla desde Gmsh
     gmsh.initialize()
@@ -67,9 +70,11 @@ def run_corrected_fea():
             material_properties = Kratos.Properties(1)
             Young_modulus = 68.9e9  # Pa (aluminio)
             Poisson_ratio = 0.33
+            density = 2700.0  # kg/m^3 (aluminio)
             
             material_properties.SetValue(Kratos.YOUNG_MODULUS, Young_modulus)
             material_properties.SetValue(Kratos.POISSON_RATIO, Poisson_ratio)
+            material_properties.SetValue(Kratos.DENSITY, density)
             
             # Agregar ley constitutiva usando el método correcto
             try:
@@ -148,6 +153,7 @@ def run_corrected_fea():
     # Crear esquema de tiempo
     model_part.ProcessInfo.SetValue(Kratos.STEP, 1)
     model_part.ProcessInfo.SetValue(Kratos.TIME, 0.0)
+    model_part.ProcessInfo.SetValue(Kratos.DELTA_TIME, 1.0)
     
     # Crear solver lineal simplificado
     try:

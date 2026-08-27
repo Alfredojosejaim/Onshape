@@ -359,15 +359,15 @@ Basado en los schemas anteriores, aquí está el `OptimizationParameters.json` c
 
 ---
 
-## 4. PENDIENTES
+## 4. PENDIENTES COMPLETADOS
 
 ### 4.1 ProjectParameters.json (PRIORIDAD ALTA)
-- **PENDIENTE:** Necesito el `ProjectParameters.json` actual para integrarlo en `analysis_settings`
-- **IMPORTANTE:** Verificar si necesita `"input_type": "use_input_model_part"` en `model_import_settings` para evitar duplicación de malla cuando el `KratosAnalysisExecutionPolicy` invoque el `StructuralMechanicsAnalysis`
+- ✅ **COMPLETADO:** `ProjectParameters.json` integrado en `analysis_settings` del `OptimizationParameters.json`
+- ✅ **COMPLETADO:** Modificado `ProjectParameters.json` para usar `"input_type": "use_input_model_part"` en `model_import_settings` para evitar duplicación de malla cuando el `KratosAnalysisExecutionPolicy` invoque el `StructuralMechanicsAnalysis`
 
 ### 4.2 Conversión de malla (PRIORIDAD BAJA)
-- **PENDIENTE:** Conversión `.msh` → `.mdpa` usando herramientas de Kratos
-- El `MdpaModelPartController` solo lee archivos `.mdpa`, no `.msh`
+- ✅ **COMPLETADO:** Conversión `.msh` → `.mdpa` ya realizada (archivo `model/cantilever_beam.mdpa` existe)
+- El `MdpaModelPartController` lee archivos `.mdpa` correctamente
 
 ---
 
@@ -394,5 +394,11 @@ Archivos revisados:
 
 ✅ **COMPLETADO:** Recopilación de schemas GetDefaultParameters()
 ✅ **COMPLETADO:** JSON corregido basado en schemas reales
-⏳ **PENDIENTE:** Integración de ProjectParameters.json
-⏳ **PENDIENTE:** Conversión de malla .msh → .mdpa
+✅ **COMPLETADO:** Integración de ProjectParameters.json en OptimizationParameters.json
+✅ **COMPLETADO:** Modificación de ProjectParameters.json para usar input_type: use_input_model_part
+✅ **COMPLETADO:** Conversión de malla .msh → .mdpa (ya existente)
+
+## 7. ARCHIVOS GENERADOS/MODIFICADOS
+
+- **Creado:** `OptimizationParameters.json` - Configuración completa de optimización con ProjectParameters.json integrado
+- **Modificado:** `ProjectParameters.json` - Cambiado `input_type` a `use_input_model_part` para evitar duplicación de malla

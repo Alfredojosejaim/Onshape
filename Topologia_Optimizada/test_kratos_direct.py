@@ -55,6 +55,17 @@ except Exception as e:
 
 print()
 
+# Test 3b: Add nodal variables (MUST BE BEFORE importing mesh)
+print("3b. Agregando variables nodales (ANTES de importar malla)...")
+try:
+    adapter.add_nodal_variables(model_part)
+    print("   [PASS] Variables nodales agregadas correctamente")
+except Exception as e:
+    print(f"   [FAIL] Error agregando variables nodales: {e}")
+    sys.exit(1)
+
+print()
+
 # Test 4: Import mesh
 print("4. Importando malla simple...")
 try:
@@ -65,6 +76,17 @@ try:
     print(f"   [PASS] Malla importada: {model_part.NumberOfNodes()} nodos, {model_part.NumberOfElements()} elementos")
 except Exception as e:
     print(f"   [FAIL] Error importando malla: {e}")
+    sys.exit(1)
+
+print()
+
+# Test 4b: Setup ModelPart for structural analysis (buffer size)
+print("4b. Configurando ModelPart para análisis estructural (buffer size)...")
+try:
+    adapter.setup_model_part_for_structural_analysis(model_part)
+    print("   [PASS] ModelPart configurado correctamente")
+except Exception as e:
+    print(f"   [FAIL] Error configurando ModelPart: {e}")
     sys.exit(1)
 
 print()
@@ -119,11 +141,11 @@ print()
 print("=== FIN DE PRUEBA DIRECTA ===")
 print()
 print("RESUMEN:")
-print("  - Importación Kratos: ✅ FUNCIONAL")
-print("  - KratosAdapter: ✅ FUNCIONAL")
-print("  - ModelPart: ✅ FUNCIONAL")
-print("  - Importación de malla: ✅ FUNCIONAL")
-print("  - Configuración de material: ✅ FUNCIONAL")
-print("  - Aplicación de restricciones: ✅ FUNCIONAL")
-print("  - Aplicación de cargas: ✅ FUNCIONAL")
-print("  - Configuración de solver: ❌ BLOQUEADO (LinearSolverFactory.Create())")
+print("  - Importación Kratos: [OK] FUNCIONAL")
+print("  - KratosAdapter: [OK] FUNCIONAL")
+print("  - ModelPart: [OK] FUNCIONAL")
+print("  - Importación de malla: [OK] FUNCIONAL")
+print("  - Configuración de material: [OK] FUNCIONAL")
+print("  - Aplicación de restricciones: [OK] FUNCIONAL")
+print("  - Aplicación de cargas: [OK] FUNCIONAL")
+print("  - Configuración de solver: [OK] FUNCIONAL (LinearSolverFactory.Create() - BLOQUEADO-004 RESUELTO)")

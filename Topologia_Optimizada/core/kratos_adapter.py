@@ -534,33 +534,98 @@ class KratosAdapter:
             logger.error(f"Failed to apply constraint from Core: {e}")
             raise
     
-    def apply_constraints_by_face_mapping(self, model_part: Any, constraints: List[Any], 
-                                         boundary_mapper: Any, nodes: List[List[float]]) -> None:
-        """Apply constraints using face-to-node mapping from Core's BoundaryConditionMapper.
-        
+    def apply_constraints_by_face_mapping(
+        self, model_part: Any, constraints: List[Any], cad_shape: Any,
+        nodes: List[List[float]], tolerance: float = 0.5) -> None:
+        """Apply constraints to nodes mapped from real CAD faces.
+
+        Uses the Core's ``BoundaryConditionMapper`` to the map ``location_face_id``
+        of every constraint to the mesh nodes that lie geometrically on that CAD
+        face, then applies the constraint exclusively to those nodes.
+
         Args:
             model_part: Kratos ModelPart with nodes and DOFs
             constraints: List of ConstraintDefinition objects from core.study
-            boundary_mapper: BoundaryConditionMapper from core.boundary
+            cad_shape: CadQuery/OpenCASCADE Shape of the CAD model
             nodes: List of node coordinates for mapping
+            tolerance: Distance tolerance (model units) for face-node matching
         """
         try:
-            logger.info(f"Applying {len(constraints)} constraints using face mapping")
-            
+            from core.boundary import BoundaryConditionMapper, resolve_face_index
+
+            logger.info(f"Applying {len(constraints)} constraints using CAD face mapping")
+
             for constraint in constraints:
-                # Map face to nodes using Core's boundary mapper
-                # This requires the CAD shape, which we don't have in this context
-                # For now, we'll apply constraints to all nodes as a demonstration
-                logger.warning("Face mapping requires CAD shape, applying to all nodes as demonstration")
-                
-                # Apply to all nodes as demonstration
-                all_node_indices = list(range(len(nodes)))
-                self.apply_constraint_from_core(model_part, constraint, all_node_indices)
-            
-            logger.info("Constraints applied using face mapping (demonstration mode)")
-            
+                face_index = resolve_face_index(getattr(constraint, "location_face_id", None))
+                if face_index is None:
+                    logger.warning(
+                        f"Constraint {constraint.id} has no resolvable location_face_id; skipped"
+                    )
+                    continue
+
+                mapped = BoundaryConditionMapper.map_faces_to_nodes(
+                    cad_shape, nodes, face_indices=[face_index], tolerance=tolerance
+                )
+                if not mapped or not mapped[0].node_indices:
+                    logger.warning(
+                        f"Constraint {constraint.id}: no nodes found on CAD face index {face_index}"
+                    )
+                    continue
+
+                node_indices = mapped[0].node_indices
+                self.apply_constraint_from_core(model_part, constraint, node_indices)
+                logger.info(
+                    f"Constraint {constraint.id} applied to {len(node_indices)} nodes "
+                    f"via CAD face index {face_index}"
+                )
+
+            logger.info("Constraints applied using CAD face mapping")
+
         except Exception as e:
             logger.error(f"Failed to apply constraints by face mapping: {e}")
+            raise
+
+    def apply_loads_by_face_mapping(
+        self, model_part: Any, loads: List[Any], cad_shape: Any,
+        nodes: List[List[float]], tolerance: float = 0.5) -> None:
+        """Apply loads to nodes mapped from real CAD faces.
+
+        Mirrors ``apply_constraints_by_face_mapping`` using the load's
+        ``application_face_id``.
+        """
+        try:
+            from core.boundary import BoundaryConditionMapper, resolve_face_index
+
+            logger.info(f"Applying {len(loads)} loads using CAD face mapping")
+
+            for load in loads:
+                face_index = resolve_face_index(getattr(load, "application_face_id", None))
+                if face_index is None:
+                    logger.warning(
+                        f"Load {load.id} has no resolvable application_face_id; skipped"
+                    )
+                    continue
+
+                mapped = BoundaryConditionMapper.map_faces_to_nodes(
+                    cad_shape, nodes, face_indices=[face_index], tolerance=tolerance
+                )
+                if not mapped or not mapped[0].node_indices:
+                    logger.warning(
+                        f"Load {load.id}: no nodes found on CAD face index {face_index}"
+                    )
+                    continue
+
+                node_indices = mapped[0].node_indices
+                self.apply_load_from_core(model_part, load, node_indices)
+                logger.info(
+                    f"Load {load.id} applied to {len(node_indices)} nodes "
+                    f"via CAD face index {face_index}"
+                )
+
+            logger.info("Loads applied using CAD face mapping")
+
+        except Exception as e:
+            logger.error(f"Failed to apply loads by face mapping: {e}")
             raise
     
     def apply_point_load(self, model_part: Any, node_index: int, force_vector: List[float]) -> None:

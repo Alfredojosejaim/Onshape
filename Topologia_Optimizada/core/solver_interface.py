@@ -138,6 +138,7 @@ def create_kratos_fea_solver(
     material: Any,
     constraints: Any,
     loads: Any,
+    cad_shape: Any = None,
 ) -> Callable[..., Dict[str, Any]]:
     """Create a Kratos-based FEA solver for use with TopOptSolver.
     
@@ -150,6 +151,11 @@ def create_kratos_fea_solver(
         material: Material object from core.materials
         constraints: List of ConstraintDefinition objects
         loads: List of LoadDefinition objects
+        cad_shape: CadQuery/OpenCASCADE Shape of the CAD model. When provided,
+            For each node definition, the application strategies follow this order:
+            1. Named Kratos submodelpart (``submodelpart_name`` / ``boundary_name``).
+            2. CAD face mapping (``location_face_id`` / ``application_face_id`` → real mesh nodes).
+            3. Coordinate-based filtering (fallback, kept for backward compatibility).
         
     Returns:
         Callable function that can be used as fea_solver for TopOptSolver
@@ -191,9 +197,12 @@ def create_kratos_fea_solver(
             # Add nodal variables BEFORE importing mesh (critical requirement)
             adapter.add_nodal_variables(model_part)
             
-            # Convert numpy arrays to list format for KratosAdapter
-            nodes_list = nodes.tolist()
-            elements_list = elements.tolist()
+            # Convert numpy arrays to list format for KratosAdapter.
+            # Tolerant to both numpy arrays and plain python lists.
+            nodes_arr = np.asarray(nodes, dtype=float)
+            elements_arr = np.asarray(elements, dtype=int)
+            nodes_list = nodes_arr.tolist()
+            elements_list = elements_arr.tolist()
             
             # Import mesh
             adapter.import_mesh_from_core_format(
@@ -212,14 +221,15 @@ def create_kratos_fea_solver(
             # Apply constraints using geometric selection
             # CRITICAL FIX: No longer applies to ALL nodes
             # Instead, use geometric information to select boundary nodes
+            # (1) named submodelpart, (2) CAD face mapping, (3) coordinate fallback.
             for constraint in constraints:
-                _apply_constraint_geometrically(adapter, model_part, constraint, nodes_list)
+                _apply_constraint_geometrically(adapter, model_part, constraint, nodes_list, cad_shape)
             
             # Apply loads using geometric selection
             # CRITICAL FIX: No longer applies to ALL nodes
             # Instead, use geometric information to select load surface nodes
             for load in loads:
-                _apply_load_geometrically(adapter, model_part, load, nodes_list)
+                _apply_load_geometrically(adapter, model_part, load, nodes_list, cad_shape)
             
             # Run analysis
             result = adapter.run_analysis(model_part)
@@ -257,25 +267,73 @@ def create_kratos_fea_solver(
     return kratos_fea_solver
 
 
-def _apply_constraint_geometrically(adapter: Any, model_part: Any, constraint: Any, 
-                                   nodes_list: List[List[float]]) -> None:
+def _apply_constraint_by_face_mapping(adapter: Any, model_part: Any, constraint: Any,
+                                      nodes_list: List[List[float]], cad_shape: Any) -> bool:
+    """Apply a constraint to the mesh nodes that lie on a real CAD face.
+
+    Uses the Core ``BoundaryConditionMapper`` with the constraint's
+    ``location_face_id`` resolved against the CAD shape. Physically anchored:
+    it selects only the nodes on that B-Rep face, never an arbitrary region.
+
+    Returns:
+        True when the constraint was applied via face mapping, False when the
+        constraint cannot be resolved/does not match any node (callers should
+        then fall through to the coordinate-based fallback).
+    """
+    from core.boundary import BoundaryConditionMapper, resolve_face_index
+
+    face_index = resolve_face_index(getattr(constraint, "location_face_id", None))
+    if cad_shape is None or face_index is None:
+        return False
+
+    tolerance = getattr(constraint, "tolerance", 0.5)
+    if not tolerance or tolerance <= 0:
+        tolerance = 0.5
+
+    try:
+        mapped = BoundaryConditionMapper.map_faces_to_nodes(
+            cad_shape, nodes_list, face_indices=[face_index], tolerance=tolerance
+        )
+    except Exception as e:
+        logger.error(f"Face mapping failed for constraint {constraint.id}: {e}")
+        return False
+
+    if not mapped or not mapped[0].node_indices:
+        logger.warning(
+            f"No mesh nodes found on CAD face index {face_index} for constraint {constraint.id}"
+        )
+        return False
+
+    node_indices = mapped[0].node_indices
+    adapter.apply_constraint_from_core(model_part, constraint, node_indices)
+    logger.info(
+        f"Constraint {constraint.id} applied to {len(node_indices)} nodes "
+        f"via CAD face index {face_index} (face-based mapping)"
+    )
+    return True
+
+
+def _apply_constraint_geometrically(adapter: Any, model_part: Any, constraint: Any,
+                                    nodes_list: List[List[float]], cad_shape: Any = None) -> None:
     """Apply constraint using geometric node selection.
-    
+
     ARCHITECTURE NOTE:
     This function implements proper geometric node selection for boundary conditions.
     Previously, constraints were applied to ALL nodes, creating an over-constrained system.
-    
-    Two approaches are supported:
-    1. Submodelpart-based (recommended): If .mdpa has named submodelparts from gmsh 
-       physical groups, use those (e.g., "Structure.FixedFace")
-    2. Coordinate-based (fallback): If no submodelpart, filter nodes by coordinate 
-       (e.g., Z=0 for fixed end)
-       
+
+    Three strategies are attempted in order:
+    1. Named submodelpart (exact, if the mesh was imported with physical groups)
+    2. CAD face mapping (primary geometric mechanism): maps ``location_face_id``
+       to the mesh nodes lying on that real CAD face using BoundaryConditionMapper
+    3. Coordinate-based (fallback): filter nodes by coordinate (e.g., Z=0 for the
+       fixed end). Kept only as a technical fallback.
+
     Args:
         adapter: KratosAdapter instance
         model_part: Kratos ModelPart
         constraint: ConstraintDefinition object
         nodes_list: Original node coordinates from Core
+        cad_shape: CadQuery/OpenCASCADE Shape of the CAD model (or None)
     """
     try:
         from core.study import ConstraintType
@@ -285,14 +343,23 @@ def _apply_constraint_geometrically(adapter: Any, model_part: Any, constraint: A
                            getattr(constraint, 'boundary_name', None)
         
         if submodelpart_name:
-            logger.info(f"Applying constraint using submodelpart: {submodelpart_name}")
-            adapter.apply_constraint_to_submodelpart(model_part, constraint, submodelpart_name)
+            node_indices = adapter.get_nodes_from_submodelpart(model_part, submodelpart_name)
+            if node_indices:
+                adapter.apply_constraint_from_core(model_part, constraint, node_indices)
+                logger.info(f"Constraint {constraint.id} applied to {len(node_indices)} nodes "
+                            f"via submodelpart '{submodelpart_name}'")
+                return
+            logger.warning(f"Submodelpart '{submodelpart_name}' has no nodes for constraint "
+                           f"{constraint.id}; falling through to face mapping")
+        
+        # Strategy 2: CAD face mapping (primary geometric mechanism, physically anchored)
+        if _apply_constraint_by_face_mapping(adapter, model_part, constraint, nodes_list, cad_shape):
             return
         
-        # Strategy 2: Fallback - use coordinate-based filtering
+        # Strategy 3: Fallback - use coordinate-based filtering
         # This is a temporary solution until gmsh physical groups are properly integrated
-        logger.warning(f"No submodelpart specified for constraint {constraint.id}. "
-                      "Using coordinate-based selection (temporary workaround).")
+        logger.warning(f"No geometric face region resolved for constraint {constraint.id}. "
+                      "Using coordinate-based selection (fallback).")
         
         # For a fixed constraint on a cantilever beam, typically fix the built-in end
         # Assumption: the fixed end is at Z=0 (this should be in constraint metadata)
@@ -300,6 +367,10 @@ def _apply_constraint_geometrically(adapter: Any, model_part: Any, constraint: A
         fixed_coord = getattr(constraint, 'fixed_coordinate', 0.0)
         fixed_axis = getattr(constraint, 'fixed_axis', 2)  # Default Z axis
         tolerance = getattr(constraint, 'tolerance', 0.01)
+        
+        if fixed_coord is None:
+            logger.warning(f"Constraint {constraint.id} has no coordinate or face information, cannot apply")
+            return
         
         node_indices = adapter.get_nodes_by_coordinate_filter(
             model_part, 
@@ -319,42 +390,94 @@ def _apply_constraint_geometrically(adapter: Any, model_part: Any, constraint: A
         raise
 
 
-def _apply_load_geometrically(adapter: Any, model_part: Any, load: Any, 
-                             nodes_list: List[List[float]]) -> None:
+def _apply_load_by_face_mapping(adapter: Any, model_part: Any, load: Any,
+                                nodes_list: List[List[float]], cad_shape: Any) -> bool:
+    """Apply a load to the mesh nodes that lie on a real CAD face.
+
+    Mirrors ``_apply_constraint_by_face_mapping`` using ``application_face_id``.
+
+    Returns:
+        True when the load was applied via face mapping, False otherwise.
+    """
+    from core.boundary import BoundaryConditionMapper, resolve_face_index
+
+    face_index = resolve_face_index(getattr(load, "application_face_id", None))
+    if cad_shape is None or face_index is None:
+        return False
+
+    tolerance = getattr(load, "tolerance", 0.5)
+    if not tolerance or tolerance <= 0:
+        tolerance = 0.5
+
+    try:
+        mapped = BoundaryConditionMapper.map_faces_to_nodes(
+            cad_shape, nodes_list, face_indices=[face_index], tolerance=tolerance
+        )
+    except Exception as e:
+        logger.error(f"Face mapping failed for load {load.id}: {e}")
+        return False
+
+    if not mapped or not mapped[0].node_indices:
+        logger.warning(
+            f"No mesh nodes found on CAD face index {face_index} for load {load.id}"
+        )
+        return False
+
+    node_indices = mapped[0].node_indices
+    adapter.apply_load_from_core(model_part, load, node_indices)
+    logger.info(
+        f"Load {load.id} applied to {len(node_indices)} nodes "
+        f"via CAD face index {face_index} (face-based mapping)"
+    )
+    return True
+
+
+def _apply_load_geometrically(adapter: Any, model_part: Any, load: Any,
+                              nodes_list: List[List[float]], cad_shape: Any = None) -> None:
     """Apply load using geometric node selection.
     
     ARCHITECTURE NOTE:
     This function implements proper geometric node selection for loads.
     Previously, loads were applied to ALL nodes, creating an over-loaded system.
     
-    Similar to constraints, two approaches are supported:
-    1. Submodelpart-based (recommended): Use named submodelparts from gmsh physical groups
-    2. Coordinate-based (fallback): Filter nodes by coordinate
-    
-    For a cantilever beam with a point load at the free end, this would select only
-    the nodes at the free end (e.g., Z=L).
-    
+    Three strategies are attempted in order:
+    1. Named submodelpart (exact, if the mesh was imported with physical groups)
+    2. CAD face mapping (primary geometric mechanism): maps ``application_face_id``
+       to the mesh nodes lying on that real CAD face using BoundaryConditionMapper
+    3. Coordinate-based (fallback): filter nodes by coordinate (e.g., Z=L for the
+       free end of a cantilever). Kept only as a technical fallback.
+
     Args:
         adapter: KratosAdapter instance
         model_part: Kratos ModelPart
         load: LoadDefinition object
         nodes_list: Original node coordinates from Core
+        cad_shape: CadQuery/OpenCASCADE Shape of the CAD model (or None)
     """
     try:
         from core.study import LoadType
         
-        # Strategy 1: Try to use named submodelpart
+        # Strategy 1: Try to use named submodelpart (e.g., from gmsh physical groups)
         submodelpart_name = getattr(load, 'submodelpart_name', None) or \
                            getattr(load, 'boundary_name', None)
         
         if submodelpart_name:
-            logger.info(f"Applying load using submodelpart: {submodelpart_name}")
-            adapter.apply_load_to_submodelpart(model_part, load, submodelpart_name)
+            node_indices = adapter.get_nodes_from_submodelpart(model_part, submodelpart_name)
+            if node_indices:
+                adapter.apply_load_from_core(model_part, load, node_indices)
+                logger.info(f"Load {load.id} applied to {len(node_indices)} nodes "
+                            f"via submodelpart '{submodelpart_name}'")
+                return
+            logger.warning(f"Submodelpart '{submodelpart_name}' has no nodes for load "
+                           f"{load.id}; falling through to face mapping")
+        
+        # Strategy 2: CAD face mapping (primary geometric mechanism, physically anchored)
+        if _apply_load_by_face_mapping(adapter, model_part, load, nodes_list, cad_shape):
             return
         
-        # Strategy 2: Fallback - use coordinate-based filtering
-        logger.warning(f"No submodelpart specified for load {load.id}. "
-                      "Using coordinate-based selection (temporary workaround).")
+        # Strategy 3: Fallback - use coordinate-based filtering
+        logger.warning(f"No geometric face region resolved for load {load.id}. "
+                      "Using coordinate-based selection (fallback).")
         
         # For a point load on a cantilever, typically at the free end
         # Assumption: load is applied at Z=L or at a specific coordinate
@@ -376,7 +499,7 @@ def _apply_load_geometrically(adapter: Any, model_part: Any, load: Any,
             else:
                 logger.warning(f"No nodes found matching load criteria for {load.id}")
         else:
-            logger.warning(f"Load {load.id} has no coordinate information, cannot apply")
+            logger.warning(f"Load {load.id} has no coordinate or face information, cannot apply")
             
     except Exception as e:
         logger.error(f"Failed to apply load geometrically: {e}")

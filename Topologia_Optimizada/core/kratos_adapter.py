@@ -948,6 +948,123 @@ class KratosAdapter:
             applications["OptimizationApplication"] = False
         
         return applications
+    
+    def get_nodes_from_submodelpart(self, model_part: Any, submodelpart_name: str) -> List[int]:
+        """Get node indices from a named submodelpart.
+        
+        This is used for accessing nodes that were mapped from CAD faces (e.g., by gmsh 
+        physical groups or other naming schemes).
+        
+        Args:
+            model_part: Kratos ModelPart
+            submodelpart_name: Name of the submodelpart (e.g., "Structure.FixedFace")
+            
+        Returns:
+            List of 0-based node indices in the submodelpart
+        """
+        try:
+            # Try to get submodelpart by name
+            if model_part.HasSubModelPart(submodelpart_name):
+                sub_part = model_part.GetSubModelPart(submodelpart_name)
+                node_indices = [node.Id - 1 for node in sub_part.Nodes]  # Convert 1-based Kratos to 0-based
+                logger.info(f"Retrieved {len(node_indices)} nodes from submodelpart '{submodelpart_name}'")
+                return node_indices
+            else:
+                logger.warning(f"Submodelpart '{submodelpart_name}' not found")
+                return []
+                
+        except Exception as e:
+            logger.error(f"Failed to get nodes from submodelpart '{submodelpart_name}': {e}")
+            raise
+    
+    def get_nodes_by_coordinate_filter(self, model_part: Any, coordinate: int, 
+                                      value: float, tolerance: float = 0.01) -> List[int]:
+        """Get node indices by filtering on a specific coordinate (X, Y, or Z).
+        
+        Useful for selecting boundary nodes without named submodelparts.
+        For example, get_nodes_by_coordinate_filter(mp, 2, 0.0, 0.01) gets all nodes 
+        where Z ≈ 0 (the bottom face of a model).
+        
+        Args:
+            model_part: Kratos ModelPart
+            coordinate: 0 for X, 1 for Y, 2 for Z
+            value: Target coordinate value
+            tolerance: Tolerance for matching (default 0.01)
+            
+        Returns:
+            List of 0-based node indices matching the filter
+        """
+        try:
+            if coordinate not in [0, 1, 2]:
+                raise ValueError(f"coordinate must be 0 (X), 1 (Y), or 2 (Z), got {coordinate}")
+            
+            coord_name = ['X', 'Y', 'Z'][coordinate]
+            node_indices = []
+            
+            for node in model_part.Nodes:
+                node_coord = node.GetSolutionStepValue(Kratos.DISPLACEMENT)
+                node_pos = [node.X, node.Y, node.Z]
+                if abs(node_pos[coordinate] - value) <= tolerance:
+                    node_indices.append(node.Id - 1)  # Convert to 0-based
+            
+            logger.info(f"Found {len(node_indices)} nodes with {coord_name} ≈ {value} (tolerance ±{tolerance})")
+            return node_indices
+            
+        except Exception as e:
+            logger.error(f"Failed to filter nodes by coordinate: {e}")
+            raise
+    
+    def apply_constraint_to_submodelpart(self, model_part: Any, constraint: Any, 
+                                        submodelpart_name: str) -> None:
+        """Apply constraint to all nodes in a named submodelpart.
+        
+        This is the correct way to apply boundary conditions after importing a mesh
+        with gmsh physical groups (which create named submodelparts).
+        
+        Args:
+            model_part: Kratos ModelPart
+            constraint: ConstraintDefinition object from core.study
+            submodelpart_name: Name of the submodelpart to apply constraint to
+        """
+        try:
+            node_indices = self.get_nodes_from_submodelpart(model_part, submodelpart_name)
+            
+            if not node_indices:
+                logger.warning(f"No nodes found in submodelpart '{submodelpart_name}', constraint not applied")
+                return
+            
+            self.apply_constraint_from_core(model_part, constraint, node_indices)
+            logger.info(f"Constraint applied to submodelpart '{submodelpart_name}' ({len(node_indices)} nodes)")
+            
+        except Exception as e:
+            logger.error(f"Failed to apply constraint to submodelpart: {e}")
+            raise
+    
+    def apply_load_to_submodelpart(self, model_part: Any, load: Any, 
+                                  submodelpart_name: str) -> None:
+        """Apply load to all nodes in a named submodelpart.
+        
+        This is the correct way to apply loads after importing a mesh
+        with gmsh physical groups (which create named submodelparts).
+        
+        Args:
+            model_part: Kratos ModelPart
+            load: LoadDefinition object from core.study
+            submodelpart_name: Name of the submodelpart to apply load to
+        """
+        try:
+            node_indices = self.get_nodes_from_submodelpart(model_part, submodelpart_name)
+            
+            if not node_indices:
+                logger.warning(f"No nodes found in submodelpart '{submodelpart_name}', load not applied")
+                return
+            
+            self.apply_load_from_core(model_part, load, node_indices)
+            logger.info(f"Load applied to submodelpart '{submodelpart_name}' ({len(node_indices)} nodes)")
+            
+        except Exception as e:
+            logger.error(f"Failed to apply load to submodelpart: {e}")
+            raise
 
 
 def is_kratos_available() -> bool:

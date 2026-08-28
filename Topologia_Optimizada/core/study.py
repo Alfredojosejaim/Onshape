@@ -34,12 +34,26 @@ class LoadDefinition:
     application_face_id: Optional[str] = None
     load_type: LoadType = LoadType.POINT
     unit: str = "N"
+    
+    # Geometric selection (Fase 2: gmsh physical groups)
+    submodelpart_name: Optional[str] = None
+    boundary_name: Optional[str] = None  # Alternative name for submodelpart
+    
+    # Geometric selection (Fase 1: coordinate-based fallback)
+    # For selecting nodes by coordinate proximity (e.g., load at Z=L)
+    load_axis: int = 2  # 0=X, 1=Y, 2=Z
+    load_coordinate: Optional[float] = None  # Target coordinate value
+    tolerance: float = 0.01  # Tolerance in same units as coordinates
 
     def __post_init__(self):
         if self.magnitude <= 0:
             raise ValueError("Load magnitude must be positive")
         if self.direction[0] == 0 and self.direction[1] == 0 and self.direction[2] == 0:
             raise ValueError("Load direction vector cannot be zero")
+        if self.load_axis not in [0, 1, 2]:
+            raise ValueError("load_axis must be 0 (X), 1 (Y), or 2 (Z)")
+        if self.tolerance < 0:
+            raise ValueError("tolerance must be non-negative")
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -51,6 +65,11 @@ class LoadDefinition:
             "application_face_id": self.application_face_id,
             "load_type": self.load_type.value,
             "unit": self.unit,
+            "submodelpart_name": self.submodelpart_name,
+            "boundary_name": self.boundary_name,
+            "load_axis": self.load_axis,
+            "load_coordinate": self.load_coordinate,
+            "tolerance": self.tolerance,
         }
 
 
@@ -63,10 +82,24 @@ class ConstraintDefinition:
     degrees_of_freedom: Dict[str, bool] = field(default_factory=lambda: {
         "ux": True, "uy": True, "uz": True, "rx": True, "ry": True, "rz": True
     })
+    
+    # Geometric selection (Fase 2: gmsh physical groups)
+    submodelpart_name: Optional[str] = None
+    boundary_name: Optional[str] = None  # Alternative name for submodelpart
+    
+    # Geometric selection (Fase 1: coordinate-based fallback)
+    # For selecting nodes by coordinate proximity (e.g., fixed at Z=0)
+    fixed_axis: int = 2  # 0=X, 1=Y, 2=Z
+    fixed_coordinate: Optional[float] = None  # Target coordinate value
+    tolerance: float = 0.01  # Tolerance in same units as coordinates
 
     def __post_init__(self):
         if not any(self.degrees_of_freedom.values()):
             raise ValueError("At least one degree of freedom must be constrained")
+        if self.fixed_axis not in [0, 1, 2]:
+            raise ValueError("fixed_axis must be 0 (X), 1 (Y), or 2 (Z)")
+        if self.tolerance < 0:
+            raise ValueError("tolerance must be non-negative")
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -74,6 +107,11 @@ class ConstraintDefinition:
             "constraint_type": self.constraint_type.value,
             "location_face_id": self.location_face_id,
             "degrees_of_freedom": self.degrees_of_freedom,
+            "submodelpart_name": self.submodelpart_name,
+            "boundary_name": self.boundary_name,
+            "fixed_axis": self.fixed_axis,
+            "fixed_coordinate": self.fixed_coordinate,
+            "tolerance": self.tolerance,
         }
 
 

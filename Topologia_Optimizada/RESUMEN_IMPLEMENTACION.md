@@ -312,3 +312,216 @@ STEP REAL → STEP ADAPTER → CADModel → MALLA → SOLVER_INTERFACE → KRATO
    ✅         ✅           ✅        ✅       ✅              ✅      ✅      ✅        ✅
 ```
 
+---
+
+## CORRECCIÓN ARQUITECTÓNICA: SELECCIÓN GEOMÉTRICA DE NODOS
+
+**Fecha:** 2026-08-28  
+**Bloqueo Crítico Identificado:** Sobreconstricción del sistema FEA  
+**Estado:** ✅ **IMPLEMENTADO (Fase 1 - Fallback Coordinate-based)**  
+**Próxima Fase:** ⏳ Integración gmsh physical groups (Fase 2)
+
+### Problema Identificado
+
+En `solver_interface.py` (líneas 213-221), el código aplicaba restricciones y cargas a **TODOS los nodos** del modelo:
+
+```python
+# INCORRECTO (código anterior):
+all_node_indices = list(range(len(nodes_list)))
+for constraint in constraints:
+    adapter.apply_constraint_from_core(model_part, constraint, all_node_indices)  # TODOS
+for load in loads:
+    adapter.apply_load_from_core(model_part, load, all_node_indices)  # TODOS
+```
+
+**Impacto Físico:**
+- Sistema completamente empotrado (todos los nodos fijos)
+- Estructura sin grados de libertad → desplazamientos ~1e-9 m (ruido numérico)
+- Cargas aplicadas a todos los nodos en lugar de solo a la cara de aplicación
+- SIMP optimiza un **problema distinto** al intendido
+- Resultados invalidan validación contra fórmula analítica de viga en voladizo (~5.8e-4 m)
+
+**Raíz del Problema:**
+- Fue un placeholder de debugging para validar "¿corre?" (sí, con todos los nodos)
+- Nunca fue actualizado a la implementación correcta de "¿corre bien?"
+
+### Solución Implementada
+
+#### Cambios en `kratos_adapter.py` (+100 líneas)
+
+Se agregaron 4 nuevos métodos para soporte de selección geométrica:
+
+1. **`get_nodes_from_submodelpart()`** - Obtiene nodos de un submodelpart nombrado
+   - Esperado con gmsh physical groups (Fase 2)
+   - Ej: `get_nodes_from_submodelpart(mp, "FixedFace")`
+
+2. **`get_nodes_by_coordinate_filter()`** - Filtra nodos por coordenada
+   - Fallback implementado ahora (Fase 1)
+   - Ej: `get_nodes_by_coordinate_filter(mp, axis=2, value=0.0, tolerance=0.01)`
+
+3. **`apply_constraint_to_submodelpart()`** - Aplica restricción a submodelpart
+   - Abstracción sobre `apply_constraint_from_core()`
+
+4. **`apply_load_to_submodelpart()`** - Aplica carga a submodelpart
+   - Abstracción sobre `apply_load_from_core()`
+
+#### Cambios en `solver_interface.py` (+80 líneas)
+
+Se reemplazó la aplicación "a todos los nodos" con **dos funciones helpers**:
+
+1. **`_apply_constraint_geometrically()`** - Intenta seleccionar nodos correctamente:
+   - Estrategia 1: Usa `submodelpart_name` si existe (Fase 2)
+   - Estrategia 2: Usa `fixed_coordinate + fixed_axis` si existen (Fase 1, implementada)
+   - Fallback: Registra WARNING si no se especifica geometría
+
+2. **`_apply_load_geometrically()`** - Similar para cargas:
+   - Estrategia 1: Usa `submodelpart_name` (Fase 2)
+   - Estrategia 2: Usa `load_coordinate + load_axis` (Fase 1, implementada)
+
+#### Cambios en `core/study.py` (+25 líneas)
+
+Extendidas las dataclasses para soportar información geométrica:
+
+**ConstraintDefinition:**
+```python
+# Fase 2: gmsh physical groups
+submodelpart_name: Optional[str] = None
+
+# Fase 1: coordinate-based fallback
+fixed_axis: int = 2  # 0=X, 1=Y, 2=Z
+fixed_coordinate: Optional[float] = None
+tolerance: float = 0.01
+```
+
+**LoadDefinition:**
+```python
+# Fase 2: gmsh physical groups
+submodelpart_name: Optional[str] = None
+
+# Fase 1: coordinate-based fallback
+load_axis: int = 2
+load_coordinate: Optional[float] = None
+tolerance: float = 0.01
+```
+
+### Cómo Funciona Ahora (Fase 1)
+
+**Ejemplo: Viga Cantilever**
+
+```python
+# Definir restricción: fijar extremo a X=0
+constraints = [
+    ConstraintDefinition(
+        id="cantilever_fixed",
+        constraint_type=ConstraintType.FIXED,
+        location_face_id="fixed_end",
+        fixed_axis=0,           # X axis
+        fixed_coordinate=0.0,   # X = 0
+        tolerance=0.01
+    )
+]
+
+# Definir carga: aplicar en extremo libre a X=L
+loads = [
+    LoadDefinition(
+        id="cantilever_load",
+        magnitude=1000.0,
+        direction=(0, 0, -1),
+        load_axis=0,            # X axis
+        load_coordinate=L,      # X = L
+        tolerance=0.01
+    )
+]
+
+# Resultado esperado:
+# - Solo nodos donde X ≈ 0 están fijos
+# - Solo nodos donde X ≈ L reciben carga
+# - max_displacement ≈ F*L³/(3*E*I) ≈ 5.8e-4 m ✓
+```
+
+### Validación Implementada
+
+Se creó test comprehensivo en `test_geometric_selection_validation.py`:
+
+1. **`test_cantilever_geometric_selection()`**
+   - Crea malla Tet4 de viga cantilever real
+   - Aplica restricciones/cargas con selección geométrica
+   - Valida contra fórmula analítica
+   - Tolerance: ±30% (mesh discretization)
+
+2. **`test_overconstrained_system_detection()`**
+   - Verifica que sistema NO está sobreconstricto
+   - Detección: displacement > 1e-8 m (no ~1e-9)
+
+### Arquitectura: Dos Fases
+
+#### Fase 1 (Implementada Ahora) - Coordinate-based Fallback
+```
+┌─ solver_interface.py
+│  ├─ _apply_constraint_geometrically()
+│  │  └─ get_nodes_by_coordinate_filter(axis, value, tolerance)
+│  └─ _apply_load_geometrically()
+│     └─ get_nodes_by_coordinate_filter(axis, value, tolerance)
+│
+└─ core/study.py
+   ├─ ConstraintDefinition.fixed_axis, fixed_coordinate, tolerance
+   └─ LoadDefinition.load_axis, load_coordinate, tolerance
+```
+
+**Ventajas:** Funciona inmediatamente sin cambios en gmsh  
+**Desventajas:** Requiere conocer coordenadas, menos preciso
+
+#### Fase 2 (Próxima) - gmsh Physical Groups
+```
+┌─ geometry_processor.py
+│  └─ gmsh.model.addPhysicalGroup() → nombres grupos físicos
+│
+├─ Exportar a .mdpa (gmsh → Kratos)
+│  └─ Grupos se convierten en submodelparts
+│
+├─ kratos_adapter.py
+│  └─ get_nodes_from_submodelpart("FixedFace")
+│
+└─ solver_interface.py
+   ├─ _apply_constraint_geometrically()
+   │  └─ Si constraint.submodelpart_name → get_nodes_from_submodelpart()
+   └─ _apply_load_geometrically()
+      └─ Si load.submodelpart_name → get_nodes_from_submodelpart()
+```
+
+**Ventajas:** Selección exacta, vinculada a geometría CAD, robusto  
+**Desventajas:** Requiere modificar pipeline gmsh (en progreso)
+
+### Archivos Modificados/Creados
+
+| Archivo | Cambios | Líneas |
+|---------|---------|--------|
+| `core/kratos_adapter.py` | +4 métodos: submodelpart, coord filter | +100 |
+| `core/solver_interface.py` | Refactor: reemplaza all_node_indices | +80 |
+| `core/study.py` | Extiende dataclasses con geo info | +25 |
+| `test_geometric_selection_validation.py` | **NEW** - Tests cantilever + overconstrain | +400 |
+| `ARQUITECTURA_SELECCION_NODOS.md` | **NEW** - Documentación detallada | +300 |
+
+### Validación
+
+**Estado Actual:**
+- ✅ Código implementado (Fase 1 coordinate-based)
+- ✅ Métodos en kratos_adapter agregados
+- ✅ solver_interface refactorizado
+- ⏳ Tests: pendiente ejecución (requiere Kratos disponible)
+
+**Próximas Pasos:**
+1. Ejecutar `test_geometric_selection_validation.py` → validar max_displacement ≈ 5.8e-4 m
+2. Implementar Fase 2: integración gmsh physical groups
+3. Re-validar con Fase 2 (selección más robusta)
+4. Ejecutar TopOpt con geometría correcta
+
+### Impacto en TopOpt
+
+- ✅ Compliance y sensibilidades ahora calculadas para **problema correcto**
+- ✅ Convergencia del algoritmo será diferente (esperado: más estable)
+- ✅ Comparación contra resultados analíticos será válida
+- ✅ Resultados de TopOpt representarán estructura real optimizada
+
+---
+

@@ -209,16 +209,17 @@ def create_kratos_fea_solver(
             # Add displacement DOFs
             adapter.add_displacement_dofs(model_part)
             
-            # Apply constraints
-            # For now, apply constraints to all nodes as a simplification
-            # In a full implementation, this would use proper face mapping
-            all_node_indices = list(range(len(nodes_list)))
+            # Apply constraints using geometric selection
+            # CRITICAL FIX: No longer applies to ALL nodes
+            # Instead, use geometric information to select boundary nodes
             for constraint in constraints:
-                adapter.apply_constraint_from_core(model_part, constraint, all_node_indices)
+                _apply_constraint_geometrically(adapter, model_part, constraint, nodes_list)
             
-            # Apply loads
+            # Apply loads using geometric selection
+            # CRITICAL FIX: No longer applies to ALL nodes
+            # Instead, use geometric information to select load surface nodes
             for load in loads:
-                adapter.apply_load_from_core(model_part, load, all_node_indices)
+                _apply_load_geometrically(adapter, model_part, load, nodes_list)
             
             # Run analysis
             result = adapter.run_analysis(model_part)
@@ -254,3 +255,129 @@ def create_kratos_fea_solver(
             }
     
     return kratos_fea_solver
+
+
+def _apply_constraint_geometrically(adapter: Any, model_part: Any, constraint: Any, 
+                                   nodes_list: List[List[float]]) -> None:
+    """Apply constraint using geometric node selection.
+    
+    ARCHITECTURE NOTE:
+    This function implements proper geometric node selection for boundary conditions.
+    Previously, constraints were applied to ALL nodes, creating an over-constrained system.
+    
+    Two approaches are supported:
+    1. Submodelpart-based (recommended): If .mdpa has named submodelparts from gmsh 
+       physical groups, use those (e.g., "Structure.FixedFace")
+    2. Coordinate-based (fallback): If no submodelpart, filter nodes by coordinate 
+       (e.g., Z=0 for fixed end)
+       
+    Args:
+        adapter: KratosAdapter instance
+        model_part: Kratos ModelPart
+        constraint: ConstraintDefinition object
+        nodes_list: Original node coordinates from Core
+    """
+    try:
+        from core.study import ConstraintType
+        
+        # Strategy 1: Try to use named submodelpart (e.g., from gmsh physical groups)
+        submodelpart_name = getattr(constraint, 'submodelpart_name', None) or \
+                           getattr(constraint, 'boundary_name', None)
+        
+        if submodelpart_name:
+            logger.info(f"Applying constraint using submodelpart: {submodelpart_name}")
+            adapter.apply_constraint_to_submodelpart(model_part, constraint, submodelpart_name)
+            return
+        
+        # Strategy 2: Fallback - use coordinate-based filtering
+        # This is a temporary solution until gmsh physical groups are properly integrated
+        logger.warning(f"No submodelpart specified for constraint {constraint.id}. "
+                      "Using coordinate-based selection (temporary workaround).")
+        
+        # For a fixed constraint on a cantilever beam, typically fix the built-in end
+        # Assumption: the fixed end is at Z=0 (this should be in constraint metadata)
+        # Extract fixed end from constraint or default to Z=0
+        fixed_coord = getattr(constraint, 'fixed_coordinate', 0.0)
+        fixed_axis = getattr(constraint, 'fixed_axis', 2)  # Default Z axis
+        tolerance = getattr(constraint, 'tolerance', 0.01)
+        
+        node_indices = adapter.get_nodes_by_coordinate_filter(
+            model_part, 
+            coordinate=fixed_axis,
+            value=fixed_coord,
+            tolerance=tolerance
+        )
+        
+        if node_indices:
+            adapter.apply_constraint_from_core(model_part, constraint, node_indices)
+            logger.info(f"Constraint applied to {len(node_indices)} nodes by coordinate filter")
+        else:
+            logger.warning(f"No nodes found matching constraint criteria for {constraint.id}")
+            
+    except Exception as e:
+        logger.error(f"Failed to apply constraint geometrically: {e}")
+        raise
+
+
+def _apply_load_geometrically(adapter: Any, model_part: Any, load: Any, 
+                             nodes_list: List[List[float]]) -> None:
+    """Apply load using geometric node selection.
+    
+    ARCHITECTURE NOTE:
+    This function implements proper geometric node selection for loads.
+    Previously, loads were applied to ALL nodes, creating an over-loaded system.
+    
+    Similar to constraints, two approaches are supported:
+    1. Submodelpart-based (recommended): Use named submodelparts from gmsh physical groups
+    2. Coordinate-based (fallback): Filter nodes by coordinate
+    
+    For a cantilever beam with a point load at the free end, this would select only
+    the nodes at the free end (e.g., Z=L).
+    
+    Args:
+        adapter: KratosAdapter instance
+        model_part: Kratos ModelPart
+        load: LoadDefinition object
+        nodes_list: Original node coordinates from Core
+    """
+    try:
+        from core.study import LoadType
+        
+        # Strategy 1: Try to use named submodelpart
+        submodelpart_name = getattr(load, 'submodelpart_name', None) or \
+                           getattr(load, 'boundary_name', None)
+        
+        if submodelpart_name:
+            logger.info(f"Applying load using submodelpart: {submodelpart_name}")
+            adapter.apply_load_to_submodelpart(model_part, load, submodelpart_name)
+            return
+        
+        # Strategy 2: Fallback - use coordinate-based filtering
+        logger.warning(f"No submodelpart specified for load {load.id}. "
+                      "Using coordinate-based selection (temporary workaround).")
+        
+        # For a point load on a cantilever, typically at the free end
+        # Assumption: load is applied at Z=L or at a specific coordinate
+        load_coord = getattr(load, 'load_coordinate', None)
+        load_axis = getattr(load, 'load_axis', 2)  # Default Z axis
+        tolerance = getattr(load, 'tolerance', 0.01)
+        
+        if load_coord is not None:
+            node_indices = adapter.get_nodes_by_coordinate_filter(
+                model_part,
+                coordinate=load_axis,
+                value=load_coord,
+                tolerance=tolerance
+            )
+            
+            if node_indices:
+                adapter.apply_load_from_core(model_part, load, node_indices)
+                logger.info(f"Load applied to {len(node_indices)} nodes by coordinate filter")
+            else:
+                logger.warning(f"No nodes found matching load criteria for {load.id}")
+        else:
+            logger.warning(f"Load {load.id} has no coordinate information, cannot apply")
+            
+    except Exception as e:
+        logger.error(f"Failed to apply load geometrically: {e}")
+        raise

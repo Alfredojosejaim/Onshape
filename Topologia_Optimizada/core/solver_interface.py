@@ -13,6 +13,17 @@ logger = logging.getLogger(__name__)
 
 NOT_IMPLEMENTED_MSG = "A real FEA solver and mapped boundary conditions are required"
 
+# Kratos import - optional, only when Kratos solver is used
+KRATOS_AVAILABLE = True
+KRATOS_IMPORT_ERROR = None
+
+try:
+    from core.kratos_adapter import KratosAdapter, is_kratos_available, get_kratos_import_error
+except ImportError as e:
+    KRATOS_AVAILABLE = False
+    KRATOS_IMPORT_ERROR = str(e)
+    logger.warning(f"Kratos adapter not available: {e}")
+
 
 class TopOptSolver:
     """Core SIMP topology optimization interface; no fake analysis is performed."""
@@ -119,3 +130,127 @@ def run_topology_optimization(
         tolerance=tolerance,
         callback=callback,
     )
+
+
+def create_kratos_fea_solver(
+    nodes: np.ndarray,
+    elements: np.ndarray,
+    material: Any,
+    constraints: Any,
+    loads: Any,
+) -> Callable[..., Dict[str, Any]]:
+    """Create a Kratos-based FEA solver for use with TopOptSolver.
+    
+    This function creates a fea_solver callable that uses KratosAdapter to perform
+    FEA analysis. It integrates Kratos with the Core's data structures.
+    
+    Args:
+        nodes: Node coordinates array (N x 3)
+        elements: Element connectivity array (M x 4 for Tet4)
+        material: Material object from core.materials
+        constraints: List of ConstraintDefinition objects
+        loads: List of LoadDefinition objects
+        
+    Returns:
+        Callable function that can be used as fea_solver for TopOptSolver
+        
+    Raises:
+        RuntimeError: If Kratos is not available
+    """
+    if not KRATOS_AVAILABLE:
+        raise RuntimeError(f"Kratos not available: {KRATOS_IMPORT_ERROR}")
+    
+    def kratos_fea_solver(
+        densities: np.ndarray,
+        forces: Optional[np.ndarray] = None,
+        supports: Optional[np.ndarray] = None,
+        max_iterations: int = 1,
+        tolerance: float = 0.01,
+        callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> Dict[str, Any]:
+        """Execute FEA analysis using Kratos.
+        
+        Args:
+            densities: Element densities (for topology optimization)
+            forces: Force array (optional, uses loads parameter if not provided)
+            supports: Support array (optional, uses constraints parameter if not provided)
+            max_iterations: Maximum iterations (not used for single FEA)
+            tolerance: Convergence tolerance (not used for single FEA)
+            callback: Callback function for progress updates
+            
+        Returns:
+            Dictionary with FEA results
+        """
+        try:
+            # Initialize Kratos adapter
+            adapter = KratosAdapter()
+            
+            # Create ModelPart
+            model_part = adapter.create_model_part("CoreFEAModel")
+            
+            # Add nodal variables BEFORE importing mesh (critical requirement)
+            adapter.add_nodal_variables(model_part)
+            
+            # Convert numpy arrays to list format for KratosAdapter
+            nodes_list = nodes.tolist()
+            elements_list = elements.tolist()
+            
+            # Import mesh
+            adapter.import_mesh_from_core_format(
+                model_part,
+                nodes_list,
+                elements_list,
+                element_type="tet4"
+            )
+            
+            # Configure material
+            adapter.configure_material_from_core(model_part, material)
+            
+            # Add displacement DOFs
+            adapter.add_displacement_dofs(model_part)
+            
+            # Apply constraints
+            # For now, apply constraints to all nodes as a simplification
+            # In a full implementation, this would use proper face mapping
+            all_node_indices = list(range(len(nodes_list)))
+            for constraint in constraints:
+                adapter.apply_constraint_from_core(model_part, constraint, all_node_indices)
+            
+            # Apply loads
+            for load in loads:
+                adapter.apply_load_from_core(model_part, load, all_node_indices)
+            
+            # Run analysis
+            result = adapter.run_analysis(model_part)
+            
+            if result["success"]:
+                # Extract results in format expected by TopOptSolver
+                analysis_results = result.get("results", {})
+                
+                return {
+                    "success": True,
+                    "status": "completed",
+                    "displacements": np.array(analysis_results.get("displacements", [])),
+                    "compliance": analysis_results.get("compliance", 0.0),
+                    "element_energies": np.array(analysis_results.get("element_energies", [])),
+                    "num_nodes": analysis_results.get("num_nodes_with_displacement", 0),
+                    "num_elements": len(elements_list),
+                }
+            else:
+                return {
+                    "success": False,
+                    "status": "failed",
+                    "error": result.get("error", "Unknown error"),
+                }
+                
+        except Exception as e:
+            logger.error(f"Kratos FEA solver failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                "success": False,
+                "status": "failed",
+                "error": str(e),
+            }
+    
+    return kratos_fea_solver

@@ -525,3 +525,132 @@ Se creó test comprehensivo en `test_geometric_selection_validation.py`:
 
 ---
 
+## CORRECCIÓN FINAL — VALIDACIÓN Y CONTROL DEL MAPEO CAD → NODOS
+
+**Fecha:** 2026-08-28
+**Estado:** ✅ **COMPLETADO — PROBLEMA CERRADO**
+**Alcance:** Únicamente el mecanismo de aplicación de cargas/restricciones cuando existe una cara CAD identificable.
+
+### 1. Problema Original
+
+Garantizar que, cuando existe una cara CAD identificable (`cad_shape` + `location_face_id` / `application_face_id` válidos), la condición FEA se aplique mediante el **mapeo geométrico CAD → nodos** y no mediante el fallback por coordenadas. El fallback no debía ocultar silenciosamente un fallo del mecanismo principal.
+
+### 2. Auditoría Realizada
+
+Se revisaron, sin modificación previa:
+
+- `core/solver_interface.py` — `create_kratos_fea_solver`, `_apply_constraint_geometrically`, `_apply_load_geometrically`
+- `core/boundary.py` — `BoundaryConditionMapper.map_faces_to_nodes()`, `resolve_face_index()`
+- `core/kratos_adapter.py` — `apply_constraint_from_core` / `apply_load_from_core`
+- `core/study.py` — `ConstraintDefinition` / `LoadDefinition`
+- `core/models.py` — `CADFace`
+- `adapters/cad/step_adapter.py` — conservación de `cad_shape` (cache por `model_id`)
+- Pruebas existentes de condiciones de contorno
+
+**Hallazgos del flujo:**
+- `location_face_id` / `application_face_id` provienen de `core/study.py`.
+- El `cad_shape` (cq.Shape) se conserva en `StepAdapter._shape_cache` vía `get_shape(model_id)`.
+- Una cara se identifica por su índice 0-based en `shape.Faces()` (id `face_{idx}`).
+- `resolve_face_index()` convierte `face_id` → índice; `BoundaryConditionMapper` convierte la cara en nodos de malla.
+- Los índices de nodos (0-based Core) se convierten a 1-based en el adapter de Kratos.
+- El mecanismo principal (mapeo CAD) ya existía y funcionaba; la **debilidad** estaba en que un fallo del mapeo (cara válida sin nodos) se trataba de forma ambigua y podía caer al fallback sin diagnóstico explícito.
+
+### 3. Cambios Realizados
+
+**`core/solver_interface.py`** (único archivo de producción modificado):
+
+1. **Diferenciación de casos A–E** en `_apply_constraint_by_face_mapping` y `_apply_load_by_face_mapping`:
+   - **A** `NO_FACE_ID` — sin identificador; fallback permitido.
+   - **B** `INVALID_FACE_ID` — identificador presente pero no resoluble; se registra el motivo.
+   - **C** `OUT_OF_RANGE` — índice válido pero fuera del rango de caras; error de datos registrado.
+   - **D** `NO_NODES_MATCHED` — cara válida pero 0 nodos coinciden; bloque `CAD FACE MAPPING FAILED` emitido.
+   - **E** `APPLIED` → exclusivamente los nodos de esa cara; **nunca todos los nodos**.
+
+2. **Nuevo helper `_face_mapping_failure_log()`** que emite el bloque estructurado:
+   ```
+   CAD FACE MAPPING FAILED
+   constraint/load: <id>
+   face_id: <id>
+   face_index: <idx>
+   matched_nodes: <n>
+   tolerance: <tol>
+   reason: <motivo>
+   ```
+   Siempre se emite **antes** de permitir el fallback (el fallo del mecanismo principal nunca queda oculto).
+
+3. Los callers (`_apply_constraint_geometrically` / `_apply_load_geometrically`) interpretan el estado retornado y solo continúan al fallback por coordenadas después de que el fallo haya sido registrado claramente. La ruta `CAD_FACE_MAPPING` queda explícita en el log (`METHOD=CAD_FACE_MAPPING`).
+
+**No se modificó:** Kratos, el solver, la arquitectura del Core, `boundary.py`, `study.py` ni los adapters.
+
+### 4. Archivos Modificados / Creados
+
+| Archivo | Tipo | Cambio |
+|---------|------|--------|
+| `core/solver_interface.py` | Modificado | Diferenciación A–E + log estructurado `CAD FACE MAPPING FAILED` + `METHOD=CAD_FACE_MAPPING` |
+| `test_cad_face_mapping_evidence.py` | **Nuevo** | Prueba obligatoria con STEP real y evidencia |
+| `EVIDENCIA_MAPEO_CAD.md` | **Nuevo** | Documento de evidencia persistente |
+
+### 5. STEP Utilizado
+
+`cono.step` (real, presente en el proyecto — no se generó geometría artificial).
+
+### 6. Cara Utilizada y Nodos Obtenidos
+
+| Condición | Cara | Face ID | Face index | Nodos seleccionados | Método |
+|-----------|------|---------|------------|---------------------|--------|
+| Restricción (FIXED) | disco inferior (z≈0) | `face_1` | 1 | 268 | **CAD_FACE_MAPPING** |
+| Carga (DISTRIBUTED, 1000 N ↓) | disco superior (z≈zmax) | `face_2` | 2 | 108 | **CAD_FACE_MAPPING** |
+
+- Total nodos de la malla: **1476**
+- **NODOS_SELECCIONADOS (268, 108) ≠ TODOS_LOS_NODOS (1476): `True`**
+
+### 7. Prueba Ejecutada
+
+`test_cad_face_mapping_evidence.py` (también coleccionable con pytest):
+
+1. Carga `cono.step` → CAD Shape.
+2. Genera malla con Gmsh (1476 nodos, Tet4).
+3. Identifica caras reales `face_1` / `face_2`.
+4. Crea restricción y carga sobre esas caras.
+5. Ejecuta el mapeo → nodos por cara.
+6. Registra cantidad de nodos seleccionados.
+7. Ejecuta Kratos (`create_kratos_fea_solver` con `cad_shape`).
+8. Verifica condiciones aplicadas solo sobre esos nodos.
+9. Resultado FEA: **success = True**.
+
+### 8. Resultado
+
+- ✅ Método utilizado para caras válidas: **CAD_FACE_MAPPING**
+- ✅ **NODOS_SELECCIONADOS ≠ TODOS LOS NODOS**
+- ✅ FEA de extremo a extremo ejecutado y completado.
+- ✅ Fallback por coordenadas **NO** se activó (existía cara válida y `cad_shape`).
+
+### 9. ¿Se utilizó fallback?
+
+**No**, para las caras válidas. El fallback por coordenadas se conserva únicamente para compatibilidad (casos A/B/D tras registrar el fallo, y contexto sin `cad_shape`). Su comportamiento sin regresión está cubierto por `test_coordinate_fallback_still_works_when_no_cad_shape`.
+
+### 10. Errores Encontrados
+
+- Ningún error en el mapeo CAD → nodos. El mecanismo funciona correctamente con el STEP real.
+- Los dos fallos de `test_geometric_selection_validation.py` (`test_cantilever_geometric_selection`, `test_overconstrained_system_detection`) son **pre-existentes** (presentes en `.pytest_cache/v/cache/lastfailed`): corresponden a la malla sintética con tetraedros invertidos (`DETJ0: -1`) y a un error de codificación de consola Windows (cp1252) en el propio test. No involucran `cad_shape` ni la lógica de mapeo CAD y **no fueron introducidos por esta intervención**.
+
+### 11. Test de No Regresión
+
+- `test_face_selection_validation.py` — **6/6 PASSED** (mapeo real de caras + aplicación en Kratos + fallback).
+- `test_core_independence.py` — **9/9 PASSED**.
+- `test_standalone_step_import.py` — **5/5 PASSED**.
+- `test_cad_face_mapping_evidence.py` — **1/1 PASSED**.
+- Kratos sigue cargándose y ejecutando FEA; el STEP real continúa cargándose; la malla se genera; los resultados regresan al Core; las condiciones no se aplican a todos los nodos.
+
+### 12. Tolerancia
+
+Se revisó la tolerancia de `BoundaryConditionMapper.map_faces_to_nodes()` (default `0.5`, confirmada por la prueba como `FACE_TOLERANCE = 0.5`). Es consistente con la escala del `cono.step` (radio base ≈ 39.55, altura a zmax; elementos de malla ≈ 5 mm) y se verificó con el STEP real (268 + 108 nodos correctos). **No se modificó arbitrariamente.**
+
+### 13. Estado Final
+
+**`CERRAR ESTE PROBLEMA.`**
+
+El mapeo CAD → nodos funciona correctamente. Cuando existe una cara CAD válida, el sistema usa realmente esa cara (método `CAD_FACE_MAPPING`) para determinar los nodos de la condición FEA y ya no oculta un fallo recurriendo silenciosamente a coordenadas; cualquier fallo del mapeo se registra explícitamente antes de permitir el fallback. No se continúa modificando ni se crea otra solución.
+
+---
+

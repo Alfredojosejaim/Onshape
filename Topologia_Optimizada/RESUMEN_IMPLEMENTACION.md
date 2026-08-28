@@ -576,9 +576,14 @@ Se revisaron, sin modificación previa:
    tolerance: <tol>
    reason: <motivo>
    ```
-   Siempre se emite **antes** de permitir el fallback (el fallo del mecanismo principal nunca queda oculto).
 
-3. Los callers (`_apply_constraint_geometrically` / `_apply_load_geometrically`) interpretan el estado retornado y solo continúan al fallback por coordenadas después de que el fallo haya sido registrado claramente. La ruta `CAD_FACE_MAPPING` queda explícita en el log (`METHOD=CAD_FACE_MAPPING`).
+3. **El fallback por coordenadas NO es automático cuando existe una cara.** Los callers
+   (`_apply_constraint_geometrically` / `_apply_load_geometrically`) solo ejecutan el
+   fallback en el **Caso A** (`NO_FACE_ID`). Para los **casos B, C y D** (se especificó
+   un `face_id` pero el mapeo falló), se deja la condición **sin aplicar** y se registra
+   el motivo — NO se cae al fallback por coordenadas, para no ocultar el fallo del
+   mecanismo principal ni seleccionar una región no intencionada (REGLA FINAL). La ruta
+   `CAD_FACE_MAPPING` queda explícita en el log (`METHOD=CAD_FACE_MAPPING`).
 
 **No se modificó:** Kratos, el solver, la arquitectura del Core, `boundary.py`, `study.py` ni los adapters.
 
@@ -627,19 +632,32 @@ Se revisaron, sin modificación previa:
 
 ### 9. ¿Se utilizó fallback?
 
-**No**, para las caras válidas. El fallback por coordenadas se conserva únicamente para compatibilidad (casos A/B/D tras registrar el fallo, y contexto sin `cad_shape`). Su comportamiento sin regresión está cubierto por `test_coordinate_fallback_still_works_when_no_cad_shape`.
+**No**, para las caras válidas. El fallback por coordenadas se conserva **únicamente** para
+el **Caso A** (sin `cad_shape` ni `face_id`), donde es el mecanismo documentado. Cuando se
+especificó una cara CAD pero el mapeo falló (casos B/C/D), el fallback **no** se ejecuta:
+la condición queda sin aplicar y el fallo se registra explícitamente (`CAD FACE MAPPING FAILED`).
+
+Verificado por:
+- `test_fallback_not_applied_when_valid_face_fails_mapping` — casos B (`"base"`) y C (`"face_99"`)
+  con `cad_shape` presente → **0 nodos** fijos (fallback NO aplicado).
+- `test_fallback_applied_only_when_no_face_id` — caso A sin `cad_shape` → nodos fijos (fallback SÍ aplicado).
+- `test_coordinate_fallback_still_works_when_no_cad_shape` — fallback sin regresión.
 
 ### 10. Errores Encontrados
 
+- **Auditoría posterior:** el fallback por coordenadas se ejecutaba **automáticamente** aunque
+  existiera un `face_id` válido cuyo mapeo fracasara. **Corregido**: ahora el fallback solo
+  corre en el caso A; ante un face_id especificado que no se mapea (B/C/D), la condición no
+  se aplica y el fallo queda registrado, evitando ocultar el mecanismo principal.
 - Ningún error en el mapeo CAD → nodos. El mecanismo funciona correctamente con el STEP real.
 - Los dos fallos de `test_geometric_selection_validation.py` (`test_cantilever_geometric_selection`, `test_overconstrained_system_detection`) son **pre-existentes** (presentes en `.pytest_cache/v/cache/lastfailed`): corresponden a la malla sintética con tetraedros invertidos (`DETJ0: -1`) y a un error de codificación de consola Windows (cp1252) en el propio test. No involucran `cad_shape` ni la lógica de mapeo CAD y **no fueron introducidos por esta intervención**.
 
 ### 11. Test de No Regresión
 
 - `test_face_selection_validation.py` — **6/6 PASSED** (mapeo real de caras + aplicación en Kratos + fallback).
+- `test_cad_face_mapping_evidence.py` — **3/3 PASSED** (evidencia + control del fallback: casos A/B/C).
 - `test_core_independence.py` — **9/9 PASSED**.
 - `test_standalone_step_import.py` — **5/5 PASSED**.
-- `test_cad_face_mapping_evidence.py` — **1/1 PASSED**.
 - Kratos sigue cargándose y ejecutando FEA; el STEP real continúa cargándose; la malla se genera; los resultados regresan al Core; las condiciones no se aplican a todos los nodos.
 
 ### 12. Tolerancia
@@ -650,7 +668,13 @@ Se revisó la tolerancia de `BoundaryConditionMapper.map_faces_to_nodes()` (defa
 
 **`CERRAR ESTE PROBLEMA.`**
 
-El mapeo CAD → nodos funciona correctamente. Cuando existe una cara CAD válida, el sistema usa realmente esa cara (método `CAD_FACE_MAPPING`) para determinar los nodos de la condición FEA y ya no oculta un fallo recurriendo silenciosamente a coordenadas; cualquier fallo del mapeo se registra explícitamente antes de permitir el fallback. No se continúa modificando ni se crea otra solución.
+El mapeo CAD → nodos funciona correctamente. Cuando existe una cara CAD válida, el sistema usa
+realmente esa cara (método `CAD_FACE_MAPPING`) para determinar los nodos de la condición FEA.
+Además, el fallback por coordenadas **ya no es automático** cuando se especificó una cara: solo
+se ejecuta en el caso A (sin `cad_shape` ni `face_id`). Ante un `face_id` que no se mapea
+(casos B/C/D), la condición no se aplica y el fallo del mecanismo principal queda explícitamente
+registrado (`CAD FACE MAPPING FAILED`) en lugar de ocultarse recurriendo a coordenadas.
+No se continúa modificando ni se crea otra solución.
 
 ---
 

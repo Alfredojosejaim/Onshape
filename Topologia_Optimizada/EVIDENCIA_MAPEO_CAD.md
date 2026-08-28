@@ -37,4 +37,21 @@ Método verificado: **CAD_FACE_MAPPING**.
 El fallback por coordenadas **no** se activó en este flujo: existía `cad_shape` y un
 `location_face_id` / `application_face_id` válido, por lo que se usó exclusivamente el
 mapeo geométrico `CAD_FACE_MAPPING`. Cualquier fallo del mapeo se registra ahora con el
-bloque estructurado `CAD FACE MAPPING FAILED` antes de permitir el fallback (casos A–E).
+bloque estructurado `CAD FACE MAPPING FAILED` (casos A–E).
+
+### Control del fallback (corrección posterior por auditoría)
+
+El fallback por coordenadas **no es automático** cuando se especificó una cara CAD:
+solo se ejecuta en el **Caso A** (`NO_FACE_ID`: no hay `cad_shape` ni `location_face_id` / `application_face_id`).
+
+Cuando se especifica un `face_id` pero el mapeo falla:
+
+- **Caso B** (`INVALID_FACE_ID`): identificador no resoluble → se registra el motivo, **fallback NO aplicado**.
+- **Caso C** (`OUT_OF_RANGE`): índice fuera del rango de caras → error de datos, **fallback NO aplicado**.
+- **Caso D** (`NO_NODES_MATCHED`): cara válida sin nodos → bloque `CAD FACE MAPPING FAILED`, **fallback NO aplicado**.
+
+Esto garantiza la REGLA FINAL: cuando existe una cara CAD válida, la condición FEA se
+resuelve mediante esa cara, y un fallo del mapeo **no** se oculta aplicando silenciosamente
+coordenadas a una región no intencionada. Verificado por
+`test_fallback_not_applied_when_valid_face_fails_mapping` (casos B/C) y
+`test_fallback_applied_only_when_no_face_id` (caso A).

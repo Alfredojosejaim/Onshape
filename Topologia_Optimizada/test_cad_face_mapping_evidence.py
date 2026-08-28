@@ -155,6 +155,139 @@ def test_cad_face_mapping_evidence():
     assert main() is True
 
 
+def _fallback_would_fix_nodes(shape, nodes, elements, face_id, coord_axis=2, coord_value=0.0):
+    """Aplica una restriccion con cad_shape presente.
+
+    Si el fallback por coordenadas NO debe ejecutarse (hay face_id especificado
+    pero el mapeo falla: casos B/C/D), NINGUN nodo debe quedar fijo.
+    Devuelve la cantidad de nodos fijos.
+    """
+    from core.kratos_adapter import KRATOS_AVAILABLE, KratosAdapter
+    from core.materials import STANDARD_MATERIALS
+    from core.solver_interface import _apply_constraint_geometrically
+    from core.study import ConstraintDefinition, ConstraintType
+
+    adapter = KratosAdapter()
+    model_part = adapter.create_model_part("FallbackGuard")
+    adapter.add_nodal_variables(model_part)
+    adapter.import_mesh_from_core_format(model_part, nodes, elements, element_type="tet4")
+    adapter.configure_material_from_core(model_part, STANDARD_MATERIALS["steel"])
+    adapter.add_displacement_dofs(model_part)
+
+    constraint = ConstraintDefinition(
+        id="guard",
+        constraint_type=ConstraintType.FIXED,
+        location_face_id=face_id,
+        fixed_axis=coord_axis,
+        fixed_coordinate=coord_value,
+        tolerance=FACE_TOLERANCE,
+    )
+    _apply_constraint_geometrically(adapter, model_part, constraint, nodes, cad_shape=shape)
+
+    import KratosMultiphysics as Kratos
+    fixed = {
+        node.Id - 1 for node in model_part.Nodes
+        if node.IsFixed(Kratos.DISPLACEMENT_X)
+           and node.IsFixed(Kratos.DISPLACEMENT_Y)
+           and node.IsFixed(Kratos.DISPLACEMENT_Z)
+    }
+    return len(fixed)
+
+
+def test_fallback_not_applied_when_valid_face_fails_mapping():
+    """Un face_id valido que no se mapea NO debe caer al fallback por coordenadas (Caso D).
+
+    Se usa un face_id con formato valido pero fuera del rango de caras del STEP real;
+    esto produce OUT_OF_RANGE (Caso C) y obliga a que NINGUN nodo quede fijo (aunque
+    exista fixed_coordinate configurado para el fallback).
+    """
+    from core.kratos_adapter import KRATOS_AVAILABLE
+    if not KRATOS_AVAILABLE:
+        import pytest
+        pytest.skip("Kratos no esta disponible")
+
+    from adapters.cad.step_adapter import StepAdapter
+    adapter = StepAdapter()
+    cad_model = adapter.load_from_file(REAL_STEP_FILE, model_name="Cono")
+    shape = adapter.get_shape(cad_model.id)
+
+    import gmsh
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
+    gmsh.model.add("fono")
+    gmsh.option.setNumber("Geometry.OCCImportLabels", 1)
+    gmsh.model.occ.importShapes(REAL_STEP_FILE, format="step")
+    gmsh.model.occ.synchronize()
+    gmsh.option.setNumber("Mesh.CharacteristicLengthMax", 5.0)
+    gmsh.model.mesh.generate(3)
+    _, coords, _ = gmsh.model.mesh.getNodes()
+    nodes = [[coords[3 * i], coords[3 * i + 1], coords[3 * i + 2]] for i in range(len(coords) // 3)]
+    element_types = gmsh.model.mesh.getElementTypes()
+    _, _, ec = gmsh.model.mesh.getElements()
+    tet = None
+    for i, et in enumerate(element_types):
+        if et == 4:
+            tet = ec[i]
+            break
+    gmsh.finalize()
+    elements = (np.array(tet).reshape(-1, 4) - 1).tolist()
+
+    # Caso C: face_id con formato valido, indice fuera de rango (el cono tiene 3 caras).
+    n_fixed_c = _fallback_would_fix_nodes(shape, nodes, elements, "face_99")
+    assert n_fixed_c == 0, (
+        f"CASO C: se aplico el fallback por coordenadas ({n_fixed_c} nodos fijos) a pesar "
+        f"de un face_id especificado/out-of-range. El fallback no debe ejecutarse."
+    )
+
+    # Caso B: identificador no resoluble ("base") con cad_shape presente.
+    n_fixed_b = _fallback_would_fix_nodes(shape, nodes, elements, "base")
+    assert n_fixed_b == 0, (
+        f"CASO B: se aplico el fallback por coordenadas ({n_fixed_b} nodos fijos) a pesar "
+        f"de un face_id invalido especificado. El fallback no debe ejecutarse."
+    )
+
+
+def test_fallback_applied_only_when_no_face_id():
+    """Sin face_id (Caso A) SI se aplica el fallback por coordenadas (sin regresion)."""
+    from core.kratos_adapter import KRATOS_AVAILABLE
+    if not KRATOS_AVAILABLE:
+        import pytest
+        pytest.skip("Kratos no esta disponible")
+
+    from adapters.cad.step_adapter import StepAdapter
+    adapter = StepAdapter()
+    cad_model = adapter.load_from_file(REAL_STEP_FILE, model_name="Cono")
+    shape = adapter.get_shape(cad_model.id)
+
+    import gmsh
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
+    gmsh.model.add("fa")
+    gmsh.option.setNumber("Geometry.OCCImportLabels", 1)
+    gmsh.model.occ.importShapes(REAL_STEP_FILE, format="step")
+    gmsh.model.occ.synchronize()
+    gmsh.option.setNumber("Mesh.CharacteristicLengthMax", 5.0)
+    gmsh.model.mesh.generate(3)
+    _, coords, _ = gmsh.model.mesh.getNodes()
+    nodes = [[coords[3 * i], coords[3 * i + 1], coords[3 * i + 2]] for i in range(len(coords) // 3)]
+    element_types = gmsh.model.mesh.getElementTypes()
+    _, _, ec = gmsh.model.mesh.getElements()
+    tet = None
+    for i, et in enumerate(element_types):
+        if et == 4:
+            tet = ec[i]
+            break
+    gmsh.finalize()
+    elements = (np.array(tet).reshape(-1, 4) - 1).tolist()
+
+    # Sin cad_shape -> NO_FACE_ID -> fallback coordenadas (fijar z=0).
+    n_fixed = _fallback_would_fix_nodes(None, nodes, elements, None, coord_axis=2, coord_value=0.0)
+    assert n_fixed >= 1, (
+        f"CASO A: el fallback por coordenadas deberia aplicarse cuando no hay cara; "
+        f"se fijaron {n_fixed} nodos."
+    )
+
+
 if __name__ == "__main__":
     ok = main()
     print("\nPRUEBA OBLIGATORIA:", "OK - CAD_FACE_MAPPING verificado" if ok else "FALLO")

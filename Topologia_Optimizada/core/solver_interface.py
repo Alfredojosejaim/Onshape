@@ -301,18 +301,22 @@ def _apply_constraint_by_face_mapping(adapter: Any, model_part: Any, constraint:
 
     * ``APPLIED``          (Case E): valid face + nodes found; default applied
                             exclusively to those nodes via CAD_FACE_MAPPING.
-    * ``NO_FACE_ID``       (Case A): ``location_face_id`` is None; caller may
-                            use the coordinate fallback.
+    * ``NO_FACE_ID``       (Case A): ``location_face_id``/``cad_shape`` absent;
+                            the coordinate fallback is the documented mechanism.
     * ``INVALID_FACE_ID``  (Case B): identifier exists but is not resolvable;
-                            reason documented; caller may use fallback.
+                            reason documented; fallback NOT permitted (it would
+                            mask the failure and select an unintended region).
     * ``OUT_OF_RANGE``     (Case C): identifier is a valid index but outside the
-                            CAD face range; data error, documented.
+                            CAD face range; data error, documented; fallback
+                            NOT permitted.
     * ``NO_NODES_MATCHED`` (Case D): valid face but zero matching mesh nodes;
-                            CAD FACE MAPPING FAILED block emitted; caller may
-                            use fallback only after that log.
+                            CAD FACE MAPPING FAILED block emitted; fallback
+                            NOT permitted.
 
-    Returns a status string (never a bare bool) so the caller can decide
-    whether falling back to coordinates is permitted.
+    Returns a status string (never a bare bool). The caller only runs the
+    coordinate fallback for ``NO_FACE_ID`` (Case A); every other non-APPLIED
+    status means the user specified a face, so the condition is left unapplied
+    rather than silently switched to a coordinate region.
     """
     from core.boundary import BoundaryConditionMapper, resolve_face_index
 
@@ -413,24 +417,24 @@ def _apply_constraint_geometrically(adapter: Any, model_part: Any, constraint: A
         status = _apply_constraint_by_face_mapping(adapter, model_part, constraint, nodes_list, cad_shape)
         if status == "APPLIED":
             return
-        if status == "NO_FACE_ID":
-            # Case A: no face identifier available; coordinate fallback is the
-            # documented selection mechanism.
-            pass
-        elif status == "INVALID_FACE_ID":
-            # Case B: identifier present but unresolvable; reason already logged.
-            pass
-        elif status == "OUT_OF_RANGE":
-            # Case C: data error already logged. Do NOT silently paper over it;
-            # still allow the coordinate fallback for backward compatibility.
-            pass
-        elif status == "NO_NODES_MATCHED":
-            # Case D: CAD FACE MAPPING FAILED block already emitted above. Only
-            # now (after clear logging) may the coordinate fallback run.
-            pass
+        if status != "NO_FACE_ID":
+            # Cases B (INVALID_FACE_ID), C (OUT_OF_RANGE) and D (NO_NODES_MATCHED)
+            # all carry a face identifier. Per the REGLA FINAL, the coordinate
+            # fallback must NOT run automatically when the user specified a CAD
+            # face: doing so would silently mask the mapping failure and apply a
+            # condition to the wrong region. The failure was already reported as
+            # ``CAD FACE MAPPING FAILED``; stop here instead of papering over it.
+            logger.warning(
+                f"Constraint {constraint.id} specifies a CAD face that could not be "
+                f"mapped (status={status}). Coordinate fallback NOT applied to avoid "
+                f"silently selecting an unintended region."
+            )
+            return
 
         # Strategy 3: Fallback - use coordinate-based filtering
-        # This is a temporary solution until gmsh physical groups are properly integrated
+        # Only reached when NO face identifier was given (Case A: no cad_shape or
+        # no location_face_id), where the coordinate filter is the documented
+        # selection mechanism.
         logger.warning(f"No geometric face region resolved for constraint {constraint.id}. "
                       "Using coordinate-based selection (fallback).")
         
@@ -569,11 +573,20 @@ def _apply_load_geometrically(adapter: Any, model_part: Any, load: Any,
         status = _apply_load_by_face_mapping(adapter, model_part, load, nodes_list, cad_shape)
         if status == "APPLIED":
             return
-        # Cases A (NO_FACE_ID), B (INVALID_FACE_ID), C (OUT_OF_RANGE) and
-        # D (NO_NODES_MATCHED, after the CAD FACE MAPPING FAILED log) may all
-        # proceed to the coordinate fallback.
+        if status != "NO_FACE_ID":
+            # Cases B/C/D carry a face identifier. Coordinate fallback must NOT run
+            # automatically: it would silently mask the mapping failure and select
+            # an unintended region. The failure was already reported via
+            # ``CAD FACE MAPPING FAILED``.
+            logger.warning(
+                f"Load {load.id} specifies a CAD face that could not be mapped "
+                f"(status={status}). Coordinate fallback NOT applied to avoid "
+                f"silently selecting an unintended region."
+            )
+            return
 
         # Strategy 3: Fallback - use coordinate-based filtering
+        # Only reached when NO application face was given (Case A).
         logger.warning(f"No geometric face region resolved for load {load.id}. "
                       "Using coordinate-based selection (fallback).")
         

@@ -1,374 +1,186 @@
-INTEGRACIÓN DEL MOTOR KRATOS EN EL CORE
+CORRECCIÓN FOCALIZADA — MAPEO GEOMÉTRICO DE CARGAS Y RESTRICCIONES
+
+El objetivo de esta intervención es consolidar y hacer robusto el sistema actual de aplicación de cargas y restricciones FEA, eliminando cualquier dependencia de soluciones provisionales cuando sea posible.
+
+CONTEXTO
+
+La integración de Kratos con el Core ya está funcionando.
+
+El problema anterior de aplicar cargas/restricciones a todos los nodos ya fue corregido.
+
+Actualmente el sistema utiliza selección geométrica y dispone de mecanismos mediante "SubModelPart"/"boundary" y selección por coordenadas.
+
+NO vuelvas a investigar Kratos ni rehagas la integración existente.
+
+La tarea es exclusivamente mejorar este punto.
+
+---
 
 OBJETIVO
 
-Convertir la integración actual de Kratos Multiphysics en el motor FEA operativo del Core de Topología Optimizada.
-
-Kratos ya fue investigado, probado y adoptado como motor principal. No repetir la investigación ni volver a evaluar si Kratos es viable.
-
-Las pruebas existentes y su documentación deben utilizarse como referencia técnica para implementar la integración definitiva.
-
----
-
-1. PRIMERA ACCIÓN — AUDITORÍA
-
-Antes de modificar código:
-
-1. Leer "README.md".
-2. Leer "metodologia.md".
-3. Leer "resumen_implementacion.md".
-4. Revisar la estructura actual del proyecto.
-5. Revisar "core/".
-6. Revisar "adapters/".
-7. Revisar "kratos_adapter.py" y las interfaces relacionadas.
-8. Revisar las pruebas de Kratos existentes.
-9. Identificar qué código corresponde a:
-   - implementación real;
-   - pruebas;
-   - PoC;
-   - código temporal;
-   - código heredado;
-   - código actualmente utilizado por el Core.
-
-No asumir que un archivo es innecesario únicamente por su nombre.
-
----
-
-2. LIMPIEZA DEL REPOSITORIO
-
-Antes de comenzar la integración definitiva, realizar una limpieza controlada del repositorio.
-
-Eliminar únicamente:
-
-- archivos temporales;
-- scripts experimentales que ya no tengan utilidad;
-- duplicados;
-- artefactos generados;
-- código muerto claramente identificado;
-- pruebas PoC que hayan sido sustituidas y cuya evidencia ya esté documentada;
-- archivos pertenecientes a arquitecturas abandonadas que ya no tengan ninguna dependencia.
-
-Conservar:
-
-- código utilizado por el producto;
-- pruebas relevantes;
-- documentación técnica necesaria;
-- evidencia de validación de Kratos;
-- archivos necesarios para reproducir o verificar la integración;
-- "README.md";
-- "prompt.md";
-- "metodologia.md";
-- "resumen_implementacion.md".
-
-Regla crítica
-
-No eliminar archivos dudosos.
-
-Si no puede determinarse con seguridad si un archivo sigue siendo necesario:
-
-«conservarlo y documentar la duda.»
-
-No borrar documentación histórica únicamente para hacer el repositorio más pequeño.
-
----
-
-3. LIMPIEZA DE "resumen_implementacion.md"
-
-Antes de comenzar esta nueva implementación, limpiar "resumen_implementacion.md".
-
-El archivo debe dejar de funcionar como acumulación indiscriminada de iteraciones anteriores.
-
-Conservar únicamente la información histórica estrictamente necesaria para comprender decisiones técnicas importantes, especialmente:
-
-- adopción de Kratos;
-- resultados de las pruebas que justificaron su adopción;
-- problemas importantes y sus soluciones;
-- decisiones arquitectónicas relevantes.
-
-Eliminar:
-
-- repeticiones;
-- estados obsoletos;
-- resultados duplicados;
-- información temporal que ya no represente el estado actual;
-- listas antiguas de tareas;
-- descripciones de estados que contradigan la implementación actual.
-
-Después de la limpieza, crear una nueva sección:
-
-## ESTADO ACTUAL — INTEGRACIÓN DE KRATOS EN EL CORE
-
-A partir de ese punto registrar exclusivamente lo correspondiente a esta nueva fase.
-
----
-
-4. INTEGRACIÓN REAL
-
-El objetivo es consolidar el flujo:
-
-STEP REAL
-   ↓
-STEP ADAPTER
-   ↓
-CADModel
-   ↓
-MALLA
-   ↓
-KRATOS ADAPTER
-   ↓
-KRATOS
-   ↓
-FEA
-   ↓
-RESULTADOS
-   ↓
-CORE
-
-La integración debe utilizar las interfaces existentes siempre que sean adecuadas.
-
-No crear una segunda arquitectura paralela.
-
-No crear un segundo pipeline independiente únicamente para hacer funcionar Kratos.
-
-Kratos debe convertirse en el solver utilizado por el Core.
-
----
-
-5. RESPONSABILIDADES
-
-Determinar claramente las responsabilidades de cada capa.
-
-STEP Adapter
-
-Responsable de:
-
-- recibir el STEP;
-- extraer la información necesaria;
-- producir el modelo interno.
+Conseguir un flujo coherente:
 
 CADModel
+   ↓
+geometría seleccionada
+   ↓
+malla
+   ↓
+identificación de nodos pertenecientes a esa región
+   ↓
+Kratos
+   ↓
+carga / restricción
 
-Debe representar el modelo de forma independiente de Kratos y del formato STEP.
+La selección debe representar una región física real del modelo, no simplemente una coordenada arbitraria.
 
+---
+
+TAREAS
+
+1. Auditar la implementación actual de:
+   
+   - "solver_interface.py"
+   - "kratos_adapter.py"
+   - "CADModel"
+   - información geométrica disponible después del STEP.
+   - sistema actual de malla.
+   - tests relacionados.
+
+2. Determinar exactamente qué información geométrica conserva actualmente el "CADModel".
+
+3. Determinar cómo puede identificarse una cara/región real del modelo y relacionarla posteriormente con los nodos de la malla.
+
+4. Diseñar la solución más simple que permita:
+
+cara/región CAD
+      ↓
+entidad geométrica identificable
+      ↓
+nodos de malla correspondientes
+      ↓
+BC / Load
+
+5. Mantener la arquitectura desacoplada:
+
+CAD
+ ↓
+CADModel
+ ↓
 Malla
-
-Debe proporcionar una representación compatible con el solver.
-
+ ↓
+Solver Interface
+ ↓
 KratosAdapter
 
-Debe encargarse de traducir el modelo interno hacia Kratos y ejecutar el análisis.
-
-Debe evitarse que el resto del Core dependa directamente de detalles internos de Kratos.
-
-Solver Interface
-
-Debe proporcionar una interfaz abstracta que permita al Core solicitar:
-
-- configuración del análisis;
-- condiciones de frontera;
-- materiales;
-- cargas;
-- ejecución;
-- resultados.
-
-El Core no debería necesitar conocer detalles específicos de la API interna de Kratos.
+El Core no debe quedar acoplado innecesariamente a detalles internos de Kratos.
 
 ---
 
-6. FEA REAL
+REGLA SOBRE LA SOLUCIÓN ACTUAL
 
-La integración debe permitir ejecutar un análisis FEA real mediante Kratos.
+La selección por coordenadas existente puede mantenerse como fallback técnico si sigue siendo necesaria.
 
-Debe existir como mínimo el flujo:
+Pero no debe utilizarse como mecanismo principal si existe una forma fiable de mapear:
 
-modelo
- ↓
-malla
- ↓
-material
- ↓
-condiciones de frontera
- ↓
-cargas
- ↓
-solver Kratos
- ↓
-desplazamientos
- ↓
-resultados
+cara/región geométrica → nodos de malla.
 
-No utilizar resultados simulados para ocultar funcionalidades que todavía no estén implementadas.
-
-Los datos sintéticos solo podrán utilizarse cuando sean necesarios para probar componentes aislados.
+No eliminar una funcionalidad existente sin reemplazarla por una solución funcional equivalente o superior.
 
 ---
 
-7. PRUEBA DE INTEGRACIÓN
+PRUEBAS
 
-Una vez implementada la integración, ejecutar una prueba utilizando el flujo real existente.
+Implementar las pruebas mínimas necesarias para demostrar que:
 
-Preferentemente:
+1. Una región/cara seleccionada identifica únicamente los nodos correspondientes.
 
-STEP REAL
- ↓
-CADModel
- ↓
-MALLA
- ↓
-KRATOS
- ↓
-FEA
- ↓
-RESULTADOS
+2. Una restricción se aplica exclusivamente a esos nodos.
 
-No crear un STEP artificial para aparentar que la integración funciona si ya existe un STEP real disponible.
+3. Una carga se aplica exclusivamente a esos nodos.
 
-La prueba debe demostrar que los datos atraviesan realmente las capas del Core.
+4. No se modifican nodos pertenecientes a otras regiones.
+
+5. El flujo funciona con geometría STEP real.
+
+6. El resultado llega correctamente a Kratos.
+
+No utilizar geometría artificial como única evidencia de esta funcionalidad.
 
 ---
 
-8. NO REPETIR EL TRABAJO YA VALIDADO
+PROTOCOLO DE BLOQUEO
 
-No volver a:
+Aplicar estrictamente "metodologia.md".
 
-- investigar Kratos;
-- comparar Kratos con otros motores;
-- demostrar nuevamente que Kratos funciona de forma aislada;
-- repetir los PoC históricos;
-- reconstruir pruebas ya documentadas.
+Si la solución es evidente y está respaldada por la implementación/documentación existente:
 
-Las pruebas existentes son evidencia y referencia.
+- realizar una única implementación;
+- ejecutar la prueba.
 
-Solo repetir una prueba anterior si resulta estrictamente necesaria para comprobar la integración actual.
+Si aparece un problema cuya causa no sea evidente:
 
----
-
-9. CONTROL DE ERRORES
-
-Aplicar estrictamente el protocolo de "metodologia.md".
-
-Si aparece un problema:
-
-Si la causa es evidente
-
-Se permite una única corrección autónoma y una nueva prueba.
-
-Si la causa no es evidente
-
-DETENER.
+DETENERSE.
 
 No realizar múltiples intentos especulativos.
 
-Registrar inmediatamente:
+Registrar el bloqueo completo:
 
-- error exacto;
-- traceback completo;
+- error;
+- traceback;
 - archivo;
 - línea;
 - función;
-- entrada utilizada;
-- estado del sistema;
+- entrada;
 - comportamiento esperado;
 - comportamiento obtenido;
-- hipótesis técnica disponible;
-- qué se intentó;
-- resultado del intento.
+- hipótesis disponible;
+- solución investigada, si existe.
 
-Clasificarlo como:
-
-BLOQUEO TÉCNICO — REQUIERE INVESTIGACIÓN EXTERNA
-
-No continuar intentando soluciones por ensayo y error.
+Dejarlo documentado como objeto de investigación externa.
 
 ---
 
-10. NO SOBREDISEÑAR
+NO HACER
 
-No implementar todavía:
+No:
 
-- sistema de licencias;
-- suscripciones;
-- integración Onshape;
-- integración con otros CAD;
-- Rust;
-- migración general a C++;
-- UI avanzada;
-- funcionalidades futuras no necesarias para este objetivo.
-
-La tarea actual es exclusivamente:
-
-«hacer que Kratos funcione como motor FEA real dentro del Core existente.»
-
----
-
-11. CRITERIO DE FINALIZACIÓN
-
-La tarea solo puede considerarse completada si:
-
-- Kratos está integrado realmente en el Core;
-- el Core puede invocar el solver mediante una interfaz definida;
-- el flujo utiliza datos reales;
-- el FEA se ejecuta realmente mediante Kratos;
-- los resultados regresan al Core;
-- no existen mocks ocultando funcionalidades;
-- las pruebas relevantes pasan;
-- no se introdujeron dependencias CAD externas;
-- no se rompieron funcionalidades previamente verificadas;
-- el repositorio quedó limpio;
-- "resumen_implementacion.md" refleja el estado real.
-
-Si alguna condición no se cumple:
-
-«NO declarar la integración como COMPLETADA.»
+- investigar nuevamente Kratos;
+- repetir el PoC;
+- cambiar de motor FEA;
+- implementar TopOpt;
+- implementar licenciamiento;
+- implementar UI;
+- integrar Onshape;
+- introducir Rust;
+- migrar todo el proyecto a C++;
+- rediseñar el Core completo;
+- crear una arquitectura paralela.
 
 ---
 
-12. DOCUMENTACIÓN FINAL
+CRITERIO DE FINALIZACIÓN
 
-Actualizar "resumen_implementacion.md" con:
-
-- estado inicial;
-- limpieza realizada;
-- archivos eliminados y motivo;
-- archivos modificados;
-- arquitectura resultante;
-- integración realizada;
-- pruebas ejecutadas;
-- resultados;
-- errores encontrados;
-- bloqueos;
-- soluciones aplicadas;
-- estado final;
-- pendientes reales.
-
-No documentar funcionalidades que solamente estén planeadas.
-
----
-
-REGLA FINAL
-
-Esta intervención no busca producir más código por producirlo.
-
-Busca transformar la integración actualmente existente en una integración real, limpia y mantenible de Kratos dentro del Core.
-
-El resultado esperado es:
+La tarea queda completada únicamente si se puede demostrar:
 
 STEP REAL
-    ↓
+   ↓
 CADModel
-    ↓
+   ↓
+REGIÓN/CARA REAL
+   ↓
 MALLA
-    ↓
-KRATOS ADAPTER
-    ↓
-KRATOS FEA
-    ↓
-RESULTADOS
-    ↓
-CORE
+   ↓
+NODOS CORRESPONDIENTES
+   ↓
+CARGA / RESTRICCIÓN
+   ↓
+KRATOS
+   ↓
+FEA
 
-Si el flujo funciona realmente, documentarlo y detenerse.
+y las cargas/restricciones afectan únicamente a la región correspondiente.
 
-Si aparece un bloqueo cuya solución no sea evidente, detenerse y documentarlo siguiendo el protocolo de investigación externa.
+Si esto no puede conseguirse de forma fiable con la arquitectura actual, no inventar una solución ni declarar completado el requisito.
 
-No entrar en ciclos de ensayo y error.
+Documentar el resultado real en "resumen_implementacion.md".

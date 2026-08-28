@@ -775,3 +775,167 @@ La prioridad es siempre:
 
 
 Las integraciones con CAD externos se desarrollarán posteriormente como módulos opcionales, sin convertirlas en una dependencia del producto.
+
+Sí. Lo agregaría como una sección nueva, sin modificar las decisiones anteriores del README. Este es el bloque exacto para copiar y pegar:
+
+---
+
+## 26. DECISIÓN ARQUITECTÓNICA — LENGUAJE Y PROTECCIÓN COMERCIAL
+
+Como resultado de la investigación sobre lenguaje, rendimiento, integración con Kratos Multiphysics y futura protección comercial, se establece la siguiente decisión arquitectónica.
+
+### 26.1 Lenguaje principal
+
+**Python continúa siendo el lenguaje principal de la aplicación.**
+
+No se realizará una migración general de Python a C++.
+
+Python seguirá siendo utilizado para:
+
+- interfaz de usuario;
+- orquestación de la aplicación;
+- configuración;
+- flujo de simulaciones;
+- integración de alto nivel con Kratos;
+- persistencia;
+- reporting;
+- importación/exportación cuando no exista una necesidad específica de migración.
+
+Esto permite mantener una alta velocidad de desarrollo sin introducir complejidad innecesaria.
+
+---
+
+### 26.2 C++ como capa nativa
+
+**C++ será el lenguaje de referencia para las partes que requieran integración nativa con Kratos o protección de propiedad intelectual crítica.**
+
+Serán candidatos a implementarse en C++:
+
+- extensiones propias de Kratos;
+- algoritmos propietarios de optimización o diseño generativo que no sean proporcionados directamente por Kratos;
+- procesamiento geométrico crítico que contenga know-how propio;
+- preprocesamiento o postprocesamiento numérico propietario;
+- componentes computacionalmente pesados que constituyan una ventaja competitiva;
+- lógica crítica que no deba permanecer expuesta en Python.
+
+La migración será **selectiva e incremental**.
+
+No se migrará un componente a C++ únicamente porque técnicamente sea posible.
+
+---
+
+### 26.3 Kratos Multiphysics
+
+**Kratos Multiphysics permanece como el motor principal de cálculo FEA y optimización del proyecto.**
+
+La integración de alto nivel se realizará mediante su interfaz Python.
+
+Cuando sea necesario extender directamente Kratos, se utilizará el mecanismo nativo de **Kratos Applications en C++**, siguiendo la arquitectura utilizada por el propio framework.
+
+Si Kratos cubre una funcionalidad que anteriormente se contemplaba mediante otra biblioteca, dicha biblioteca podrá descartarse cuando la validación técnica confirme que Kratos satisface los requisitos.
+
+---
+
+### 26.4 Rust
+
+**Rust no se incorpora actualmente al stack principal del proyecto.**
+
+Aunque Rust presenta ventajas de seguridad de memoria y puede ser apropiado para módulos aislados, introducirlo actualmente añadiría una tercera tecnología y una capa adicional de interoperabilidad cuando sea necesario interactuar directamente con Kratos.
+
+Podrá evaluarse posteriormente para componentes aislados que no requieran integración profunda con las estructuras internas de Kratos.
+
+Su incorporación futura deberá justificarse por una necesidad técnica concreta.
+
+---
+
+### 26.5 Protección comercial futura
+
+La aplicación podrá comercializarse posteriormente mediante un sistema de suscripción/licenciamiento.
+
+El sistema de licenciamiento **no forma parte de la implementación actual**.
+
+Cuando se implemente, la verificación crítica de licencia y activación no deberá depender exclusivamente de código Python fácilmente modificable.
+
+La arquitectura deberá permitir colocar la lógica crítica de validación en código compilado.
+
+La protección no se considera absoluta: ningún software ejecutado localmente puede impedir completamente el reverse engineering. El objetivo será aumentar significativamente el coste y dificultad de:
+
+- extracción de algoritmos;
+- modificación del programa;
+- parcheo;
+- bypass del licenciamiento;
+- reutilización no autorizada del código propietario.
+
+---
+
+### 26.6 Regla de protección de propiedad intelectual
+
+No se desarrollará deliberadamente en Python un algoritmo que ya haya sido identificado como **IP crítica** con la intención de migrarlo posteriormente a C++.
+
+Cuando una funcionalidad sea identificada como parte de la ventaja competitiva o propiedad intelectual crítica del producto, deberá evaluarse su implementación directamente en C++.
+
+Por el contrario, componentes de bajo valor estratégico como UI, reporting u orquestación no deberán migrarse únicamente por motivos de protección.
+
+---
+
+### 26.7 Arquitectura de referencia
+
+La distribución tecnológica prevista queda definida de la siguiente manera:
+
+```text
+                    APLICACIÓN STANDALONE
+                             │
+              ┌──────────────┴──────────────┐
+              │                             │
+           PYTHON                          C++
+              │                             │
+       UI / Orquestación              IP propietaria
+       Configuración                  Extensiones Kratos
+       Flujo de trabajo               Procesamiento crítico
+       Reporting                      Algoritmos propios
+              │                             │
+              └──────────────┬──────────────┘
+                             ▼
+                    KRATOS MULTIPHYSICS
+                             │
+                             ▼
+                       FEA / OPTIMIZACIÓN
+
+La aplicación continuará siendo standalone y Kratos permanecerá como componente central del motor de cálculo.
+
+Las futuras integraciones CAD externas seguirán siendo opcionales y no deberán convertirse en dependencias del Core.
+
+
+---
+
+26.8 Decisión de migración
+
+La decisión actual es:
+
+> NO migrar toda la aplicación a C++.
+
+
+
+En su lugar:
+
+PYTHON
+    ↓
+Aplicación + UI + orquestación + lógica no crítica
+
+C++
+    ↓
+IP crítica + extensiones nativas de Kratos + procesamiento crítico
+
+KRATOS
+    ↓
+Motor principal FEA / optimización
+
+Esta decisión establece una frontera tecnológica para evitar una migración costosa en el futuro, pero no obliga a modificar inmediatamente el código existente.
+
+Cada nuevo componente deberá evaluarse según su función, rendimiento, integración con Kratos y valor como propiedad intelectual.
+
+Principio rector
+
+> No migrar por migrar ni proteger por proteger. Compilar y proteger únicamente aquello que realmente lo necesite.
+
+

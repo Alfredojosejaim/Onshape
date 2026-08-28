@@ -1,16 +1,40 @@
-"""Core geometric boundary condition mapping between CAD B-Rep faces and FEM mesh nodes.
+r"""Core geometric boundary condition mapping between CAD B-Rep faces and FEM mesh nodes.
 
 CAD-agnostic algorithm mapping topological CAD faces to discretized node indices.
 """
 
 from dataclasses import dataclass
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 import cadquery as cq
 import numpy as np
 
+from core.geometry import _robust_face_reference_point
+
 logger = logging.getLogger(__name__)
+
+# Matches identifiers used by the Core's CADFace.id ("face_0", "face0", "face-3") or a plain index.
+_FACE_ID_RE = re.compile(r"^(?:face[_\-\s]?)?(\d+)$", re.IGNORECASE)
+
+
+def resolve_face_index(face_id: Optional[str]) -> Optional[int]:
+    """Resolve a CAD face identifier ("face_3", "3", "face0") to its B-Rep face index.
+
+    Args:
+        face_id: A face identifier string, e.g. the ``id``/``face_index`` of a
+            Core ``CADFace``. ``None`` or non-index identifiers (e.g. "base")
+            return ``None``.
+
+    Returns:
+        The zero-based face index into ``cq.Shape.Faces()`` if the identifier is
+        resolvable, otherwise ``None``.
+    """
+    if not face_id:
+        return None
+    match = _FACE_ID_RE.fullmatch(str(face_id).strip())
+    return int(match.group(1)) if match else None
 
 
 @dataclass
@@ -62,8 +86,10 @@ class BoundaryConditionMapper:
                 if dist <= tolerance:
                     matching_node_indices.append(n_idx)
 
-            center = face.Center()
-            normal = face.normalAt(center)
+            center, normal = _robust_face_reference_point(face)
+            if center is None or normal is None:
+                center = cq.Vector(0.0, 0.0, 0.0)
+                normal = cq.Vector(0.0, 0.0, 1.0)
 
             mapped_faces.append(
                 MappedFace(

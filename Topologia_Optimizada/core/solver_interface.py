@@ -267,24 +267,77 @@ def create_kratos_fea_solver(
     return kratos_fea_solver
 
 
+def _face_mapping_failure_log(kind: str, cond_id: str, face_id: Any,
+                              face_index: Any, matched_nodes: int,
+                              tolerance: float, reason: str) -> None:
+    """Emit the structured ``CAD FACE MAPPING FAILED`` diagnostic block.
+
+    This is the single source of truth for reporting a failed CAD→node mapping.
+    It is always emitted BEFORE any coordinate fallback is allowed so that a
+    failure of the primary geometric mechanism is never silent.
+    """
+    raw_log = (
+        f"CAD FACE MAPPING FAILED\n"
+        f"{kind}: {cond_id}\n"
+        f"face_id: {face_id}\n"
+        f"face_index: {face_index}\n"
+        f"matched_nodes: {matched_nodes}\n"
+        f"tolerance: {tolerance}\n"
+        f"reason: {reason}"
+    )
+    logger.warning(raw_log)
+
+
 def _apply_constraint_by_face_mapping(adapter: Any, model_part: Any, constraint: Any,
-                                      nodes_list: List[List[float]], cad_shape: Any) -> bool:
+                                      nodes_list: List[List[float]], cad_shape: Any) -> str:
     """Apply a constraint to the mesh nodes that lie on a real CAD face.
 
     Uses the Core ``BoundaryConditionMapper`` with the constraint's
     ``location_face_id`` resolved against the CAD shape. Physically anchored:
     it selects only the nodes on that B-Rep face, never an arbitrary region.
 
-    Returns:
-        True when the constraint was applied via face mapping, False when the
-        constraint cannot be resolved/does not match any node (callers should
-        then fall through to the coordinate-based fallback).
+    Differentiates the five documented cases so a failure of the primary
+    geometric mechanism is never hidden by calling to the coordinate fallback:
+
+    * ``APPLIED``          (Case E): valid face + nodes found; default applied
+                            exclusively to those nodes via CAD_FACE_MAPPING.
+    * ``NO_FACE_ID``       (Case A): ``location_face_id`` is None; caller may
+                            use the coordinate fallback.
+    * ``INVALID_FACE_ID``  (Case B): identifier exists but is not resolvable;
+                            reason documented; caller may use fallback.
+    * ``OUT_OF_RANGE``     (Case C): identifier is a valid index but outside the
+                            CAD face range; data error, documented.
+    * ``NO_NODES_MATCHED`` (Case D): valid face but zero matching mesh nodes;
+                            CAD FACE MAPPING FAILED block emitted; caller may
+                            use fallback only after that log.
+
+    Returns a status string (never a bare bool) so the caller can decide
+    whether falling back to coordinates is permitted.
     """
     from core.boundary import BoundaryConditionMapper, resolve_face_index
 
-    face_index = resolve_face_index(getattr(constraint, "location_face_id", None))
-    if cad_shape is None or face_index is None:
-        return False
+    face_id = getattr(constraint, "location_face_id", None)
+    if cad_shape is None:
+        logger.debug(
+            f"Constraint {constraint.id}: no cad_shape available; CAD face mapping skipped"
+        )
+        return "NO_FACE_ID"
+
+    face_index = resolve_face_index(face_id)
+    if face_index is None:
+        _face_mapping_failure_log(
+            "constraint", constraint.id, face_id, face_index, 0, 0.0,
+            f"location_face_id={face_id!r} is not a resolvable face index",
+        )
+        return "INVALID_FACE_ID"
+
+    n_cad_faces = len(cad_shape.Faces())
+    if face_index < 0 or face_index >= n_cad_faces:
+        _face_mapping_failure_log(
+            "constraint", constraint.id, face_id, face_index, 0, 0.0,
+            f"face_index {face_index} out of range [0, {n_cad_faces})",
+        )
+        return "OUT_OF_RANGE"
 
     tolerance = getattr(constraint, "tolerance", 0.5)
     if not tolerance or tolerance <= 0:
@@ -295,22 +348,26 @@ def _apply_constraint_by_face_mapping(adapter: Any, model_part: Any, constraint:
             cad_shape, nodes_list, face_indices=[face_index], tolerance=tolerance
         )
     except Exception as e:
-        logger.error(f"Face mapping failed for constraint {constraint.id}: {e}")
-        return False
+        _face_mapping_failure_log(
+            "constraint", constraint.id, face_id, face_index, 0, tolerance,
+            f"exception during mapping: {e}",
+        )
+        return "NO_NODES_MATCHED"
 
     if not mapped or not mapped[0].node_indices:
-        logger.warning(
-            f"No mesh nodes found on CAD face index {face_index} for constraint {constraint.id}"
+        _face_mapping_failure_log(
+            "constraint", constraint.id, face_id, face_index, 0, tolerance,
+            "no mesh nodes matched the CAD face",
         )
-        return False
+        return "NO_NODES_MATCHED"
 
     node_indices = mapped[0].node_indices
     adapter.apply_constraint_from_core(model_part, constraint, node_indices)
     logger.info(
         f"Constraint {constraint.id} applied to {len(node_indices)} nodes "
-        f"via CAD face index {face_index} (face-based mapping)"
+        f"via CAD face index {face_index} (face-based mapping) METHOD=CAD_FACE_MAPPING"
     )
-    return True
+    return "APPLIED"
 
 
 def _apply_constraint_geometrically(adapter: Any, model_part: Any, constraint: Any,
@@ -353,9 +410,25 @@ def _apply_constraint_geometrically(adapter: Any, model_part: Any, constraint: A
                            f"{constraint.id}; falling through to face mapping")
         
         # Strategy 2: CAD face mapping (primary geometric mechanism, physically anchored)
-        if _apply_constraint_by_face_mapping(adapter, model_part, constraint, nodes_list, cad_shape):
+        status = _apply_constraint_by_face_mapping(adapter, model_part, constraint, nodes_list, cad_shape)
+        if status == "APPLIED":
             return
-        
+        if status == "NO_FACE_ID":
+            # Case A: no face identifier available; coordinate fallback is the
+            # documented selection mechanism.
+            pass
+        elif status == "INVALID_FACE_ID":
+            # Case B: identifier present but unresolvable; reason already logged.
+            pass
+        elif status == "OUT_OF_RANGE":
+            # Case C: data error already logged. Do NOT silently paper over it;
+            # still allow the coordinate fallback for backward compatibility.
+            pass
+        elif status == "NO_NODES_MATCHED":
+            # Case D: CAD FACE MAPPING FAILED block already emitted above. Only
+            # now (after clear logging) may the coordinate fallback run.
+            pass
+
         # Strategy 3: Fallback - use coordinate-based filtering
         # This is a temporary solution until gmsh physical groups are properly integrated
         logger.warning(f"No geometric face region resolved for constraint {constraint.id}. "
@@ -391,19 +464,36 @@ def _apply_constraint_geometrically(adapter: Any, model_part: Any, constraint: A
 
 
 def _apply_load_by_face_mapping(adapter: Any, model_part: Any, load: Any,
-                                nodes_list: List[List[float]], cad_shape: Any) -> bool:
+                                nodes_list: List[List[float]], cad_shape: Any) -> str:
     """Apply a load to the mesh nodes that lie on a real CAD face.
 
-    Mirrors ``_apply_constraint_by_face_mapping`` using ``application_face_id``.
-
-    Returns:
-        True when the load was applied via face mapping, False otherwise.
+    Mirrors ``_apply_constraint_by_face_mapping`` using ``application_face_id``
+    and the same case differentiation (A-E). Returns a status string.
     """
     from core.boundary import BoundaryConditionMapper, resolve_face_index
 
-    face_index = resolve_face_index(getattr(load, "application_face_id", None))
-    if cad_shape is None or face_index is None:
-        return False
+    face_id = getattr(load, "application_face_id", None)
+    if cad_shape is None:
+        logger.debug(
+            f"Load {load.id}: no cad_shape available; CAD face mapping skipped"
+        )
+        return "NO_FACE_ID"
+
+    face_index = resolve_face_index(face_id)
+    if face_index is None:
+        _face_mapping_failure_log(
+            "load", load.id, face_id, face_index, 0, 0.0,
+            f"application_face_id={face_id!r} is not a resolvable face index",
+        )
+        return "INVALID_FACE_ID"
+
+    n_cad_faces = len(cad_shape.Faces())
+    if face_index < 0 or face_index >= n_cad_faces:
+        _face_mapping_failure_log(
+            "load", load.id, face_id, face_index, 0, 0.0,
+            f"face_index {face_index} out of range [0, {n_cad_faces})",
+        )
+        return "OUT_OF_RANGE"
 
     tolerance = getattr(load, "tolerance", 0.5)
     if not tolerance or tolerance <= 0:
@@ -414,22 +504,26 @@ def _apply_load_by_face_mapping(adapter: Any, model_part: Any, load: Any,
             cad_shape, nodes_list, face_indices=[face_index], tolerance=tolerance
         )
     except Exception as e:
-        logger.error(f"Face mapping failed for load {load.id}: {e}")
-        return False
+        _face_mapping_failure_log(
+            "load", load.id, face_id, face_index, 0, tolerance,
+            f"exception during mapping: {e}",
+        )
+        return "NO_NODES_MATCHED"
 
     if not mapped or not mapped[0].node_indices:
-        logger.warning(
-            f"No mesh nodes found on CAD face index {face_index} for load {load.id}"
+        _face_mapping_failure_log(
+            "load", load.id, face_id, face_index, 0, tolerance,
+            "no mesh nodes matched the CAD face",
         )
-        return False
+        return "NO_NODES_MATCHED"
 
     node_indices = mapped[0].node_indices
     adapter.apply_load_from_core(model_part, load, node_indices)
     logger.info(
         f"Load {load.id} applied to {len(node_indices)} nodes "
-        f"via CAD face index {face_index} (face-based mapping)"
+        f"via CAD face index {face_index} (face-based mapping) METHOD=CAD_FACE_MAPPING"
     )
-    return True
+    return "APPLIED"
 
 
 def _apply_load_geometrically(adapter: Any, model_part: Any, load: Any,
@@ -472,9 +566,13 @@ def _apply_load_geometrically(adapter: Any, model_part: Any, load: Any,
                            f"{load.id}; falling through to face mapping")
         
         # Strategy 2: CAD face mapping (primary geometric mechanism, physically anchored)
-        if _apply_load_by_face_mapping(adapter, model_part, load, nodes_list, cad_shape):
+        status = _apply_load_by_face_mapping(adapter, model_part, load, nodes_list, cad_shape)
+        if status == "APPLIED":
             return
-        
+        # Cases A (NO_FACE_ID), B (INVALID_FACE_ID), C (OUT_OF_RANGE) and
+        # D (NO_NODES_MATCHED, after the CAD FACE MAPPING FAILED log) may all
+        # proceed to the coordinate fallback.
+
         # Strategy 3: Fallback - use coordinate-based filtering
         logger.warning(f"No geometric face region resolved for load {load.id}. "
                       "Using coordinate-based selection (fallback).")

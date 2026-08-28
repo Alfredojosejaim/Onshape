@@ -57,8 +57,8 @@ def step_1_import_step(step_file):
         traceback.print_exc()
         return None, None
 
-def step_2_mesh_generation(cad_model):
-    """Step 2: Generate mesh using Gmsh."""
+def step_2_mesh_generation(step_file):
+    """Step 2: Generate mesh using Gmsh from real STEP geometry."""
     logger.info("\n=== STEP 2: MALLADO ===")
     
     try:
@@ -66,31 +66,43 @@ def step_2_mesh_generation(cad_model):
         
         # Initialize Gmsh
         gmsh.initialize()
-        # Reduce verbosity (API may vary, try different approaches)
+        # Reduce verbosity
         try:
             gmsh.option.setNumber("General.Terminal", 0)
         except:
             pass
         
-        # Create geometry from CAD model (simplified approach)
-        # For E2E test, we'll create a simple box geometry in Gmsh
+        # Add model first before importing shapes
         gmsh.model.add("cantilever_beam")
+        gmsh.option.setNumber("Geometry.OCCImportLabels", 1)
         
-        # Create a box (100x10x10 mm)
-        box = gmsh.model.occ.addBox(0, 0, 0, 100, 10, 10)
+        # Import the real STEP file into Gmsh using OpenCASCADE importShapes
+        logger.info(f"Importando geometría STEP real: {step_file}")
+        imported_entities = gmsh.model.occ.importShapes(step_file, format="step")
+        logger.info(f"Entidades importadas por OCC: {imported_entities}")
+        
+        # Synchronize OpenCASCADE kernel after STEP import
+        logger.info("Sincronizando kernel OpenCASCADE...")
         gmsh.model.occ.synchronize()
+        
+        # Verify that volumes were detected after synchronization
+        volumes = gmsh.model.getEntities(dim=3)
+        logger.info(f"Volúmenes detectados tras synchronize: {len(volumes)}")
+        if len(volumes) == 0:
+            raise RuntimeError("El STEP no contiene sólidos 3D reconocibles, o el kernel usado no es OCC")
         
         # Set mesh size
         gmsh.option.setNumber("Mesh.CharacteristicLengthMax", 5.0)
         
-        # Generate 3D mesh
+        # Generate 3D mesh from the real STEP geometry
+        logger.info("Generando malla desde geometría STEP real...")
         gmsh.model.mesh.generate(3)
         
         # Get mesh statistics
         node_tags, node_coords, _ = gmsh.model.mesh.getNodes()
         element_types = gmsh.model.mesh.getElementTypes()
         
-        logger.info(f"✅ Malla generada exitosamente")
+        logger.info(f"✅ Malla generada exitosamente desde geometría STEP real")
         logger.info(f"   - Nodos: {len(node_tags)}")
         logger.info(f"   - Tipos de elementos: {element_types}")
         
@@ -106,7 +118,7 @@ def step_2_mesh_generation(cad_model):
         return msh_file
         
     except Exception as e:
-        logger.error(f"❌ Falló generación de malla: {e}")
+        logger.error(f"❌ Falló generación de malla desde STEP real: {e}")
         import traceback
         traceback.print_exc()
         return None
@@ -250,10 +262,10 @@ def main():
         logger.error("\n❌ PRUEBA E2E FALLIDA: Importación STEP falló")
         return False
     
-    # Step 2: Generate mesh
-    msh_file = step_2_mesh_generation(cad_model)
+    # Step 2: Generate mesh from real STEP geometry
+    msh_file = step_2_mesh_generation(step_file)
     if not msh_file:
-        logger.error("\n❌ PRUEBA E2E FALLIDA: Generación de malla falló")
+        logger.error("\n❌ PRUEBA E2E FALLIDA: Generación de malla desde STEP real falló")
         return False
     
     # Step 3: Execute FEA analysis

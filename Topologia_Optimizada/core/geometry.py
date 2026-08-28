@@ -15,6 +15,53 @@ from core.models import BoundingBox3D, CADFace, CADSolid, TessellatedMesh
 logger = logging.getLogger(__name__)
 
 
+def _robust_face_reference_point(face: cq.Face) -> Tuple[Optional[cq.Vector], Optional[cq.Vector]]:
+    """Return a reference point on the face and an outward-ish normal.
+
+    The primary path uses the OCC face center + ``normalAt``. Some surfaces
+    (e.g. conical/cylindrical faces whose geometric center lies on the axis,
+    outside the surface) make the projection degenerate and raise
+    ``StdFail_NotDone``. In that case the point and normal are derived from a
+    tessellation of the face so that no real B-Rep face is silently dropped.
+
+    Returns:
+        Tuple of (point_on_face, normal) as ``cq.Vector``, or ``(None, None)``
+        if the face cannot be evaluated at all.
+    """
+    try:
+        center = face.Center()
+        normal = face.normalAt(center)
+        return center, normal
+    except Exception:
+        pass
+
+    try:
+        points, triangles = face.tessellate(tolerance=0.1, angularTolerance=0.1)
+    except Exception as ex:
+        logger.debug("Face tessellation failed for reference point: %s", ex)
+        return None, None
+
+    if not triangles:
+        return None, None
+
+    for tri in triangles:
+        p0, p1, p2 = points[tri[0]], points[tri[1]], points[tri[2]]
+        u = p1 - p0
+        v = p2 - p0
+        n = u.cross(v)
+        ln = n.Length
+        if ln > 1e-12:
+            n = n.multiply(1.0 / ln)
+            center = cq.Vector(
+                (p0.x + p1.x + p2.x) / 3.0,
+                (p0.y + p1.y + p2.y) / 3.0,
+                (p0.z + p1.z + p2.z) / 3.0,
+            )
+            return center, n
+
+    return None, None
+
+
 class GeometryEngine:
     """Core geometry analysis engine for evaluating B-Rep topology and geometry."""
 
@@ -38,9 +85,11 @@ class GeometryEngine:
         cad_faces: List[CADFace] = []
         for idx, face in enumerate(faces):
             try:
-                center = face.Center()
-                normal = face.normalAt(center)
+                center, normal = _robust_face_reference_point(face)
                 bbox = face.BoundingBox()
+                if center is None or normal is None:
+                    logger.debug("Failed to extract a reference point for face %d", idx)
+                    continue
                 cad_faces.append(
                     CADFace(
                         id=f"face_{idx}",
@@ -88,9 +137,11 @@ class GeometryEngine:
         faces_meta: List[Dict[str, Any]] = []
         for idx, face in enumerate(faces):
             try:
-                center = face.Center()
-                normal = face.normalAt(center)
+                center, normal = _robust_face_reference_point(face)
                 bbox = face.BoundingBox()
+                if center is None or normal is None:
+                    logger.debug("Tessellation face metadata error for face %d (no reference point)", idx)
+                    continue
                 faces_meta.append({
                     "face_index": idx,
                     "id": f"face_{idx}",

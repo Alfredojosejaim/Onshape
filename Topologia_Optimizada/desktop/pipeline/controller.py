@@ -13,6 +13,8 @@ import os
 import threading
 from typing import Any, Callable, Dict, Optional
 
+from PySide6.QtCore import QObject, Qt, Signal
+
 import numpy as np
 
 from services.cad_service import CADService
@@ -71,8 +73,11 @@ class PipelineController:
         self.model_name = model.name
         # tessellate for the shaded surface
         tess = self.cad.tessellate_model(model.id)
-        if not tess or tess.get("success") is False or "vertices" not in tess or not tess.get("vertices"):
-            raise PipelineError(tess.get("error", "Tesselación falló"))
+        mismatch = (not tess or tess.get("success") is False
+                    or "vertices" not in tess or not tess.get("vertices")
+                    or "indices" not in tess or not tess.get("indices"))
+        if mismatch:
+            raise PipelineError(tess.get("error", "Tesselación falló (sin triángulos)"))
         self.current_tessellation = tess
         # reset downstream state
         self.mesh = None
@@ -285,7 +290,36 @@ class PipelineController:
 
 
 def launch_qt(cb: Callable[[], None]) -> None:
-    """Schedule ``cb`` to run on the Qt main thread from a worker thread."""
-    from PySide6.QtCore import QTimer
-    QTimer.singleShot(0, cb)
+    """Run ``cb`` on the Qt main thread from any thread.
+
+    ``QTimer.singleShot`` is NOT safe to call from a plain Python thread; the
+    timer is never delivered. We instead emit a queued signal on a dispatcher
+    QObject that lives on the GUI thread, which always gets delivered.
+    """
+    dispatcher = _GUI_DISPATCHER
+    if dispatcher is None:
+        cb()
+        return
+    try:
+        dispatcher.invoke.emit(cb)
+    except RuntimeError:
+        cb()
+
+
+class _GuiDispatcher(QObject):
+    invoke = Signal(object)
+
+
+def _make_dispatcher() -> Optional[_GuiDispatcher]:
+    try:
+        disp = _GuiDispatcher()
+        disp.invoke.connect(lambda fn: fn(), Qt.QueuedConnection)
+        return disp
+    except Exception:
+        return None
+
+
+# Created at import time so its thread affinity is the main (GUI) thread; the
+# controller module is imported by the GUI during application startup.
+_GUI_DISPATCHER = _make_dispatcher()
 

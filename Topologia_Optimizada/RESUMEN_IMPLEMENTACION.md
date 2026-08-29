@@ -678,3 +678,107 @@ No se continúa modificando ni se crea otra solución.
 
 ---
 
+## MALLADOR DEFINITIVO — GmshTet4Mesher (Gmsh → Tet4)
+
+**Fecha:** 2026-08-29
+**Estado:** ✅ **COMPLETADO**
+**Alcance:** Etapa MALLA del flujo funcional (STEP → CADModel → **MALLA** → ... → FEA).
+
+### 1. Contexto y justificación
+
+Según AUDITAR → ELEGIR SIGUIENTE FUNCIÓN del prompt, la etapa **MALLA** era la
+dependencia anterior todavía incompleta en el flujo hacia el producto: README (sección 11)
+y `core/meshing.py` declaraban que el mallador existente era **provisional**
+(`ProvisionalTet4Mesher`, voxelización + triangulación de Kuhn) y que el pipeline definitivo
+Gmsh → Tet4 se integraría en hitos posteriores. El flujo FEA validado usaba Gmsh directamente
+desde los tests (no el mesher del Core), lo que dejaba la etapa MALLA interna sin la
+implementación definitiva.
+
+Conforme a la regla de selección («No crear funcionalidades futuras si existe una dependencia
+anterior todavía incompleta»), se implementó el **mallador definitivo Gmsh → Tet4** en el Core.
+
+### 2. Implementación
+
+**`core/meshing.py`** — nueva clase `GmshTet4Mesher(BaseMesher)`:
+
+- `generate_mesh_from_step(step_file, target_element_size, element_type)`:
+  - Valida el archivo STEP y exige `element_type == "tet4"`.
+  - Inicializa Gmsh, importa la geometría STEP con el kernel OpenCASCADE
+    (`gmsh.model.occ.importShapes`, `Geometry.OCCImportLabels=1`).
+  - Verifica la existencia de volúmenes sólidos (`getEntities(dim=3)`).
+  - Genera malla 3D y extrae los tetraedros de 4 nodos (elemento Gmsh tipo 4).
+  - Devuelve un `MeshResult` con **`is_provisional=False`** y metadatos
+    (`mesher=GmshTet4Mesher`, `step_file`, `mesh_size_max`, `gmsh_volumes`).
+- `generate_mesh(shape, ...)` (interfaz `BaseMesher`): exporta el `cq.Shape` a un STEP
+  temporal y delega en `generate_mesh_from_step`, manteniendo la interfaz uniforme.
+
+**`core/__init__.py`** — exporta `GmshTet4Mesher`.
+
+**`services/cad_service.py`** — `generate_mesh` ahora **prefiere** `GmshTet4Mesher` para
+`tet4` y conserva `ProvisionalTet4Mesher` como fallback (si gmsh no está disponible o el
+element type no es tet4). El resultado queda marcado como no provisional y con el mesher
+utilizado.
+
+**`core/solver_interface.py`** — corrección de una regresión: faltaba `List` en el import de
+`typing` (`from typing import ... List ...`), lo que rompía la importación de todo el paquete
+`core` (y por tanto del API). Se añadió al import. Corresponde a una corrección autónoma
+permitida (causa evidente, respaldada por el uso del tipo en todo el archivo, verificable
+inmediatamente).
+
+### 3. Instalación de dependencia
+
+Se instaló `gmsh==4.15.2` en el intérprete del proyecto (`runtime/python`) — dependencia ya
+declarada en `dependencias.md`.
+
+### 4. Pruebas ejecutadas (`test_gmsh_mesher.py`, 6 tests)
+
+Verificación sobre el **STEP real** `cono.step`:
+
+1. `generate_mesh_from_step` → **1476 nodos, 6358 elementos** Tet4, `is_provisional=False`.
+2. Todos los elementos refieren nodos existentes.
+3. `element_type="hex8"` → `ValueError`.
+4. STEP inexistente → `FileNotFoundError`.
+5. `generate_mesh(shape)` (interfaz BaseMesher) → malla no provisional válida.
+6. `CADService.generate_mesh` → usa `GmshTet4Mesher` (metadata `mesher=GmshTet4Mesher`),
+   malla no provisional, bien formada.
+
+**Resultado:** ✅ **6/6 PASSED** (pytest y unittest).
+
+El resultado (1476 nodos / 6358 elementos) coincide exactamente con la malla documentada del
+flujo FEA validado (RESUMEN_IMPLEMENTACION, sección previa), confirmando que es la etapa MALLA
+definitiva del pipeline real.
+
+### 5. Regresión
+
+Se ejecutaron, sin regresión:
+
+- `test_standalone_step_import.py` — ✅ 5/5 PASSED.
+- `test_core_independence.py` — ✅ 9/9 PASSED.
+- `test_topopt_comprehensive.py` — ✅ 23/23 PASSED.
+- `test_gmsh_mesher.py` — ✅ 6/6 PASSED.
+
+**Nota de entorno:** los tests que requieren Kratos (Etapas A–H, E2E, mapeo CAD) no pudieron
+ejecutarse en este entorno porque **KratosMultiphysics no está instalado** en el intérprete
+actual (`runtime/python`). Esto es una restricción de entorno pre-existente e independiente
+de esta intervención; dichos tests estaban validados en el entorno Kratos previo.
+
+### 6. Archivos modificados / creados
+
+| Archivo | Tipo | Cambio |
+|---------|------|--------|
+| `core/meshing.py` | Modificado | `GmshTet4Mesher` (mallador definitivo) + imports `os`/`tempfile` + docstring |
+| `core/__init__.py` | Modificado | Exporta `GmshTet4Mesher` |
+| `services/cad_service.py` | Modificado | `generate_mesh` usa GmshTet4Mesher con fallback provisional |
+| `core/solver_interface.py` | Modificado | Fix de import faltante `List` |
+| `test_gmsh_mesher.py` | **Nuevo** | Pruebas del mallador definitivo (6 tests) |
+
+### 7. Siguiente tarea
+
+Con la etapa **MALLA** definitiva implementada y verificada, la siguiente funcionalidad en el
+flujo hacia el producto es **conectar el motor FEA/topología ya validado al API** (el
+`OptimizationRequest`/`TopologyConfig`/`JobStatus` existen pero no están cableados a ninguna
+ruta — no existe `/api/optimize` ni ejecución de FEA/topopt en la capa HTTP). Ello depende del
+entorno Kratos disponible.
+
+---
+

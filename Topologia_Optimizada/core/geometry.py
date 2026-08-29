@@ -113,27 +113,8 @@ class GeometryEngine:
         return cad_faces
 
     @staticmethod
-    def tessellate_shape(
-        shape: cq.Shape,
-        linear_deflection: float = 0.1,
-        angular_deflection: float = 0.1,
-    ) -> TessellatedMesh:
-        """Tessellate 3D B-Rep shape into triangular mesh for 3D visualization."""
-        points, triangles = shape.tessellate(
-            tolerance=linear_deflection,
-            angularTolerance=angular_deflection,
-        )
-
-        vertices: List[float] = []
-        for p in points:
-            vertices.extend([float(p.x), float(p.y), float(p.z)])
-
-        indices: List[int] = []
-        for tri in triangles:
-            indices.extend([int(tri[0]), int(tri[1]), int(tri[2])])
-
-        # Per-face metadata for highlighting and selection
-        faces = shape.Faces()
+    def _faces_metadata(faces: Any) -> List[Dict[str, Any]]:
+        """Per-face metadata (index/id/area/center/normal/bbox) for highlighting."""
         faces_meta: List[Dict[str, Any]] = []
         for idx, face in enumerate(faces):
             try:
@@ -156,6 +137,45 @@ class GeometryEngine:
                 })
             except Exception as ex:
                 logger.debug("Tessellation face metadata error for face %d: %s", idx, ex)
+        return faces_meta
+
+    @staticmethod
+    def tessellate_shape(
+        shape: cq.Shape,
+        linear_deflection: float = 0.1,
+        angular_deflection: float = 0.1,
+        face_mapping: bool = False,
+    ) -> TessellatedMesh:
+        """Tessellate 3D B-Rep shape into triangular mesh for 3D visualization.
+
+        When ``face_mapping`` is True the combined mesh is built by accumulating
+        the per-face tessellations, so every triangle range can be attributed to
+        the covering B-Rep face. The output ``face_triangles`` field lists
+        ``{"face_index", "start", "count"}`` ranges into ``indices`` — used by
+        the desktop viewport for entity-level (face) picking. The default path
+        (``face_mapping=False``) is byte-for-byte the previous behavior.
+        """
+        if face_mapping:
+            return GeometryEngine._tessellate_with_face_mapping(
+                shape, linear_deflection, angular_deflection
+            )
+
+        points, triangles = shape.tessellate(
+            tolerance=linear_deflection,
+            angularTolerance=angular_deflection,
+        )
+
+        vertices: List[float] = []
+        for p in points:
+            vertices.extend([float(p.x), float(p.y), float(p.z)])
+
+        indices: List[int] = []
+        for tri in triangles:
+            indices.extend([int(tri[0]), int(tri[1]), int(tri[2])])
+
+        # Per-face metadata for highlighting and selection
+        faces = shape.Faces()
+        faces_meta = GeometryEngine._faces_metadata(faces)
 
         bbox = shape.BoundingBox()
         bbox_3d = BoundingBox3D(
@@ -174,4 +194,56 @@ class GeometryEngine:
             num_triangles=len(triangles),
             faces_metadata=faces_meta,
             bbox=bbox_3d,
+        )
+
+    @staticmethod
+    def _tessellate_with_face_mapping(
+        shape: cq.Shape,
+        linear_deflection: float,
+        angular_deflection: float,
+    ) -> TessellatedMesh:
+        """Accumulate per-face tessellations so triangles map exactly to faces."""
+        faces = shape.Faces()
+        vertices: List[float] = []
+        indices: List[int] = []
+        face_triangles: List[Dict[str, Any]] = []
+        vertex_offset = 0
+        triangle_offset = 0
+        for idx, face in enumerate(faces):
+            try:
+                pts, tris = face.tessellate(
+                    tolerance=linear_deflection,
+                    angularTolerance=angular_deflection,
+                )
+            except Exception as ex:
+                logger.debug("Face %d tessellation failed: %s", idx, ex)
+                continue
+            if not pts or not tris:
+                continue
+            base = vertex_offset
+            for p in pts:
+                vertices.extend([float(p.x), float(p.y), float(p.z)])
+            for tri in tris:
+                indices.extend([int(tri[0]) + base, int(tri[1]) + base, int(tri[2]) + base])
+            face_triangles.append({
+                "face_index": idx,
+                "start": triangle_offset,
+                "count": len(tris),
+            })
+            vertex_offset += len(pts)
+            triangle_offset += len(tris)
+
+        bbox = shape.BoundingBox()
+        return TessellatedMesh(
+            vertices=vertices,
+            indices=indices,
+            num_vertices=vertex_offset,
+            num_triangles=triangle_offset,
+            faces_metadata=GeometryEngine._faces_metadata(faces),
+            bbox=BoundingBox3D(
+                xmin=float(bbox.xmin), xmax=float(bbox.xmax),
+                ymin=float(bbox.ymin), ymax=float(bbox.ymax),
+                zmin=float(bbox.zmin), zmax=float(bbox.zmax),
+            ),
+            face_triangles=face_triangles,
         )

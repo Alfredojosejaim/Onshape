@@ -1,181 +1,1019 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Entorno de Optimización Topológica</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-  <style>
-    :root { color-scheme: light; --bg:#f5f7fa; --card:#fff; --ink:#172033; --muted:#667085; --line:#d9e0e8; --blue:#1769e0; --green:#147d50; --red:#b42318; --input-bg:#f0f2f5; --panel-bg:#ffffff; }
-    * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--ink); font:14px system-ui,sans-serif; height:100vh; overflow:hidden; }
-    
-    .layout { display:grid; grid-template-columns: 320px 1fr; grid-template-rows: 60px 1fr; height:100vh; }
-    
-    .header { grid-column:1/-1; background:var(--panel-bg); border-bottom:1px solid var(--line); display:flex; align-items:center; padding:0 20px; justify-content:space-between; }
-    .header h1 { margin:0; font-size:18px; }
-    
-    .sidebar { background:var(--panel-bg); border-right:1px solid var(--line); overflow-y:auto; padding:20px; }
-    .viewer { position:relative; background:#1e232a; overflow:hidden; }
-    
-    .panel { margin-bottom:24px; }
-    .panel h3 { margin:0 0 12px; font-size:15px; font-weight:600; color:var(--ink); }
-    
-    .form-group { margin-bottom:16px; }
-    .form-group label { display:block; margin-bottom:6px; font-weight:500; font-size:13px; color:var(--ink); }
-    .form-group input, .form-group select { width:100%; padding:8px; border:1px solid var(--line); border-radius:6px; background:var(--input-bg); font:inherit; font-size:13px; }
-    .form-group input:focus, .form-group select:focus { outline:2px solid var(--blue); border-color:var(--blue); }
-    
-    .btn { width:100%; padding:10px; border:1px solid var(--line); border-radius:6px; background:#fff; color:#154b9b; font:inherit; font-weight:600; cursor:pointer; font-size:13px; }
-    .btn.primary { background:var(--blue); border-color:var(--blue); color:#fff; }
-    .btn:disabled { opacity:.5; cursor:not-allowed; }
-    
-    .viewer-controls { position:absolute; top:10px; right:10px; display:flex; gap:8px; z-index:10; }
-    .viewer-controls button { padding:8px 12px; background:rgba(255,255,255,0.9); border:1px solid var(--line); border-radius:4px; cursor:pointer; font-size:12px; }
-    
-    .status-bar { position:absolute; bottom:0; left:0; right:0; background:rgba(0,0,0,0.85); color:#fff; padding:8px 16px; font-size:12px; display:flex; justify-content:space-between; align-items:center; }
-    
-    .legend { display:flex; gap:16px; font-size:12px; }
-    .legend-item { display:flex; align-items:center; gap:6px; }
-    .legend-color { width:12px; height:12px; border-radius:2px; }
-    
-    .info-text { font-size:12px; color:var(--muted); margin-top:4px; }
-    
-    .hidden { display:none; }
-    
-    #loading-overlay { position:absolute; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); display:flex; align-items:center; justify-content:center; color:#fff; z-index:100; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Optimización Topológica — Standalone</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<style>
+  :root{
+    --bg-app: #1b1c1e;
+    --bg-panel: #232427;
+    --bg-panel-2: #2a2b2f;
+    --bg-viewport: #3c3d41;
+    --bg-toolbtn: #2c2d31;
+    --border: #38393d;
+    --border-soft: #313236;
+    --text-main: #f2f2f3;
+    --text-dim: #9a9ba0;
+    --text-faint: #6f7075;
+    --accent: #2f7bf6;
+    --accent-hover: #3d86ff;
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    font-size: 15px;
+  }
+
+  *{ box-sizing: border-box; }
+
+  html, body{
+    margin: 0;
+    height: 100%;
+    background: #0e0e10;
+    font-family: "Segoe UI", "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+    color: var(--text-main);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ============ SHELL ============ */
+  .app-shell{
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100vh;
+    background: var(--bg-app);
+    border: 1px solid #000;
+    overflow: hidden;
+  }
+
+  /* ============ TOP BAR ============ */
+  .topbar{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 52px;
+    padding: 0 16px;
+    background: #1a1a1c;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .topbar-left{
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+
+  .icon-btn{
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .icon-btn:hover{ background: var(--bg-panel-2); color: var(--text-main); }
+
+  .menu-items{
+    display: flex;
+    gap: 18px;
+    list-style: none;
+    margin: 0; padding: 0;
+  }
+  .menu-items li{
+    font-size: 13.5px;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .menu-items li:hover{ color: var(--text-main); }
+
+  .app-title{
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    color: var(--text-main);
+    white-space: nowrap;
+  }
+
+  .topbar-right{
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .avatar{
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: linear-gradient(135deg,#5b6cff,#8a5bff);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700;
+  }
+
+  .cloud-chip{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+
+  .btn{
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    padding: 9px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-panel-2);
+    color: #bcd8ff;
+    font: inherit;
+    font-weight: 600;
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  .btn:hover{ background: var(--bg-toolbtn); color: var(--text-main); }
+  .btn.primary{ background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover{ background: var(--accent-hover); }
+  .btn:disabled{ opacity:.5; cursor:not-allowed; }
+  .btn.small{ width:auto; padding:5px 12px; font-size:12px; }
+
+  /* ============ WORKSPACE TABS ============ */
+  .workspace-tabs{
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0 16px;
+    height: 34px;
+    background: #19191b;
+    border-bottom: 1px solid var(--border-soft);
+    flex-shrink: 0;
+  }
+  .workspace-tab{
+    display: flex;
+    align-items: center;
+    height: 100%;
+    padding: 0 14px;
+    font-size: 12.5px;
+    color: var(--text-dim);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+  }
+  .workspace-tab:hover{ color: var(--text-main); }
+  .workspace-tab.active{
+    color: var(--text-main);
+    border-bottom-color: var(--accent);
+  }
+  .workspace-tab-doc{
+    margin-left: 4px;
+    padding-left: 14px;
+    border-left: 1px solid var(--border-soft);
+    font-size: 12px;
+    color: var(--text-faint);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* ============ TOOLBAR (ribbon) ============ */
+  .toolbar{
+    display: flex;
+    align-items: flex-start;
+    gap: 0;
+    padding: 8px 16px 6px;
+    background: var(--bg-app);
+    border-bottom: 1px solid var(--border-soft);
+    flex-shrink: 0;
+  }
+
+  .tool-group{
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .tool-group .tool-row{
+    display: flex;
+    gap: 4px;
+  }
+
+  .group-label{
+    font-size: 9.5px;
+    letter-spacing: .6px;
+    color: var(--text-faint);
+    text-transform: uppercase;
+  }
+
+  .group-divider{
+    width: 1px;
+    align-self: stretch;
+    background: var(--border-soft);
+    margin: 2px 14px;
+  }
+
+  .tool-btn{
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    width: 62px;
+    height: 50px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: background .12s ease, color .12s ease, border-color .12s ease;
+  }
+  .tool-btn:hover{
+    background: var(--bg-panel-2);
+    color: var(--text-main);
+  }
+  .tool-btn svg{ width: 17px; height: 17px; }
+  .tool-btn span{ font-size: 9.5px; line-height: 1.1; }
+
+  .tool-btn.active{
+    background: rgba(47,123,246,0.16);
+    border-color: rgba(47,123,246,0.5);
+    color: var(--accent-hover);
+  }
+  .tool-btn.active svg{ color: var(--accent-hover); }
+
+  /* ============ MAIN AREA ============ */
+  .main-area{
+    flex: 1;
+    display: flex;
+    min-height: 0;
+  }
+
+  /* ---- Sidebar ---- */
+  .sidebar{
+    width: 265px;
+    flex-shrink: 0;
+    background: var(--bg-app);
+    border-right: 1px solid var(--border-soft);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .panel{
+    border-bottom: 1px solid var(--border-soft);
+    padding: 12px 12px 14px;
+  }
+
+  .panel-header{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-main);
+    margin-bottom: 10px;
+  }
+  .panel-header .dots{ color: var(--text-faint); cursor: pointer; }
+
+  /* Tree */
+  .tree{
+    list-style: none;
+    margin: 0; padding: 0;
+    font-size: 13px;
+  }
+  .tree-item{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 6px;
+    border-radius: var(--radius-sm);
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .tree-item:hover{ background: var(--bg-panel-2); }
+  .tree-item.selected{
+    background: var(--accent);
+    color: #fff;
+  }
+  .tree-item .chevron{
+    width: 12px; text-align: center;
+    color: var(--text-faint);
+    font-size: 10px;
+  }
+  .tree-item.selected .chevron{ color: rgba(255,255,255,.8); }
+
+  .tree-item .node-icon{
+    width: 14px; height: 14px;
+    flex-shrink: 0;
+    border-radius: 3px;
+  }
+  .node-icon.doc{ background: transparent; font-size: 11px; }
+  .node-icon.cube{ background: var(--accent); }
+  .node-icon.gear{ background: #9a9a9a; font-size: 9px; }
+  .node-icon.assembly{ background: #6fc27a; }
+  .node-icon.result{ background: #ff8a3d; }
+
+  .tree-item .grow{ flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tree-item .row-actions{
+    display: flex; gap: 4px;
+    color: var(--text-faint);
+    font-size: 11px;
+  }
+
+  .tree ul{
+    list-style: none;
+    margin: 0;
+    padding-left: 16px;
+  }
+
+  /* Properties panel */
+  .prop-title{
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--text-main);
+  }
+
+  .section-title{
+    font-size: 10px;
+    letter-spacing: .7px;
+    text-transform: uppercase;
+    color: var(--accent-hover);
+    margin: 14px 0 8px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-soft);
+  }
+
+  .field{
+    margin-bottom: 12px;
+  }
+  .field label{
+    display: block;
+    font-size: 11.5px;
+    color: var(--text-dim);
+    margin-bottom: 5px;
+  }
+  .field select,
+  .field input{
+    width: 100%;
+    background: var(--bg-panel-2);
+    border: 1px solid var(--border);
+    color: var(--text-main);
+    border-radius: var(--radius-sm);
+    padding: 7px 9px;
+    font-size: 13px;
+    outline: none;
+    appearance: none;
+  }
+  .field select:focus,
+  .field input:focus{
+    border-color: var(--accent);
+  }
+
+  .field input[type=range]{
+    -webkit-appearance: none;
+    appearance: none;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border);
+    padding: 0;
+    cursor: pointer;
+  }
+  .field input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance: none;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid #fff;
+  }
+
+  .field label.check{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .field label.check input{ width: auto; }
+
+  .info-text{ font-size: 11.5px; color: var(--text-dim); margin-top: 4px; line-height: 1.4; }
+  .info-text.accent{ color: #bcd8ff; }
+  .info-text .val{ color: var(--accent-hover); font-weight: 600; }
+
+  .field-btns{ display: flex; flex-direction: column; gap: 8px; }
+
+  /* ---- Viewport ---- */
+  .viewport-wrap{
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .viewport{
+    flex: 1;
+    position: relative;
+    background:
+      radial-gradient(ellipse at 50% 40%, #46474b 0%, var(--bg-viewport) 70%);
+    margin: 12px 12px 0 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-soft);
+    overflow: hidden;
+  }
+  .viewport canvas{ display:block; }
+
+  .viewport-label{
+    position: absolute;
+    top: 12px; left: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-main);
+    z-index: 3;
+    pointer-events: none;
+  }
+
+  .viewport-badge{
+    font-size: 11px;
+    font-weight: 500;
+    color: #bcd8ff;
+    background: rgba(47,123,246,0.18);
+    border: 1px solid rgba(47,123,246,0.4);
+    padding: 3px 9px;
+    border-radius: 20px;
+  }
+
+  .viewer-controls{
+    position: absolute;
+    top: 70px; right: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    z-index: 3;
+  }
+  .viewer-controls button{
+    padding: 6px 10px;
+    background: rgba(26,27,29,0.85);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-dim);
+    font-size: 11.5px;
+    cursor: pointer;
+    text-align: left;
+  }
+  .viewer-controls button:hover{ color: var(--text-main); background: var(--bg-panel-2); }
+  .viewer-controls button.active{ color: var(--accent-hover); border-color: rgba(47,123,246,0.5); }
+
+  .legend-scale{
+    position: absolute;
+    bottom: 54px; right: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 10.5px;
+    color: var(--text-dim);
+    z-index: 3;
+    pointer-events: none;
+  }
+  .legend-gradient{
+    width: 90px; height: 8px;
+    border-radius: 4px;
+    background: linear-gradient(90deg, #2b3a55, #2f7bf6, #ff8a3d, #ff3d3d);
+  }
+
+  .viewcube{
+    position: absolute;
+    top: 14px; right: 16px;
+    width: 46px; height: 46px;
+    background: var(--bg-panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    color: var(--text-dim);
+    transform: perspective(200px) rotateX(15deg) rotateY(-20deg);
+    z-index: 3;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  .model-placeholder{
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 10px;
+    color: var(--text-faint);
+    pointer-events: none;
+    z-index: 1;
+  }
+  .model-placeholder .box{
+    width: 90px; height: 90px;
+    border: 2px dashed #5b5c60;
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 26px;
+  }
+  .model-placeholder small{
+    font-size: 11.5px;
+    letter-spacing: .3px;
+  }
+
+  .status-bar{
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    background: rgba(14,14,16,0.9);
+    color: var(--text-dim);
+    padding: 7px 14px;
+    font-size: 11.5px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    z-index: 3;
+  }
+  .legend{ display:flex; gap:14px; font-size:11px; white-space: nowrap; }
+  .legend-item{ display:flex; align-items:center; gap:5px; }
+  .legend-color{ width:10px; height:10px; border-radius:2px; flex-shrink:0; }
+  #viewer-info{
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+  }
+
+  #loading-overlay{
+    position: absolute;
+    top:0; left:0; right:0; bottom:0;
+    background: rgba(0,0,0,0.72);
+    display:flex;
+    align-items:center; justify-content:center;
+    color:#fff;
+    z-index:100;
+  }
+  .hidden{ display:none !important; }
+
+  /* ---- Timeline ---- */
+  .timeline{
+    flex-shrink: 0;
+    margin: 12px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-md);
+    padding: 12px 16px 14px;
+  }
+
+  .timeline-header{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    gap: 10px;
+  }
+  .timeline-header h3{ margin: 0; font-size: 13px; font-weight: 600; }
+  .timeline-header .icons{ display: flex; gap: 10px; color: var(--text-faint); font-size: 13px; }
+
+  .convergence-chip{
+    margin-left: auto;
+    font-size: 11px;
+    color: #b9f2c4;
+    background: rgba(90,200,120,0.14);
+    border: 1px solid rgba(90,200,120,0.35);
+    padding: 3px 10px;
+    border-radius: 20px;
+    white-space: nowrap;
+  }
+
+  .timeline-steps{
+    display: flex;
+    gap: 12px;
+    margin-bottom: 12px;
+    overflow-x: auto;
+  }
+
+  .step{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .step .step-num{
+    font-size: 10.5px;
+    color: var(--text-faint);
+  }
+  .step-pill{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    background: var(--bg-panel-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 12.5px;
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+  .step-pill.active{
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .step-pill.done{
+    border-color: rgba(90,200,120,0.4);
+    color: #b9f2c4;
+  }
+  .step-pill .dot{
+    width: 8px; height: 8px;
+    border-radius: 2px;
+    background: currentColor;
+    opacity: .6;
+    flex-shrink: 0;
+  }
+
+  .scrub-track{
+    position: relative;
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    margin-bottom: 14px;
+  }
+  .scrub-fill{
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 0%;
+    background: var(--accent);
+    border-radius: 2px;
+    transition: width .25s ease;
+  }
+  .scrub-handle{
+    position: absolute;
+    top: 50%; left: 0%;
+    transform: translate(-50%, -50%);
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid #fff;
+    transition: left .25s ease;
+  }
+
+  .playback{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+  }
+
+  .playback button{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .playback button:hover{ color: var(--text-main); }
+
+  .play-main{
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .play-main:hover{ background: var(--accent-hover); }
+
+  /* Scrollbars */
+  .sidebar::-webkit-scrollbar{ width: 8px; }
+  .sidebar::-webkit-scrollbar-thumb{ background: #3a3b3f; border-radius: 4px; }
+  .sidebar::-webkit-scrollbar-track{ background: transparent; }
+</style>
 </head>
 <body>
-<div class="layout">
-  <header class="header">
-    <h1>Entorno de Optimización Topológica</h1>
-    <div>
-      <input type="file" id="step-file-input" accept=".step,.stp" style="display:none;">
-      <button id="import-step-btn" class="btn primary" style="width:auto; margin-left:16px;">📁 Importar STEP</button>
-      <span id="connection-status" class="info-text" style="margin-left:16px;">Modo Standalone</span>
-    </div>
-  </header>
-  
-  <aside class="sidebar">
-    <div class="panel">
-      <h3>📁 Importar Modelo</h3>
-      <div class="form-group">
-        <label>Archivo STEP local</label>
-        <button id="import-step-btn-sidebar" class="btn primary">Seleccionar archivo STEP</button>
-        <div id="file-info" class="info-text" style="margin-top:6px;"></div>
-      </div>
+
+<div class="app-shell">
+
+  <!-- ===== TOP BAR ===== -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <button class="icon-btn" aria-label="Menú">☰</button>
+      <ul class="menu-items">
+        <li>Archivo</li>
+        <li>Editar</li>
+        <li>Diseño</li>
+        <li>Herramientas</li>
+        <li>Ayuda</li>
+      </ul>
     </div>
 
-    <div class="panel">
-      <h3>📊 Estado</h3>
-      <div id="app-status" class="info-text">Listo para configurar optimización</div>
-      <div id="cad-meta" class="info-text" style="margin-top:6px; color:#1769e0;"></div>
+    <div class="app-title">OPTIMIZACIÓN TOPOLÓGICA</div>
+
+    <div class="topbar-right">
+      <div class="cloud-chip" id="connection-status">☁ Standalone</div>
+      <input type="file" id="step-file-input" accept=".step,.stp" style="display:none;">
+      <button id="import-step-btn" class="btn primary small">📁 Importar STEP</button>
+      <div class="avatar">JD</div>
     </div>
-    
-    <div class="panel">
-      <h3>👁️ Visibilidad</h3>
-      <div class="form-group">
-        <label>
-          <input type="checkbox" id="show-geometry" checked> Geometría Real (CAD)
-        </label>
+  </header>
+
+  <!-- ===== WORKSPACE TABS ===== -->
+  <div class="workspace-tabs">
+    <div class="workspace-tab">Modelo</div>
+    <div class="workspace-tab active">Optimización (Kratos)</div>
+    <div class="workspace-tab">Simulación</div>
+    <div class="workspace-tab">Fabricación</div>
+    <div class="workspace-tab-doc" id="doc-tab">📁 Sin documento cargado</div>
+  </div>
+
+  <!-- ===== TOOLBAR — ribbon de capacidades ===== -->
+  <nav class="toolbar">
+
+    <div class="tool-group">
+      <div class="tool-row">
+        <button class="tool-btn" data-tool="importar" title="Importar archivo STEP local">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h12l4 4v10H4z"/><path d="M14 5v4h4M12 13v-4m0 4l-2.5-2.5M12 13l2.5-2.5"/></svg>
+          <span>Importar STEP</span>
+        </button>
+        <button class="tool-btn" data-tool="malla" title="Generar malla volumétrica FEM (Tet4)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/><rect x="3" y="3" width="18" height="18"/></svg>
+          <span>Malla FEM</span>
+        </button>
+        <button class="tool-btn" data-tool="analisis" title="Structural Mechanics App — análisis estático">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19V9M10 19V13M16 19V6M4 19h16"/><path d="M2 21h20"/></svg>
+          <span>Análisis FEM</span>
+        </button>
       </div>
-      <div class="form-group">
-        <label>
-          <input type="checkbox" id="show-forces-viz" checked> Cargas / Fuerzas
-        </label>
+      <span class="group-label">Modelo</span>
+    </div>
+
+    <div class="group-divider"></div>
+
+    <div class="tool-group">
+      <div class="tool-row">
+        <button class="tool-btn" data-tool="sensibilidad" title="Análisis de sensibilidad (adjoint)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 17l5-5 4 4 8-8"/><path d="M14 8h6v6"/></svg>
+          <span>Sensibilidad</span>
+        </button>
+        <button class="tool-btn" data-tool="filtros" title="Radio de filtro de densidad">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16l-6 8v6l-4 2v-8z"/></svg>
+          <span>Filtros</span>
+        </button>
+        <button class="tool-btn active" data-tool="optimizar" title="Optimization Application — algoritmo SIMP/MMA">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 3l14 9-14 9V3z"/></svg>
+          <span>Optimizar SIMP</span>
+        </button>
       </div>
-      <div class="form-group">
-        <label>
-          <input type="checkbox" id="show-constraints-viz" checked> Restricciones
-        </label>
+      <span class="group-label">Optimización</span>
+    </div>
+
+    <div class="group-divider"></div>
+
+    <div class="tool-group">
+      <div class="tool-row">
+        <button class="tool-btn" data-tool="resultado" title="Visualizar campo de densidad por elemento">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12c3-6 6-6 9 0s6 6 9 0"/></svg>
+          <span>Visualizar</span>
+        </button>
+        <button class="tool-btn" data-tool="exportar" title="Exportar resultado de la optimización">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 15V3m0 12l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+          <span>Exportar</span>
+        </button>
+      </div>
+      <span class="group-label">Postproceso</span>
+    </div>
+
+  </nav>
+
+  <!-- ===== MAIN AREA ===== -->
+  <div class="main-area">
+
+    <!-- ---- SIDEBAR ---- -->
+    <aside class="sidebar">
+
+      <!-- Navegador de diseño -->
+      <section class="panel">
+        <div class="panel-header">
+          <span>Navegador de Diseño</span>
+          <span class="dots">⋯</span>
+        </div>
+        <ul class="tree">
+          <li>
+            <div class="tree-item">
+              <span class="chevron">▾</span>
+              <span class="node-icon cube"></span>
+              <span class="grow" id="tree-part-name">Modelo sin importar</span>
+            </div>
+            <ul id="tree-children"></ul>
+          </li>
+        </ul>
+      </section>
+
+      <!-- Panel de propiedades -->
+      <section class="panel" style="flex:1; border-bottom:none;">
+        <div class="panel-header">
+          <span>Panel de Propiedades</span>
+          <span class="dots">⋯</span>
+        </div>
+
+        <div class="prop-title">Optimizar (SIMP)</div>
+
+        <div class="field">
+          <label>Respuesta objetivo</label>
+          <select id="objective-select">
+            <option>Compliance mínima (SIMP)</option>
+            <option>Masa mínima</option>
+            <option>Desplazamiento máx. nodal</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="volume-fraction">Fracción de volumen objetivo</label>
+          <input type="range" id="volume-fraction" min="0.1" max="0.9" step="0.05" value="0.35">
+          <div class="info-text"><span id="volume-value" class="val">35%</span> volumen retenido</div>
+        </div>
+
+        <div class="field">
+          <label>Algoritmo</label>
+          <select id="algorithm-select">
+            <option>MMA (Method of Moving Asymptotes)</option>
+            <option>GCMMA</option>
+            <option>Steepest descent</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="penalization">Penalización SIMP (p)</label>
+          <input type="number" id="penalization" value="3.0" min="1" step="0.5">
+        </div>
+
+        <div class="field">
+          <label for="filter-radius">Radio de filtro (mm)</label>
+          <input type="number" id="filter-radius" value="1.5" min="0.1" step="0.1">
+        </div>
+
+        <div class="field">
+          <label for="max-iterations">Iteraciones máximas</label>
+          <input type="number" id="max-iterations" value="50" min="5" max="500" step="5">
+        </div>
+
+        <div class="field-btns">
+          <button id="generate-mesh-btn" class="btn">📐 Generar Malla FEM</button>
+          <button id="run-optimization" class="btn primary">▶ Ejecutar Optimización</button>
+        </div>
+
+        <div class="section-title">Material</div>
+        <div class="field">
+          <label for="material">Material</label>
+          <select id="material">
+            <option value="steel">Acero Estructural (E=210 GPa, ν=0.30)</option>
+            <option value="aluminum">Aluminio 6061-T6 (E=68.9 GPa, ν=0.33)</option>
+            <option value="titanium">Titanio Ti-6Al-4V (E=113.8 GPa, ν=0.34)</option>
+          </select>
+        </div>
+
+        <div class="section-title">Cargas / Fuerzas</div>
+        <div class="field">
+          <label for="force-magnitude">Magnitud (N)</label>
+          <input type="number" id="force-magnitude" value="1000" min="1" step="10">
+        </div>
+        <div class="field">
+          <label for="force-direction-x">Dirección X</label>
+          <input type="number" id="force-direction-x" value="0" step="0.1">
+        </div>
+        <div class="field">
+          <label for="force-direction-y">Dirección Y</label>
+          <input type="number" id="force-direction-y" value="-1" step="0.1">
+        </div>
+        <div class="field">
+          <label for="force-direction-z">Dirección Z</label>
+          <input type="number" id="force-direction-z" value="0" step="0.1">
+        </div>
+        <button id="add-force" class="btn">+ Agregar Fuerza</button>
+
+        <div class="section-title">Restricciones</div>
+        <div class="field">
+          <label for="constraint-type">Tipo de fijación</label>
+          <select id="constraint-type">
+            <option value="fixed">Fija (Empotramiento)</option>
+            <option value="pinned">Pinnada (Rotación libre)</option>
+            <option value="roller">Rodillo (Desplazamiento guiado)</option>
+          </select>
+        </div>
+        <button id="add-constraint" class="btn">+ Agregar Restricción</button>
+
+        <div class="section-title">Visibilidad</div>
+        <div class="field">
+          <label class="check"><input type="checkbox" id="show-geometry" checked> Geometría Real (CAD)</label>
+        </div>
+        <div class="field">
+          <label class="check"><input type="checkbox" id="show-forces-viz" checked> Cargas / Fuerzas</label>
+        </div>
+        <div class="field">
+          <label class="check"><input type="checkbox" id="show-constraints-viz" checked> Restricciones</label>
+        </div>
+
+        <div class="section-title">Estado</div>
+        <div id="app-status" class="info-text">Listo para configurar optimización</div>
+        <div id="cad-meta" class="info-text accent" style="margin-top:6px;"></div>
+        <div id="file-info" class="info-text"></div>
+      </section>
+    </aside>
+
+    <!-- ---- VIEWPORT + TIMELINE ---- -->
+    <div class="viewport-wrap">
+
+      <div class="viewport" id="viewer-container">
+        <div class="viewport-label">
+          Optimización <span class="viewport-badge" id="pipeline-badge">SIMP · Standalone</span>
+        </div>
+
+        <div class="viewer-controls">
+          <button id="reset-camera" title="Centrar la vista en el modelo">📷 Centrar Vista</button>
+          <button id="toggle-wireframe" title="Activar modo alambre">🔲 Wireframe</button>
+          <button id="toggle-axes" title="Mostrar ejes de coordenadas">📐 Ejes</button>
+          <button id="toggle-forces" title="Mostrar/ocultar vectores de fuerza">⚡ Fuerzas</button>
+          <button id="toggle-constraints" title="Mostrar/ocultar fijaciones">🔒 Fijaciones</button>
+        </div>
+
+        <div class="viewcube">⦿</div>
+
+        <div class="model-placeholder" id="model-placeholder">
+          <div class="box">🔲</div>
+          <small>Importe un archivo STEP para cargar el modelo 3D</small>
+        </div>
+
+        <div class="legend-scale">
+          Densidad
+          <div class="legend-gradient"></div>
+          <span>1.0</span>
+        </div>
+
+        <div class="status-bar">
+          <div class="legend">
+            <div class="legend-item"><div class="legend-color" style="background:#3b82f6;"></div>Sólido CAD Real</div>
+            <div class="legend-item"><div class="legend-color" style="background:#f59e0b;"></div>Fuerzas (Vectores)</div>
+            <div class="legend-item"><div class="legend-color" style="background:#8b5cf6;"></div>Fijaciones</div>
+          </div>
+          <div id="viewer-info">Visor 3D inicializando...</div>
+        </div>
+
+        <div id="loading-overlay" class="hidden">
+          <div id="loading-text">Cargando modelo CAD real...</div>
+        </div>
+      </div>
+
+      <!-- Timeline de progreso del estudio -->
+      <div class="timeline">
+        <div class="timeline-header">
+          <h3>Progreso del estudio</h3>
+          <span class="convergence-chip hidden" id="convergence-chip">✔ Convergido</span>
+          <div class="icons">⏱</div>
+        </div>
+
+        <div class="timeline-steps" id="timeline-steps">
+          <div class="step" data-step="1"><span class="step-num">1</span><span class="step-pill"><span class="dot"></span>Importar STEP</span></div>
+          <div class="step" data-step="2"><span class="step-num">2</span><span class="step-pill"><span class="dot"></span>Cargas y Restricciones</span></div>
+          <div class="step" data-step="3"><span class="step-num">3</span><span class="step-pill"><span class="dot"></span>Generar Malla</span></div>
+          <div class="step" data-step="4"><span class="step-num">4</span><span class="step-pill"><span class="dot"></span>Optimizar SIMP</span></div>
+          <div class="step" data-step="5"><span class="step-num">5</span><span class="step-pill"><span class="dot"></span>Resultado</span></div>
+        </div>
+
+        <div class="scrub-track">
+          <div class="scrub-fill" id="scrub-fill"></div>
+          <div class="scrub-handle" id="scrub-handle"></div>
+        </div>
+
+        <div class="playback">
+          <button id="playback-prev">⏮ Reiniciar</button>
+          <button id="playback-play" class="play-main" title="Continuar con el siguiente paso del flujo">▶</button>
+          <button id="playback-next">Ejecutar ▶</button>
+        </div>
       </div>
     </div>
-    
-    <div class="panel">
-      <h3>⚡ Cargas</h3>
-      <div class="form-group">
-        <label for="force-magnitude">Magnitud (N)</label>
-        <input type="number" id="force-magnitude" value="1000" min="1" step="10">
-      </div>
-      <div class="form-group">
-        <label for="force-direction-x">Dirección X</label>
-        <input type="number" id="force-direction-x" value="0" step="0.1">
-      </div>
-      <div class="form-group">
-        <label for="force-direction-y">Dirección Y</label>
-        <input type="number" id="force-direction-y" value="-1" step="0.1">
-      </div>
-      <div class="form-group">
-        <label for="force-direction-z">Dirección Z</label>
-        <input type="number" id="force-direction-z" value="0" step="0.1">
-      </div>
-      <button id="add-force" class="btn">+ Agregar Fuerza</button>
-    </div>
-    
-    <div class="panel">
-      <h3>🔒 Restricciones</h3>
-      <div class="form-group">
-        <label>Tipo de fijación</label>
-        <select id="constraint-type">
-          <option value="fixed">Fija (Empotramiento)</option>
-          <option value="pinned">Pinnada (Rotación libre)</option>
-          <option value="roller">Rodillo (Desplazamiento guiado)</option>
-        </select>
-      </div>
-      <button id="add-constraint" class="btn">+ Agregar Restricción</button>
-    </div>
-    
-    <div class="panel">
-      <h3>⚙️ Optimización (SIMP)</h3>
-      <div class="form-group">
-        <label for="volume-fraction">Fracción de volumen objetivo</label>
-        <input type="range" id="volume-fraction" min="0.1" max="0.9" step="0.05" value="0.3">
-        <div class="info-text"><span id="volume-value">30%</span> volumen retenido</div>
-      </div>
-      <div class="form-group">
-        <label for="max-iterations">Iteraciones máximas</label>
-        <input type="number" id="max-iterations" value="50" min="5" max="500" step="5">
-      </div>
-      <button id="generate-mesh-btn" class="btn" style="margin-bottom:8px;">📐 Generar Malla FEM</button>
-      <button id="run-optimization" class="btn primary">▶ Ejecutar Optimización</button>
-    </div>
-    
-    <div class="panel">
-      <h3>📐 Material</h3>
-      <div class="form-group">
-        <label for="material">Material</label>
-        <select id="material">
-          <option value="steel">Acero Estructural (E=210 GPa, ν=0.30)</option>
-          <option value="aluminum">Aluminio 6061-T6 (E=68.9 GPa, ν=0.33)</option>
-          <option value="titanium">Titanio Ti-6Al-4V (E=113.8 GPa, ν=0.34)</option>
-        </select>
-      </div>
-    </div>
-  </aside>
-  
-  <main class="viewer" id="viewer-container">
-    <div class="viewer-controls">
-      <button id="reset-camera">📷 Centrar Vista</button>
-      <button id="toggle-wireframe">🔲 Wireframe</button>
-      <button id="toggle-axes">📐 Ejes</button>
-      <button id="toggle-forces">⚡ Fuerzas</button>
-      <button id="toggle-constraints">🔒 Fijaciones</button>
-    </div>
-    
-    <div class="status-bar">
-      <div class="legend">
-        <div class="legend-item"><div class="legend-color" style="background:#3b82f6;"></div>Sólido CAD Real</div>
-        <div class="legend-item"><div class="legend-color" style="background:#f59e0b;"></div>Fuerzas (Vectores)</div>
-        <div class="legend-item"><div class="legend-color" style="background:#8b5cf6;"></div>Fijaciones</div>
-      </div>
-      <div id="viewer-info">Comprobando geometría...</div>
-    </div>
-    
-    <div id="loading-overlay" class="hidden">
-      <div id="loading-text">Cargando modelo CAD real...</div>
-    </div>
-  </main>
+  </div>
 </div>
 
 <script>
@@ -190,93 +1028,98 @@
   let isWireframe = false;
   let showAxes = false;
   let axesHelper = null;
-  let visibilityState = {
-    geometry: true,
-    forces: true,
-    constraints: true
-  };
-  
+  let currentMeshForDisplay = null;
+  let densityPoints = null;
+  let currentModelId = null;
+  let lastOptimizationResult = null;
+  let modelName = null;
+
+  const visibilityState = { geometry: true, forces: true, constraints: true };
+
   const $ = id => document.getElementById(id);
-  
+
+  /* ================= Visor 3D ================= */
+
   function initViewer() {
     const container = $('viewer-container');
     const width = container.clientWidth;
     const height = container.clientHeight;
-    
+
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x1a202c);
-    
+    scene.background = new THREE.Color(0x2e2f33);
+
     camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 2000);
     camera.position.set(20, 20, 30);
-    
+
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(width, height);
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.shadowMap.enabled = true;
     container.appendChild(renderer.domElement);
-    
+
     controls = new THREE.OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
-    
+
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
     scene.add(ambientLight);
-    
+
     const dirLight1 = new THREE.DirectionalLight(0xffffff, 0.8);
     dirLight1.position.set(50, 50, 50);
     scene.add(dirLight1);
-    
+
     const dirLight2 = new THREE.DirectionalLight(0xffffff, 0.4);
     dirLight2.position.set(-50, -30, -50);
     scene.add(dirLight2);
-    
+
     const gridHelper = new THREE.GridHelper(50, 20, 0x4a5568, 0x2d3748);
     scene.add(gridHelper);
-    
+
     window.addEventListener('resize', onWindowResize);
     animate();
     $('viewer-info').textContent = 'Visor 3D listo';
   }
-  
+
   function onWindowResize() {
     const container = $('viewer-container');
     camera.aspect = container.clientWidth / container.clientHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(container.clientWidth, container.clientHeight);
   }
-  
+
   function animate() {
     requestAnimationFrame(animate);
     controls.update();
     renderer.render(scene, camera);
   }
-  
-  // Renderizar la geometría real descargada del STEP local
+
   function loadRealCADGeometry(tess) {
     if (!tess || !tess.vertices || tess.vertices.length === 0) {
       $('viewer-info').textContent = 'No hay datos de geometría disponibles';
       return;
     }
-    
+
+    $('model-placeholder').classList.add('hidden');
+
     if (geometryMesh) {
       scene.remove(geometryMesh);
       geometryMesh.geometry.dispose();
       geometryMesh.material.dispose();
       geometryMesh = null;
     }
-    
+
     const geometry = new THREE.BufferGeometry();
     const positions = new Float32Array(tess.vertices);
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    
+
     if (tess.indices && tess.indices.length > 0) {
       geometry.setIndex(tess.indices);
     }
-    
+
     geometry.computeVertexNormals();
     geometry.computeBoundingBox();
     geometry.computeBoundingSphere();
-    
+
     const material = new THREE.MeshStandardMaterial({
       color: 0x3b82f6,
       metalness: 0.2,
@@ -284,82 +1127,180 @@
       wireframe: isWireframe,
       side: THREE.DoubleSide
     });
-    
+
     geometryMesh = new THREE.Mesh(geometry, material);
+    geometryMesh.visible = visibilityState.geometry;
     scene.add(geometryMesh);
-    
+
     cadFaces = tess.faces || [];
     cadBBox = tess.bbox;
-    
-    // Ajustar cámara al tamaño real del objeto
+
     const sphere = geometry.boundingSphere;
     if (sphere) {
       const radius = sphere.radius || 10;
-      camera.position.set(sphere.center.x + radius * 2, sphere.center.y + radius * 1.5, sphere.center.z + radius * 2.5);
+      camera.position.set(
+        sphere.center.x + radius * 2,
+        sphere.center.y + radius * 1.5,
+        sphere.center.z + radius * 2.5
+      );
       controls.target.copy(sphere.center);
       controls.update();
     }
-    
-    $('viewer-info').textContent = `Geometría Real: ${tess.num_vertices} vértices, ${tess.num_triangles} triángulos`;
-    $('cad-meta').textContent = `Volumen: ${(tess.volume || 0).toFixed(2)} mm³ | Caras: ${cadFaces.length}`;
+
+    $('viewer-info').textContent =
+      `Geometría Real: ${tess.num_vertices} vértices, ${tess.num_triangles} triángulos`;
+    $('cad-meta').textContent =
+      `Volumen: ${(tess.volume || 0).toFixed(2)} mm³ | Caras: ${cadFaces.length}`;
   }
-  
-  // Crear vector de fuerza 3D real
+
   function createForceVector(origin, direction, magnitude, color = 0xf59e0b) {
     const dir = new THREE.Vector3(direction.x, direction.y, direction.z);
     if (dir.length() === 0) dir.set(0, -1, 0);
     dir.normalize();
-    
+
     const length = Math.max(2, Math.min(magnitude / 100, 10));
     return new THREE.ArrowHelper(dir, origin, length, color, length * 0.25, length * 0.15);
   }
-  
+
   function visualizeForces() {
     forceVectors.forEach(v => scene.remove(v));
     forceVectors = [];
-    
+
     let defaultOrigin = new THREE.Vector3(0, 0, 0);
     if (geometryMesh && geometryMesh.geometry.boundingSphere) {
       const center = geometryMesh.geometry.boundingSphere.center;
       const radius = geometryMesh.geometry.boundingSphere.radius;
       defaultOrigin = new THREE.Vector3(center.x, center.y + radius * 0.8, center.z);
     }
-    
+
     forces.forEach(force => {
       const dir = { x: force.direction_x, y: force.direction_y, z: force.direction_z };
       const vec = createForceVector(defaultOrigin, dir, force.magnitude);
+      vec.visible = visibilityState.forces;
       scene.add(vec);
       forceVectors.push(vec);
     });
   }
-  
+
   function visualizeConstraints() {
     constraintVisuals.forEach(c => scene.remove(c));
     constraintVisuals = [];
-    
+
     let basePos = new THREE.Vector3(0, 0, 0);
     if (geometryMesh && geometryMesh.geometry.boundingBox) {
       const bbox = geometryMesh.geometry.boundingBox;
       basePos = new THREE.Vector3(bbox.min.x, bbox.min.y, bbox.min.z);
     }
-    
+
     constraints.forEach((constraint, idx) => {
       const size = 1.0;
       const geom = new THREE.BoxGeometry(size, size, size);
       const mat = new THREE.MeshStandardMaterial({ color: 0x8b5cf6, transparent: true, opacity: 0.8 });
       const mesh = new THREE.Mesh(geom, mat);
       mesh.position.set(basePos.x + idx * size * 1.5, basePos.y, basePos.z);
+      mesh.visible = visibilityState.constraints;
       scene.add(mesh);
       constraintVisuals.push(mesh);
     });
   }
-  
+
   function updateVisualization() {
     visualizeForces();
     visualizeConstraints();
   }
-  
-  // Controles
+
+  function renderDensityField(densities) {
+    if (densityPoints) { scene.remove(densityPoints); densityPoints.geometry.dispose(); densityPoints = null; }
+    const mesh = currentMeshForDisplay;
+    if (!mesh || !mesh.nodes || !mesh.elements || !densities || !geometryMesh) {
+      $('viewer-info').textContent = 'Sin datos de densidad para visualizar';
+      return;
+    }
+    const pos = [];
+    const colors = [];
+    for (let e = 0; e < Math.min(mesh.elements.length, 20000); e++) {
+      const con = mesh.elements[e];
+      const c = [0, 0, 0];
+      for (let k = 0; k < 4; k++) {
+        c[0] += mesh.nodes[con[k]][0];
+        c[1] += mesh.nodes[con[k]][1];
+        c[2] += mesh.nodes[con[k]][2];
+      }
+      pos.push(c[0] / 4, c[1] / 4, c[2] / 4);
+      const d = densities[e];
+      colors.push(d, 0.2 * d, 0.4 + 0.6 * (1 - d));
+    }
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geom.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    const mat = new THREE.PointsMaterial({ size: 0.05, vertexColors: true });
+    densityPoints = new THREE.Points(geom, mat);
+    scene.add(densityPoints);
+    $('viewer-info').textContent =
+      `SIMP: densidad por elemento (rojo=lleno, azul=vacío) · ${pos.length / 3} puntos`;
+  }
+
+  /* ================= Timeline / pipeline ================= */
+
+  const SCRUB_STEPS = 5;
+
+  function setPipelineStep(i) {
+    document.querySelectorAll('.step').forEach((s, k) => {
+      const pill = s.querySelector('.step-pill');
+      pill.classList.toggle('active', k + 1 <= i);
+      pill.classList.toggle('done', k + 1 < i);
+    });
+    const pct = (i / SCRUB_STEPS) * 100;
+    $('scrub-fill').style.width = pct + '%';
+    $('scrub-handle').style.left = pct + '%';
+    if (i >= SCRUB_STEPS) $('convergence-chip').classList.remove('hidden');
+  }
+
+  function setToolActive(tool, active = true) {
+    document.querySelectorAll('.tool-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.tool === tool && active);
+    });
+  }
+
+  /* ================= Árbol de diseño ================= */
+
+  function upsertTreeNode(label, icon = 'doc', select = false) {
+    const ul = $('tree-children');
+    let existing = null;
+    for (const li of ul.children) {
+      const grow = li.querySelector('.grow');
+      if (grow && grow.textContent === label) { existing = li; break; }
+    }
+    if (existing) {
+      if (select) selectTreeNode(existing);
+      return existing;
+    }
+    const li = document.createElement('li');
+    const div = document.createElement('div');
+    div.className = 'tree-item';
+    const iconChar = (icon === 'doc' || icon === 'gear') ? '📄' : '';
+    div.innerHTML = '<span class="chevron"></span><span class="node-icon ' + icon + '">' + iconChar + '</span><span class="grow"></span>';
+    div.querySelector('.grow').textContent = label;
+    li.appendChild(div);
+    ul.appendChild(li);
+    if (select) selectTreeNode(li);
+    return li;
+  }
+
+  function selectTreeNode(li) {
+    document.querySelectorAll('#tree-children .tree-item').forEach(i => i.classList.remove('selected'));
+    const item = li.querySelector ? li.querySelector('.tree-item') : li;
+    if (item) item.classList.add('selected');
+  }
+
+  /* ================= Status helpers ================= */
+
+  function setStatus(msg) {
+    $('app-status').textContent = msg;
+  }
+
+  /* ================= Controles del visor ================= */
+
   $('reset-camera').addEventListener('click', () => {
     if (geometryMesh && geometryMesh.geometry.boundingSphere) {
       const s = geometryMesh.geometry.boundingSphere;
@@ -371,14 +1312,16 @@
     }
     controls.update();
   });
-  
+
   $('toggle-wireframe').addEventListener('click', () => {
     isWireframe = !isWireframe;
+    $('toggle-wireframe').classList.toggle('active', isWireframe);
     if (geometryMesh) geometryMesh.material.wireframe = isWireframe;
   });
-  
+
   $('toggle-axes').addEventListener('click', () => {
     showAxes = !showAxes;
+    $('toggle-axes').classList.toggle('active', showAxes);
     if (showAxes) {
       if (!axesHelper) {
         axesHelper = new THREE.AxesHelper(15);
@@ -389,46 +1332,52 @@
       axesHelper = null;
     }
   });
-  
+
   $('toggle-forces').addEventListener('click', () => {
     visibilityState.forces = !visibilityState.forces;
+    $('toggle-forces').classList.toggle('active', !visibilityState.forces);
     forceVectors.forEach(v => v.visible = visibilityState.forces);
   });
-  
+
   $('toggle-constraints').addEventListener('click', () => {
     visibilityState.constraints = !visibilityState.constraints;
+    $('toggle-constraints').classList.toggle('active', !visibilityState.constraints);
     constraintVisuals.forEach(c => c.visible = visibilityState.constraints);
   });
-  
+
   $('show-geometry').addEventListener('change', e => {
+    visibilityState.geometry = e.target.checked;
     if (geometryMesh) geometryMesh.visible = e.target.checked;
   });
-  
+
   $('show-forces-viz').addEventListener('change', e => {
+    visibilityState.forces = e.target.checked;
     forceVectors.forEach(v => v.visible = e.target.checked);
   });
-  
+
   $('show-constraints-viz').addEventListener('change', e => {
+    visibilityState.constraints = e.target.checked;
     constraintVisuals.forEach(c => c.visible = e.target.checked);
   });
-  
+
   $('volume-fraction').addEventListener('input', e => {
     const val = Math.round(e.target.value * 100);
     $('volume-value').textContent = val + '%';
   });
-  
-  // Agregar fuerza
+
+  /* ================= Cargas ================= */
+
   $('add-force').addEventListener('click', async () => {
     const mag = parseFloat($('force-magnitude').value);
     const dx = parseFloat($('force-direction-x').value);
     const dy = parseFloat($('force-direction-y').value);
     const dz = parseFloat($('force-direction-z').value);
-    
+
     if (mag <= 0 || (dx === 0 && dy === 0 && dz === 0)) {
-      $('app-status').textContent = 'Magnitud > 0 y dirección no nula requeridas';
+      setStatus('Magnitud > 0 y dirección no nula requeridas');
       return;
     }
-    
+
     forces.push({ magnitude: mag, direction_x: dx, direction_y: dy, direction_z: dz, force_type: 'point' });
     try {
       const res = await fetch('/api/boundary/forces', {
@@ -438,21 +1387,27 @@
         body: JSON.stringify(forces)
       });
       if (res.ok) {
-        $('app-status').textContent = `${forces.length} fuerza(s) registrada(s)`;
+        setStatus(`${forces.length} fuerza(s) registrada(s)`);
+        upsertTreeNode(`Cargas (${forces.length})`, 'gear', true);
+        setPipelineStep(2);
         updateVisualization();
       }
     } catch (err) {
-      $('app-status').textContent = 'Error al registrar fuerza: ' + err.message;
+      setStatus('Error al registrar fuerza: ' + err.message);
     }
   });
-  
-  // Agregar restricción
+
+  /* ================= Restricciones ================= */
+
   $('add-constraint').addEventListener('click', async () => {
     const cType = $('constraint-type').value;
     constraints.push({
       constraint_type: cType,
       location: 'face_0',
-      degrees_of_freedom: { ux: true, uy: true, uz: true, rx: cType !== 'pinned', ry: cType !== 'pinned', rz: cType !== 'pinned' }
+      degrees_of_freedom: {
+        ux: true, uy: true, uz: true,
+        rx: cType !== 'pinned', ry: cType !== 'pinned', rz: cType !== 'pinned'
+      }
     });
     try {
       const res = await fetch('/api/boundary/constraints', {
@@ -462,50 +1417,21 @@
         body: JSON.stringify(constraints)
       });
       if (res.ok) {
-        $('app-status').textContent = `${constraints.length} restricción(es) registrada(s)`;
+        setStatus(`${constraints.length} restricción(es) registrada(s)`);
+        upsertTreeNode(`Restricciones (${constraints.length})`, 'assembly', true);
+        setPipelineStep(2);
         updateVisualization();
       }
     } catch (err) {
-      $('app-status').textContent = 'Error al registrar restricción: ' + err.message;
+      setStatus('Error al registrar restricción: ' + err.message);
     }
   });
-  
-  // Generar Malla FEM Real
-  let currentMeshForDisplay = null;
-  let densityPoints = null;
 
-  function renderDensityField(densities) {
-    if (densityPoints) { scene.remove(densityPoints); densityPoints.geometry.dispose(); densityPoints = null; }
-    const mesh = currentMeshForDisplay;
-    if (!mesh || !mesh.nodes || !mesh.elements || !densities) {
-      $('viewer-info').textContent = 'Sin datos de densidad para visualizar';
-      return;
-    }
-    // Compute element centroids and color them by density
-    const pos = [];
-    const colors = [];
-    const scale = Math.max(1, Math.max(mesh.num_nodes, mesh.num_elements) / 2000);
-    const size = 0.02 * (geometryMesh ? geometryMesh.geometry.boundingSphere.radius : 1) * (scale > 1 ? 1 : 1);
-    for (let e = 0; e < Math.min(mesh.elements.length, 20000); e++) {
-      const con = mesh.elements[e];
-      const c = [0, 0, 0];
-      for (let k = 0; k < 4; k++) { c[0] += mesh.nodes[con[k]][0]; c[1] += mesh.nodes[con[k]][1]; c[2] += mesh.nodes[con[k]][2]; }
-      pos.push(c[0] / 4, c[1] / 4, c[2] / 4);
-      const d = densities[e];
-      colors.push(d, 0.2 * d, 0.4 + 0.6 * (1 - d));
-    }
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    geom.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    const mat = new THREE.PointsMaterial({ size: 0.05, vertexColors: true });
-    densityPoints = new THREE.Points(geom, mat);
-    scene.add(densityPoints);
-    $('viewer-info').textContent = `SIMP: densidad por elemento (rojo=lleno, azul=vacío) · ${pos.length / 3} puntos`;
-  }
+  /* ================= Malla FEM ================= */
 
-  $('generate-mesh-btn').addEventListener('click', async () => {
+  async function generateMesh() {
     try {
-      $('app-status').textContent = 'Generando malla volumétrica FEM...';
+      setStatus('Generando malla volumétrica FEM...');
       const res = await fetch('/api/mesh/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -514,26 +1440,84 @@
       });
       const data = await res.json();
       if (!res.ok) {
-        $('app-status').textContent = data.detail || 'Fallo al generar la malla';
-        return;
+        setStatus(data.detail || 'Fallo al generar la malla');
+        return false;
       }
       if (data.status === 'success') {
         currentMeshForDisplay = data.mesh;
-        $('app-status').textContent = `Malla FEM generada: ${data.mesh.num_nodes} nodos, ${data.mesh.num_elements} tetraedros`;
-      } else {
-        $('app-status').textContent = data.message || 'Fallo al generar la malla';
+        setStatus(`Malla FEM generada: ${data.mesh.num_nodes} nodos, ${data.mesh.num_elements} tetraedros`);
+        upsertTreeNode(`Malla FEM (${data.mesh.num_nodes} nodos)`, 'gear', true);
+        setPipelineStep(3);
+        setToolActive('malla');
+        return true;
       }
+      setStatus(data.message || 'Fallo al generar la malla');
+      return false;
     } catch (err) {
-      $('app-status').textContent = 'Error: ' + err.message;
+      setStatus('Error: ' + err.message);
+      return false;
     }
-  });
-  
-  // Iniciar optimización
-  $('run-optimization').addEventListener('click', async () => {
-    const volfrac = parseFloat($('volume-fraction').value) || 0.3;
+  }
+
+  $('generate-mesh-btn').addEventListener('click', () => generateMesh());
+
+  /* ================= Análisis FEM ================= */
+
+  async function runFEA() {
+    if (!currentMeshForDisplay && !constraints.length) {
+      setStatus('Genere primero la malla FEM y agregue al menos una restricción.');
+      return;
+    }
+    setStatus('Ejecutando análisis FEM estático...');
+    setToolActive('analisis');
+    try {
+      const res = await fetch('/api/fea/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ material: $('material').value })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setStatus('FEA fallido: ' + (data.detail || 'Error'));
+        return;
+      }
+      const r = data.result;
+      const maxStress = (r.element_von_mises && r.element_von_mises.length)
+        ? Math.max(...r.element_von_mises) : 0;
+      setStatus(
+        `FEA completado: max desplaz. = ${r.max_displacement.toExponential(3)} mm | ` +
+        `compliance = ${r.compliance.toExponential(2)} | σ_vm máx = ${maxStress.toExponential(2)} MPa`
+      );
+      $('cad-meta').textContent =
+        `Análisis · ${r.num_nodes} nodos, ${r.num_elements} elems · engine ${r.engine}`;
+      upsertTreeNode(`FEA estático (max u=${r.max_displacement.toExponential(2)})`, 'result', true);
+    } catch (err) {
+      setStatus('Error al ejecutar FEA: ' + err.message);
+    }
+  }
+
+  /* ================= Optimización SIMP ================= */
+
+  async function runOptimization() {
+    const volfrac = parseFloat($('volume-fraction').value) || 0.35;
     const iters = parseInt($('max-iterations').value, 10) || 50;
-    $('app-status').textContent = 'Ejecutando FEA + SIMP (esto puede tardar)...';
+    const penal = parseFloat($('penalization').value) || 3.0;
+    const filt = parseFloat($('filter-radius').value) || 1.5;
+
+    setStatus('Ejecutando FEA + SIMP (esto puede tardar)...');
     $('run-optimization').disabled = true;
+    setToolActive('optimizar');
+    setPipelineStep(4);
+
+    const progressTimer = setInterval(() => {
+      const cur = parseFloat($('scrub-fill').style.width) || 60;
+      if (cur < 94) {
+        const next = Math.min(94, cur + 4);
+        $('scrub-fill').style.width = next + '%';
+        $('scrub-handle').style.left = next + '%';
+      }
+    }, 400);
+
     try {
       const res = await fetch('/api/optimize', {
         method: 'POST',
@@ -541,53 +1525,151 @@
         body: JSON.stringify({
           volume_fraction: volfrac,
           max_iterations: iters,
-          penalization: 3.0,
-          filter_radius: 1.5,
+          penalization: penal,
+          filter_radius: filt,
           tolerance: 0.005
         })
       });
       const data = await res.json();
       if (!res.ok) {
-        $('app-status').textContent = 'Optimización fallida: ' + (data.detail || 'Error');
+        setStatus('Optimización fallida: ' + (data.detail || 'Error'));
         return;
       }
       const r = data.result;
-      $('app-status').textContent =
+      lastOptimizationResult = r;
+      setStatus(
         `SIMP completado: ${r.iterations} iter., vol=${(r.final_volume_fraction * 100).toFixed(1)}%, ` +
-        `compliance=${r.final_compliance.toExponential(2)}`;
+        `compliance=${r.final_compliance.toExponential(2)}`
+      );
 
-      // Visualizar densidades (malla simplificada): mostrar fracción de elementos activos
       const active = r.densities ? r.densities.filter(d => d > 0.5).length : 0;
       $('cad-meta').textContent =
         `Vol obtenido: ${(r.final_volume_fraction * 100).toFixed(1)}% | Elementos activos (>0.5): ${active}`;
 
-      if (data.result && data.result.densities && currentMeshForDisplay) {
-        renderDensityField(data.result.densities);
+      upsertTreeNode(
+        `Resultado SIMP (vol ${(r.final_volume_fraction * 100).toFixed(0)}%)`,
+        'result',
+        true
+      );
+
+      setPipelineStep(5);
+      if (r.densities && currentMeshForDisplay) {
+        renderDensityField(r.densities);
       }
     } catch (err) {
-      $('app-status').textContent = 'Error al ejecutar optimización: ' + err.message;
+      setStatus('Error al ejecutar optimización: ' + err.message);
     } finally {
+      clearInterval(progressTimer);
+      setPipelineStep(5);
       $('run-optimization').disabled = false;
     }
+  }
+
+  $('run-optimization').addEventListener('click', () => runOptimization());
+
+  /* ================= Exportar resultado ================= */
+
+  function exportResult() {
+    if (!lastOptimizationResult) {
+      setStatus('Sin resultado para exportar. Ejecute primero la optimización.');
+      return;
+    }
+    const payload = {
+      estudio: 'Optimización Topológica (Standalone)',
+      material: $('material').value,
+      volumen_fraccion: parseFloat($('volume-fraction').value),
+      iteraciones: lastOptimizationResult.iterations,
+      volumen_final: lastOptimizationResult.final_volume_fraction,
+      compliance_final: lastOptimizationResult.final_compliance,
+      densidades: (lastOptimizationResult.densities || []).slice(0, 20000),
+      num_elementos: lastOptimizationResult.densities ? lastOptimizationResult.densities.length : null,
+      fecha: new Date().toISOString()
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'resultado_optimizacion.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    setStatus('Resultado exportado (JSON).');
+  }
+
+  /* ================= Toolbar ribbon ================= */
+
+  document.querySelectorAll('.tool-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tool = btn.dataset.tool;
+      if (tool === 'importar') $('import-step-btn').click();
+      else if (tool === 'malla') generateMesh();
+      else if (tool === 'analisis') runFEA();
+      else if (tool === 'optimizar') runOptimization();
+      else if (tool === 'filtros') {
+        $('filter-radius').focus();
+        setStatus('Configure el radio de filtro de densidad en el panel de propiedades.');
+      }
+      else if (tool === 'sensibilidad') {
+        setStatus('Sensibilidad adjunto: computada internamente por el motor SIMP en cada iteración.');
+      }
+      else if (tool === 'resultado') {
+        if (lastOptimizationResult && lastOptimizationResult.densities && currentMeshForDisplay) {
+          renderDensityField(lastOptimizationResult.densities);
+        } else {
+          setStatus('Ejecute la optimización para visualizar el campo de densidad.');
+        }
+      }
+      else if (tool === 'exportar') exportResult();
+    });
   });
 
-  // Importación STEP Standalone
-  let currentModelId = null;
+  /* ================= Playback (flujo guiado) ================= */
+
+  async function runNextStep() {
+    if (!currentModelId) {
+      $('step-file-input').click();
+      return;
+    }
+    if (!currentMeshForDisplay) {
+      await generateMesh();
+      return;
+    }
+    if (!lastOptimizationResult) {
+      await runOptimization();
+      return;
+    }
+    setStatus('Flujo completado. Modifique parámetros y vuelva a ejecutar.');
+  }
+
+  $('playback-play').addEventListener('click', () => runNextStep());
+  $('playback-next').addEventListener('click', () => runNextStep());
+  $('playback-prev').addEventListener('click', () => {
+    setPipelineStep(1);
+    $('convergence-chip').classList.add('hidden');
+    setStatus('Flujo reiniciado. Importe o vuelva a ejecutar los pasos.');
+  });
+
+  /* ================= Importación STEP Standalone ================= */
 
   function handleStepFileSelect(event) {
     const file = event.target.files[0];
     if (!file) return;
 
     $('file-info').textContent = `Archivo: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
-    $('app-status').textContent = 'Leyendo archivo STEP...';
+    setStatus('Leyendo archivo STEP...');
+    modelName = file.name.replace(/\.(step|stp)$/i, '');
 
     const reader = new FileReader();
     reader.onload = async (e) => {
       try {
         const arrayBuffer = e.target.result;
-        const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+        const bytes = new Uint8Array(arrayBuffer);
+        let binary = '';
+        const chunkSize = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunkSize) {
+          binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+        }
+        const base64 = btoa(binary);
 
-        $('app-status').textContent = 'Importando STEP al servidor...';
+        setStatus('Importando STEP al servidor...');
         $('loading-overlay').classList.remove('hidden');
         $('loading-text').textContent = 'Procesando geometría STEP...';
 
@@ -596,7 +1678,7 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             step_data: base64,
-            model_name: file.name.replace(/\.(step|stp)$/i, '')
+            model_name: modelName
           })
         });
 
@@ -605,10 +1687,15 @@
 
         if (data.success) {
           currentModelId = data.model_id;
-          $('app-status').textContent = `Modelo importado: ${data.model_name}`;
-          $('cad-meta').textContent = `ID: ${data.model_id} | Volumen: ${data.model.total_volume.toFixed(2)} mm³`;
+          setStatus(`Modelo importado: ${data.model_name}`);
+          $('cad-meta').textContent =
+            `ID: ${data.model_id} | Volumen: ${data.model.total_volume.toFixed(2)} mm³`;
 
-          // Generar teselación automáticamente
+          $('doc-tab').textContent = `📁 ${data.model_name}.step`;
+          $('tree-part-name').textContent = data.model_name;
+          upsertTreeNode('Malla importada (STEP)', 'doc', true);
+          setPipelineStep(1);
+
           const tessResponse = await fetch(`/api/cad/models/${data.model_id}/tessellate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -624,43 +1711,37 @@
             loadRealCADGeometry(tessData);
           }
         } else {
-          $('app-status').textContent = 'Error al importar STEP: ' + (data.detail || 'Error desconocido');
+          setStatus('Error al importar STEP: ' + (data.detail || 'Error desconocido'));
         }
       } catch (err) {
         $('loading-overlay').classList.add('hidden');
-        $('app-status').textContent = 'Error: ' + err.message;
+        setStatus('Error: ' + err.message);
       }
     };
 
     reader.onerror = () => {
-      $('app-status').textContent = 'Error al leer el archivo';
+      setStatus('Error al leer el archivo');
       $('loading-overlay').classList.add('hidden');
     };
 
     reader.readAsArrayBuffer(file);
   }
 
-  $('import-step-btn').addEventListener('click', () => {
-    $('step-file-input').click();
-  });
-
-  $('import-step-btn-sidebar').addEventListener('click', () => {
-    $('step-file-input').click();
-  });
-
+  $('import-step-btn').addEventListener('click', () => $('step-file-input').click());
   $('step-file-input').addEventListener('change', handleStepFileSelect);
 
-  // Cargar estado inicial (modo standalone)
+  /* ================= Estado inicial ================= */
+
   async function loadInitialState() {
     try {
-      // En modo standalone, importamos archivo STEP local
-      $('connection-status').textContent = 'Modo Standalone - Importar archivo STEP local';
+      $('connection-status').textContent = '☁ Standalone - Importar archivo STEP local';
 
-      // Intentar cargar geometría desde el servidor si existe un modelo previo
       const geoRes = await fetch('/api/geometry/current', { credentials: 'include' });
       const geoData = await geoRes.json();
       if (geoData.status === 'success' && geoData.tessellation) {
         loadRealCADGeometry(geoData.tessellation);
+        currentModelId = currentModelId || 'active';
+        $('model-placeholder').classList.add('hidden');
       } else {
         $('viewer-info').textContent = 'Sin geometría activa. Importe un archivo STEP local.';
       }
@@ -668,7 +1749,7 @@
       console.warn('Error al verificar sesión:', err);
     }
   }
-  
+
   initViewer();
   loadInitialState();
 </script>

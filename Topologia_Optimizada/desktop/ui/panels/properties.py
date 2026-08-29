@@ -201,6 +201,22 @@ class PropertiesPanel(QWidget):
         self._btn_add_constraint = QPushButton("+ Agregar Restricción")
         col.addWidget(self._btn_add_constraint)
 
+        # ============ Selección geométrica avanzada ============
+        col.addWidget(_section_title("Selección avanzada"))
+        self._sel_info = _info_label(
+            "Haz clic sobre una cara del sólido en el visor para usarla como "
+            "región de carga o restricción.")
+        col.addWidget(self._sel_info)
+        self._btn_sel_force = QPushButton("⚡ Usar cara como Fuerza")
+        self._btn_sel_force.setEnabled(False)
+        self._btn_sel_constraint = QPushButton("🔒 Usar cara como Restricción")
+        self._btn_sel_constraint.setEnabled(False)
+        self._btn_sel_clear = QPushButton("✕ Limpiar selección")
+        self._btn_sel_clear.setEnabled(False)
+        col.addWidget(self._btn_sel_force)
+        col.addWidget(self._btn_sel_constraint)
+        col.addWidget(self._btn_sel_clear)
+
         # ============ Visibilidad ============
         col.addWidget(_section_title("Visibilidad"))
         self._cb_geom = QCheckBox("Geometría Real (CAD)")
@@ -221,6 +237,11 @@ class PropertiesPanel(QWidget):
         col.addWidget(self._file_info)
         col.addStretch(1)
 
+        # Advanced-selection state (entity payload from the viewport)
+        self._viewport_selection: dict | None = None
+        self._pending_force_selection: dict | None = None
+        self._pending_constraint_selection: dict | None = None
+
         # ---- Wiring ----
         self._btn_mesh.clicked.connect(lambda: self.generateMesh.emit(self._element_size.value()))
         self._btn_fea.clicked.connect(self.runFEA.emit)
@@ -230,6 +251,9 @@ class PropertiesPanel(QWidget):
         self._cb_geom.toggled.connect(lambda checked: self._toggle_vis("geometry", checked))
         self._cb_forces.toggled.connect(lambda checked: self._toggle_vis("forces", checked))
         self._cb_constraints.toggled.connect(lambda checked: self._toggle_vis("constraints", checked))
+        self._btn_sel_force.clicked.connect(lambda: self._use_selection("force"))
+        self._btn_sel_constraint.clicked.connect(lambda: self._use_selection("constraint"))
+        self._btn_sel_clear.clicked.connect(self.clear_selection)
 
     # ------------------------------------------------------------------ #
     # Volume label helper
@@ -263,6 +287,60 @@ class PropertiesPanel(QWidget):
 
     def _toggle_vis(self, which: str, checked: bool) -> None:
         self.set_status(f"Visibilidad {'Activada' if checked else 'Desactivada'}: {which}")
+
+    # ------------------------------------------------------------------ #
+    # Advanced geometric selection (viewport -> fuerza / restricción)
+    # ------------------------------------------------------------------ #
+    def set_viewport_selection(self, payload: dict | None) -> None:
+        """Receive the entity picked in the viewport and update the controls."""
+        self._viewport_selection = payload
+        is_face = bool(payload and payload.get("kind") == "face")
+        self._btn_sel_force.setEnabled(is_face)
+        self._btn_sel_constraint.setEnabled(is_face)
+        if is_face:
+            idx = payload["face_index"]
+            meta = f"""Cara {idx} seleccionada en el visor:
+normal ({', '.join(f'{v:+.3f}' for v in payload.get('normal', []))}) · 
+área {payload.get('area', 0.0):.2f} mm²"""
+            self._sel_info.setProperty("infovalid", True)
+            self._sel_info.setStyleSheet("font-size: 11.5px;")
+            self._sel_info.setText(meta)
+            self._sel_info.setToolTip(meta)
+        else:
+            self._sel_info.setProperty("info", True)
+            self._sel_info.setStyleSheet("")
+            self._sel_info.setText(
+                "Haz clic sobre una cara del sólido en el visor para usarla como "
+                "región de carga o restricción.")
+
+    def clear_selection(self) -> None:
+        """Drop both pending advanced selections."""
+        self._pending_force_selection = None
+        self._pending_constraint_selection = None
+        self.set_status("Selección geométrica avanzada limpiada.")
+
+    def _use_selection(self, target: str) -> None:
+        payload = self._viewport_selection
+        if not payload or payload.get("kind") != "face":
+            self.set_status("Selecciona primero una cara en el visor.")
+            return
+        idx = int(payload["face_index"])
+        sel = {"type": "face", "face_indices": [idx], "tolerance": 0.5}
+        if target == "force":
+            self._pending_force_selection = sel
+            name = "Fuerza"
+        else:
+            self._pending_constraint_selection = sel
+            name = "Restricción"
+        self.set_status(
+            f"{name} → cara {idx} del sólido (selección avanzada activa). "
+            f"Se aplicará a los nodos FEM sobre esa cara.")
+
+    def force_selection(self) -> dict | None:
+        return self._pending_force_selection
+
+    def constraint_selection(self) -> dict | None:
+        return self._pending_constraint_selection
 
     # ------------------------------------------------------------------ #
     # Controller wiring (public API used by MainWindow)

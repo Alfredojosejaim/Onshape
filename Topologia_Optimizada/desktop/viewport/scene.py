@@ -152,7 +152,7 @@ class Scene:
         actor = self._renderer.make_triangle_actor(
             vertices,
             triangles,
-            color=(0.42, 0.48, 0.60),
+            color=(0.231, 0.51, 0.964),  # #3b82f6 (HTML CAD solid color)
         )
         self.add_object(SceneObject("Modelo CAD", "model"), actor)
         self._apply_display_mode(actor)

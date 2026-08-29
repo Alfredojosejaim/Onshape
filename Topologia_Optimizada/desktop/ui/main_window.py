@@ -24,7 +24,7 @@ from PySide6.QtCore import Qt
 import numpy as np
 
 from desktop.viewport.viewport_3d import Viewport3D, StandardView
-from desktop.pipeline.controller import PipelineController, PipelineError
+from desktop.pipeline.controller import PipelineController, PipelineError, launch_qt
 from desktop.ui.panels.design_tree import DesignTreePanel
 from desktop.ui.panels.properties import PropertiesPanel
 from desktop.ui.panels.results import ResultsPanel
@@ -384,19 +384,19 @@ class MainWindow(QMainWindow):
         self._set_busy(True, "Ejecutando optimización topológica (SIMP)...")
 
         def progress_cb(info: dict):
-            self.results.append_history(info["iteration"], info["volume_fraction"], info["compliance"])
-            pct = int(100 * info["iteration"] / max(1, params["max_iterations"]))
-            self.results.set_result(
-                {"success": True, "converged": False, "iterations": info["iteration"],
-                 "final_volume_fraction": info["volume_fraction"],
-                 "final_compliance": info["compliance"], "max_density_change": info["max_change"]},
-                params["material"],
-            )
-            # update progress on the Qt thread via singleShot
-            from PySide6.QtCore import QTimer
-            QTimer.singleShot(0, lambda: (self.properties._progress.setValue(pct),
-                                          self.properties._status.setText(
-                                              f"Iteración {info['iteration']}: V={info['volume_fraction']:.2%}")))
+            def upd():
+                self.results.append_history(info["iteration"], info["volume_fraction"], info["compliance"])
+                pct = int(100 * info["iteration"] / max(1, params["max_iterations"]))
+                self.results.set_result(
+                    {"success": True, "converged": False, "iterations": info["iteration"],
+                     "final_volume_fraction": info["volume_fraction"],
+                     "final_compliance": info["compliance"], "max_density_change": info["max_change"]},
+                    params["material"],
+                )
+                self.properties._progress.setValue(pct)
+                self.properties._status.setText(
+                    f"Iteración {info['iteration']}: V={info['volume_fraction']:.2%}")
+            launch_qt(upd)
 
         def task():
             return self.controller.run_optimization(
@@ -485,7 +485,9 @@ class MainWindow(QMainWindow):
             "Topología Optimizada — Desktop",
             "Interfaz desktop nativa (PySide6 + VTK) para optimización topológica.\n\n"
             "Flujo: Importar STEP → Generar malla → FEA → Optimización SIMP.\n"
-            "Navegación: órbita [botón medio], pan [izquierdo], zoom [rueda].\n"
+            "Navegación (estilo AutoCAD): zoom [rueda], pan [rueda pulsada], "
+            "órbita [Shift + rueda pulsada], selección [clic izquierdo], "
+            "ajustar vista al modelo [N].\n"
             "La CAD y solvers reutilizan el core existente.",
         )
 

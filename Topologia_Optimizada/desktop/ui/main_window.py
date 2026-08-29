@@ -656,8 +656,19 @@ class MainWindow(QMainWindow):
         )
         n_tri = len(indices) // 3
         triangles = indices.reshape(n_tri, 3) if n_tri else np.empty((0, 3), dtype=int)
+        # Per-triangle B-Rep face index derived from the face_triangles ranges.
+        face_index_map = None
+        face_ranges = tess.get("face_triangles") or []
+        if face_ranges and n_tri:
+            face_index_map = np.full(n_tri, -1, dtype=np.int64)
+            for rng in face_ranges:
+                start, count = int(rng.get("start", 0)), int(rng.get("count", 0))
+                if 0 <= start < n_tri:
+                    face_index_map[start:start + count] = int(rng.get("face_index", -1))
         self._attach_bounds(bbox)
-        self.viewport.load_model(vertices, triangles, bbox)
+        self.viewport.load_model(vertices, triangles, bbox,
+                                 face_index_map=face_index_map,
+                                 faces_meta=tess.get("faces"))
         self._viewer_info.setText(
             f"Geometría: {tess.get('num_vertices', vertices.shape[0])} vértices · "
             f"{tess.get('num_triangles', n_tri)} triángulos")
@@ -865,17 +876,24 @@ class MainWindow(QMainWindow):
         self.controller.set_material(material)
         ctype = self.properties.constraint_type()
         dof = {"ux": True, "uy": True, "uz": True}
-        self.controller.constraints = [
-            {"constraint_type": ctype, "location": "", "degrees_of_freedom": dof}
-        ]
+        constraint = {"constraint_type": ctype, "location": "", "degrees_of_freedom": dof}
+        csel = self.properties.constraint_selection()
+        if csel:
+            constraint["selection"] = csel
+        self.controller.constraints = [constraint]
         mag = self.properties.force_magnitude()
         dx, dy, dz = self.properties.force_direction()
+        fsel = self.properties.force_selection()
         if not self.controller.forces:
             self.controller.forces = [{"magnitude": mag, "direction_x": dx,
                                        "direction_y": dy, "direction_z": dz}]
         else:
             self.controller.forces[0].update({"magnitude": mag, "direction_x": dx,
                                               "direction_y": dy, "direction_z": dz})
+        if fsel:
+            self.controller.forces[0]["selection"] = fsel
+        else:
+            self.controller.forces[0].pop("selection", None)
 
     def _set_busy(self, busy: bool, message: str) -> None:
         self.properties.set_busy(busy, message)
@@ -884,9 +902,25 @@ class MainWindow(QMainWindow):
         self.viewport.clear_selection()
         self.design_tree.set_selection_clearable(False)
 
-    def _on_selection(self, key: Optional[str]) -> None:
-        self.design_tree.set_selection_clearable(key is not None)
-        self.statusBar().showMessage(f"Seleccionado: {key}" if key else "Nada seleccionado.")
+    def _on_selection(self, payload) -> None:
+        if payload is None:
+            self.design_tree.set_selection_clearable(False)
+            self.statusBar().showMessage("Nada seleccionado.")
+        else:
+            self.design_tree.set_selection_clearable(True)
+            if payload.get("kind") == "face":
+                normal = payload.get("normal") or []
+                nstr = ", ".join(f"{v:+.3f}" for v in normal)
+                self.statusBar().showMessage(
+                    f"Cara {payload.get('face_index')} de '{payload.get('key')}' "
+                    f"· normal ({nstr}) · área {payload.get('area', 0.0):.2f} mm²")
+            else:
+                self.statusBar().showMessage(f"Seleccionado: {payload.get('key')}")
+        # Keep the properties panel's advanced-selection controls in sync.
+        view_sel = payload
+        if view_sel is not None and "actor" in view_sel:
+            view_sel = {k: v for k, v in view_sel.items() if k != "actor"}
+        self.properties.set_viewport_selection(view_sel)
 
     def _on_view(self, key: str) -> None:
         self.viewport.set_view(key)

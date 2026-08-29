@@ -18,7 +18,7 @@ from core.models import (
     Unit,
 )
 from core.geometry import GeometryEngine
-from core.meshing import BaseMesher, MeshResult, ProvisionalTet4Mesher
+from core.meshing import BaseMesher, GmshTet4Mesher, MeshResult, ProvisionalTet4Mesher
 from core.boundary import BoundaryConditionMapper, MappedFace
 from core.materials import Material, STANDARD_MATERIALS
 from core.study import (
@@ -46,6 +46,7 @@ __all__ = [
     "GeometryEngine",
     "BaseMesher",
     "MeshResult",
+    "GmshTet4Mesher",
     "ProvisionalTet4Mesher",
     "BoundaryConditionMapper",
     "MappedFace",

@@ -45,6 +45,12 @@ class LoadDefinition:
     load_coordinate: Optional[float] = None  # Target coordinate value
     tolerance: float = 0.01  # Tolerance in same units as coordinates
 
+    # Geometric selection (Fase 3: advanced regions, see core/selection.py)
+    # JSON-compatible region/composition descriptor resolved by NodeSelectionEngine:
+    # e.g. {"operator": "union", "regions": [...]} of plane/box/sphere/cylinder/face/normal.
+    # Takes precedence over submodelpart_name / application_face_id / load_axis.
+    selection: Optional[Dict[str, Any]] = None
+
     def __post_init__(self):
         if self.magnitude <= 0:
             raise ValueError("Load magnitude must be positive")
@@ -70,6 +76,7 @@ class LoadDefinition:
             "load_axis": self.load_axis,
             "load_coordinate": self.load_coordinate,
             "tolerance": self.tolerance,
+            "selection": self.selection,
         }
 
 
@@ -93,6 +100,11 @@ class ConstraintDefinition:
     fixed_coordinate: Optional[float] = None  # Target coordinate value
     tolerance: float = 0.01  # Tolerance in same units as coordinates
 
+    # Geometric selection (Fase 3: advanced regions, see core/selection.py)
+    # JSON-compatible region/composition descriptor resolved by NodeSelectionEngine.
+    # Takes precedence over submodelpart_name / location_face_id / fixed_axis.
+    selection: Optional[Dict[str, Any]] = None
+
     def __post_init__(self):
         if not any(self.degrees_of_freedom.values()):
             raise ValueError("At least one degree of freedom must be constrained")
@@ -112,6 +124,7 @@ class ConstraintDefinition:
             "fixed_axis": self.fixed_axis,
             "fixed_coordinate": self.fixed_coordinate,
             "tolerance": self.tolerance,
+            "selection": self.selection,
         }
 
 

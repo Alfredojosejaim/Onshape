@@ -417,10 +417,6 @@
     $('volume-value').textContent = val + '%';
   });
   
-  $('back-btn').addEventListener('click', () => {
-    window.location.href = '/';
-  });
-  
   // Agregar fuerza
   $('add-force').addEventListener('click', async () => {
     const mag = parseFloat($('force-magnitude').value);
@@ -475,6 +471,38 @@
   });
   
   // Generar Malla FEM Real
+  let currentMeshForDisplay = null;
+  let densityPoints = null;
+
+  function renderDensityField(densities) {
+    if (densityPoints) { scene.remove(densityPoints); densityPoints.geometry.dispose(); densityPoints = null; }
+    const mesh = currentMeshForDisplay;
+    if (!mesh || !mesh.nodes || !mesh.elements || !densities) {
+      $('viewer-info').textContent = 'Sin datos de densidad para visualizar';
+      return;
+    }
+    // Compute element centroids and color them by density
+    const pos = [];
+    const colors = [];
+    const scale = Math.max(1, Math.max(mesh.num_nodes, mesh.num_elements) / 2000);
+    const size = 0.02 * (geometryMesh ? geometryMesh.geometry.boundingSphere.radius : 1) * (scale > 1 ? 1 : 1);
+    for (let e = 0; e < Math.min(mesh.elements.length, 20000); e++) {
+      const con = mesh.elements[e];
+      const c = [0, 0, 0];
+      for (let k = 0; k < 4; k++) { c[0] += mesh.nodes[con[k]][0]; c[1] += mesh.nodes[con[k]][1]; c[2] += mesh.nodes[con[k]][2]; }
+      pos.push(c[0] / 4, c[1] / 4, c[2] / 4);
+      const d = densities[e];
+      colors.push(d, 0.2 * d, 0.4 + 0.6 * (1 - d));
+    }
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geom.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    const mat = new THREE.PointsMaterial({ size: 0.05, vertexColors: true });
+    densityPoints = new THREE.Points(geom, mat);
+    scene.add(densityPoints);
+    $('viewer-info').textContent = `SIMP: densidad por elemento (rojo=lleno, azul=vacío) · ${pos.length / 3} puntos`;
+  }
+
   $('generate-mesh-btn').addEventListener('click', async () => {
     try {
       $('app-status').textContent = 'Generando malla volumétrica FEM...';
@@ -485,7 +513,12 @@
         body: JSON.stringify({ target_element_size: 2.0, element_type: 'tet4' })
       });
       const data = await res.json();
+      if (!res.ok) {
+        $('app-status').textContent = data.detail || 'Fallo al generar la malla';
+        return;
+      }
       if (data.status === 'success') {
+        currentMeshForDisplay = data.mesh;
         $('app-status').textContent = `Malla FEM generada: ${data.mesh.num_nodes} nodos, ${data.mesh.num_elements} tetraedros`;
       } else {
         $('app-status').textContent = data.message || 'Fallo al generar la malla';
@@ -497,7 +530,45 @@
   
   // Iniciar optimización
   $('run-optimization').addEventListener('click', async () => {
-    $('app-status').textContent = 'Hito 1 completado. El solver FEA/TopOpt será acoplado en el siguiente hito (Hito 2).';
+    const volfrac = parseFloat($('volume-fraction').value) || 0.3;
+    const iters = parseInt($('max-iterations').value, 10) || 50;
+    $('app-status').textContent = 'Ejecutando FEA + SIMP (esto puede tardar)...';
+    $('run-optimization').disabled = true;
+    try {
+      const res = await fetch('/api/optimize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          volume_fraction: volfrac,
+          max_iterations: iters,
+          penalization: 3.0,
+          filter_radius: 1.5,
+          tolerance: 0.005
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        $('app-status').textContent = 'Optimización fallida: ' + (data.detail || 'Error');
+        return;
+      }
+      const r = data.result;
+      $('app-status').textContent =
+        `SIMP completado: ${r.iterations} iter., vol=${(r.final_volume_fraction * 100).toFixed(1)}%, ` +
+        `compliance=${r.final_compliance.toExponential(2)}`;
+
+      // Visualizar densidades (malla simplificada): mostrar fracción de elementos activos
+      const active = r.densities ? r.densities.filter(d => d > 0.5).length : 0;
+      $('cad-meta').textContent =
+        `Vol obtenido: ${(r.final_volume_fraction * 100).toFixed(1)}% | Elementos activos (>0.5): ${active}`;
+
+      if (data.result && data.result.densities && currentMeshForDisplay) {
+        renderDensityField(data.result.densities);
+      }
+    } catch (err) {
+      $('app-status').textContent = 'Error al ejecutar optimización: ' + err.message;
+    } finally {
+      $('run-optimization').disabled = false;
+    }
   });
 
   // Importación STEP Standalone

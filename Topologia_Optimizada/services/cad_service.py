@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from adapters.cad.step_adapter import StepAdapter
 from core.geometry import GeometryEngine
-from core.meshing import ProvisionalTet4Mesher, MeshResult
+from core.meshing import GmshTet4Mesher, ProvisionalTet4Mesher, MeshResult
 from core.boundary import BoundaryConditionMapper
 from core.models import CADModel, SourceType, SourceReference
 import cadquery as cq
@@ -25,6 +25,7 @@ class CADService:
 
     def __init__(self):
         self.step_adapter = StepAdapter()
+        self.gmsh_mesher = GmshTet4Mesher()
         self.provisional_mesher = ProvisionalTet4Mesher()
         self._model_cache: Dict[str, tuple[CADModel, cq.Shape]] = {}
 
@@ -142,16 +143,38 @@ class CADService:
             }
 
         try:
-            mesh_result = self.provisional_mesher.generate_mesh(
-                shape,
-                target_element_size=target_element_size,
-                element_type=element_type,
-            )
+            if element_type != "tet4":
+                # GmshTet4Mesher only supports tet4; use the provisional mesher otherwise.
+                mesh_result = self.provisional_mesher.generate_mesh(
+                    shape,
+                    target_element_size=target_element_size,
+                    element_type=element_type,
+                )
+            else:
+                # Prefer the definitive Gmsh-Tet4 pipeline, which produces a
+                # boundary-conforming real mesh. Fall back to the provisional
+                # voxelization mesher if gmsh is unavailable or fails.
+                try:
+                    mesh_result = self.gmsh_mesher.generate_mesh(
+                        shape,
+                        target_element_size=target_element_size,
+                        element_type=element_type,
+                    )
+                except (ImportError, RuntimeError, ValueError, FileNotFoundError) as exc:
+                    logger.warning(
+                        "GmshTet4Mesher failed (%s); falling back to ProvisionalTet4Mesher.", exc
+                    )
+                    mesh_result = self.provisional_mesher.generate_mesh(
+                        shape,
+                        target_element_size=target_element_size,
+                        element_type=element_type,
+                    )
             logger.info(
-                "Generated mesh for model %s: %d nodes, %d elements",
+                "Generated mesh for model %s: %d nodes, %d elements (mesher=%s)",
                 model_id,
                 mesh_result.num_nodes,
                 mesh_result.num_elements,
+                mesh_result.metadata.get("mesher", "ProvisionalTet4Mesher"),
             )
             return mesh_result.to_dict()
         except Exception as exc:

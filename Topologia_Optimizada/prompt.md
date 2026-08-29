@@ -1,404 +1,249 @@
-CORRECCIÓN FINAL — VALIDACIÓN Y CONTROL DEL MAPEO CAD → NODOS
+SIGUIENTE ETAPA — AVANCE ACELERADO DEL PRODUCTO
 
-OBJETIVO ÚNICO
+El proyecto ya superó la fase principal de validación del motor.
 
-Corregir y validar específicamente el mecanismo actual de aplicación de cargas y restricciones para garantizar que, cuando existe una cara CAD identificable, la condición FEA se aplique mediante el mapeo geométrico CAD → nodos de malla y no mediante el fallback por coordenadas.
+Kratos Multiphysics está integrado como motor FEA y el flujo principal ya fue probado con geometría STEP real.
 
-No rediseñar el sistema.
+A partir de este momento comienza una fase de construcción acelerada del producto.
 
-No investigar nuevamente Kratos.
+1. PRIMER PASO
 
-No modificar otras partes del proyecto que no sean necesarias para resolver este problema.
+Antes de modificar código:
 
----
+1. Leer "README.md".
+2. Leer "metodologia.md".
+3. Revisar el estado actual del repositorio.
+4. Revisar la documentación existente de implementación y pruebas.
+5. Identificar qué funcionalidades ya están realmente funcionando.
+6. Identificar cuál es el siguiente componente necesario para convertir el motor actual en una aplicación funcional.
 
-1. ESTADO ACTUAL
+No repetir investigaciones ya cerradas.
 
-El proyecto ya dispone de:
+No volver a evaluar la decisión de Kratos.
 
-STEP
- ↓
-CADModel
- ↓
-CAD Shape
- ↓
-Malla
- ↓
-BoundaryConditionMapper
- ↓
-CAD Face → Mesh Nodes
- ↓
-Kratos
+No volver a investigar el funcionamiento básico del motor FEA.
 
-"solver_interface.py" actualmente intenta resolver las condiciones mediante:
-
-1. "SubModelPart / boundary"
-2. "CAD face mapping"
-3. "coordinate-based fallback"
-
-"boundary.py" ya contiene "BoundaryConditionMapper.map_faces_to_nodes()".
-
-El problema pendiente es garantizar que el mecanismo principal sea realmente el mapeo geométrico de la cara CAD y que el fallback no oculte silenciosamente un fallo del mecanismo principal.
+No repetir pruebas históricas salvo que sean necesarias para detectar una regresión.
 
 ---
 
-2. AUDITORÍA PREVIA
+2. OBJETIVO
 
-Antes de modificar código, revisar exclusivamente:
-
-- "core/solver_interface.py"
-- "core/boundary.py"
-- "core/kratos_adapter.py"
-- definición de "ConstraintDefinition"
-- definición de "LoadDefinition"
-- representación de "CADFace"
-- código que genera/conserva "cad_shape"
-- pruebas existentes relacionadas con boundary conditions.
-
-Determinar exactamente:
-
-¿De dónde sale location_face_id?
-¿De dónde sale application_face_id?
-¿Cómo se conserva el CAD Shape?
-¿Cómo se identifica una cara?
-¿Cómo llega esa información hasta BoundaryConditionMapper?
-¿Cómo se convierten los índices de nodos?
-¿Cómo llegan finalmente esos nodos a Kratos?
-
-No modificar nada hasta comprender ese flujo.
-
----
-
-3. REQUISITO PRINCIPAL
-
-Cuando una restricción tenga un "location_face_id" válido y exista "cad_shape":
-
-location_face_id
-        ↓
-resolve_face_index()
-        ↓
-CAD Shape.Faces()
-        ↓
-cara B-Rep real
-        ↓
-BoundaryConditionMapper
-        ↓
-nodos pertenecientes a esa cara
-        ↓
-apply_constraint_from_core()
-        ↓
-Kratos
-
-Debe utilizarse esta ruta.
-
-Para una carga:
-
-application_face_id
-        ↓
-resolve_face_index()
-        ↓
-CAD Shape.Faces()
-        ↓
-cara B-Rep real
-        ↓
-BoundaryConditionMapper
-        ↓
-nodos pertenecientes a esa cara
-        ↓
-apply_load_from_core()
-        ↓
-Kratos
-
----
-
-4. FALLBACK POR COORDENADAS
-
-El fallback por coordenadas puede permanecer por compatibilidad.
-
-Sin embargo:
-
-NO debe ejecutarse silenciosamente cuando:
-
-- existe "cad_shape";
-- existe "location_face_id" / "application_face_id";
-- el identificador de cara es válido;
-- y el mapeo CAD debería poder ejecutarse.
-
-Si el mapeo de una cara válida falla porque no encuentra nodos, debe registrarse claramente el motivo.
-
-Ejemplo:
-
-CAD FACE MAPPING FAILED
-constraint: X
-face_id: face_3
-face_index: 3
-matched_nodes: 0
-tolerance: 0.5
-reason: no mesh nodes matched the CAD face
-
-Solo después de registrar claramente ese fallo podrá utilizarse el fallback.
-
----
-
-5. DIFERENCIAR "CARA INVÁLIDA" DE "CARA SIN NODOS"
-
-No tratar todos los fallos como iguales.
-
-Distinguir:
-
-Caso A — no existe identificador de cara
-
-face_id = None
-
-Puede utilizar fallback.
-
-Caso B — identificador inválido
-
-Ejemplo:
-
-face_id = "base"
-
-Si el sistema actual no puede resolverlo, documentar el motivo.
-
-Caso C — identificador válido pero fuera del rango de caras
-
-Debe considerarse un error de datos y registrarse.
-
-Caso D — cara válida pero ningún nodo coincide
-
-Debe registrarse como fallo del mapeo geométrico.
-
-No ocultarlo.
-
-Caso E — cara válida y nodos encontrados
-
-Debe utilizarse exclusivamente ese conjunto de nodos.
-
----
-
-6. NO PERMITIR FALSOS POSITIVOS
-
-Una condición aplicada mediante CAD face mapping debe poder demostrar:
-
-face_index = X
-matched_nodes_count = N
-node_indices = [...]
-
-y esos nodos deben ser exactamente los enviados a:
-
-adapter.apply_constraint_from_core()
-
-o:
-
-adapter.apply_load_from_core()
-
-No utilizar "model_part.Nodes" completo.
-
-No utilizar todos los nodos como fallback oculto.
-
----
-
-7. VALIDACIÓN DE LA TOLERANCIA
-
-Revisar la tolerancia actualmente utilizada por:
-
-BoundaryConditionMapper.map_faces_to_nodes()
-
-Determinar si la tolerancia actual es razonable respecto de la escala de la malla.
-
-No cambiar arbitrariamente la tolerancia.
-
-Si se necesita modificarla, justificarlo técnicamente y probarlo con el STEP real.
-
----
-
-8. PRUEBA OBLIGATORIA
-
-Utilizar un STEP real existente en el proyecto.
-
-No generar una geometría artificial para esta prueba.
-
-La prueba debe:
-
-1. cargar el STEP;
-2. obtener el "CAD Shape";
-3. generar/utilizar la malla correspondiente;
-4. identificar una cara real;
-5. crear una restricción sobre esa cara;
-6. crear una carga sobre una cara real;
-7. ejecutar el mapeo;
-8. registrar cuántos nodos fueron seleccionados;
-9. ejecutar Kratos;
-10. verificar que las condiciones fueron aplicadas únicamente sobre esos nodos.
-
----
-
-9. EVIDENCIA OBLIGATORIA
-
-La prueba debe dejar evidencia explícita de:
-
-STEP utilizado:
-Cara de restricción:
-Face ID:
-Face index:
-Nodos seleccionados:
-Cantidad de nodos:
-Método utilizado:
-    CAD_FACE_MAPPING / SUBMODELPART / COORDINATE_FALLBACK
-
-Cara de carga:
-Face ID:
-Face index:
-Nodos seleccionados:
-Cantidad de nodos:
-Método utilizado:
-    CAD_FACE_MAPPING / SUBMODELPART / COORDINATE_FALLBACK
-
-La evidencia debe demostrar específicamente que el método utilizado fue:
-
-CAD_FACE_MAPPING
-
-cuando la cara CAD era válida y estaba disponible.
-
----
-
-10. TEST DE NO REGRESIÓN
-
-Comprobar que:
-
-- el solver Kratos continúa funcionando;
-- el STEP real continúa cargándose;
-- la malla continúa generándose;
-- el FEA continúa ejecutándose;
-- los resultados continúan regresando al Core;
-- las condiciones no vuelven a aplicarse a todos los nodos.
-
-No romper funcionalidades existentes para solucionar este problema.
-
----
-
-11. SI EL MAPEADOR FALLA
-
-Aplicar estrictamente el protocolo de "metodologia.md".
-
-Si aparece un error cuya causa sea evidente:
-
-- realizar una única corrección;
-- volver a ejecutar la prueba.
-
-Si la causa no es evidente:
-
-DETENERSE.
-
-No realizar múltiples modificaciones especulativas.
-
-Registrar:
-
-- traceback completo;
-- archivo;
-- línea;
-- función;
-- face_id;
-- face_index;
-- tolerancia;
-- cantidad de nodos;
-- geometría utilizada;
-- estado de la malla;
-- comportamiento esperado;
-- comportamiento obtenido.
-
-Marcarlo como:
-
-BLOQUEO TÉCNICO
-REQUIERE INVESTIGACIÓN
-
-No intentar cinco soluciones diferentes.
-
----
-
-12. NO HACER
-
-Durante esta intervención NO:
-
-- cambiar Kratos;
-- cambiar el solver;
-- cambiar la arquitectura del Core;
-- implementar TopOpt;
-- implementar licenciamiento;
-- implementar UI;
-- integrar CAD externo;
-- introducir Rust;
-- migrar a C++;
-- eliminar el "BoundaryConditionMapper";
-- reemplazar el sistema por una solución completamente diferente;
-- repetir investigaciones anteriores sobre Kratos.
-
----
-
-13. CRITERIO DE ÉXITO
-
-La intervención se considera completada únicamente si se demuestra:
+A partir del estado actual, avanzar hacia el producto funcional siguiendo esta dirección:
 
 STEP REAL
    ↓
-CAD Shape
+CADModel
    ↓
-CAD Face identificada
+MALLA
    ↓
-Face index
+ESTUDIO
    ↓
-BoundaryConditionMapper
+MATERIAL
    ↓
-Nodos de esa cara
+CARGAS
    ↓
-Carga / Restricción
+RESTRICCIONES
    ↓
-Kratos
+FEA KRATOS
+   ↓
+RESULTADOS
+   ↓
+VISUALIZACIÓN
+   ↓
+OPTIMIZACIÓN
+   ↓
+RESULTADO FINAL
 
-y la evidencia demuestra que:
-
-NODOS SELECCIONADOS ≠ TODOS LOS NODOS
-
-y que el método utilizado fue:
-
-CAD_FACE_MAPPING
-
-para una cara válida.
+La prioridad es convertir progresivamente el motor ya funcional en un flujo de aplicación utilizable.
 
 ---
 
-14. DOCUMENTACIÓN
+3. REGLA DE SELECCIÓN DE LA SIGUIENTE TAREA
 
-Actualizar "resumen_implementacion.md" únicamente con esta intervención.
+Después de la auditoría inicial:
+
+- determinar cuál es la funcionalidad pendiente más importante;
+- determinar sus dependencias;
+- verificar que esas dependencias ya existan;
+- implementar esa funcionalidad.
+
+No crear funcionalidades futuras si existe una dependencia anterior todavía incompleta.
+
+Priorizar siempre:
+
+funcionalidad necesaria → integración → prueba → siguiente funcionalidad.
+
+No priorizar por cantidad de código ni por facilidad de implementación.
+
+---
+
+4. REGLA ESPECIAL PARA EL MAPEO CAD → NODOS
+
+El mecanismo de mapeo CAD → nodos ya existe.
+
+Mantener:
+
+CAD Face
+   ↓
+BoundaryConditionMapper
+   ↓
+Mesh Nodes
+   ↓
+Kratos
+
+No rediseñarlo.
+
+Sin embargo, si durante la implementación se detecta que una cara CAD válida no puede mapearse correctamente a nodos:
+
+NO ocultar el problema mediante un fallback automático que pueda producir una condición FEA físicamente incorrecta.
+
+Registrar el fallo y aplicar estrictamente el protocolo de bloqueo de "metodologia.md".
+
+---
+
+5. PROTOCOLO DE BLOQUEO
+
+No utilizar ensayo y error ilimitado.
+
+Si aparece un error:
+
+Corrección autónoma
+
+Se permite una única corrección si:
+
+- la causa es evidente;
+- la solución está respaldada por el código o documentación;
+- no implica especulación;
+- puede verificarse inmediatamente.
+
+Después ejecutar nuevamente la prueba.
+
+Bloqueo
+
+Si la causa no es evidente o la primera corrección falla:
+
+DETENERSE.
+
+No generar múltiples implementaciones alternativas.
 
 Registrar:
 
-- problema original;
-- auditoría realizada;
-- cambios realizados;
+- error;
+- traceback;
+- archivo;
+- línea;
+- función;
+- entrada utilizada;
+- comportamiento esperado;
+- comportamiento obtenido;
+- contexto técnico;
+- hipótesis disponible.
+
+Marcarlo como:
+
+BLOQUEADO
+REQUIERE INVESTIGACIÓN
+
+y continuar únicamente con otra tarea independiente que no dependa de ese bloqueo.
+
+---
+
+6. TESTING
+
+Cada funcionalidad implementada debe tener la prueba adecuada.
+
+Cuando sea posible:
+
+implementación
+     ↓
+test
+     ↓
+resultado
+     ↓
+evidencia
+
+Utilizar geometría STEP real cuando la funcionalidad dependa del flujo CAD completo.
+
+No utilizar mocks como evidencia de funcionamiento real.
+
+---
+
+7. DOCUMENTACIÓN
+
+Después de cada intervención significativa actualizar la documentación correspondiente.
+
+Registrar:
+
+- qué se implementó;
 - archivos modificados;
-- STEP utilizado;
-- cara utilizada;
-- nodos obtenidos;
-- método de selección;
-- prueba ejecutada;
-- resultado;
-- si se utilizó o no fallback;
-- errores encontrados;
-- estado final.
+- pruebas ejecutadas;
+- resultados;
+- errores;
+- bloqueos;
+- funcionalidades completadas;
+- siguiente tarea.
 
-Si la prueba demuestra que el mapeo CAD → nodos funciona correctamente:
+La documentación debe representar el estado real del código.
 
-«CERRAR ESTE PROBLEMA.»
+---
 
-No continuar modificándolo ni crear otra solución.
+8. CONTROL DEL ALCANCE
 
-REGLA FINAL
+NO implementar durante esta etapa:
 
-El objetivo no es eliminar el fallback.
+- sistema de suscripción;
+- protección comercial;
+- integración con Onshape;
+- integración con otros CAD;
+- Rust;
+- migración completa a C++;
+- funcionalidades que no sean necesarias para avanzar hacia el producto funcional.
 
-El objetivo es garantizar que:
+Estas decisiones ya fueron analizadas y se implementarán cuando corresponda.
 
-«cuando existe una cara CAD válida, el sistema utilice realmente esa cara para determinar los nodos de la condición FEA y no oculte un fallo recurriendo silenciosamente a coordenadas.»
+---
 
-Resolver únicamente esto y detenerse.
+9. REGLA DE VELOCIDAD
+
+A partir de esta etapa:
+
+NO SOBREAUDITAR.
+
+La auditoría inicial debe ser suficiente para conocer el estado actual y elegir la siguiente tarea.
+
+Después:
+
+AUDITAR
+   ↓
+ELEGIR SIGUIENTE FUNCIÓN
+   ↓
+IMPLEMENTAR
+   ↓
+PROBAR
+   ↓
+DOCUMENTAR
+   ↓
+CONTINUAR
+
+No detener el proyecto para volver a analizar decisiones ya cerradas.
+
+---
+
+10. CRITERIO DE FINALIZACIÓN
+
+Al terminar esta intervención:
+
+1. Debe existir una funcionalidad nueva real o una corrección concreta.
+2. Debe estar integrada con la arquitectura existente.
+3. Debe haber sido probada.
+4. Debe quedar documentada.
+5. Debe indicarse claramente cuál es el siguiente paso.
+
+Si aparece un bloqueo técnico desconocido, detener únicamente esa línea de trabajo y documentarlo según "metodologia.md".
+
+PRINCIPIO DE ESTA ETAPA
+
+«El motor ya fue validado. Ahora hay que construir el producto alrededor de él.»
+
+Avanzar de forma incremental, verificable y rápida.

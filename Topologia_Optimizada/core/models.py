@@ -161,6 +161,11 @@ class TessellatedMesh:
     faces_metadata: List[Dict[str, Any]] = field(default_factory=list)
     bbox: Optional[BoundingBox3D] = None
 
+    # Per-face triangle ranges used by the desktop viewport for entity picking:
+    # [{"face_index": int, "start": int, "count": int}] into ``indices``.
+    # Only present when the tessellation was generated with face mapping.
+    face_triangles: List[Dict[str, Any]] = field(default_factory=list)
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "format": "triangle_mesh",
@@ -171,6 +176,7 @@ class TessellatedMesh:
             "normals": self.normals,
             "faces": self.faces_metadata,
             "bbox": self.bbox.to_dict() if self.bbox else None,
+            "face_triangles": self.face_triangles,
         }
 
 

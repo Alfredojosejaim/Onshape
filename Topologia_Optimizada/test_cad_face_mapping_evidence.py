@@ -27,10 +27,8 @@ FACE_TOLERANCE = 0.5
 def main():
     from adapters.cad.step_adapter import StepAdapter
     from core.boundary import BoundaryConditionMapper
-    from core.kratos_adapter import KRATOS_AVAILABLE
+    from core.fea import solve_fea
     from core.materials import STANDARD_MATERIALS
-    from core.solver_interface import create_kratos_fea_solver
-    from core.study import ConstraintDefinition, ConstraintType, LoadDefinition, LoadType
 
     # 1) Cargar STEP real
     adapter = StepAdapter()
@@ -95,48 +93,34 @@ def main():
     lines.append(f"  NODOS_SELECCIONADOS({len(fixed_nodes)},{len(load_nodes)}) != TODOS_LOS_NODOS({all_nodes}): "
                  f"{len(fixed_nodes) < all_nodes and len(load_nodes) < all_nodes}")
 
-    # 4) Ejecutar el flujo completo hasta Kratos
-    if not KRATOS_AVAILABLE:
-        print("\n".join(lines))
-        print("KRATOS NO DISPONIBLE: no se ejecuto el paso FEA de la evidencia.")
-        return False
+    # 4) Ejecutar el flujo FEA completo con el motor autocontenido (NumPy/SciPy)
+    material = STANDARD_MATERIALS["steel"]
 
-    constraints = [
-        ConstraintDefinition(
-            id="ev_fixed_base",
-            constraint_type=ConstraintType.FIXED,
-            location_face_id=f"face_{FIXED_FACE_INDEX}",
-            tolerance=FACE_TOLERANCE,
-        )
-    ]
-    loads = [
-        LoadDefinition(
-            id="ev_top_load",
-            magnitude=1000.0,
-            direction=(0.0, 0.0, -1.0),
-            load_type=LoadType.DISTRIBUTED,
-            application_face_id=f"face_{LOAD_FACE_INDEX}",
-            tolerance=FACE_TOLERANCE,
-        )
-    ]
-    fea_solver = create_kratos_fea_solver(
-        nodes=nodes,
-        elements=elements,
-        material=STANDARD_MATERIALS["steel"],
-        constraints=constraints,
-        loads=loads,
-        cad_shape=shape,
+    # Carga distribuida: 1000 N hacia -z repartida entre los nodos de la cara superior
+    force_dofs = []
+    step = 1000.0 / max(len(load_nodes), 1)
+    for ni in sorted(load_nodes):
+        force_dofs.append((ni * 3 + 2, -step))
+
+    # Restriccion: fijar los 3 GDL de todos los nodos de la cara inferior
+    fixed_dofs = []
+    for ni in sorted(fixed_nodes):
+        fixed_dofs += [ni * 3, ni * 3 + 1, ni * 3 + 2]
+
+    result = solve_fea(
+        nodes=np.array(nodes, dtype=float),
+        elements=np.array(elements, dtype=int),
+        young_modulus=material.young_modulus,
+        poisson_ratio=material.poisson_ratio,
+        forces_dofs=force_dofs,
+        fixed_dofs=fixed_dofs,
     )
-    result = fea_solver(
-        densities=np.ones(len(elements), dtype=float),
-        forces=None,
-        supports=None,
-        max_iterations=1,
-    )
-    lines.append(f"--- Resultado FEA (Kratos) ---")
+
+    lines.append("--- Resultado FEA (motor autocontenido NumPy/SciPy) ---")
     lines.append(f"  FEA success: {result.get('success')}")
-    lines.append(f"  num_nodes_with_displacement: {result.get('num_nodes')}")
+    lines.append(f"  num_nodes: {result.get('num_nodes')}")
     lines.append(f"  max_displacement: {result.get('max_displacement')}")
+    lines.append(f"  compliance: {result.get('compliance')}")
 
     print("\n".join(lines))
 
@@ -147,6 +131,7 @@ def main():
     assert load_nodes < set(range(all_nodes)), "Se seleccionaron TODOS los nodos (falso positivo)"
     assert fixed_nodes.isdisjoint(load_nodes), "Restriccion y carga no deben compartir la cara"
     assert result.get("success"), f"El FEA fallo: {result.get('error')}"
+    assert result.get("max_displacement", 0.0) > 0.0, "El FEA debe producir desplazamiento no nulo"
     return True
 
 

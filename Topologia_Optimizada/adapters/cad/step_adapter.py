@@ -181,8 +181,13 @@ class StepAdapter(BaseCADAdapter):
         cad_model: CADModel,
         linear_deflection: float = 0.1,
         angular_deflection: float = 0.1,
+        face_mapping: bool = False,
     ) -> TessellatedMesh:
-        """Generate/refresh triangulated mesh tessellation for the given model."""
+        """Generate/refresh triangulated mesh tessellation for the given model.
+
+        ``face_mapping=True`` produces per-face triangle ranges (``face_triangles``)
+        for entity-level picking in the desktop viewport.
+        """
         shape = self.get_shape(cad_model.id)
         if shape is None:
             raise ValueError(f"Shape for model {cad_model.id} is not cached")
@@ -190,6 +195,7 @@ class StepAdapter(BaseCADAdapter):
             shape,
             linear_deflection=linear_deflection,
             angular_deflection=angular_deflection,
+            face_mapping=face_mapping,
         )
         cad_model.tessellation = tess
         return tess

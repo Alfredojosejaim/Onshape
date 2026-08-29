@@ -1,55 +1,93 @@
-"""ResultsPanel - reports mesh metrics and topology optimization results."""
+"""ResultsPanel - mesh metrics, FEA/optimization summary and convergence log,
+styled with the same HTML section language as the rest of the desktop UI.
+"""
 
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QGroupBox, QFormLayout, QTextEdit,
+    QWidget, QVBoxLayout, QLabel, QScrollArea, QTextEdit,
 )
+
+
+def _section_title(text: str) -> QLabel:
+    lbl = QLabel(text.upper())
+    lbl.setProperty("section", True)
+    return lbl
+
+
+def _value_label() -> QLabel:
+    lbl = QLabel("—")
+    lbl.setProperty("infovalid", True)
+    lbl.setStyleSheet("font-size: 12.5px;")
+    return lbl
 
 
 class ResultsPanel(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         root = QVBoxLayout(self)
-        root.setContentsMargins(8, 8, 8, 8)
+        root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(8)
 
-        title = QLabel("Resultados")
-        title.setStyleSheet("font-weight: 600; color: #f2f2f3;")
-        root.addWidget(title)
+        header = QLabel("Resultados")
+        header.setStyleSheet("font-size: 13px; font-weight: 600;")
+        root.addWidget(header)
 
-        grp = QGroupBox("Malla")
-        form = QFormLayout(grp)
-        self._mesh_n = QLabel("—")
-        self._mesh_e = QLabel("—")
-        self._mesh_t = QLabel("—")
-        form.addRow("Nodos", self._mesh_n)
-        form.addRow("Elementos", self._mesh_e)
-        form.addRow("Tipo", self._mesh_t)
-        root.addWidget(grp)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        inner = QWidget()
+        col = QVBoxLayout(inner)
+        col.setContentsMargins(4, 0, 4, 4)
+        col.setSpacing(8)
+        scroll.setWidget(inner)
+        root.addWidget(scroll, 1)
 
-        res = QGroupBox("Optimización")
-        rform = QFormLayout(res)
+        # ---- Malla ----
+        col.addWidget(_section_title("Malla"))
+        self._mesh_n = _value_label()
+        self._mesh_e = _value_label()
+        self._mesh_t = _value_label()
+        col.addWidget(QLabel("Nodos"))
+        col.addWidget(self._mesh_n)
+        col.addWidget(QLabel("Elementos"))
+        col.addWidget(self._mesh_e)
+        col.addWidget(QLabel("Tipo"))
+        col.addWidget(self._mesh_t)
+
+        # ---- Optimización ----
+        col.addWidget(_section_title("Optimización"))
         self._status = QLabel("—")
-        self._iter = QLabel("—")
-        self._vol = QLabel("—")
-        self._compliance = QLabel("—")
-        self._conv = QLabel("—")
-        rform.addRow("Estado", self._status)
-        rform.addRow("Iteraciones", self._iter)
-        rform.addRow("Volumen final", self._vol)
-        rform.addRow("Compliance", self._compliance)
-        rform.addRow("Convergencia", self._conv)
-        root.addWidget(res)
+        self._status.setProperty("infovalid", True)
+        self._iter = _value_label()
+        self._vol = _value_label()
+        self._compliance = _value_label()
+        self._conv = _value_label()
+        col.addWidget(QLabel("Estado"))
+        col.addWidget(self._status)
+        col.addWidget(QLabel("Iteraciones"))
+        col.addWidget(self._iter)
+        col.addWidget(QLabel("Volumen final"))
+        col.addWidget(self._vol)
+        col.addWidget(QLabel("Compliance"))
+        col.addWidget(self._compliance)
+        col.addWidget(QLabel("Convergencia"))
+        col.addWidget(self._conv)
 
-        log = QGroupBox("Historial de convergencia")
-        lform = QVBoxLayout(log)
+        # ---- Historial ----
+        col.addWidget(_section_title("Historial de convergencia"))
         self._log = QTextEdit()
         self._log.setReadOnly(True)
-        self._log.setStyleSheet("font-family: Consolas, monospace; font-size: 11px;")
-        lform.addWidget(self._log)
-        root.addWidget(log, 1)
+        self._log.setStyleSheet(
+            "background: #2a2b2f; border: 1px solid #38393d; border-radius: 4px;"
+            "font-family: Consolas, monospace; font-size: 11px;"
+        )
+        col.addWidget(self._log)
+        col.addStretch(1)
 
+    # ------------------------------------------------------------------ #
+    # Public API (used by MainWindow / controller callbacks)
+    # ------------------------------------------------------------------ #
     def set_mesh(self, num_nodes: int, num_elements: int, element_type: str, provisional: bool) -> None:
         self._mesh_n.setText(f"{num_nodes:,}")
         self._mesh_e.setText(f"{num_elements:,}")
@@ -62,7 +100,8 @@ class ResultsPanel(QWidget):
         if not result or not result.get("success"):
             self._status.setText("Sin resultado")
             return
-        self._status.setText(("Convergido" if result.get("converged") else "Máx. iteraciones") + " · " + (material_name or ""))
+        state = "Convergido" if result.get("converged") else "Máx. iteraciones"
+        self._status.setText(f"{state} · {material_name or ''}")
         self._iter.setText(str(result.get("iterations", "—")))
         vol = result.get("final_volume_fraction")
         self._vol.setText(f"{vol:.2%}" if isinstance(vol, float) else "—")

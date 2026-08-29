@@ -102,36 +102,57 @@ class Camera:
     # ------------------------------------------------------------------ #
 
     def orbit(self, dx: float, dy: float, sensitivity: float = 0.008) -> None:
-        """Rotate the camera around the focal point from pixel deltas."""
+        """Free trackball orbit around the focal point (Onshape-style).
+
+        Any (dx, dy) mouse displacement is mapped to a single rotation about
+        the screen-plane axis perpendicular to the drag direction, so the view
+        follows the pointer along a great circle instead of being locked to
+        fixed world axes. The view-up is rotated together with the view
+        direction and re-orthonormalized, which lets the camera reach any
+        orientation (including rolled) without gimbal hangups.
+        """
         forward = self._focal - self._cam.GetPosition()
-        forward = forward / np.linalg.norm(forward)
+        dist = float(np.linalg.norm(forward))
+        if dist < 1e-12:
+            return
+        forward = forward / dist
+
         up = np.array(self._cam.GetViewUp())
         right = np.cross(forward, up)
-        right = right / np.linalg.norm(right)
+        nr = float(np.linalg.norm(right))
+        if nr < 1e-9:
+            right = np.cross(forward, np.array([0.0, 1.0, 0.0]))
+            nr = float(np.linalg.norm(right))
+            if nr < 1e-9:
+                right = np.cross(forward, np.array([1.0, 0.0, 0.0]))
+                nr = float(np.linalg.norm(right))
+        right = right / nr
         up = np.cross(right, forward)
 
-        # yaw around "up", then pitch around "right"
-        yaw = -dx * sensitivity
-        pitch = dy * sensitivity
+        # drag vector in the view plane (mouse y grows downward on screen)
+        drag = right * dx - up * dy
+        dmg = float(np.linalg.norm(drag))
+        if dmg < 1e-12:
+            return
+        drag = drag / dmg
 
-        dir_vec = forward
-        if yaw:
-            dir_vec = (_rodrigues(up, yaw) @ dir_vec)
-        if pitch:
-            dir_vec = (_rodrigues(right, pitch) @ dir_vec)
-        dir_vec = dir_vec / np.linalg.norm(dir_vec)
+        # rotation axis: perpendicular to the drag, within the view plane
+        axis = np.cross(drag, forward)
+        axis = axis / np.linalg.norm(axis)
+        angle = dmg * sensitivity
 
-        pos = self._focal - dir_vec * self.distance
-        self._cam.SetPosition(*pos)
+        rot = _rodrigues(axis, angle)
+        new_forward = rot @ forward
+        new_forward = new_forward / np.linalg.norm(new_forward)
 
-        # rebuild a stable up-vector
-        new_right = np.cross(dir_vec, np.array([0, 0, 1.0]))
-        if np.linalg.norm(new_right) > 1e-6:
-            new_right = new_right / np.linalg.norm(new_right)
-            new_up = np.cross(new_right, dir_vec)
-            new_up = new_up / np.linalg.norm(new_up)
-        else:
+        new_up = rot @ up
+        new_up = new_up - new_forward * float(np.dot(new_up, new_forward))
+        if np.linalg.norm(new_up) < 1e-9:
             new_up = np.array([0.0, 1.0, 0.0])
+        else:
+            new_up = new_up / np.linalg.norm(new_up)
+
+        self._cam.SetPosition(*(self._focal - new_forward * dist))
         self._cam.SetViewUp(*new_up)
 
     def dolly(self, steps: float, sensitivity: float = 0.8) -> None:

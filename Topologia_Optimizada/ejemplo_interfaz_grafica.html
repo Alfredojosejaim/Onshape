@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CREA 3D — Optimización Topológica (guía)</title>
+<style>
+  :root{
+    --bg-app: #1b1c1e;
+    --bg-panel: #232427;
+    --bg-panel-2: #2a2b2f;
+    --bg-viewport: #3c3d41;
+    --bg-toolbtn: #2c2d31;
+    --border: #38393d;
+    --border-soft: #313236;
+    --text-main: #f2f2f3;
+    --text-dim: #9a9ba0;
+    --text-faint: #6f7075;
+    --accent: #2f7bf6;
+    --accent-hover: #3d86ff;
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    font-size: 15px;
+  }
+
+  *{ box-sizing: border-box; }
+
+  html, body{
+    margin: 0;
+    height: 100%;
+    background: #0e0e10;
+    font-family: "Segoe UI", "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+    color: var(--text-main);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ============ SHELL ============ */
+  .app-shell{
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100vh;
+    background: var(--bg-app);
+    border: 1px solid #000;
+    overflow: hidden;
+  }
+
+  /* ============ TOP BAR ============ */
+  .topbar{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 52px;
+    padding: 0 16px;
+    background: #1a1a1c;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .topbar-left{
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+
+  .icon-btn{
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .icon-btn:hover{ background: var(--bg-panel-2); color: var(--text-main); }
+
+  .menu-items{
+    display: flex;
+    gap: 18px;
+    list-style: none;
+    margin: 0; padding: 0;
+  }
+  .menu-items li{
+    font-size: 13.5px;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .menu-items li:hover{ color: var(--text-main); }
+
+  .app-title{
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    color: var(--text-main);
+  }
+
+  .topbar-right{
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .avatar{
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: linear-gradient(135deg,#5b6cff,#8a5bff);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700;
+  }
+
+  .cloud-chip{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+
+  /* ============ TOOLBAR ============ */
+  .toolbar{
+    display: flex;
+    gap: 10px;
+    padding: 14px 16px;
+    background: var(--bg-app);
+    border-bottom: 1px solid var(--border-soft);
+    flex-shrink: 0;
+  }
+
+  .tool-btn{
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 92px;
+    height: 62px;
+    background: var(--bg-toolbtn);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-md);
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: background .12s ease, color .12s ease, border-color .12s ease;
+  }
+  .tool-btn:hover{
+    background: #333438;
+    color: var(--text-main);
+  }
+  .tool-btn svg{ width: 20px; height: 20px; }
+  .tool-btn span{ font-size: 11.5px; }
+
+  .tool-btn.active{
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+
+  /* ============ MAIN AREA ============ */
+  .main-area{
+    flex: 1;
+    display: flex;
+    min-height: 0;
+  }
+
+  /* ---- Sidebar ---- */
+  .sidebar{
+    width: 220px;
+    flex-shrink: 0;
+    background: var(--bg-app);
+    border-right: 1px solid var(--border-soft);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .panel{
+    border-bottom: 1px solid var(--border-soft);
+    padding: 12px 12px 14px;
+  }
+
+  .panel-header{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-main);
+    margin-bottom: 10px;
+  }
+  .panel-header .dots{ color: var(--text-faint); cursor: pointer; }
+
+  /* Tree */
+  .tree{
+    list-style: none;
+    margin: 0; padding: 0;
+    font-size: 13px;
+  }
+  .tree-item{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 6px;
+    border-radius: var(--radius-sm);
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .tree-item:hover{ background: var(--bg-panel-2); }
+  .tree-item.selected{
+    background: var(--accent);
+    color: #fff;
+  }
+  .tree-item .chevron{
+    width: 12px; text-align: center;
+    color: var(--text-faint);
+    font-size: 10px;
+  }
+  .tree-item.selected .chevron{ color: rgba(255,255,255,.8); }
+
+  .tree-item .node-icon{
+    width: 14px; height: 14px;
+    flex-shrink: 0;
+    border-radius: 3px;
+  }
+  .node-icon.doc{ background: transparent; }
+  .node-icon.cube{ background: var(--accent); }
+  .node-icon.gear{ background: #9a9a9a; }
+  .node-icon.assembly{ background: #6fc27a; }
+
+  .tree-item .grow{ flex: 1; }
+  .tree-item .row-actions{
+    display: flex; gap: 4px;
+    color: var(--text-faint);
+    font-size: 11px;
+  }
+
+  .tree ul{
+    list-style: none;
+    margin: 0;
+    padding-left: 16px;
+  }
+
+  /* Properties panel */
+  .prop-title{
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--text-main);
+  }
+
+  .field{
+    margin-bottom: 12px;
+  }
+  .field label{
+    display: block;
+    font-size: 11.5px;
+    color: var(--text-dim);
+    margin-bottom: 5px;
+  }
+  .field select,
+  .field input{
+    width: 100%;
+    background: var(--bg-panel-2);
+    border: 1px solid var(--border);
+    color: var(--text-main);
+    border-radius: var(--radius-sm);
+    padding: 7px 9px;
+    font-size: 13px;
+    outline: none;
+    appearance: none;
+  }
+  .field select:focus,
+  .field input:focus{
+    border-color: var(--accent);
+  }
+
+  /* ---- Viewport ---- */
+  .viewport-wrap{
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .viewport{
+    flex: 1;
+    position: relative;
+    background:
+      radial-gradient(ellipse at 50% 40%, #46474b 0%, var(--bg-viewport) 70%);
+    margin: 12px 12px 0 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-soft);
+    overflow: hidden;
+  }
+
+  .viewport-label{
+    position: absolute;
+    top: 12px; left: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-main);
+    z-index: 2;
+  }
+
+  .viewport-badge{
+    font-size: 11px;
+    font-weight: 500;
+    color: #bcd8ff;
+    background: rgba(47,123,246,0.18);
+    border: 1px solid rgba(47,123,246,0.4);
+    padding: 3px 9px;
+    border-radius: 20px;
+  }
+
+  .legend-scale{
+    position: absolute;
+    bottom: 14px; right: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 10.5px;
+    color: var(--text-dim);
+  }
+  .legend-gradient{
+    width: 90px; height: 8px;
+    border-radius: 4px;
+    background: linear-gradient(90deg, #2b3a55, #2f7bf6, #ff8a3d, #ff3d3d);
+  }
+
+  .viewcube{
+    position: absolute;
+    top: 14px; right: 16px;
+    width: 46px; height: 46px;
+    background: var(--bg-panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    color: var(--text-dim);
+    transform: perspective(200px) rotateX(15deg) rotateY(-20deg);
+  }
+
+  .model-placeholder{
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 10px;
+    color: var(--text-faint);
+  }
+  .model-placeholder .box{
+    width: 90px; height: 90px;
+    border: 2px dashed #5b5c60;
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 26px;
+  }
+  .model-placeholder small{
+    font-size: 11.5px;
+    letter-spacing: .3px;
+  }
+
+  .axis-gizmo{
+    position: absolute;
+    bottom: 14px; left: 16px;
+    width: 60px; height: 60px;
+    opacity: .9;
+  }
+
+  /* ---- Timeline ---- */
+  .timeline{
+    flex-shrink: 0;
+    margin: 12px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-md);
+    padding: 12px 16px 14px;
+  }
+
+  .timeline-header{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .timeline-header h3{
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .timeline-header .icons{
+    display: flex; gap: 10px;
+    color: var(--text-faint);
+    font-size: 13px;
+  }
+
+  .convergence-chip{
+    margin-left: auto;
+    margin-right: 14px;
+    font-size: 11px;
+    color: #b9f2c4;
+    background: rgba(90,200,120,0.14);
+    border: 1px solid rgba(90,200,120,0.35);
+    padding: 3px 10px;
+    border-radius: 20px;
+  }
+
+  .timeline-steps{
+    display: flex;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+
+  .step{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .step .step-num{
+    font-size: 10.5px;
+    color: var(--text-faint);
+  }
+  .step-pill{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    background: var(--bg-panel-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 12.5px;
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+  .step-pill.active{
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .step-pill .dot{
+    width: 8px; height: 8px;
+    border-radius: 2px;
+    background: currentColor;
+    opacity: .6;
+    flex-shrink: 0;
+  }
+
+  .scrub-track{
+    position: relative;
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    margin-bottom: 14px;
+  }
+  .scrub-fill{
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 34%;
+    background: var(--accent);
+    border-radius: 2px;
+  }
+  .scrub-handle{
+    position: absolute;
+    top: 50%; left: 34%;
+    transform: translate(-50%, -50%);
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid #fff;
+  }
+
+  .playback{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+  }
+
+  .playback button{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .playback button:hover{ color: var(--text-main); }
+
+  .play-main{
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .play-main:hover{ background: var(--accent-hover); }
+
+  /* Scrollbars */
+  .sidebar::-webkit-scrollbar{ width: 8px; }
+  .sidebar::-webkit-scrollbar-thumb{ background: #3a3b3f; border-radius: 4px; }
+
+  /* Guide note */
+  .guide-note{
+    max-width: 1400px;
+    margin: 18px auto 0;
+    padding: 0 4px;
+    font-size: 12.5px;
+    color: #7c7d82;
+    font-family: monospace;
+  }
+</style>
+</head>
+<body>
+
+<div class="app-shell">
+
+  <!-- ===== TOP BAR ===== -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <button class="icon-btn" aria-label="Menú">☰</button>
+      <ul class="menu-items">
+        <li>Archivo</li>
+        <li>Editar</li>
+        <li>Diseño</li>
+        <li>Herramientas</li>
+        <li>Ayuda</li>
+      </ul>
+    </div>
+
+    <div class="app-title">CREA 3D</div>
+
+    <div class="topbar-right">
+      <button class="icon-btn" aria-label="Notificaciones">🔔</button>
+      <div class="avatar">JD</div>
+      <button class="icon-btn" aria-label="Expandir cuenta" style="width:16px">▾</button>
+      <div class="cloud-chip">☁ Cloud</div>
+    </div>
+  </header>
+
+  <!-- ===== TOOLBAR — flujo de optimización topológica ===== -->
+  <nav class="toolbar">
+    <button class="tool-btn" data-tool="importar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+      <span>Importar</span>
+    </button>
+    <button class="tool-btn" data-tool="cargas">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 20h14"/></svg>
+      <span>Cargas</span>
+    </button>
+    <button class="tool-btn" data-tool="restricciones">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="4"/><path d="M6 14v4M10 14v4M14 14v4M18 14v4"/></svg>
+      <span>Restricciones</span>
+    </button>
+    <button class="tool-btn" data-tool="material">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l9 5-9 5-9-5 9-5z"/><path d="M3 12l9 5 9-5M3 17l9 5 9-5"/></svg>
+      <span>Material</span>
+    </button>
+    <button class="tool-btn active" data-tool="ejecutar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3l14 9-14 9V3z"/></svg>
+      <span>Ejecutar</span>
+    </button>
+    <button class="tool-btn" data-tool="resultados">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19V9M10 19V5M16 19v-7M4 19h16"/></svg>
+      <span>Resultados</span>
+    </button>
+  </nav>
+
+  <!-- ===== MAIN AREA ===== -->
+  <div class="main-area">
+
+    <!-- ---- SIDEBAR ---- -->
+    <aside class="sidebar">
+
+      <!-- Navegador de diseño -->
+      <section class="panel">
+        <div class="panel-header">
+          <span>Navegador de Diseño</span>
+          <span class="dots">⋯</span>
+        </div>
+        <ul class="tree">
+          <li>
+            <div class="tree-item">
+              <span class="chevron">▾</span>
+              <span class="node-icon cube"></span>
+              <span class="grow">Soporte_Brazo_v3</span>
+            </div>
+            <ul>
+              <li>
+                <div class="tree-item">
+                  <span class="chevron"></span>
+                  <span class="node-icon doc">📄</span>
+                  <span class="grow">Malla importada (STEP)</span>
+                </div>
+              </li>
+              <li>
+                <div class="tree-item">
+                  <span class="chevron">▸</span>
+                  <span class="node-icon gear">⚙</span>
+                  <span class="grow">Caso de Carga 1</span>
+                  <span class="row-actions">⋯</span>
+                </div>
+              </li>
+              <li>
+                <div class="tree-item">
+                  <span class="chevron">▸</span>
+                  <span class="node-icon gear">⚙</span>
+                  <span class="grow">Restricciones (2)</span>
+                  <span class="row-actions">⋯</span>
+                </div>
+              </li>
+              <li>
+                <div class="tree-item">
+                  <span class="chevron"></span>
+                  <span class="node-icon doc">📄</span>
+                  <span class="grow">Material: Aluminio 6061</span>
+                </div>
+              </li>
+              <li>
+                <div class="tree-item selected">
+                  <span class="chevron">▾</span>
+                  <span class="node-icon cube"></span>
+                  <span class="grow">Optimización 1 — Resultado</span>
+                </div>
+              </li>
+            </ul>
+          </li>
+        </ul>
+      </section>
+
+      <!-- Panel de propiedades -->
+      <section class="panel" style="flex:1; border-bottom:none;">
+        <div class="panel-header">
+          <span>Panel de Propiedades</span>
+          <span class="dots">⋯</span>
+        </div>
+        <div class="prop-title">Optimización 1</div>
+
+        <div class="field">
+          <label>Objetivo</label>
+          <select>
+            <option>Minimizar masa</option>
+            <option>Maximizar rigidez</option>
+            <option>Minimizar desplazamiento</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Fracción de volumen objetivo</label>
+          <input type="text" value="35%">
+        </div>
+
+        <div class="field">
+          <label>Región de diseño</label>
+          <select>
+            <option>Cuerpo completo</option>
+            <option>Selección manual</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Simetría de fabricación</label>
+          <select>
+            <option>Ninguna</option>
+            <option>Plano XY</option>
+            <option>Extracción (impresión 3D)</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Espesor mínimo de miembro</label>
+          <input type="text" value="2.00 mm">
+        </div>
+
+        <div class="field">
+          <label>Iteraciones máximas</label>
+          <input type="text" value="80">
+        </div>
+      </section>
+    </aside>
+
+    <!-- ---- VIEWPORT + TIMELINE ---- -->
+    <div class="viewport-wrap">
+
+      <div class="viewport">
+        <div class="viewport-label">
+          3D Viewport
+          <span class="viewport-badge">Resultado optimizado · Iteración 62/80</span>
+        </div>
+        <div class="viewcube">CAD</div>
+
+        <!-- Placeholder: aquí va la malla resultante de la optimización topológica
+             (ej. canvas three.js con geometría orgánica generada por el solver) -->
+        <div class="model-placeholder">
+          <div class="box">◈</div>
+          <small>Aquí se renderiza la topología optimizada (placeholder)</small>
+        </div>
+
+        <div class="legend-scale">
+          <span>Baja densidad</span>
+          <div class="legend-gradient"></div>
+          <span>Alta densidad</span>
+        </div>
+
+        <svg class="axis-gizmo" viewBox="0 0 60 60">
+          <line x1="30" y1="30" x2="30" y2="6" stroke="#5ba3ff" stroke-width="2"/>
+          <line x1="30" y1="30" x2="52" y2="40" stroke="#ff5b5b" stroke-width="2"/>
+          <line x1="30" y1="30" x2="14" y2="48" stroke="#5bff8a" stroke-width="2"/>
+          <text x="30" y="4" fill="#5ba3ff" font-size="8">Z</text>
+          <text x="55" y="43" fill="#ff5b5b" font-size="8">X</text>
+          <text x="8" y="52" fill="#5bff8a" font-size="8">Y</text>
+        </svg>
+      </div>
+
+      <!-- Línea del tiempo -->
+      <div class="timeline">
+        <div class="timeline-header">
+          <h3>Historial de Iteraciones</h3>
+          <div class="convergence-chip">Convergencia: 0.4% Δ masa</div>
+          <div class="icons">
+            <span>⚙</span>
+            <span>⋯</span>
+          </div>
+        </div>
+
+        <div class="timeline-steps">
+          <div class="step">
+            <span class="step-num">Iter. 0</span>
+            <div class="step-pill"><span class="dot"></span>Diseño inicial</div>
+          </div>
+          <div class="step">
+            <span class="step-num">Iter. 20</span>
+            <div class="step-pill"><span class="dot"></span>Vol. 62%</div>
+          </div>
+          <div class="step">
+            <span class="step-num">Iter. 40</span>
+            <div class="step-pill"><span class="dot"></span>Vol. 48%</div>
+          </div>
+          <div class="step">
+            <span class="step-num">Iter. 62</span>
+            <div class="step-pill active"><span class="dot"></span>Vol. 35% · Actual</div>
+          </div>
+          <div class="step">
+            <span class="step-num">Iter. 80</span>
+            <div class="step-pill"><span class="dot"></span>Objetivo</div>
+          </div>
+        </div>
+
+        <div class="scrub-track">
+          <div class="scrub-fill"></div>
+          <div class="scrub-handle"></div>
+        </div>
+
+        <div class="playback">
+          <button>‹ Iteración anterior</button>
+          <div class="play-main">▶</div>
+          <button>Siguiente iteración ›</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!--
+  NOTA PARA EL DESARROLLADOR / IA QUE IMPLEMENTA:
+  - Esta es una PLANTILLA/GUÍA visual para una app de OPTIMIZACIÓN
+    TOPOLÓGICA sobre modelos ya creados en otro CAD (importados vía
+    STEP/IGES/STL, no modelados aquí). No es una app funcional.
+  - Flujo esperado: Importar → Cargas → Restricciones → Material →
+    Ejecutar (solver) → Resultados. La toolbar refleja ese orden.
+  - El bloque .model-placeholder debe reemplazarse por el canvas real
+    del visor 3D (three.js, Babylon.js, WebGL, etc.) que renderice la
+    malla resultante del solver de optimización (geometría orgánica,
+    típicamente coloreada por densidad de material).
+  - .legend-scale es la leyenda de densidad de material (azul = baja
+    densidad / se puede remover, rojo = alta densidad / material
+    estructural). Ajusta el gradiente al esquema de tu solver.
+  - .viewport-badge indica el estado actual (ej. "Resultado optimizado
+    · Iteración 62/80"); actualízalo dinámicamente durante el cálculo.
+  - El "Historial de Iteraciones" (antes línea de tiempo de bocetos/
+    extrusiones) ahora representa el progreso del solver iterativo:
+    cada paso puede mostrar volumen restante, iteración y estado de
+    convergencia. El scrubber permite revisar iteraciones anteriores
+    para comparar cómo evolucionó la geometría.
+  - El panel de propiedades trae parámetros típicos de topopt
+    (objetivo, fracción de volumen, región de diseño, simetría de
+    fabricación, espesor mínimo de miembro, iteraciones máx.) —
+    ajústalos según el solver real que integres (ej. Altair
+    OptiStruct, nTopology, nlopt, nastran, nano-optimizer propio).
+  - Los datos del árbol, propiedades y pasos son estáticos aquí: en
+    la app real deben generarse dinámicamente desde el estado/modelo.
+  - Las clases .active / .selected muestran el estado "seleccionado":
+    reutilízalas al togglear con JS/estado de tu framework.
+  - Toda la paleta de color está centralizada en :root.
+-->
+
+</body>
+</html>

@@ -5,7 +5,7 @@ until a verified FEA adapter is supplied.
 """
 
 import logging
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 

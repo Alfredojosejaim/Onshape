@@ -220,6 +220,14 @@ class ProvisionalTet4Mesher(BaseMesher):
     (:class:`GmshTet4Mesher`) is the recommended mesh generator.
     """
 
+    def __init__(self, max_grid: int = 18):
+        # ``max_grid`` caps the voxel grid per axis. A smaller value keeps the
+        # (pure-Python, single-threaded) provisional FEA responsive: ~18^3 grid
+        # yields a few thousand tets which the solver assembles + solves in under
+        # a second, whereas the previous 40^3 default produced 50k+ elements and
+        # multi-minute solves/optimizations.
+        self.max_grid = max(2, int(max_grid))
+
     def generate_mesh(
         self,
         shape: cq.Shape,
@@ -239,7 +247,7 @@ class ProvisionalTet4Mesher(BaseMesher):
         nz = max(int(np.ceil(dz / h)), 2)
 
         # Limit total grid size for reasonable computation
-        max_grid = 40
+        max_grid = self.max_grid
         if max(nx, ny, nz) > max_grid:
             scale = max_grid / max(nx, ny, nz)
             nx = max(int(nx * scale), 2)

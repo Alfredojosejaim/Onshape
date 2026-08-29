@@ -71,8 +71,9 @@ class PipelineController:
         model = self.cad.import_step_from_file(path)
         self.model_id = model.id
         self.model_name = model.name
-        # tessellate for the shaded surface
-        tess = self.cad.tessellate_model(model.id)
+        # tessellate for the shaded surface; per-face ranges enable entity
+        # (face) selection in the viewport and CAD-anchored BC regions.
+        tess = self.cad.tessellate_model(model.id, face_mapping=True)
         mismatch = (not tess or tess.get("success") is False
                     or "vertices" not in tess or not tess.get("vertices")
                     or "indices" not in tess or not tess.get("indices"))
@@ -111,17 +112,26 @@ class PipelineController:
     def _apply_constraints(self, nodes: np.ndarray) -> np.ndarray:
         """Default: fix the nodes at the minimum coordinate along the longest axis."""
         from core.boundary import BoundaryConditionMapper, resolve_face_index
+        from core.selection import NodeSelectionEngine
 
         fixed_dofs = []
         node_indices = []
+        shape = self.cad.get_model_shape(self.model_id) if self.model_id else None
         for c in self.constraints:
-            ctype = c.get("constraint_type", "fixed")
-            location = c.get("location", "")
-            if location:
-                model = self.cad.get_model(self.model_id) if self.model_id else None
-                shape = self.cad.get_model_shape(self.model_id) if self.model_id else None
+            dof = c.get("degrees_of_freedom") or {"ux": True, "uy": True, "uz": True}
+            fix_xyz = [bool(dof.get("ux", True)), bool(dof.get("uy", True)), bool(dof.get("uz", True))]
+
+            cond_nodes = []
+            selection = c.get("selection")
+            if selection:
+                tol = c.get("tolerance")
+                cond_nodes = NodeSelectionEngine.select_nodes(
+                    nodes, selection, cad_shape=shape,
+                    default_tolerance=float(tol) if tol is not None else None,
+                )
+            else:
+                location = c.get("location", "")
                 face_index = resolve_face_index(str(location)) if location else None
-                mapped_nodes = []
                 if shape is not None and face_index is not None:
                     sample = nodes[:: max(1, len(nodes) // 500)]
                     bbox = sample.max(axis=0) - sample.min(axis=0)
@@ -130,21 +140,10 @@ class PipelineController:
                         shape, nodes.tolist(), face_indices=[face_index], tolerance=1.5 * char_length
                     )
                     if mapped and mapped[0].node_indices:
-                        mapped_nodes = mapped[0].node_indices
-                if mapped_nodes:
-                    node_indices.extend(mapped_nodes)
-            if not node_indices and not self.constraints:
-                axis = int(c.get("fixed_axis", 2))
-                coord = c.get("fixed_coordinate")
-                if coord is None:
-                    coord = float(nodes[:, axis].min())
-                node_indices = [
-                    i for i in range(nodes.shape[0])
-                    if abs(float(nodes[i, axis]) - coord) <= 1e-6 * max(1.0, np.ptp(nodes[:, axis]))
-                ]
-            dof = c.get("degrees_of_freedom") or {"ux": True, "uy": True, "uz": True}
-            fix_xyz = [bool(dof.get("ux", True)), bool(dof.get("uy", True)), bool(dof.get("uz", True))]
-            for ni in node_indices:
+                        cond_nodes = mapped[0].node_indices
+
+            node_indices.extend(cond_nodes)
+            for ni in cond_nodes:
                 for ax in range(3):
                     if fix_xyz[ax]:
                         fixed_dofs.append(ni * 3 + ax)
@@ -163,9 +162,11 @@ class PipelineController:
 
     def _apply_loads(self, nodes: np.ndarray, num_dofs: int) -> np.ndarray:
         from core.boundary import BoundaryConditionMapper, resolve_face_index
+        from core.selection import NodeSelectionEngine
 
         force_vector = np.zeros(num_dofs)
         node_indices = []
+        shape = self.cad.get_model_shape(self.model_id) if self.model_id else None
         for ld in self.forces:
             mag = float(ld.get("magnitude", 0))
             direction = [float(ld.get("direction_x", 0)), float(ld.get("direction_y", 0)), float(ld.get("direction_z", 0))]
@@ -174,12 +175,18 @@ class PipelineController:
                 continue
             direction = np.array(direction) / norm
             fvec = direction * mag
-            face_id = ld.get("application_face_id")
-            shape = self.cad.get_model_shape(self.model_id) if self.model_id else None
             mapped_nodes = []
-            if shape is not None and face_id:
+            selection = ld.get("selection")
+            if selection:
+                tol = ld.get("tolerance")
+                mapped_nodes = NodeSelectionEngine.select_nodes(
+                    nodes, selection, cad_shape=shape,
+                    default_tolerance=float(tol) if tol is not None else None,
+                )
+            else:
+                face_id = ld.get("application_face_id")
                 face_index = resolve_face_index(str(face_id)) if face_id else None
-                if face_index is not None:
+                if shape is not None and face_index is not None:
                     sample = nodes[:: max(1, len(nodes) // 500)]
                     bbox = sample.max(axis=0) - sample.min(axis=0)
                     char_length = max(float(np.linalg.norm(bbox) / max(1.0, len(nodes) ** (1.0 / 3.0))), 1e-9)
@@ -190,7 +197,7 @@ class PipelineController:
                         mapped_nodes = mapped[0].node_indices
             if mapped_nodes:
                 node_indices.extend(mapped_nodes)
-            else:
+            elif not selection:
                 axis = int(np.argmax(np.abs(direction)))
                 coord = float(nodes[:, axis].max())
                 node_indices.extend(

@@ -40,6 +40,8 @@ class Scene:
         self._radius = 1.0
         self.display_mode = "surfaced"
         self._on_change: Callable[[], None] | None = None
+        self._grid_visible = True
+        self._axes_visible = True
 
     # ------------------------------------------------------------------ #
     # Events
@@ -74,6 +76,10 @@ class Scene:
         radius = max(radius, 1e-4)
         self._center = center
         self._radius = radius
+        if self._grid_visible:
+            self.set_grid_visible(True)
+        if self._axes_visible:
+            self.set_axes_visible(True)
 
     @property
     def bounds(self):
@@ -88,7 +94,7 @@ class Scene:
         return self._radius
 
     def fit_camera(self) -> None:
-        self._camera.set_target(self._center, self._radius, delta=2.2)
+        self._camera.set_target(self._center, self._radius, delta=4.0)
         self._camera.fit()
 
     def reset_fit(self) -> None:
@@ -283,6 +289,7 @@ class Scene:
     # Axes / grid (managed by renderer, toggled through scene for symmetry)
     # ------------------------------------------------------------------ #
     def set_axes_visible(self, visible: bool) -> None:
+        self._axes_visible = visible
         extent = self._radius if self._radius else 1.0
         if visible:
             self._renderer.set_axes(extent * 1.2)
@@ -291,6 +298,7 @@ class Scene:
         self._renderer.render()
 
     def set_grid_visible(self, visible: bool) -> None:
+        self._grid_visible = visible
         extent = self._radius if self._radius else 10.0
         if visible:
             self._renderer.set_grid(extent * 2.0, 10)

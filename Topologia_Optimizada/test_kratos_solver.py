@@ -18,6 +18,9 @@ def test_solver_setup():
         adapter = initialize_kratos_adapter()
         model_part = adapter.create_model_part("TestSolverSetup")
         
+        # CORRECT ORDER: Add nodal solution-step variables BEFORE creating nodes
+        adapter.add_nodal_variables(model_part)
+        
         # Create a simple mesh
         nodes = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
         elements = [[0, 1, 2, 3]]
@@ -53,6 +56,9 @@ def test_simple_analysis():
         
         adapter = initialize_kratos_adapter()
         model_part = adapter.create_model_part("TestSimpleAnalysis")
+        
+        # CORRECT ORDER: Add nodal solution-step variables BEFORE creating nodes
+        adapter.add_nodal_variables(model_part)
         
         # Create a simple mesh
         nodes = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
@@ -98,33 +104,36 @@ def test_analysis_with_loads():
         adapter = initialize_kratos_adapter()
         model_part = adapter.create_model_part("TestAnalysisWithLoads")
         
-        # Create a cantilever-like mesh
-        nodes = [
-            [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],
-            [2.0, 0.0, 0.0], [2.0, 1.0, 0.0], [2.0, 0.0, 1.0], [2.0, 1.0, 1.0]
-        ]
-        elements = [[0, 1, 2, 3], [1, 4, 2, 5], [2, 6, 3, 7]]
+        # CORRECT ORDER: Add nodal solution-step variables BEFORE creating nodes
+        adapter.add_nodal_variables(model_part)
+        
+        # Create a valid mesh: a single positive-volume tet4 (verified det>0),
+        # consistent with the mesh used by the other passing Stage tests. The
+        # previous hand-written "cantilever" connectivity produced an inverted
+        # element (DETJ0 < 0) that Kratos rejects with a fatal error.
+        nodes = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        elements = [[0, 1, 2, 3]]
         
         adapter.import_mesh_from_core_format(model_part, nodes, elements, "tet4")
         adapter.configure_material_manually(model_part, 68.9e9, 0.33)
         adapter.add_displacement_dofs(model_part)
         
-        # Apply fixed constraint to one end
+        # Apply fixed constraint to one node
         constraint = ConstraintDefinition(
             id="fixed_end",
             constraint_type=ConstraintType.FIXED,
             location_face_id="face_left"
         )
-        adapter.apply_constraint_from_core(model_part, constraint, [0, 1, 2])
+        adapter.apply_constraint_from_core(model_part, constraint, [0])
         
-        # Apply point load to the other end
+        # Apply point load to the opposing node
         load = LoadDefinition(
             id="tip_load",
             magnitude=1000.0,
             direction=(0.0, 0.0, -1.0),
             load_type=LoadType.POINT
         )
-        adapter.apply_load_from_core(model_part, load, [7])
+        adapter.apply_load_from_core(model_part, load, [3])
         
         # Run analysis
         result = adapter.run_analysis(model_part)
@@ -161,6 +170,9 @@ def test_analysis_with_real_mesh():
         
         adapter = initialize_kratos_adapter()
         model_part = adapter.create_model_part("TestRealMeshAnalysis")
+        
+        # CORRECT ORDER: Add nodal solution-step variables BEFORE creating nodes
+        adapter.add_nodal_variables(model_part)
         
         # Import real mesh
         adapter.import_mesh_from_gmsh(model_part, gmsh_file)

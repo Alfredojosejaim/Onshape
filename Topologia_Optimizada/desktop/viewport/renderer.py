@@ -177,9 +177,15 @@ class Renderer:
         opacity: float = 1.0,
         edge_color=(0.05, 0.07, 0.1),
         edge_visibility: bool = True,
+        cell_data: Optional[Dict[str, np.ndarray]] = None,
     ) -> vtkActor:
-        """Build a lit, phong-shaded triangle-mesh actor (GPU-represented)."""
-        poly = self._build_polydata(vertices, triangles, compute_normals=True)
+        """Build a lit, phong-shaded triangle-mesh actor (GPU-represented).
+
+        ``cell_data`` maps array names to one-value-per-cell arrays (e.g.
+        ``{"face_index": [...]}``) stored on the output poly for entity picking.
+        """
+        poly = self._build_polydata(vertices, triangles, compute_normals=True,
+                                    cell_data=cell_data)
         mapper = vtkPolyDataMapper()
         mapper.SetInputData(poly)
         mapper.SetScalarVisibility(False)
@@ -203,6 +209,7 @@ class Renderer:
         vertices: np.ndarray,
         triangles: np.ndarray,
         compute_normals: bool = True,
+        cell_data: Optional[Dict[str, np.ndarray]] = None,
     ) -> vtkPolyData:
         verts = np.asarray(vertices, dtype=float)
         tris = np.asarray(triangles, dtype=np.int64)
@@ -223,7 +230,18 @@ class Renderer:
             normals.ComputeCellNormalsOn()
             normals.SplittingOff()
             normals.Update()
-            return normals.GetOutput()
+            poly = normals.GetOutput()
+        if cell_data:
+            from vtkmodules.vtkCommonCore import vtkIntArray
+            for name, arr in cell_data.items():
+                arr = np.ascontiguousarray(arr)
+                if arr.ndim != 1 or arr.shape[0] != tris.shape[0]:
+                    continue
+                carr = vtkIntArray()
+                carr.SetName(str(name))
+                for v in arr:
+                    carr.InsertNextValue(int(v))
+                poly.GetCellData().AddArray(carr)
         return poly
 
 

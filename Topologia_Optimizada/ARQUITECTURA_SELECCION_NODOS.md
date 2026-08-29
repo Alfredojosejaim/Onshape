@@ -3,7 +3,7 @@
 **Documento**: Explicación y corrección del problema arquitectónico en `solver_interface.py`  
 **Autor**: Análisis de bloqueo arquitectónico  
 **Fecha**: 2026-08-28  
-**Estado**: IMPLEMENTADO (Fase 1 - Coordinate-based fallback; Fase 2 - gmsh physical groups pendiente)
+**Estado**: IMPLEMENTADO (Fase 1 - Coordinate-based fallback; Fase 2 - gmsh physical groups pendiente; **Fase 3 - Selección geométrica avanzada implementada**)
 
 ---
 
@@ -183,6 +183,52 @@ load = LoadDefinition(
 # 3. Obtiene EXACTAMENTE los nodos de esa cara CAD (mapeados por gmsh)
 # 4. Aplica Fix() SOLO a esos nodos → Correcto ✓
 ```
+
+---
+
+## Fase 3 - Selección Geométrica Avanzada (nuevo motor)
+
+### Qué resuelve
+Amplía la selección de nodos FEM más allá de cara única / plano coordenado con un
+motor declarativo y CAD-agnóstico: `core/selection.py` (`NodeSelectionEngine`).
+
+Regiones soportadas (descriptores JSON, compatibles con
+`GeometryReference.geometry` de `api_server.py`):
+
+| type       | Campos                                               | Requiere `cad_shape` |
+|------------|------------------------------------------------------|----------------------|
+| `plane`    | `point`, `normal`, `tolerance`                       | No                   |
+| `box`      | `bbox` (xmin..zmax), `tolerance`                     | No                   |
+| `sphere`   | `center`, `radius`, `tolerance`                      | No                   |
+| `cylinder` | `point` (sobre el eje), `axis`, `radius`, `height`, `tolerance` | No       |
+| `face`     | `face_indices: [int]`, `tolerance`                   | Sí (mapeo BoundaryConditionMapper) |
+| `normal`   | `normal`, `angle_tolerance_deg`, `tolerance`         | Sí (empareja caras por normal) |
+| `all`      | —                                                    | No                   |
+
+Composición booleana: `{"operator": "union|intersection|exclusion", "regions": [...]}`
+(el dict plano sin `type` también se acepta).
+
+### Integración (Estrategia 0 - prioridad máxima)
+En `_apply_constraint_geometrically` / `_apply_load_geometrically` la selección
+avanzada (campo `selection` de `ConstraintDefinition`/`LoadDefinition`) se intenta
+**antes** que submodelpart, CAD face mapping y fallback por coordenadas. Sigue la
+REGLA FINAL: si hay selección explícita que no resuelve nodos, se emite
+`ADVANCED SELECTION FAILED` y **NO** se cae silenciosamente a otra estrategia.
+
+### Viewport (entidad geométrica)
+- `GeometryEngine.tessellate_shape(..., face_mapping=True)` acumula la tessellación
+  por cara y devuelve `TessellatedMesh.face_triangles` (rangos `{face_index, start, count}`).
+- `renderer.make_triangle_actor(..., cell_data={"face_index": [...]})` adjunta el
+  índice de cara como cell data VTK; `SelectionManager.pick` usa `GetCellId()` para
+  resolver cara → payload `{kind: "face", face_index, center, normal, area}`.
+- `Scene.highlight_faces()` resalta en dorado translúcido las caras elegidas.
+- `PropertiesPanel` "Selección avanzada": botones para usar la cara del visor como
+  región de Fuerza / Restricción (se propaga a `controller` vía `selection`).
+
+### Tests
+`test_advanced_geometric_selection.py` (regiones, composición, parser, tolerancia,
+cara/normal con `cono.step`, Estrategia 0 con adapter stub, tessellation face-mapping,
+PipelineController end-to-end).
 
 ---
 

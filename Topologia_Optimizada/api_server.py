@@ -130,40 +130,7 @@ class MeshRequest(BaseModel):
     element_type: str = Field(default="tet4", pattern="^(tet4|tet10|hex8)$")
 
 
-class ForceDefinition(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    magnitude: float = Field(gt=0)
-    direction_x: float
-    direction_y: float
-    direction_z: float
-    application_point: Optional[str] = None
-    force_type: str = Field(default="point", pattern="^(point|distributed|pressure)$")
-
-    @model_validator(mode="after")
-    def non_zero_direction(self) -> "ForceDefinition":
-        if self.direction_x == self.direction_y == self.direction_z == 0:
-            raise ValueError("La dirección de la fuerza no puede ser cero")
-        return self
-
-
-class ConstraintDefinition(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    constraint_type: str = Field(pattern="^(fixed|pinned|roller|symmetry)$")
-    location: str
-    degrees_of_freedom: Dict[str, bool] = Field(default_factory=lambda: {
-        "ux": True, "uy": True, "uz": True, "rx": True, "ry": True, "rz": True
-    })
-
-    @model_validator(mode="after")
-    def one_axis_required(self) -> "ConstraintDefinition":
-        if not any(self.degrees_of_freedom.values()):
-            raise ValueError("Al menos un grado de libertad debe estar restringido")
-        return self
-
-
-class Load(BaseModel):
+class LoadDto(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: str = Field(default="force", pattern="^force$")
@@ -177,13 +144,13 @@ class Load(BaseModel):
     inverted: bool = False
 
     @model_validator(mode="after")
-    def non_zero_direction(self) -> "Load":
+    def non_zero_direction(self) -> "LoadDto":
         if self.directionX == self.directionY == self.directionZ == 0:
             raise ValueError("load direction cannot be zero")
         return self
 
 
-class Constraint(BaseModel):
+class ConstraintDto(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: str = Field(default="fixed", pattern="^fixed$")
@@ -193,7 +160,7 @@ class Constraint(BaseModel):
     uz: bool = True
 
     @model_validator(mode="after")
-    def one_axis_required(self) -> "Constraint":
+    def one_axis_required(self) -> "ConstraintDto":
         if not any((self.ux, self.uy, self.uz)):
             raise ValueError("a constraint must restrict at least one axis")
         return self
@@ -203,11 +170,11 @@ class LoadCase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=128)
-    constraints: list[Constraint] = Field(min_length=1)
-    loads: list[Load] = Field(min_length=1)
+    constraints: list[ConstraintDto] = Field(min_length=1)
+    loads: list[LoadDto] = Field(min_length=1)
 
 
-class Material(BaseModel):
+class MaterialDto(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=128)
@@ -218,13 +185,13 @@ class Material(BaseModel):
     yieldStrength: float = Field(gt=0)
 
 
-class Objectives(BaseModel):
+class ObjectivesDto(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     volumeFraction: float = Field(gt=0, le=1)
 
 
-class SolverSettings(BaseModel):
+class SolverSettingsDto(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     maxIterations: int = Field(gt=0, le=10000)
@@ -249,9 +216,9 @@ class TopologyConfig(BaseModel):
     context: Dict[str, str] = Field(min_length=1)
     designSpace: DesignSpace
     loadCases: list[LoadCase] = Field(min_length=1)
-    material: Material
-    objectives: Objectives
-    solverSettings: SolverSettings
+    material: MaterialDto
+    objectives: ObjectivesDto
+    solverSettings: SolverSettingsDto
     timestamp: str = Field(default_factory=utc_now)
 
 

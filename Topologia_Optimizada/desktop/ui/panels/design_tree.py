@@ -1,110 +1,91 @@
-"""DesignTreePanel - the engineering model/manufacturing navigation tree
-(similar to a CAD feature tree), filled dynamically from the project state.
+"""DesignTreePanel - the "Navegador de Diseño" tree, styled like the HTML
+sidebar. It reflects the active model / mesh / optimization result and keeps
+the selection-clear affordance used by the main window.
 """
 
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem,
-    QLabel, QCheckBox, QPushButton, QHBoxLayout, QGroupBox,
+    QLabel, QPushButton, QHBoxLayout,
 )
 from PySide6.QtCore import Qt, Signal
 
 
 class DesignTreePanel(QWidget):
-    entitiesChanged = Signal()   # emitted when show-mesh / show-solids toggles
+    entitiesChanged = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         root = QVBoxLayout(self)
-        root.setContentsMargins(8, 8, 8, 8)
-        root.setSpacing(8)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(6)
 
-        title = QLabel("Navegador de Diseño")
-        title.setStyleSheet("font-weight: 600; color: #f2f2f3;")
-        root.addWidget(title)
+        header = QLabel("Navegador de Diseño")
+        header.setStyleSheet("font-size: 13px; font-weight: 600;")
+        root.addWidget(header)
 
         self._tree = QTreeWidget()
         self._tree.setHeaderHidden(True)
+        self._tree.setIndentation(14)
         root.addWidget(self._tree, 1)
 
-        # visibility group
-        vis = QGroupBox("Visualización")
-        vlay = QVBoxLayout(vis)
-
-        self._cb_solids = QCheckBox("Superficie (CAD)")
-        self._cb_solids.setChecked(True)
-        self._cb_solids.setEnabled(False)
-        self._cb_solids.stateChanged.connect(lambda _: self.entitiesChanged.emit())
-
-        self._cb_mesh = QCheckBox("Malla FEM")
-        self._cb_mesh.setEnabled(False)
-
-        self._cb_density = QCheckBox("Densidad (resultado)")
-        self._cb_density.setEnabled(False)
-
-        for cb in (self._cb_solids, self._cb_mesh, self._cb_density):
-            vlay.addWidget(cb)
-
         h = QHBoxLayout()
+        h.setContentsMargins(0, 0, 0, 0)
         self._btn_clear = QPushButton("Limpiar selección")
         self._btn_clear.setEnabled(False)
         h.addWidget(self._btn_clear)
-        vlay.addLayout(h)
-        root.addWidget(vis)
+        h.addStretch(1)
+        root.addLayout(h)
 
         self._model_item: QTreeWidgetItem | None = None
-        self._mesh_item: QTreeWidgetItem | None = None
-        self._result_item: QTreeWidgetItem | None = None
 
     # ------------------------------------------------------------------ #
     # State
     # ------------------------------------------------------------------ #
     def set_context(self, model_name: str | None, has_mesh: bool, has_result: bool) -> None:
         self._tree.clear()
-        self._model_item = self._mesh_item = self._result_item = None
+        self._model_item = None
 
         if model_name:
-            self._model_item = QTreeWidgetItem([model_name])
-            self._model_item.setData(0, Qt.UserRole, "model")
-            icon = "🗂"
-            self._tree.addTopLevelItem(self._model_item)
-            self._model_item.addChildren([
-                QTreeWidgetItem([f"Archivo: {model_name}"]),
-                QTreeWidgetItem(["Malla importada (STEP/CadQuery)"]),
-            ])
-            self._cb_solids.setEnabled(True)
-            self._cb_solids.setChecked(True)
+            model = QTreeWidgetItem([model_name.upper() if len(model_name) else model_name])
+            model.setData(0, Qt.UserRole, "model")
+            model.setIcon(0, self._empty_icon())
+            self._tree.addTopLevelItem(model)
+            self._model_item = model
+            model.addChild(QTreeWidgetItem(["Archivo: " + model_name]))
+            model.addChild(QTreeWidgetItem(["Geometría CAD (STEP)"]))
+
+            if has_mesh:
+                mesh = QTreeWidgetItem(["Malla FEM"])
+                model.addChild(mesh)
+            if has_result:
+                model.addChild(QTreeWidgetItem(["Optimización — Resultado"]))
         else:
-            placeholder = QTreeWidgetItem(["Sin modelo cargado"])
+            placeholder = QTreeWidgetItem(["Modelo sin importar"])
             self._tree.addTopLevelItem(placeholder)
-            self._cb_solids.setEnabled(False)
 
-        if model_name:
-            self._mesh_item = QTreeWidgetItem(["Caso de Estudio"])
-            self._model_item.addChild(self._mesh_item)
-
-        self._cb_mesh.setEnabled(has_mesh)
-        self._cb_mesh.setChecked(has_mesh)
-
-        if has_result:
-            self._result_item = QTreeWidgetItem(["Optimización — Resultado"])
-            self._model_item.addChild(self._result_item)
-        self._cb_density.setEnabled(has_result)
-        self._cb_density.setChecked(has_result)
         self._tree.expandAll()
 
+    @staticmethod
+    def _empty_icon():
+        from PySide6.QtGui import QIcon, QPixmap, QColor
+
+        pm = QPixmap(10, 10)
+        pm.fill(QColor("#2f7bf6"))
+        return QIcon(pm)
+
     # ------------------------------------------------------------------ #
-    # Getters used by the main window
+    # Getters (API kept for compatibility)
     # ------------------------------------------------------------------ #
     def show_solids(self) -> bool:
-        return self._cb_solids.isChecked()
+        return True
 
     def show_mesh(self) -> bool:
-        return self._cb_mesh.isChecked()
+        return True
 
     def show_density(self) -> bool:
-        return self._cb_density.isChecked()
+        return True
 
     def set_selection_clearable(self, enabled: bool) -> None:
         self._btn_clear.setEnabled(enabled)

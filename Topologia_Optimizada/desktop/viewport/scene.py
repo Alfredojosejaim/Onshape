@@ -43,6 +43,14 @@ class Scene:
         self._grid_visible = True
         self._axes_visible = True
 
+        # Entity-level geometry (model actor) for cell -> CAD face resolution
+        self._model_vertices: Optional[np.ndarray] = None
+        self._model_triangles: Optional[np.ndarray] = None
+        self._tri_face_index: Optional[np.ndarray] = None   # per-triangle face_index (-1 = unknown)
+        self._faces_meta: Dict[int, Dict[str, Any]] = {}
+        self._model_actor_key: Optional[str] = None
+        self._highlight_actor_key: Optional[str] = None
+
     # ------------------------------------------------------------------ #
     # Events
     # ------------------------------------------------------------------ #
@@ -146,17 +154,114 @@ class Scene:
     # ------------------------------------------------------------------ #
     # High-level geometry / mesh / results
     # ------------------------------------------------------------------ #
-    def set_model_geometry(self, vertices: np.ndarray, triangles: np.ndarray) -> None:
-        """Build the shaded triangle-mesh actor for the imported CAD surface."""
+    def set_model_geometry(
+        self,
+        vertices: np.ndarray,
+        triangles: np.ndarray,
+        face_index_map: Optional[np.ndarray] = None,
+        faces_meta: Optional[list] = None,
+    ) -> None:
+        """Build the shaded triangle-mesh actor for the imported CAD surface.
+
+        ``face_index_map`` is an optional per-triangle B-Rep face index (-1 for
+        unknown) enabling entity-level (face) picking via the renderer cell data.
+        """
         self.remove_by_kind("model")
+        vertices = np.asarray(vertices, dtype=float)
+        triangles = np.asarray(triangles, dtype=np.int64)
+        self._model_vertices = vertices
+        self._model_triangles = triangles
+        self._tri_face_index = None
+        self._faces_meta = {}
+        self._build_faces_meta(faces_meta)
+
+        cell_data = None
+        if face_index_map is not None:
+            face_index_map = np.asarray(face_index_map, dtype=np.int64)
+            if face_index_map.shape[0] == triangles.shape[0]:
+                self._tri_face_index = face_index_map
+                cell_data = {"face_index": face_index_map}
+
         actor = self._renderer.make_triangle_actor(
             vertices,
             triangles,
             color=(0.231, 0.51, 0.964),  # #3b82f6 (HTML CAD solid color)
+            cell_data=cell_data,
         )
-        self.add_object(SceneObject("Modelo CAD", "model"), actor)
+        obj = SceneObject("Modelo CAD", "model")
+        self.add_object(obj, actor)
+        self._model_actor_key = obj.actor_key
         self._apply_display_mode(actor)
         self._notify()
+
+    def _build_faces_meta(self, faces_meta: Optional[list]) -> None:
+        if not faces_meta:
+            return
+        for meta in faces_meta:
+            if not isinstance(meta, dict) or meta.get("face_index") is None:
+                continue
+            self._faces_meta[int(meta["face_index"])] = meta
+
+    # ------------------------------------------------------------------ #
+    # Entity-level selection helpers (sólido / cara / actor)
+    # ------------------------------------------------------------------ #
+    @property
+    def model_actor_key(self) -> Optional[str]:
+        return self._model_actor_key
+
+    def face_index_for_cell(self, cell_id: int) -> Optional[int]:
+        """Map a picked VTK triangle cell id back to a B-Rep face index."""
+        if self._tri_face_index is None or cell_id < 0:
+            return None
+        if cell_id >= self._tri_face_index.shape[0]:
+            return None
+        fi = int(self._tri_face_index[cell_id])
+        return fi if fi >= 0 else None
+
+    def face_meta(self, face_index: int) -> Optional[Dict[str, Any]]:
+        return self._faces_meta.get(int(face_index))
+
+    def highlight_faces(self, face_indices: list) -> None:
+        """Draw a translucent gold overlay on the given B-Rep face triangles."""
+        self.clear_highlight()
+        if not face_indices or self._tri_face_index is None:
+            return
+        wanted = set(int(f) for f in face_indices)
+        mask = np.isin(self._tri_face_index, np.array(sorted(wanted), dtype=np.int64))
+        tris = self._model_triangles[mask]
+        if tris.shape[0] == 0:
+            self._renderer.render()
+            return
+        actor = self._renderer.make_triangle_actor(
+            self._model_vertices,
+            tris,
+            color=(0.95, 0.72, 0.08),
+            opacity=0.55,
+            edge_color=(0.98, 0.9, 0.4),
+            edge_visibility=True,
+        )
+        obj = SceneObject("Cara seleccionada", "selection_highlight")
+        self.add_object(obj, actor)
+        self._highlight_actor_key = obj.actor_key
+        self._renderer.render()
+
+    def clear_highlight(self) -> None:
+        if self._highlight_actor_key is not None:
+            self.remove_object(self._highlight_actor_key)
+            self._highlight_actor_key = None
+            self._renderer.render()
+
+    def clear(self) -> None:
+        keys = list(self._actors.keys())
+        for key in keys:
+            self.remove_object(key)
+        self._bbox = None
+        self._model_vertices = None
+        self._model_triangles = None
+        self._tri_face_index = None
+        self._faces_meta = {}
+        self._model_actor_key = None
+        self._highlight_actor_key = None
 
     def set_mesh(self, nodes: np.ndarray, elements: np.ndarray, color=(0.6, 0.65, 0.75)) -> None:
         """Render the volumetric FE mesh as an outlined surface."""

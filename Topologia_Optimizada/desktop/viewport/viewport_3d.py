@@ -9,6 +9,10 @@ how Qt routes mouse events to the embedded window) and follows the standard
 AutoCAD scheme: scroll wheel = zoom, middle button drag = pan, Shift+middle
 button drag = orbit, left click = select/pick, N = fit view to model.
 Right click is left unbound for a future context menu.
+
+The orbit itself is a free trackball rotation (Onshape-style field motion): the
+camera follows the pointer along a great circle and can reach any orientation
+without being locked to fixed axes.
 """
 
 from __future__ import annotations
@@ -163,9 +167,9 @@ class Viewport3D(QWidget):
         if key in ("n", "N"):
             self.fit_to_view()
 
-    def _emit_selection(self, key) -> None:
+    def _emit_selection(self, payload) -> None:
         try:
-            self.selectionChanged.emit(key)
+            self.selectionChanged.emit(payload)
         except Exception:
             pass
 
@@ -194,9 +198,13 @@ class Viewport3D(QWidget):
     def clear_selection(self) -> None:
         self.selection.clear()
 
-    def load_model(self, vertices: np.ndarray, triangles: np.ndarray, bbox) -> None:
+    def load_model(self, vertices: np.ndarray, triangles: np.ndarray, bbox,
+                   face_index_map: Optional[np.ndarray] = None,
+                   faces_meta: Optional[list] = None) -> None:
         self.scene.set_bounds(bbox)
-        self.scene.set_model_geometry(vertices, triangles)
+        self.scene.set_model_geometry(vertices, triangles,
+                                      face_index_map=face_index_map,
+                                      faces_meta=faces_meta)
         self.scene.fit_camera()
         self.renderer.render()
 

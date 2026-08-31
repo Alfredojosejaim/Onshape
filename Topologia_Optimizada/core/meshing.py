@@ -182,6 +182,127 @@ class GmshTet4Mesher(BaseMesher):
         finally:
             gmsh.finalize()
 
+    def generate_adaptive_mesh(
+        self,
+        step_file: str,
+        size_points: Optional[list] = None,
+        base_size: float = 5.0,
+        min_size: float = 0.5,
+        element_type: str = "tet4",
+        density: Optional[list] = None,
+    ) -> MeshResult:
+        """Generate a Tet4 mesh adaptively refined according to a scalar field.
+
+        ``size_points`` is a list of ``[x, y, z, size]`` providing an element
+        size at arbitrary 3D points.  A Gmsh "Distance" background field built
+        around those points maps local distance to element size, giving smooth
+        density-driven local refinement (dense/solid regions refine more).
+
+        Falls back to a uniform mesh (base_size) if no refinement points and no
+        gmsh field support are available.
+        """
+        if not os.path.exists(step_file):
+            raise FileNotFoundError(f"STEP file not found: {step_file}")
+        if element_type != "tet4":
+            raise ValueError(f"GmshTet4Mesher only supports element_type='tet4', got {element_type!r}")
+        try:
+            import gmsh
+        except ImportError as e:
+            raise RuntimeError("gmsh is not installed.") from e
+
+        gmsh.initialize()
+        try:
+            gmsh.option.setNumber("General.Terminal", 0)
+            gmsh.model.add("topologia_optimizada_mesh_adaptive")
+            gmsh.option.setNumber("Geometry.OCCImportLabels", 1)
+            gmsh.model.occ.importShapes(step_file, format="step")
+            gmsh.model.occ.synchronize()
+
+            volumes = gmsh.model.getEntities(dim=3)
+            if not volumes:
+                raise ValueError(f"STEP '{step_file}' contains no 3D solid/volume to mesh")
+
+            if size_points and len(size_points) >= 4:
+                # Robust density-driven refinement using a Gmsh background
+                # "Distance" field around the refinement points combined with a
+                # "MathEval" size mapping and a "Min" clamp.  Works on all
+                # Gmsh builds (unlike the PostView field).
+                gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
+                gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
+                gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
+
+                # Create the refinement points geometry.
+                point_tags = []
+                for p in size_points:
+                    t = gmsh.model.occ.addPoint(
+                        float(p[0]), float(p[1]), float(p[2]))
+                    point_tags.append(t)
+                gmsh.model.occ.synchronize()
+
+                # Estimate the domain extent for the distance->size mapping.
+                x0 = gmsh.model.getBoundingBox(-1, -1)
+                import math as _math
+                bb = x0  # (-1,-1) is the whole model bounding box
+                extent = _math.sqrt(
+                    (bb[3] - bb[0]) ** 2 + (bb[4] - bb[1]) ** 2 + (bb[5] - bb[2]) ** 2
+                ) or base_size
+                maxdist = max(extent, 1e-6)
+
+                df = gmsh.model.mesh.field.add("Distance")
+                gmsh.model.mesh.field.setNumbers(df, "PointsList", point_tags)
+                gmsh.model.mesh.field.setNumber(df, "Sampling", 100)
+
+                # size = min_size + (base_size - min_size) * (dist / maxdist)
+                scale = max(base_size - min_size, 0.0)
+                formula = f"{min_size:.6f} + {scale:.6f} * (F1 / {maxdist:.6f})"
+                me = gmsh.model.mesh.field.add("MathEval")
+                gmsh.model.mesh.field.setString(me, "F", formula)
+
+                base = gmsh.model.mesh.field.add("MathEval")
+                gmsh.model.mesh.field.setString(base, "F", f"{base_size:.6f}")
+
+                small = gmsh.model.mesh.field.add("Min")
+                gmsh.model.mesh.field.setNumbers(small, "FieldsList", [me, base])
+                gmsh.model.mesh.field.setAsBackgroundMesh(small)
+            else:
+                gmsh.option.setNumber("Mesh.CharacteristicLengthMax", float(base_size))
+
+            gmsh.model.mesh.generate(3)
+
+            _, node_coords, _ = gmsh.model.mesh.getNodes()
+            nodes = [
+                [node_coords[3 * i], node_coords[3 * i + 1], node_coords[3 * i + 2]]
+                for i in range(len(node_coords) // 3)
+            ]
+            element_types = gmsh.model.mesh.getElementTypes()
+            _, _, element_connectivity = gmsh.model.mesh.getElements()
+            tet_connectivity = None
+            for i, et in enumerate(element_types):
+                if et == 4:
+                    tet_connectivity = element_connectivity[i]
+                    break
+            if tet_connectivity is None or len(tet_connectivity) == 0:
+                raise ValueError(f"Gmsh produced no Tet4 elements for '{step_file}'")
+            elements = (np.array(tet_connectivity).reshape(-1, 4) - 1).tolist()
+
+            return MeshResult(
+                nodes=nodes,
+                elements=elements,
+                num_nodes=len(nodes),
+                num_elements=len(elements),
+                element_type="tet4",
+                is_provisional=False,
+                metadata={
+                    "mesher": "GmshTet4Mesher(adaptive)",
+                    "mesh_size_max": base_size,
+                    "min_size": min_size,
+                    "adaptive": True,
+                    "n_size_points": len(size_points) if size_points else 0,
+                },
+            )
+        finally:
+            gmsh.finalize()
+
     def generate_mesh(
         self,
         shape: cq.Shape,

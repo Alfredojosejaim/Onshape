@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Type
 
-from core.cad_entity import CadEntityRef
+from core.cad_entity import CadEntityRef, EntityType
 
 
 class CommandType(str, Enum):
@@ -168,13 +168,30 @@ class BooleanOperation(str, Enum):
 class BooleanCommand(Command):
     """Boolean operation between solid bodies.
 
-    Architecture-ready: validates parameters and selections but the actual
-    CadQuery boolean execution is delegated to the pipeline layer.
+    A boolean command distinguishes between a **target** body (the piece to be
+    modified) and one or more **tool** bodies (the pieces used to perform the
+    operation).  The UI builds a ``BooleanCommand`` by selecting the target and
+    the tools from the viewport (reusing the existing ``SelectionManager``).
+
+    The actual CadQuery execution is delegated to the pipeline layer via
+    ``CommandResult`` returned by ``execute()``.
+
+    Representation
+    --------------
+    - ``selection[0]`` (or the ``target`` parameter) is the target body.
+    - the remaining selections (or the ``tools`` parameter) are the tool bodies.
+    - ``parameters["operation"]``  union | difference | intersection
+    - ``parameters["keep_tools"]`` whether the tool bodies stay after the op.
     """
 
     command_type = CommandType.BOOLEAN
     display_name = "Boolean"
     description = "Union, difference, or intersection of solid bodies"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._target_ref: Optional[CadEntityRef] = None
+        self._tool_refs: List[CadEntityRef] = []
 
     @property
     def parameters_spec(self) -> List[CommandParameter]:
@@ -190,11 +207,99 @@ class BooleanCommand(Command):
                 default=False,
                 tooltip="Whether to keep the tool bodies after the operation",
             ),
+            CommandParameter(
+                name="target", label="Target body", param_type="selection",
+                required=True, tooltip="The body to be modified",
+            ),
+            CommandParameter(
+                name="tools", label="Tool bodies", param_type="selection",
+                required=True, tooltip="The bodies used to perform the operation",
+            ),
         ]
+
+    # ------------------------------------------------------------------ #
+    # Target / tool configuration
+    # ------------------------------------------------------------------ #
+    def set_target(self, ref: Optional[CadEntityRef]) -> None:
+        """Set the target body reference (the piece to be modified)."""
+        self._target_ref = ref
+        # Keep parameters in sync so the base validate() passes the required
+        # 'target' check.
+        self.parameters["target"] = ref.to_dict() if ref is not None else None
+
+    def add_tool(self, ref: CadEntityRef) -> None:
+        """Add a tool body reference (the piece used for the operation)."""
+        if ref not in self._tool_refs:
+            self._tool_refs.append(ref)
+        self.parameters["tools"] = [t.to_dict() for t in self._tool_refs]
+
+    def clear_tools(self) -> None:
+        self._tool_refs.clear()
+        self.parameters["tools"] = []
+
+    @property
+    def target(self) -> Optional[CadEntityRef]:
+        return self._target_ref
+
+    @property
+    def tools(self) -> List[CadEntityRef]:
+        return list(self._tool_refs)
+
+    def target_body_id(self) -> Optional[str]:
+        """Return the target body's solid id (``solid_<n>``) or its model id."""
+        if self._target_ref is None:
+            return None
+        return self._target_ref.solid_id or self._target_ref.model_id
+
+    def tool_body_ids(self) -> List[str]:
+        """Return the tool body solid ids (falls back to model ids)."""
+        ids = []
+        for ref in self._tool_refs:
+            sid = ref.solid_id if ref.entity_type == EntityType.SOLID else None
+            ids.append(sid or ref.model_id)
+        return ids
+
+    def set_parameter(self, name: str, value: Any) -> None:
+        """Extend the base setter to also handle target / tools shorthand."""
+        if name == "target":
+            if isinstance(value, CadEntityRef):
+                self.set_target(value)
+            elif isinstance(value, str):
+                self.set_target(CadEntityRef.from_solid(value))
+            return
+        if name == "tools":
+            if isinstance(value, (list, tuple)):
+                for v in value:
+                    if isinstance(v, CadEntityRef):
+                        self.add_tool(v)
+                    elif isinstance(v, str):
+                        self.add_tool(CadEntityRef.from_solid(v))
+            elif isinstance(value, CadEntityRef):
+                self.add_tool(value)
+            return
+        if name == "operation":
+            if isinstance(value, BooleanOperation):
+                value = value.value
+        super().set_parameter(name, value)
+
+    def add_selection(self, entity: CadEntityRef) -> None:
+        """Keep selections in sync with the explicit target/tool model.
+
+        The first added selection is treated as the target; any subsequent
+        ones as tools.  This keeps the existing ``selections`` list coherent
+        with the dedicated target/tools fields.
+        """
+        super().add_selection(entity)
+        if self._target_ref is None:
+            self._target_ref = entity
+        else:
+            self.add_tool(entity)
 
     def validate(self) -> bool:
         super().validate()
-        if not self.selections:
+        if self._target_ref is None:
+            self._add_error("A target body must be selected.")
+        if not self._tool_refs:
             self._add_error("At least one tool body must be selected.")
         op = self.parameters.get("operation")
         if op and op not in [e.value for e in BooleanOperation]:
@@ -202,19 +307,24 @@ class BooleanCommand(Command):
         return len(self._validation_errors) == 0
 
     def execute(self) -> CommandResult:
-        """Placeholder: actual execution requires pipeline integration."""
+        """The pipeline layer performs the CadQuery boolean operation.
+
+        ``execute_command`` in the pipeline controller interprets the target /
+        tools and produces the result.  If the command is not valid, a failing
+        ``CommandResult`` is returned so the UI never mutates the model.
+        """
         if not self.validate():
             return CommandResult(
                 success=False,
                 error_message="; ".join(self._validation_errors),
             )
-        # The pipeline layer will perform:
-        #   cadquery boolean operation using the target and tool shapes
-        # For now, return a pending result that the controller can interpret.
         return CommandResult(
             success=True,
-            data={"status": "pending_pipeline_execution", "command": self.to_dict()},
+            data={"status": "ready_for_pipeline_execution", "command": self.to_dict()},
         )
+
+    # Do NOT override to_dict: the base implementation already serialises
+    # parameters + selections; target/tools are derivable from them.
 
 
 # ====================================================================== #

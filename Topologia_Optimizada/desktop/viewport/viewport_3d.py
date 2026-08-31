@@ -1,9 +1,9 @@
 """Viewport3D - the central Qt widget that hosts the GPU-accelerated 3D view.
 
 Composition:  Viewport3D -> Scene -> Renderer -> GPU
-                          -> Camera -> (renderer active camera)
+                          -> CameraController -> (renderer active camera)
                           -> SelectionManager
-                          -> NavigationManager  (Phase 1 architecture)
+                          -> NavigationManager  (profiles drive WHAT to do)
 
 Navigation is driven through VTK interactor observers (so it works regardless of
 how Qt routes mouse events to the embedded window) and follows the standard
@@ -15,11 +15,15 @@ The orbit itself is a free trackball rotation (Onshape-style field motion): the
 camera follows the pointer along a great circle and can reach any orientation
 without being locked to fixed axes.
 
-Architecture integration (Phase 1):
+Architecture integration:
     A ``NavigationManager`` from ``core.navigation`` is created at init time
-    with the default AutoCAD profile.  The existing VTK observer handlers
-    continue to work exactly as before; the NavigationManager is available
-    for the UI to query and swap profiles without touching the viewport.
+    with the default AutoCAD profile.  It only decides WHAT action the user
+    requests (orbit/pan/zoom/select/fit).  The actual camera transformation
+    is performed by the independent ``CameraController``.  The existing VTK
+    observer handlers resolve events through the NavigationManager and execute
+    the resulting action on the CameraController; the NavigationManager is
+    available for the UI to query and swap profiles without touching the
+    viewport or the camera.
 """
 
 from __future__ import annotations
@@ -33,7 +37,7 @@ from vtkmodules.vtkCommonCore import vtkCommand
 from vtkmodules.vtkInteractionStyle import vtkInteractorStyleUser
 
 from desktop.viewport.renderer import Renderer
-from desktop.viewport.camera import Camera, StandardView
+from desktop.viewport.camera import CameraController, StandardView
 from desktop.viewport.scene import Scene
 from desktop.viewport.selection import SelectionManager
 from core.navigation import NavigationManager, InputEvent, MouseButton, ViewportAction
@@ -61,7 +65,10 @@ class Viewport3D(QWidget):
         self.renderer.vtk_renderer.SetRenderWindow(rw)
         rw.AddRenderer(self.renderer.vtk_renderer)
 
-        self.camera = Camera(self.renderer.vtk_renderer.GetActiveCamera())
+        # Independent camera system (CameraController) — how the camera moves.
+        # It is kept separate from NavigationManager, which only decides WHAT
+        # action (orbit/pan/zoom/select/fit) the user is requesting.
+        self.camera = CameraController(self.renderer.vtk_renderer.GetActiveCamera())
         self.scene = Scene(self.renderer, self.camera)
         self.selection = SelectionManager(self.renderer.vtk_renderer)
         self.selection.attach(self.scene)

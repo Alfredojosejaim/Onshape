@@ -14,6 +14,7 @@ from core.geometry import GeometryEngine
 from core.meshing import GmshTet4Mesher, ProvisionalTet4Mesher, MeshResult
 from core.boundary import BoundaryConditionMapper
 from core.models import CADModel, SourceType, SourceReference
+from core.commands import BooleanOperation
 import cadquery as cq
 
 logger = logging.getLogger(__name__)
@@ -242,6 +243,97 @@ class CADService:
         except Exception as exc:
             logger.exception("list_solids failed for model %s", model_id)
             return []
+
+    def get_solid_shape(self, model_id: str, index: int) -> Optional["cq.Shape"]:
+        """Return the B-Rep shape of a single solid body (by index) of a model."""
+        shape = self.get_model_shape(model_id)
+        if shape is None:
+            return None
+        try:
+            solids = list(shape.Solids())
+        except Exception as exc:
+            logger.debug("get_solid_shape: no solids %s", exc)
+            return None
+        if 0 <= index < len(solids):
+            return solids[index]
+        return None
+
+    def boolean_bodies(
+        self,
+        model_id: str,
+        operation: str,
+        target_index: int,
+        tool_indices: List[int],
+        keep_tools: bool = False,
+    ) -> Dict[str, Any]:
+        """Perform a body-level boolean operation on the solids of a model.
+
+        The current model's B-Rep is split into its constituent solids.  The
+        solid at ``target_index`` is the target; the solids at
+        ``tool_indices`` are the tools.  The operation (union/difference/
+        intersection) is applied to the target using each tool.  The result is
+        stored as a new model in the cache and returned.
+
+        ``keep_tools`` controls whether the tool bodies are retained alongside
+        the modified target body in the resulting model:
+
+        * ``keep_tools=True``  -> tools remain available after the operation.
+        * ``keep_tools=False`` -> tools are consumed by the operation.
+
+        Returns a dict with ``{"success", "model_id", "error"}``.  On failure
+        the original model is left untouched.
+        """
+        shape = self.get_model_shape(model_id)
+        if shape is None:
+            return {"success": False, "error": "Model not found in cache."}
+        try:
+            solids = list(shape.Solids())
+        except Exception as exc:
+            logger.exception("boolean_bodies: could not enumerate solids")
+            return {"success": False, "error": f"Could not enumerate solids: {exc}"}
+
+        if not solids:
+            return {"success": False, "error": "The model contains no solid bodies."}
+        if not (0 <= target_index < len(solids)):
+            return {"success": False,
+                    "error": f"Target body index {target_index} out of range."}
+        bad_tools = [i for i in tool_indices if not (0 <= i < len(solids))]
+        if bad_tools:
+            return {"success": False,
+                    "error": f"Tool body index(es) out of range: {bad_tools}"}
+        if target_index in tool_indices:
+            return {"success": False,
+                    "error": "A tool body cannot also be the target body."}
+
+        try:
+            result_solid = solids[target_index]
+            for t_idx in tool_indices:
+                tool = solids[t_idx]
+                if operation == BooleanOperation.UNION.value:
+                    result_solid = result_solid.fuse(tool)
+                elif operation == BooleanOperation.DIFFERENCE.value:
+                    result_solid = result_solid.cut(tool)
+                elif operation == BooleanOperation.INTERSECTION.value:
+                    result_solid = result_solid.intersect(tool)
+                else:
+                    return {"success": False,
+                            "error": f"Unsupported boolean operation: {operation}"}
+
+            # Reassemble the model: the modified target plus every body that is
+            # not a tool (and, if keep_tools, the tools themselves).
+            keep_indices = [i for i in range(len(solids)) if i != target_index]
+            if not keep_tools:
+                keep_indices = [i for i in keep_indices if i not in tool_indices]
+            out_solids = [result_solid] + [solids[i] for i in keep_indices]
+            new_shape = cq.Compound.makeCompound(out_solids)
+
+            new_model_id = self.store_computed_shape(
+                new_shape, model_name=f"Boolean {operation}"
+            )
+            return {"success": True, "model_id": new_model_id}
+        except Exception as exc:
+            logger.exception("boolean_bodies failed")
+            return {"success": False, "error": str(exc)}
 
     def resolve_solid_for_face(self, model_id: str, face_index: int) -> Optional[Dict[str, Any]]:
         """Determine which solid a given face (by global face index) belongs to.

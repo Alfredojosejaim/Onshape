@@ -3,7 +3,7 @@
 **Documento**: Explicación y corrección del problema arquitectónico en `solver_interface.py`  
 **Autor**: Análisis de bloqueo arquitectónico  
 **Fecha**: 2026-08-28  
-**Estado**: IMPLEMENTADO (Fase 1 - Coordinate-based fallback; Fase 2 - gmsh physical groups pendiente; **Fase 3 - Selección geométrica avanzada implementada**)
+**Estado**: IMPLEMENTADO (Fase 1 - Coordinate-based fallback; **Fase 2 - gmsh physical groups implementada**; **Fase 3 - Selección geométrica avanzada implementada**)
 
 ---
 
@@ -115,11 +115,55 @@ Resultado esperado: **Viga cantilever con un extremo fijo, el otro libre**.
 
 ---
 
-## Próximo Paso: Integración con gmsh Physical Groups
+## Integración con gmsh Physical Groups (IMPLEMENTADA)
 
-### Fase 2 - Estrategia Robusta (gmsh)
+### Fase 2 - Estrategia Robusta (gmsh) ✓ Implementada
 
-La solución definitiva requiere crear **grupos físicos en gmsh** antes de mallar:
+El mallador `GmshTet4Mesher` ahora es capaz de crear **grupos físicos** sobre las
+caras (dim=2) y exponer sus nodos. La API acepta un diccionario
+`{nombre: [índices_de_cara]}` en `generate_mesh_from_step` / `generate_adaptive_mesh`
+/ `generate_mesh` (y en `CADService.generate_mesh` / `generate_adaptive_mesh`):
+
+```python
+from core.meshing import GmshTet4Mesher
+
+mesher = GmshTet4Mesher()
+res = mesher.generate_mesh_from_step(
+    "cono.step",
+    target_element_size=5.0,
+    physical_groups={"FixedFace": [0], "LoadFace": [2]},  # caras 0 y 2
+)
+# res.physical_groups == {"FixedFace": [nodos...], "LoadFace": [nodos...]}
+# índices 0-based alineados con res.nodes/res.elements
+```
+
+Los `índices de cara` son las posiciones secuenciales de las superficies
+(`gmsh.model.getEntities(2)`), la misma convención que usa `core.boundary`
+(`resolve_face_index` / `CADFace.id`). Tras el mallado, cada grupo se expone en
+`MeshResult.physical_groups` como lista de índices de nodo (0-based).
+
+La capa Kratos reconstruye los grupos como **SubModelParts** nombrados durante
+`import_mesh_from_core_format` / `import_mesh_from_mesh_result`
+(`_create_submodelparts_from_groups`), y `create_kratos_fea_solver` los propaga
+vía el parámetro `physical_groups`. Una vez en el ModelPart:
+
+```python
+constraint = ConstraintDefinition(
+    constraint_type=ConstraintType.FIXED,
+    boundary_name="FixedFace"   # ← ahora desde gmsh physical groups
+)
+load = LoadDefinition(
+    load_type=LoadType.POINT,
+    submodelpart_name="LoadFace",
+    magnitude=1000.0,
+    direction=[0, 0, -1]
+)
+```
+
+`_apply_constraint_geometrically` / `_apply_load_geometrically` (Estrategia 1)
+resuelven `boundary_name`/`submodelpart_name` con
+`adapter.get_nodes_from_submodelpart` y aplican la condición **exactamente** a
+los nodos de esa cara CAD (sin aproximación por coordenadas).
 
 #### 1. En el código de mallado (`core/meshing.py` → `GmshTet4Mesher`):
 
@@ -146,7 +190,11 @@ gmsh.model.mesh.generate(3)
 gmsh.write("modelo_con_grupos.msh")
 ```
 
-#### 2. Exportar a .mdpa (preserva nombres de grupos):
+*(Referencia del diseño original; la implementación actual crea los grupos de
+forma programática a partir de `physical_groups={nombre: [cara...]}` y no
+requiere exportar a `.msh`)*
+
+#### 2. Exportar a .mdpa (preserva nombres de grupos): *(ruta alternativa, no requerida por la implementación actual)*
 
 ```python
 # Usando KratosMultiphysics.ModelPartIO
@@ -158,23 +206,7 @@ msh_io.ReadModelPart(model_part)
 # - "LoadFace" → model_part.GetSubModelPart("LoadFace")
 ```
 
-#### 3. Usar nombres en ProjectParameters o definiciones de restricciones:
-
-```python
-constraint = ConstraintDefinition(
-    constraint_type=ConstraintType.FIXED,
-    submodelpart_name="FixedFace"  # ← Ahora viene del gmsh
-)
-
-load = LoadDefinition(
-    load_type=LoadType.POINT,
-    submodelpart_name="LoadFace",  # ← Ahora viene del gmsh
-    magnitude=1000.0,
-    direction=[0, 0, -1]
-)
-```
-
-#### 4. Resultado: Selección automática y robusta
+#### 3. Resultado: Selección automática y robusta
 
 ```python
 # En _apply_constraint_geometrically():

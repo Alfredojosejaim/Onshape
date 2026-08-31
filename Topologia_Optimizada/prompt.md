@@ -1,428 +1,602 @@
-MIGRACIÓN A INTERFAZ GRÁFICA DESKTOP NATIVA + VISOR 3D
+FASE 1 — ARQUITECTURA CAD/CAE Y SISTEMA DE FEATURES
 
 ROL
 
-Actúa como un PROGRAMADOR SENIOR ESPECIALISTA EN DESARROLLO DE APLICACIONES DESKTOP, VISUALIZACIÓN 3D, CAD/CAE Y ARQUITECTURA DE SOFTWARE.
+Actúa como PROGRAMADOR SENIOR Y ARQUITECTO DE SOFTWARE especializado en aplicaciones CAD/CAE, geometría computacional, visualización 3D, FEA y optimización.
 
-Trabaja directamente sobre el proyecto existente del repositorio.
+Trabaja directamente sobre el repositorio existente.
 
 NO desarrolles una aplicación desde cero.
 
-Primero AUDITA la implementación actual, comprende su arquitectura y posteriormente realiza la migración necesaria.
+Antes de modificar código, audita la implementación actual y comprende cómo están conectados el desktop, viewport, geometría, selección, pipeline, FEA y optimización.
 
 ---
 
-OBJETIVO
+OBJETIVO DE ESTA FASE
 
-La aplicación actualmente utiliza una interfaz web local para mostrar y controlar el visor 3D.
+Preparar la arquitectura existente para evolucionar desde el actual visor/aplicación de optimización hacia una aplicación CAD/CAE independiente, capaz de incorporar progresivamente operaciones CAD, estudios de ingeniería, optimización estructural y diseño generativo.
 
-El objetivo es reemplazar esa interfaz por una INTERFAZ DESKTOP NATIVA, manteniendo y reutilizando la mayor cantidad posible de la arquitectura existente.
+Esta fase es principalmente arquitectónica y funcional.
 
-La aplicación debe ejecutarse como una aplicación de escritorio y abrir directamente su ventana gráfica.
+NO realizar todavía un rediseño visual de la interfaz.
 
-NO utilizar el navegador como interfaz principal.
-
-La solución debe quedar preparada para evolucionar posteriormente hacia una aplicación CAD/CAE profesional.
+La estética será una fase posterior.
 
 ---
 
-ESTRATEGIA TECNOLÓGICA
+REGLA PRINCIPAL
 
-La aplicación existente está desarrollada principalmente en Python, por lo que Python debe considerarse la tecnología base y debe conservarse siempre que sea técnicamente razonable.
+REUTILIZA TODO LO QUE YA FUNCIONE.
 
-Sin embargo, NO cierres la arquitectura a Python ni a un único lenguaje o framework.
+No reemplaces componentes existentes simplemente para crear una arquitectura nueva.
 
-Primero analiza el proyecto y determina cuál es la solución tecnológica más adecuada para conseguir:
+Antes de modificar algo determina:
 
-- interfaz desktop nativa;
-- viewport 3D acelerado por GPU;
-- navegación CAD fluida;
-- buena integración con la arquitectura existente;
-- mantenibilidad;
-- extensibilidad futura;
-- rendimiento con geometría compleja.
+- qué existe;
+- qué funciona;
+- qué está incompleto;
+- qué es provisional;
+- qué puede reutilizarse;
+- qué necesita ser adaptado;
+- qué realmente debe reemplazarse.
 
-La opción preferida inicialmente es:
-
-Python + PySide6 + tecnología 3D compatible con GPU
-
-Pero puedes utilizar otras tecnologías, frameworks o lenguajes, incluyendo una arquitectura híbrida, si la auditoría demuestra que aportan una ventaja técnica significativa.
-
-Por ejemplo, podría utilizarse un componente especializado en otro lenguaje para el rendering o viewport manteniendo Python como capa principal de aplicación.
-
-NO introduzcas otro lenguaje únicamente por preferencia personal o complejidad innecesaria.
-
-Si decides utilizar una tecnología diferente de Python/PySide6, justifica brevemente la decisión y explica cómo se integra con el proyecto existente.
-
-NO conviertas todo el proyecto a otro lenguaje sin una justificación técnica clara.
-
-NO desarrolles un motor gráfico desde cero.
+No elimines funcionalidades existentes sin verificar sus dependencias.
 
 ---
 
-AUDITORÍA PREVIA OBLIGATORIA
+1. AUDITORÍA
 
-Antes de modificar código:
+Audita como mínimo:
 
-1. Revisa la estructura completa del proyecto.
-2. Identifica el punto de entrada actual.
-3. Identifica la interfaz gráfica actual.
-4. Identifica cómo se crea actualmente el visor 3D.
-5. Identifica qué biblioteca o tecnología gráfica utiliza.
-6. Identifica cómo se cargan los modelos.
-7. Identifica cómo se representa actualmente la geometría.
-8. Identifica los controles de cámara existentes.
-9. Identifica el sistema actual de selección.
-10. Identifica qué componentes pueden reutilizarse.
-11. Identifica qué componentes deben reemplazarse.
-12. Identifica las dependencias gráficas actuales.
-13. Identifica qué partes de la arquitectura dependen actualmente del navegador.
-14. Determina cuál es la estrategia tecnológica más adecuada para la nueva interfaz.
-
-No elimines código antes de comprobar que realmente pertenece a la interfaz que se está reemplazando.
-
----
-
-NUEVA VENTANA PRINCIPAL
-
-Crear una ventana desktop nativa con una estructura similar a una aplicación CAD.
-
-Debe existir:
-
-- barra de menú;
-- barra de herramientas;
-- viewport 3D central;
-- panel lateral izquierdo;
-- panel lateral derecho;
-- barra de estado.
-
-La distribución exacta puede adaptarse si existe una solución arquitectónicamente mejor.
-
-El viewport debe ocupar la mayor parte de la ventana.
-
-Los paneles deben poder redimensionarse.
-
-Siempre debe priorizarse el espacio disponible para visualizar el modelo.
-
----
-
-VIEWPORT 3D
-
-El viewport es el componente principal de esta etapa.
-
-Debe permitir visualizar el modelo 3D de manera fluida y utilizar aceleración mediante GPU.
-
-Implementar:
-
-- órbita;
-- rotación;
-- zoom;
-- pan;
-- ajuste del modelo a pantalla;
-- vista isométrica;
-- vista frontal;
-- vista posterior;
-- vista superior;
-- vista inferior;
-- vista izquierda;
-- vista derecha.
-
-La navegación debe sentirse similar a la de una aplicación CAD.
-
-No desarrolles un sistema de rendering desde cero.
-
-Utiliza una biblioteca o framework 3D adecuado al proyecto.
-
----
-
-VISUALIZACIÓN
-
-Implementar diferentes modos de visualización:
-
-- sombreado;
-- sombreado con aristas;
-- wireframe;
-- transparencia.
-
-Agregar controles para:
-
-- mostrar/ocultar ejes;
-- mostrar/ocultar rejilla;
-- centrar modelo;
-- ajustar cámara.
-
-La representación debe utilizar aceleración gráfica mediante GPU.
-
----
-
-SELECCIÓN
-
-El viewport debe disponer de selección mediante mouse.
-
-Como mínimo debe ser posible:
-
-- seleccionar el modelo;
-- identificar visualmente la selección;
-- deseleccionar.
-
-La arquitectura del sistema de selección debe quedar preparada para poder diferenciar posteriormente entidades geométricas como:
-
-- sólidos;
-- caras;
-- aristas;
-- vértices.
-
-No es necesario implementar todavía herramientas avanzadas de selección.
-
-Lo importante es crear una base sólida y extensible.
-
----
-
-ESCENA 3D
-
-Separar conceptualmente:
-
-- escena;
+- punto de entrada;
+- aplicación desktop;
+- MainWindow;
+- viewport;
 - cámara;
-- geometría;
-- representación visual;
+- renderer;
+- escena;
 - selección;
-- renderer.
+- carga STEP;
+- CadQuery/OCP;
+- tessellation;
+- Gmsh;
+- FEA;
+- optimización;
+- PipelineController;
+- servicios;
+- dependencias;
+- interfaz web/API restante.
 
-Evitar colocar toda la lógica del visor dentro de un único archivo.
+Identifica acoplamientos innecesarios y responsabilidades mal ubicadas.
 
-Una estructura posible sería:
-
-ui/
-    main_window.py
-    panels/
-
-viewport/
-    viewport_3d.py
-    camera.py
-    scene.py
-    renderer.py
-    selection.py
-
-Adapta esta estructura al proyecto existente.
-
-No la copies ciegamente.
-
-Si la arquitectura actual permite una solución mejor, utiliza esa solución.
+Antes de implementar nuevas estructuras, documenta brevemente qué arquitectura existe actualmente y qué modificaciones son realmente necesarias.
 
 ---
 
-RENDERER
+2. MODELO DE DOCUMENTO
 
-La interfaz y la lógica de escena no deben depender directamente de llamadas específicas de la API gráfica repartidas por todo el proyecto.
-
-Centraliza la comunicación con el sistema gráfico.
+Introduce, adapta o prepara una abstracción de documento CAD/CAE.
 
 Conceptualmente:
 
+Document
+├── Models
+├── Features
+├── Studies
+├── Results
+└── Metadata
+
+El documento debe poder representar la evolución del modelo y no solamente el estado final del viewport.
+
+No es necesario desarrollar todavía un sistema completo de persistencia de documentos.
+
+Lo importante es establecer una base extensible.
+
+---
+
+3. FEATURE HISTORY
+
+Preparar una línea de operaciones reproducible.
+
+Conceptualmente:
+
+Document
+   ↓
+Feature 1
+   ↓
+Feature 2
+   ↓
+Feature 3
+   ↓
+Study
+   ↓
+Result
+
+Cada Feature debe representar una operación o transformación del modelo.
+
+Crear una abstracción que permita posteriormente incorporar:
+
+- Boolean;
+- transformación;
+- mirror;
+- pattern;
+- fillet;
+- chamfer;
+- shell;
+- medición;
+- otras operaciones CAD.
+
+NO implementar todas estas operaciones ahora.
+
+Crear únicamente la arquitectura necesaria.
+
+---
+
+4. SISTEMA DE COMMANDS / FEATURES
+
+Separar:
+
+- parámetros;
+- selección;
+- validación;
+- ejecución;
+- resultado.
+
+Conceptualmente:
+
+Command
+├── parameters
+├── selections
+├── validate()
+└── execute()
+
+Ejemplo futuro:
+
+BooleanCommand
+├── operation
+├── target_body
+├── tool_bodies
+├── keep_tools
+├── validate()
+└── execute()
+
+La UI no debe contener la lógica geométrica de la operación.
+
+---
+
+5. SISTEMA DE SELECCIÓN
+
+Conservar y evolucionar el sistema de selección existente.
+
+Prepararlo para distinguir:
+
+- cuerpos/sólidos;
+- caras;
+- aristas;
+- vértices;
+- múltiples entidades.
+
+Una selección debe contener suficiente información para identificar de forma estable la entidad CAD seleccionada.
+
+No depender únicamente del actor gráfico de VTK.
+
+El viewport representa la selección, pero la selección pertenece al modelo CAD.
+
+---
+
+6. SISTEMA DE NAVEGACIÓN
+
+Crear una abstracción "NavigationManager".
+
+Debe permitir posteriormente seleccionar diferentes esquemas de navegación:
+
+- Onshape;
+- AutoCAD;
+- Fusion 360;
+- Blender;
+- otros.
+
+No implementar todavía todos los perfiles si no es necesario.
+
+Crear la arquitectura para que cada perfil traduzca entradas de:
+
+- mouse;
+- rueda;
+- teclado;
+- botones;
+- modificadores;
+
+a acciones internas como:
+
+Orbit
+Pan
+Zoom
+Rotate
+Select
+Fit
+
+El viewport no debe contener lógica específica de un único esquema de navegación.
+
+---
+
+7. ESTUDIOS CAE
+
+Separar el concepto de "Study" del concepto de "Feature".
+
+Un estudio representa un análisis físico o de ingeniería.
+
+Conceptualmente:
+
+Study
+├── geometry
+├── material
+├── loads
+├── constraints
+├── objectives
+├── solver
+└── results
+
+Preparar la arquitectura para:
+
+- resistencia;
+- elasticidad;
+- deformación;
+- tensión;
+- factor de seguridad;
+- análisis posteriores.
+
+No es necesario implementar todos los estudios ahora.
+
+---
+
+8. OPTIMIZACIÓN ESTRUCTURAL
+
+Mantener la optimización estructural existente como un tipo específico de estudio.
+
+Conceptualmente:
+
+StructuralOptimizationStudy
+├── design_region
+├── loads
+├── constraints
+├── material
+├── objective
+├── volume_fraction
+├── solver
+└── result
+
+No romper la implementación SIMP existente.
+
+Adaptarla progresivamente a esta arquitectura.
+
+---
+
+9. DISEÑO GENERATIVO
+
+Preparar desde ahora una arquitectura diferente para el diseño generativo.
+
+NO asumir que diseño generativo significa simplemente ejecutar SIMP sobre una pieza existente.
+
+Debe soportar dos escenarios:
+
+ESCENARIO A — Pieza existente
+
+El usuario proporciona una geometría CAD existente.
+
+CAD existente
+      ↓
+Condiciones físicas
+      ↓
+Espacio de diseño
+      ↓
+Optimización
+      ↓
+Geometría optimizada
+
+ESCENARIO B — Conexión entre piezas
+
+El usuario proporciona, por ejemplo:
+
+Pieza A
+Pieza B
+
+y define que ambas deben quedar conectadas físicamente.
+
+El sistema debe poder crear material/geometría en el espacio disponible entre ellas y optimizar dicha conexión.
+
+Conceptualmente:
+
+Pieza A
+   │
+   │
+   │ ← geometría generada
+   │
+Pieza B
+
+La arquitectura debe contemplar:
+
+GenerativeDesignStudy
+├── input_geometry
+├── connection_targets
+├── design_space
+├── loads
+├── constraints
+├── objectives
+├── geometry_generation
+├── optimization
+└── generated_cad
+
+La generación de geometría y la optimización deben ser componentes diferenciables.
+
+---
+
+10. CAD GENERADO
+
+El diseño generativo debe quedar preparado para producir geometría CAD, no únicamente una malla visual.
+
+La arquitectura futura debe permitir:
+
+Condiciones
+     ↓
+Generación / optimización
+     ↓
+Representación volumétrica o malla
+     ↓
+Reconstrucción geométrica
+     ↓
+CAD/B-Rep
+     ↓
+STEP
+
+No es necesario implementar todavía el algoritmo completo de reconstrucción CAD.
+
+Pero NO diseñes la arquitectura suponiendo que el resultado final será únicamente STL o una malla.
+
+El resultado generativo debe poder convertirse posteriormente en una geometría CAD utilizable.
+
+---
+
+11. PIPELINE
+
+Adaptar el "PipelineController" existente para que funcione como coordinador de operaciones y estudios, evitando que concentre toda la lógica.
+
+Separar conceptualmente:
+
 UI
  ↓
-Viewport
+Commands / Studies
  ↓
-Scene
+Application Services
  ↓
-Renderer
+Core
  ↓
-GPU
+Solvers / Geometry / Meshing
 
-La implementación concreta puede variar según la tecnología seleccionada.
+Las operaciones pesadas no deben bloquear la interfaz.
 
-Esto debe permitir evolucionar posteriormente el sistema gráfico sin tener que reescribir toda la interfaz.
-
----
-
-GEOMETRÍA
-
-Conserva el mecanismo existente para cargar los modelos siempre que sea correcto.
-
-Primero determina qué formato utiliza actualmente el proyecto.
-
-Si actualmente trabaja con STEP, STL u otro formato, adapta el mecanismo existente al nuevo viewport.
-
-No reemplaces el sistema de geometría simplemente para cambiar la interfaz.
-
-El objetivo de esta etapa es cambiar la PRESENTACIÓN E INTERACCIÓN GRÁFICA, no rehacer innecesariamente el procesamiento geométrico.
+Reutilizar los mecanismos existentes de ejecución en segundo plano cuando sean adecuados.
 
 ---
 
-RENDIMIENTO
+12. INTERFAZ ACTUAL
 
-El viewport debe estar preparado para trabajar posteriormente con geometría y mallas de mayor complejidad.
+NO rediseñar visualmente la interfaz en esta fase.
 
-Evita:
+No cambiar todavía:
 
-- reconstruir toda la escena innecesariamente;
-- recalcular geometría durante cada movimiento de cámara;
-- duplicar objetos sin necesidad;
-- bloquear la interfaz;
-- realizar operaciones pesadas en eventos de mouse.
+- colores;
+- iconografía;
+- estilo visual;
+- dimensiones;
+- tema;
+- estética.
 
-La navegación de cámara debe mantenerse fluida.
+Sí se permite modificar la estructura interna necesaria para soportar:
 
-Las operaciones pesadas deberán quedar preparadas para ejecutarse fuera del hilo principal cuando corresponda.
-
----
-
-INTERFAZ
-
-El diseño debe ser:
-
-- profesional;
-- limpio;
-- técnico;
-- moderno;
-- sobrio;
-- orientado a CAD.
-
-Evita una apariencia de página web.
-
-Debe sentirse como una aplicación de ingeniería.
-
-El viewport debe ser visualmente dominante.
-
-Los paneles laterales deben utilizar componentes nativos o apropiados para una aplicación desktop.
-
----
-
-RESPONSIVIDAD
-
-La ventana debe poder:
-
-- maximizarse;
-- minimizarse;
-- redimensionarse;
-- cambiar de resolución;
-- utilizar diferentes tamaños de pantalla.
-
-Los paneles deben adaptarse correctamente.
-
-El viewport debe aprovechar automáticamente el espacio disponible.
-
----
-
-ESTRUCTURA DEL CÓDIGO
-
-Mantén una separación clara entre:
-
-- interfaz;
-- viewport;
-- cámara;
-- escena;
-- renderer;
+- árbol de modelo;
+- historial de Features;
 - selección;
-- carga/representación del modelo.
+- comandos;
+- estudios;
+- propiedades.
 
-No crear un archivo monolítico con toda la aplicación.
-
-Utiliza clases y responsabilidades claramente separadas.
-
-Mantén el código limpio, legible y documentado cuando sea necesario.
-
-Si se utiliza más de un lenguaje, define claramente las responsabilidades y el mecanismo de comunicación entre componentes.
-
-Evita introducir una arquitectura híbrida innecesariamente compleja.
+La mejora visual se realizará posteriormente.
 
 ---
 
-MIGRACIÓN
+13. ÁRBOL DE MODELO Y TIMELINE
 
-No elimines inmediatamente la interfaz web actual.
+Preparar conceptualmente el actual "DesignTreePanel" y "TimelinePanel" para evolucionar desde el flujo fijo de optimización hacia:
 
-Primero determina qué partes son exclusivamente gráficas y cuáles contienen lógica reutilizable.
+ÁRBOL
 
-Reutiliza todo aquello que siga siendo útil.
+Modelo
+├── Cuerpos
+├── Operaciones
+├── Estudios
+└── Resultados
 
-Una vez comprobado que la nueva interfaz funciona correctamente, elimina únicamente los componentes web que hayan quedado definitivamente obsoletos.
+y:
+
+TIMELINE
+
+Importar STEP
+      ↓
+Boolean
+      ↓
+Otra Feature
+      ↓
+Estudio
+      ↓
+Resultado
+
+No implementar todavía todas las operaciones.
+
+La arquitectura debe permitir agregarlas sin rehacer la interfaz.
 
 ---
 
-EJECUCIÓN
+14. BARRA SUPERIOR
 
-Al ejecutar la aplicación debe abrirse directamente la ventana desktop.
+Preparar la arquitectura para que posteriormente la barra superior pueda organizar las funciones por categorías, por ejemplo:
 
-No debe ser necesario abrir manualmente un navegador.
+Modelo
+Optimización
+Pruebas de rendimiento
+Visualización
+Herramientas
 
-Conserva el punto de entrada actual siempre que sea apropiado.
+Dentro de Optimización:
 
-Por ejemplo:
+Optimización estructural
+Diseño generativo
 
-python main.py
+Dentro de Pruebas:
 
-Si la arquitectura resultante requiere otro mecanismo de ejecución, utiliza el necesario y documenta claramente cómo iniciar la aplicación.
+Resistencia
+Elasticidad
+Deformación
+...
+
+No es necesario realizar todavía el rediseño visual de esta barra.
+
+Preparar únicamente las acciones y comandos necesarios para que pueda implementarse posteriormente.
 
 ---
 
-VALIDACIÓN
+15. BOOLEANOS
 
-Antes de finalizar prueba obligatoriamente:
+Como primera Feature CAD futura, preparar la arquitectura para:
 
-1. Inicio de la aplicación.
-2. Apertura de la ventana principal.
-3. Visualización del viewport.
-4. Carga de un modelo existente.
-5. Rotación orbital.
-6. Zoom.
-7. Pan.
-8. Vistas predefinidas.
-9. Ajuste automático del modelo.
-10. Wireframe.
-11. Sombreado.
-12. Sombreado con aristas.
-13. Transparencia.
-14. Mostrar/ocultar ejes.
-15. Mostrar/ocultar rejilla.
-16. Selección.
-17. Deselección.
-18. Redimensionamiento de ventana.
-19. Redimensionamiento de paneles.
-20. Cierre correcto de la aplicación.
+Boolean
 
-Corrige los errores encontrados antes de finalizar.
+Operación:
+- Unión
+- Diferencia
+- Intersección
+
+Pieza principal:
+[ selección ]
+
+Piezas herramienta:
+[ selección múltiple ]
+
+☑ Conservar herramientas
+
+No implementar la operación si requiere modificar demasiadas capas en esta fase.
+
+Primero asegúrate de que el sistema de selección, comandos, parámetros, historial y ejecución puede soportarla correctamente.
+
+---
+
+16. COMPATIBILIDAD TECNOLÓGICA
+
+Python continúa siendo la base actual del proyecto.
+
+No conviertas todo el proyecto a otro lenguaje.
+
+Sin embargo, no cierres la arquitectura a Python de forma artificial.
+
+Si una parte futura requiere una tecnología especializada para:
+
+- rendering;
+- geometría;
+- generación de malla;
+- solver;
+- reconstrucción CAD;
+
+podrá evaluarse una arquitectura híbrida si existe una justificación técnica real.
+
+No introducir tecnologías adicionales sin necesidad.
+
+---
+
+17. VALIDACIÓN
+
+Después de realizar los cambios verifica como mínimo:
+
+1. La aplicación desktop inicia correctamente.
+2. El viewport continúa funcionando.
+3. Los modelos STEP continúan cargándose.
+4. La tessellation continúa funcionando.
+5. La selección existente continúa funcionando.
+6. El sistema de cámara continúa funcionando.
+7. El pipeline existente continúa funcionando.
+8. El mallado continúa funcionando.
+9. La FEA existente no se rompe.
+10. La optimización SIMP existente no se rompe.
+11. Las operaciones pesadas no bloquean innecesariamente la UI.
+12. La nueva arquitectura permite representar Features y Studies.
+13. El código no introduce dependencias circulares.
+14. No quedan funcionalidades existentes inutilizadas.
+
+Corrige los errores encontrados.
 
 ---
 
 REGLAS
 
-NO conviertas Python a otro lenguaje sin una justificación técnica.
+NO rediseñar todavía la interfaz visual.
 
-NO cierres la arquitectura exclusivamente a Python si otra tecnología resulta claramente más adecuada para una parte específica del sistema.
+NO eliminar la implementación existente sin justificarlo.
 
-NO desarrolles un motor gráfico desde cero.
+NO reescribir el proyecto desde cero.
 
-NO rehagas innecesariamente el procesamiento de geometría.
+NO reemplazar VTK/PySide6 simplemente por preferencia personal.
 
-NO elimines funcionalidades existentes sin comprobar su dependencia.
+NO convertir Python a otro lenguaje.
 
-NO implementes funcionalidades que no sean necesarias para esta etapa.
+NO cerrar la puerta a arquitecturas híbridas justificadas técnicamente.
 
-NO introduzcas tecnologías adicionales sin una necesidad técnica concreta.
+NO implementar todas las funciones CAD ahora.
 
-Prioriza una base gráfica sólida, limpia, extensible y preparada para evolucionar hacia una aplicación CAD/CAE profesional.
+NO implementar todavía un sistema completo de diseño generativo.
+
+La prioridad de esta fase es construir una arquitectura que permita implementar esas funciones correctamente después.
 
 ---
 
 RESULTADO FINAL
 
-Al finalizar, la aplicación debe disponer de una interfaz desktop nativa con un viewport 3D acelerado por GPU que permita navegar e inspeccionar el modelo de forma similar a una aplicación CAD.
+Al finalizar, el proyecto debe conservar sus funcionalidades actuales y disponer de una base arquitectónica preparada para evolucionar hacia:
 
-La tecnología final debe ser la que resulte técnicamente más adecuada después de auditar el proyecto, priorizando la reutilización de Python y de los componentes existentes.
+CAD
+│
+├── Modelado
+├── Features
+├── Selección
+├── Historial
+│
+CAE
+│
+├── Estudios
+├── Materiales
+├── Cargas
+├── Restricciones
+├── FEA
+│
+Optimización
+│
+├── Estructural
+└── Generativa
+      │
+      ├── Geometría existente
+      └── Generación de geometría
+             ↓
+          CAD generado
 
-Entrega finalmente un informe breve indicando:
+Entrega al finalizar un informe breve indicando:
 
-- tecnología gráfica seleccionada;
-- justificación de la elección;
-- arquitectura utilizada;
+- arquitectura encontrada;
+- cambios realizados;
 - archivos creados;
 - archivos modificados;
 - archivos eliminados;
-- dependencias agregadas;
 - componentes reutilizados;
 - componentes reemplazados;
-- cómo iniciar la aplicación;
-- pruebas realizadas;
-- problemas pendientes.
+- nuevas abstracciones creadas;
+- dependencias agregadas;
+- funcionalidades verificadas;
+- problemas encontrados;
+- problemas pendientes;
+- recomendaciones para la siguiente fase.

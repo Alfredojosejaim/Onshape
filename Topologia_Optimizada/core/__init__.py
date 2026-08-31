@@ -44,6 +44,14 @@ from core.study import (
     Study,
 )
 from core.solver_interface import TopOptSolver, run_topology_optimization
+from core.license import (
+    LicenseConfig,
+    LicenseManager,
+    LicenseServerProtocol,
+    LicenseState,
+    NoOpLicenseServer,
+)
+from core.user_preferences import UserPreferences
 
 __all__ = [
     "BoundingBox3D",
@@ -85,4 +93,10 @@ __all__ = [
     "Study",
     "TopOptSolver",
     "run_topology_optimization",
+    "LicenseState",
+    "LicenseServerProtocol",
+    "LicenseConfig",
+    "LicenseManager",
+    "NoOpLicenseServer",
+    "UserPreferences",
 ]

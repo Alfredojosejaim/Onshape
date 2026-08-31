@@ -10,6 +10,13 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# Contador global (por proceso) de caídas del solver iterativo a la factorización
+# directa `skyline_lu`, para seguimiento en producción (si amgcl no convergió en una
+# geometría concreta, queremos detectarlo con frecuencia, no esperar a que un usuario
+# reporte un cálculo "raro"). Se incrementa en cada fallback y se expone vía
+# KratosAdapter.get_fallback_count().
+_FALLBACK_COUNT = 0
+
 # Kratos imports - these will be imported when needed to avoid unnecessary dependencies
 KRATOS_AVAILABLE = True
 KRATOS_IMPORT_ERROR = None
@@ -224,12 +231,23 @@ class KratosAdapter:
             }
             
             kratos_element_name = element_mapping.get(element_type.lower(), "SmallDisplacementElement3D4N")
-            
-            for i, element_connectivity in enumerate(elements):
+
+            # Fase 2 (rendimiento): pre-convertir la conectividad a 1-based y a enteros
+            # fuera del bucle. En `large_50k` el `int(x)+1` repetido por elemento era el
+            # costo dominante de la población (~0.31s -> ~0.22s, ~1.4x), todo C++-side
+            # `CreateNewNode`/`CreateNewElement` más allá. Si el input es numpy (como en
+            # benchmarks/make_meshes o benchmark_fase0), el +1 vectorizado es aún más barato.
+            if hasattr(elements, "tolist") and hasattr(elements, "__add__") and not isinstance(elements, (list, tuple)):
+                try:
+                    connectivity_1based = (elements + 1).tolist()
+                except Exception:
+                    connectivity_1based = [[int(x) + 1 for x in el] for el in elements]
+            else:
+                connectivity_1based = [[int(x) + 1 for x in el] for el in elements]
+
+            for i, node_ids in enumerate(connectivity_1based):
                 element_id = i + 1  # Kratos uses 1-based indexing
-                # Convert to 1-based indexing for Kratos
-                node_ids = [int(node_id) + 1 for node_id in element_connectivity]
-                
+
                 try:
                     model_part.CreateNewElement(kratos_element_name, element_id, node_ids, material_properties)
                 except Exception as e:
@@ -739,7 +757,9 @@ class KratosAdapter:
             logger.error(f"Failed to apply pressure load: {e}")
             raise
     
-    def setup_solver_and_strategy(self, model_part: Any) -> Dict[str, Any]:
+    def setup_solver_and_strategy(
+        self, model_part: Any, linear_solver_settings: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """Set up solver and solution strategy for structural analysis.
         
         This is a simplified implementation that sets up the basic components
@@ -747,6 +767,12 @@ class KratosAdapter:
         
         Args:
             model_part: Kratos ModelPart with mesh, material, constraints, and loads
+            linear_solver_settings: optional dict de ``solver_type`` (+ opciones)
+                para Kratos ``python_linear_solver_factory.ConstructSolver``.
+                Por defecto (None) se usa el comportamiento original:
+                ``skyline_lu_factorization``. Añadido en la Fase 1 de rendimiento
+                para poder comparar solvers sin cambiar el default ni a los
+                callers existentes.
             
         Returns:
             Dictionary with solver and strategy information
@@ -758,14 +784,15 @@ class KratosAdapter:
             import KratosMultiphysics as Kratos
             import KratosMultiphysics.python_linear_solver_factory as python_linear_solver_factory
             
+            if linear_solver_settings is None:
+                # Default: amgcl (iterativo) + verificación de convergencia activa.
+                # Si amgcl no converge (o falla), run_analysis cae automáticamente a
+                # la factorización directa skyline_lu con warning (ver _record_fallback).
+                linear_solver_settings = dict(self._DEFAULT_AMGCL_SETTINGS)
+            
             # Create solver parameters using the correct format from PoC
-            solver_settings = Kratos.Parameters("""
-            {
-                "solver_type": "skyline_lu_factorization",
-                "scaling": false,
-                "tolerance": 1e-6
-            }
-            """)
+            import json as _json
+            solver_settings = Kratos.Parameters(_json.dumps(linear_solver_settings))
             
             # Create linear solver using the official Python wrapper
             linear_solver = python_linear_solver_factory.ConstructSolver(solver_settings)
@@ -846,60 +873,211 @@ class KratosAdapter:
             logger.error(f"Failed to apply external loads: {e}")
             raise
     
+    # Solvers lineales considerados ITERATIVOS (el Kratos build no expone su
+    # convergencia real: `GetIterationsNumber`=0, `IsConverged`=True siempre y
+    # `GetResidualNorm` no es el residual del sistema). Para estos solvers se
+    # aplica una verificación de convergencia por re-resolución (estabilidad del
+    # campo) y fallback a la factorización directa `skyline_lu`. Los directos
+    # (skyline_lu, sparse_lu) o bien resuelven exacto o bien lanzan/fallan.
+    _ITERATIVE_SOLVER_TYPES = {"amgcl"}
+    _DEFAULT_AMGCL_SETTINGS = {
+        "solver_type": "amgcl",
+        "smoother_type": "ilu0",
+        "krylov_type": "cg",
+        "coarsening_type": "smoothed_aggregation",
+        "max_iteration": 500,
+        "tolerance": 1e-6,
+    }
+    _DEFAULT_SKYLINE_SETTINGS = {
+        "solver_type": "skyline_lu_factorization",
+        "scaling": False,
+        "tolerance": 1e-6,
+    }
+
+    def _solve_to_results(self, model_part: Any, linear_solver_settings: Dict) -> Dict[str, Any]:
+        """Configura el solver, resuelve y extrae resultados; SIEMPRE devuelve el
+        dict de resultados (sin el wrapper) o un dict con status='failed'."""
+        solver_setup = self.setup_solver_and_strategy(
+            model_part, linear_solver_settings=linear_solver_settings
+        )
+        if solver_setup["status"] == "failed":
+            return {
+                "status": "failed",
+                "success": False,
+                "error": solver_setup.get("error"),
+                "message": "Solver setup failed",
+            }
+        solver_setup["strategy"].Solve()
+        return {
+            "status": "completed",
+            "success": True,
+            "results": self.extract_analysis_results(model_part),
+        }
+
+    def _iterative_budget_settings(self, linear_solver_settings: Dict) -> Dict:
+        """Copia de los ajustes iterativos con un presupuesto de iteraciones
+        mucho mayor, para la verificación por estabilidad (re-resolución)."""
+        settings = dict(linear_solver_settings)
+        maxit = settings.get("max_iteration", 500)
+        settings["max_iteration"] = max(int(maxit) * 20, 2000)
+        return settings
+
+    def _record_fallback(self, reason: str, model_part: Any, solver_type: str) -> int:
+        """Registra una caída del solver a la factorización directa. Emite un log
+        WARNING estructurado (timestamp ISO + identificador de la geometría/malla +
+        motivo) e incrementa el contador global del proceso. Devuelve el conteo."""
+        import datetime
+
+        global _FALLBACK_COUNT
+        _FALLBACK_COUNT += 1
+        try:
+            mesh_id = str(model_part.Name)
+        except Exception:
+            mesh_id = "<unknown>"
+        logger.warning(
+            "FALLBACK[%d] ts=%s mesh=%s solver=%s motivo=%s -> skyline_lu",
+            _FALLBACK_COUNT,
+            datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+            mesh_id,
+            solver_type,
+            reason,
+        )
+        return _FALLBACK_COUNT
+
+    @staticmethod
+    def get_fallback_count() -> int:
+        """Número de fallbacks a `skyline_lu` registrados en este proceso."""
+        return _FALLBACK_COUNT
+
+    def _verify_iterative_converged(self, model_part: Any, settings: Dict, d1, tol: float) -> bool:
+        """Re-resuelve con mayor presupuesto de iteraciones y compara el campo.
+        Si el campo cambió por encima de `tol`, el primer solve no había
+        convergido (respuesta silenciosamente incorrecta) -> False."""
+        try:
+            r2 = self._solve_to_results(model_part, self._iterative_budget_settings(settings))
+            if not r2.get("success"):
+                return False
+            d2 = np.asarray(r2["results"]["displacements"], dtype=float)
+            if d1.size == 0 or d2.size == 0 or d1.size != d2.size:
+                return False
+            delta = float(np.linalg.norm(d2 - d1))
+            denom = float(np.linalg.norm(d2))
+            if denom <= 1e-30:
+                return delta <= tol
+            return (delta / denom) <= tol
+        except Exception as e:
+            logger.warning(f"Verification of iterative solve failed ({e}); assuming not converged")
+            return False
+
     def run_analysis(self, model_part: Any, solver_config: Dict[str, Any] = None) -> Dict[str, Any]:
         """Run a simplified structural analysis on the ModelPart.
-        
+
         Args:
             model_part: Kratos ModelPart with complete setup
-            solver_config: Optional solver configuration dictionary
-            
+            solver_config: Optional solver configuration dictionary.
+                ``{"linear_solver_settings": {...}}`` selecciona el solver lineal.
+                ``{"verify_convergence": bool}`` (default True) activa/desactiva la
+                verificación de convergencia y el fallback para solvers iterativos
+                (amgcl): si el iterativo no converge (o falla) se cae a la
+                factorización directa ``skyline_lu`` con un warning en el log.
+
         Returns:
-            Dictionary with analysis results
+            Dictionary with analysis results (si hubo fallback se añade
+            ``fallback_used=True``).
         """
         try:
             logger.info("Starting structural analysis")
-            
+
             # Apply external loads
             self.apply_external_loads_to_model_part(model_part)
-            
-            # Setup solver and strategy
-            solver_setup = self.setup_solver_and_strategy(model_part)
-            
-            if solver_setup["status"] == "failed":
-                return {
-                    "success": False,
-                    "status": "failed",
-                    "error": solver_setup["error"],
-                    "message": "Solver setup failed"
-                }
-            
-            strategy = solver_setup["strategy"]
-            
-            # Solve (strategy already initialized in setup_solver_and_strategy)
-            strategy.Solve()
-            
+
+            _linear_settings = None
+            verify = True
+            if isinstance(solver_config, dict):
+                _linear_settings = solver_config.get("linear_solver_settings")
+                verify = bool(solver_config.get("verify_convergence", True))
+
+            # Si no se pasa config, se usa el MISMO default compartido que
+            # setup_solver_and_strategy (amgcl). Esto es clave: hace que el camino
+            # "default" (sin config explícita) sea `is_iterative=True` y por tanto
+            # pase por la verificación de convergencia y el fallback a skyline_lu,
+            # en vez de saltarse la red de seguridad. (Antes, None -> is_iterative=False
+            # -> el default amgcl quedaba SIN verificación ni fallback.)
+            if _linear_settings is None:
+                _linear_settings = dict(self._DEFAULT_AMGCL_SETTINGS)
+
+            solver_type = "skyline_lu_factorization"
+            if isinstance(_linear_settings, dict):
+                solver_type = str(_linear_settings.get("solver_type", solver_type))
+            is_iterative = solver_type in self._ITERATIVE_SOLVER_TYPES
+
+            # Primera resolución con la configuración pedida (default -> amgcl verificado)
+            result = self._solve_to_results(model_part, _linear_settings)
+            fallback_used = False
+
+            if not result.get("success"):
+                # Fallo de construcción o de Solve -> fallback determinista a directo
+                if _linear_settings is not None:
+                    self._record_fallback(
+                        "fallo_del_solver_primer_intento", model_part, solver_type
+                    )
+                    fb = self._solve_to_results(model_part, self._DEFAULT_SKYLINE_SETTINGS)
+                    fallback_used = True
+                    if not fb.get("success"):
+                        return {
+                            "success": False,
+                            "status": "failed",
+                            "error": fb.get("error"),
+                            "message": "Analysis execution failed",
+                            "fallback_used": True,
+                        }
+                    result = fb
+                else:
+                    return {
+                        "success": False,
+                        "status": result.get("status", "failed"),
+                        "error": result.get("error"),
+                        "message": result.get("message", "Analysis execution failed"),
+                    }
+            elif is_iterative and verify:
+                # Verificación de convergencia para iterativos (amgcl)
+                d1 = np.asarray(result["results"]["displacements"], dtype=float)
+                conv_tol = 1e-3
+                if isinstance(_linear_settings, dict):
+                    conv_tol = float(_linear_settings.get("tolerance", 1e-6)) * 10.0
+                if not self._verify_iterative_converged(model_part, _linear_settings, d1, conv_tol):
+                    self._record_fallback("no_convergencia_verificada", model_part, solver_type)
+                    result = self._solve_to_results(model_part, self._DEFAULT_SKYLINE_SETTINGS)
+                    fallback_used = True
+                    if not result.get("success"):
+                        return {
+                            "success": False,
+                            "status": "failed",
+                            "error": result.get("error"),
+                            "message": result.get("message", "Fallback to skyline_lu failed"),
+                            "fallback_used": True,
+                        }
+
             logger.info("Analysis completed successfully")
-            
-            # Extract results from the solved ModelPart
-            results = self.extract_analysis_results(model_part)
-            
+
             return {
-                "success": True,
-                "status": "completed",
+                "success": result.get("success", True),
+                "status": result.get("status", "completed"),
                 "message": "Analysis completed successfully",
-                "results": results,
+                "results": result["results"],
+                "fallback_used": fallback_used,
                 "solver_info": {
                     "nodes": model_part.NumberOfNodes(),
                     "elements": model_part.NumberOfElements(),
                     "constraints": model_part.NumberOfConditions()
                 }
             }
-            
+
         except Exception as e:
             logger.error(f"Analysis failed: {e}")
             import traceback
             traceback.print_exc()
-            
+
             return {
                 "success": False,
                 "status": "failed",

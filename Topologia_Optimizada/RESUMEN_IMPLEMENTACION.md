@@ -782,3 +782,597 @@ entorno Kratos disponible.
 
 ---
 
+# INTERVENCIÓN — FASE 0 DE RENDIMIENTO: BASELINE DEL PIPELINE FEA REAL
+
+## Información General
+
+**Fecha:** 2026-08-30
+**Objetivo:** instrumentar el pipeline real de FEA para disponer de un *baseline* medible
+(mallas de referencia, tiempos por etapa y perfilado) antes de decidir cualquier optimización.
+**Resultado: COMPLETADO** (para el alcance realista de la Fase 0). Ver abajo «Conclusión del
+plan original».
+
+## Advertencia metodológica — desajuste entre el plan de rendimiento y el repo real
+
+El plan de optimización de rendimiento que motivó esta intervención partía del supuesto de que
+existe una implementación FEA/TopOpt en NumPy+SciPy puro:
+
+- `core/fea.py` con `assemble_global_stiffness()`, `compute_element_results()`,
+  `_base_stiffnesses()`, `element_stiffness()`, `apply_bc_and_solve()` y un loop SIMP propio;
+- `core/topopt.py`, `desktop/viewport/` y `vtk.util.numpy_support`;
+- un solver lineal Python (`scipy.sparse.linalg.spsolve`) y Fases 1–5 que vectorizan/reescriben
+  ese numérico.
+
+**Esa implementación NO existe en el repositorio.** La auditoría real (metodología §7) mostró:
+
+| Supuesto del plan | Realidad del repo |
+|---|---|
+| `core/fea.py` (ensamblaje NumPy) | No existe. El FEA lo ejecuta **Kratos Multiphysics** (C++ nativo) vía `core/kratos_adapter.py`. |
+| `core/topopt.py` (SIMP propio) | No existe. `TopOptSolver` (`topopt_solver.py` / `core/solver_interface.py`) es un *wrapper* que **NO ejecuta SIMP**; exige un `fea_solver` externo. |
+| `desktop/viewport/` (NumPy→VTK) | No existe. |
+| `scipy.sparse.linalg.spsolve` | No se usa en ningún módulo. |
+| `GmshTet4Mesher` | **Sí existe** (`core/meshing.py`). Único componente coincidente con el plan. |
+
+En consecuencia, las Fases 1–4 del plan original (vectorización NumPy, cambio de solver lineal,
+serialización VTK/msgpack, Numba/pybind11) **no aplican** al no existir numérico propio en
+Python sobre el cual actuar; el cuello de botella de cómputo vive dentro del motor C++ de Kratos.
+Siguiendo la regla de conflicto de metodología (§3) se consultó al usuario y se acordó ejecutar
+**solo la Fase 0 realista**: crear mallas de referencia y un benchmark del pipeline real con
+`cProfile`/`tracemalloc` como baseline, sin tocar optimizaciones de fases posteriores que no
+aplican.
+
+## Entregables Fase 0
+
+### 1. Mallas de referencia (`benchmarks/meshes/`)
+
+Generadas con `GmshTet4Mesher.generate_mesh_from_step` sobre el **STEP real** `cono.step`,
+guardadas como `.npz` (arrays NumPy `nodes` Nx3 y `elements` Mx4) por `benchmarks/make_meshes.py`:
+
+| Malla | `target_element_size` | Nodos | Elementos |
+|---|---|---|---|
+| `small_500` | 11.50 | 206 | 643 |
+| `medium_5k` | 5.20 | 1 358 | 5 778 |
+| `large_50k` | 2.50 | 9 316 | 47 611 |
+
+El tamaño de elemento Gmsh fue calibrado por barrido para aproximar 500 / 5.000 / 50.000
+elementos. Los conteos reales quedan registrados en `benchmarks/meshes/manifest.json`.
+
+### 2. Script de benchmark (`benchmarks/benchmark_fase0.py`)
+
+Mide por separado, sobre cada malla de referencia, el tiempo de las etapas reales del pipeline:
+
+- creación de `ModelPart` + variables nodales;
+- **importación de la malla** a Kratos (creación de nodos y elementos);
+- configuración de material + DOFs;
+- aplicación de restricciones y cargas (selección geométrica);
+- **setup del solver + `strategy.Solve()` + extracción de resultados**;
+- tiempo total de una corrida FEA completa con `KratosAdapter`/`solver_interface`.
+
+Además registra **memoria pico** con `tracemalloc` y soporta `--profile` (cProfile).
+
+Se evita re-medir el mallado Gmsh dentro de la corrida FEA: las mallas se generan previamente y
+se reutilizan, aislando el costo del solver.
+
+### 3. Baseline (`benchmarks/results/`)
+
+Ejecutado completo con las 3 mallas en el entorno `.venv` (Python 3.12, numpy 2.5.2, scipy 1.18.1,
+Kratos 10.4.3, 12 hilos OpenMP):
+
+| Etapa (s) | small_500 | medium_5k | large_50k |
+|---|---|---|---|
+| ModelPart + variables | 0.0002 | 0.0002 | 0.0002 |
+| Importación de malla | 0.0149 | 0.2399 | 1.5074 |
+| Material + DOFs | 0.0051 | 0.0374 | 0.2876 |
+| Aplicación de BCs | 0.0117 | 0.0743 | 0.4582 |
+| **Solve + extracción de resultados** | **0.1220** | **0.5851** | **4.1794** |
+| **TOTAL corrida FEA** | **0.1539** | **0.9369** | **6.4328** |
+
+Todos los runs terminaron en `success=True`. Archivos:
+
+- `benchmarks/results/benchmark_fase0_baseline.json` — baseline oficial de tiempos.
+- `benchmarks/results/benchmark_fase0_medium_5k.prof` + `.txt` — perfil `cProfile` de la malla mediana.
+
+### 4. Perfilado `cProfile` — hallazgo técnico clave
+
+El `cProfile` de la malla mediana solo recoge **~0.03 s de actividad Python** de una corrida de
+~0.94 s. Los primeros hotspots Python son menores y de conversión/extracción (`.tolist()`, list
+`.append`, `abs`, `max` en `extract_analysis_results`). El grueso del tiempo (`solve_and_extract`
+~0.59 s en la mediana) ocurre **dentro del código C++ de Kratos**, que `cProfile` no puede
+ver. Conclusión directa: **el cuello de botella real del pipeline no es numérico Python sino el
+motor Kratos C++** (solver + loops Python→C++ de importación de nodos/elementos).
+
+### 5. Memoria pico (`tracemalloc`) — limitación registrada
+
+Los picos reportados por `tracemalloc` (small_500 ≈ 85 MB, medium_5k ≈ 0.7 MB, large_50k ≈ 3.5 MB)
+son **no-monótonos y no representan el consumo real de la malla grande**: `tracemalloc` solo mide
+asignaciones de Python a partir de un `start()`, y queda dominado por la carga de bindings
+C++ de Kratos según el proceso. **No es una medida fiable del workspace del solver**, que vive en
+heap C++. Para estimar memoria del solver 3D en fases futuras hará falta instrumentación del lado
+C++/os (p. ej. picos de RSS del proceso), no `tracemalloc`.
+
+### 6. Hallazgo de comportamiento (limitación pre-existente, registrada por transparencia)
+
+En la configuración usada, la corrida FEA devuelve `success=True` pero con **`compliance=0.0` y
+desplazamiento máximo 0.0**. Causa: el adaptador Kratos almacena las cargas externas
+(`apply_point_load`/`apply_distributed_load`) en un dict `external_loads` y las escribe como
+variables de solución `FORCE_*`, pero la estrategia lineal no las consume como vector de carga
+(Kratos avisa *«setting the RHS to zero!»*). Las **restricciones sí se aplican** y el solve
+realiza factorización real (el tiempo escala con el tamaño de malla), por lo que la *medición de
+tiempos* es válida; pero el *resultado físico* es degenerado (u=0). Per metodología §12 NO se
+declara un resultado FEA físicamente válido: el benchmark mide rendimiento, no valida la carga.
+
+**Estado:** la aplicación de cargas efectivas a Kratos (traspasar `external_loads` a condiciones
+de carga reales del estrategia / `Conditions`) queda como **PENDIENTE/BLOQUEADO** (requiere
+investigación del API oficial de Kratos para condiciones de carga en `ResidualBasedLinearStrategy`).
+
+### 7. Cómo reproducir
+
+```powershell
+& .venv\Scripts\python.exe benchmarks\make_meshes.py                # genera las 3 mallas
+& .venv\Scripts\python.exe benchmarks\benchmark_fase0.py            # las 3 mallas, baseline JSON
+& .venv\Scripts\python.exe benchmarks\benchmark_fase0.py --profile  # + cProfile de medium_5k
+```
+
+Requisito de entorno: correr dentro del `.venv` (o `runtime/python`) con Kratos y el registro del
+directorio `.libs` (ya hecho dentro de los scripts vía `os.add_dll_directory`).
+
+### 8. Archivos creados
+
+| Archivo | Tipo | Descripción |
+|---|---|---|
+| `benchmarks/make_meshes.py` | Nuevo | Genera las 3 mallas de referencia `.npz` + `manifest.json` |
+| `benchmarks/benchmark_fase0.py` | Nuevo | Benchmark por etapas + `tracemalloc` + `--profile` |
+| `benchmarks/meshes/{small_500,medium_5k,large_50k}.npz` | Nuevo | Mallas de referencia |
+| `benchmarks/meshes/manifest.json` | Nuevo | Conteos reales y metadatos de las mallas |
+| `benchmarks/results/benchmark_fase0_baseline.json` | Nuevo | Baseline oficial de tiempos |
+| `benchmarks/results/benchmark_fase0_medium_5k.{prof,txt}` | Nuevo | Perfil cProfile de referencia |
+
+### 9. Conclusión del plan original y siguiente paso
+
+La Fase 0 realista quedó **COMPLETADA**: hay mallas de referencia, un benchmark reproducible por
+etapas, un baseline de tiempos y un perfil cProfile guardados para comparación futura. Las Fases
+1–5 del plan original (vectorización NumPy, CHOLMOD/CG+AMG, serialización VTK/msgpack,
+Numba/pybind11, CI de perf) **no aplican al estado actual** por la ausencia de numérico Python
+propio; el cuello de botella está en Kratos C++.
+
+**Siguiente paso recomendado (depende de decisión del usuario):** (a) instrumentar el RSS de
+proceso (no `tracemalloc`) para la malla grande y optimizar los **loops Python→C++ de
+importación de malla** (hoy ~1.5 s en 50k por creación nodo/elemento en bucle) y (b) resolver la
+aplicación de cargas efectivas a Kratos (bloqueo documentado arriba) para que el pipeline produzca
+un resultado físico no degenerado antes de seguir midiendo.
+
+---
+
+# INTERVENCIÓN — FASE 0.5: BASELINE FÍSICAMENTE VÁLIDO (RHS / APLICACIÓN DE CARGA)
+
+**Fecha:** 2026-08-30
+**Objetivo:** cerrar el bloqueo de la Fase 0 (§6: `compliance=0.0`, `u=0`) para que el benchmark
+mida un pipeline con **resultado físico no degenerado**, y dejar un *baseline* de rendimiento
+válido + tests de regresión del post-proceso.
+**Resultado: COMPLETADO.** El diagnóstico confirmó que NO es un bug del código propio sino una
+limitación del **build de Kratos en Windows** (faltan las clases de condición de carga estructurales).
+Se eligió (decisión del usuario) un **baseline con desplazamiento impuesto** como caso de carga real.
+
+## 1. Diagnóstico completo del «RHS a cero» (evidencia)
+
+| Prueba | Mecanismo | ¿Alimenta el RHS? | Evidencia |
+|---|---|---|---|
+| Condición de carga de fuerza distribuida | `_apply_load_geometrically` → nodos `FORCE_*` | **No** (Kratos avisa «setting the RHS to zero!»; `u=0`) | `success=True`, `max_abs_disp=0.0`, `compliance=0.0` |
+| `FORCE_*` nodal escrito a mano con `SetSolutionStepValue` | variable histórica | **No** (`u=0`) | forzado manualmente — desplazamiento nulo |
+| `ProcessInfo[BODY_FORCE] = (0,0,-9.81)` | carga volumétrica | **No** (`u=0`) | el elemento no computa RHS de body force en este build |
+| **Desplazamiento impuesto** (FIX + valor histórico no nulo en cara superior) | BC cinemática | **SÍ** | `max_abs_disp=1.0`, **todo el sólido se deforma** (206/1358/9316 nodos) |
+
+**Conclusión:** la rigidez y el solve de `Element3D4N` son **completamente funcionales** (el modo
+de desplazamiento impuesto deforma el interior del sólido: se propaga deformación real a toda la
+malla). Lo que falta es la **ruta Neumann (RHS → b-vector)**: el build registra solo `Element3D4N`
+y **no registra ninguna condición de carga** (`PointLoadCondition3D1N`, `SurfaceLoadCondition3D3N`,
+etc.: «is not registered»), y ni `FORCE` nodal ni `BODY_FORCE` entran al RHS. Tampoco se expone a
+Python el sistema K ensamblado (`GetSystemMatrix`), las reacciones (`SetComputeReactions` no está) ni
+`STRAIN_ENERGY` por elemento. Es una **limitación del binario de Kratos instalado**, no un error de
+nuestro adaptador.
+
+## 2. Decisión (per metodología §21) y mecanismo adoptado
+
+Consultado el usuario, se adoptó el **baseline con desplazamiento impuesto** (caso cinemático real):
+
+- Se fija el DOF `DISPLACEMENT_Z = -1.0` (y X/Y = 0) en los nodos de la cara superior (`z == z_max`),
+  manteniendo la base fija. Resulta una deformación compresiva real y no nula.
+- La compliance NO puede venir del adaptador (no hay vector de fuerza explícito ni reacciones
+  accesibles), así que se calcula por **energía interna 0.5·uᵀ·K·u** con un post-procesador NumPy
+  que ensambla la rigidez del elemento de deformación constante Tet4 y la aplica sobre el campo `u`
+  resuelto por Kratos. Trabajo externo `0.5·F·u` = energía interna en el modo de desplazamiento
+  impuesto, por lo que es la compliance física correcta del caso.
+- El benchmark ahora soporta `--load-mode force` (ruta original, documentada como la medida «antes»,
+  bloqueada en este build) y `--load-mode imposed_disp` (baseline válido, default de la Fase 0.5).
+
+## 3. Verificación de validez física del post-proceso (compliance por energía)
+
+El post-procesador `benchmarks/compliance.py` se validó con tests de regresión
+(`benchmarks/test_compliance.py`, 5/5 PASSED):
+
+- **Traslación rígida** → energía ≈ 0 (solo ruido numérico ~1e-13 relativo).
+- **Rotación rígida infinitesimal** → energía ≈ 0.
+- Energía finita y > 0 para un campo genérico; tolera NaN; cero con `u=0`.
+
+Estos tests atrapan errores de **orden de DOF / apilado de `ue`**: de hecho se detectó y corrigió
+un bug concreto — `np.stack([...], axis=1).reshape(M,12)` mezclaba componente y nodo (el orden se
+obtenía sobre `(3,4,M)` sin transponer), dando energía absurda para cuerpo rígido. La corrección
+(`axis=2` → `transpose(1,2,0).reshape`) produce el orden nodo-mayor/componente-menor que exige `B`.
+Se corroboró además que **el mismo patrón no se repite** en el código propio del proyecto (solo en
+este módulo; en `core/` no hay ensamblaje DOF con `stack/reshape`).
+
+## 4. Baseline válido (desplazamiento impuesto) — `benchmarks/results/benchmark_fase0_imposed_disp_baseline.json`
+
+Entorno `.venv` (Python 3.12, Kratos 10.4.3, 12 hilos OpenMP). `max_abs_disp = 1.0` en las 3 mallas.
+
+| Etapa (s) | small_500 | medium_5k | large_50k |
+|---|---|---|---|
+| ModelPart + variables | 0.0001 | 0.0002 | 0.0001 |
+| Importación de malla | 0.0042 | 0.0731 | 0.3410 |
+| Material + DOFs | 0.0029 | 0.0227 | 0.1596 |
+| Aplicación de BCs | 0.0029 | 0.0156 | 0.0982 |
+| **Solve + extracción** | **0.038** | **0.840** | **99.56** |
+| **TOTAL corrida** | **0.048** | **0.952** | **100.15** |
+| **Compliance 0.5·uᵀ·K·u** | **2.144e12** | **2.070e12** | **2.037e12** |
+
+**Hallazgo de rendimiento clave (crítico para la Fase 1):** con deformación real, la **malla
+grande tarda ~100 s en el solve** (frente a 4.18 s del baseline `force` degenerado con `u=0`). El
+solve pasa de ser una trivialeza (RHS nulo) a un problema lineal de ~28k DOFs **no trivial**, y el
+`ResidualBasedLinearStrategy` (factorización directa por defecto) se vuelve el auténtico cuello de
+botella. Es el objeto de las Fases 1 en adelante (configuración del solver lineal / BLAS /
+paralelismo).
+
+La compliance **converge con la refinería** (2.144 → 2.070 → 2.037 e12), comportamiento esperado de
+un elemento de deformación constante: consistencia entre el solve de Kratos y el post-proceso.
+
+## 5. Archivos de la Fase 0.5
+
+| Archivo | Tipo | Cambio |
+|---|---|---|
+| `benchmarks/compliance.py` | **Nuevo** | Post-procesador NumPy de compliance 0.5·uᵀ·K·u (elemento CST Tet4, vectorizado, escala a 50k en ~0.12 s) |
+| `benchmarks/test_compliance.py` | **Nuevo** | Tests de regresión del post-proceso (5 tests: rígida trasl./rot., signo, NaN, cero) |
+| `benchmarks/benchmark_fase0.py` | Modificado | `--load-mode force\|imposed_disp`; en `imposed_disp` aplica BC de desplazamiento impuesto y calcula compliance por energía; salida por modo |
+| `benchmarks/results/benchmark_fase0_imposed_disp_baseline.json` | **Nuevo** | Baseline oficial válido (compliance>0, u≠0) |
+
+## 6. Siguiente paso
+
+La Fase 0.5 quedó COMPLETADA: ya hay un baseline **físicamente válido** (deformación real, compliance
+> 0 convergente). El siguiente paso era la **Fase 1 de rendimiento**: el hallazgo de que `large_50k`
+tarda ~100 s en el solve con cargas reales es el cuello de botella a atacar (configurar el linear
+solver de Kratos —factorización directa vs. iterativo/AMG—, verificar BLAS/LAPACK del build y el
+paralelismo OpenMP).
+
+---
+
+# INTERVENCIÓN — FASE 1 DE RENDIMIENTO: SOLVER LINEAL, BLAS Y PARALELISMO
+
+## Resultado clave: `large_50k` pasa de ~100 s a ~1.1 s
+
+El objetivo de la Fase 1 era atacar el cuello de botella del solve de Kratos detectado en la Fase
+0.5 (98.7 s en la malla grande con deformación real). El diagnóstico confirmó que el **default del
+adaptador era `skyline_lu_factorization`** (factorización directa en banda, pésima en mallas
+grandes) y que el build **sí trae** `LinearSolversApplication` con `SparseLUSolver` (Eigen
+SSparseLU) y `AMGCLSolver` (iterativo + multigrid algebraico).
+
+Al seleccionar `amgcl` (smoother ilu0, CG, coarsening `smoothed_aggregation`), el solve de la malla
+grande **baja de 98.7 s a 1.15 s (~86×)**, conservando el **mismo resultado físico** (max_abs_disp =
+1.0 y compliance idéntica a 6+ cifras significativas).
+
+| Solver | small_500 | medium_5k | large_50k | Speedup large vs skyline |
+|---|---|---|---|---|
+| **skyline_lu** (default del adaptador) | 0.042 s | 0.846 s | **98.73 s** | 1× |
+| **sparse_lu** (Eigen SSparseLU) | 0.046 s | 0.461 s | **18.17 s** | 5.4× |
+| **amgcl** (AMG + CG + ilu0) | 0.040 s | 0.180 s | **1.15 s** | **~86×** |
+
+(Load-mode `imposed_disp`: desplazamiento impuesto Z = -1 mm en la cara superior; las **3 mallas**
+dieron `max_abs_disp = 1.0` y `success = True` en los tres solvers.)
+
+| Compliance 0.5·uᵀ·K·u (N·mm) | skyline_lu | sparse_lu | amgcl |
+|---|---|---|---|
+| small_500 | 2.14445e6 | 2.14445e6 | 2.14445e6 |
+| medium_5k | 2.07050e6 | 2.07050e6 | 2.07050e6 |
+| large_50k | 2.03748e6 | 2.03748e6 | 2.03748e6 |
+
+La compliance **converge con la refinación** (2.144 → 2.070 → 2.037 e6 N·mm) y es **idéntica entre
+solvers** a 6+ cifras: los tres resuelven el mismo campo de desplazamientos, sólo con distinto
+coste.
+
+## 1. Diagnóstico: solver activo y disponibilidad en el build
+
+- **Solver activo por defecto**: `core/kratos_adapter.py` tenía hardcodeado
+  `"solver_type": "skyline_lu_factorization"` (SkylineLUFactorizationSolver, factorización en
+  banda). Es correcto para mallas muy pequeñas pero **escaló mal** a ~93k DOFs (98.7 s).
+- **Disponibilidad verificada** vía `python_linear_solver_factory` / `ConstructSolver`:
+  - Disponibles: `skyline_lu_factorization`, `sparse_lu` (en LinearSolversApplication) y `amgcl`.
+  - NO disponibles en este build: `pardiso_lu`, `super_lu`, `eigen_sparse_*`, `external_amgcl`.
+  - `amgcl` con coarsening **`ruge_stuben` falla** ("coarsening not supported by the backend");
+    usar **`smoothed_aggregation`** (verificado correcto, adecuado para sólidos 3D).
+
+## 2. Unidades: la compliance física correcta usa **N/mm² (MPa)** con geometría en mm
+
+Sanity-check pedido en Fase 1 (confirmado): `core/kratos_adapter.py:366` alimenta a Kratos
+`YOUNG_MODULUS` en **Pa (68.9e9)** sobre geometría en **mm**, con `u = 1.0` (mm). El solve es
+agnóstico a unidades (los tiempos son válidos), pero el valor absoluto de la compliance queda
+escalado por esa inconsistencia. La compliance **físicamente consistente** se calcula con
+**E en N/mm² (68.9e3)** → ~**2.0e6 N·mm** (ratio exacto 1e6 frente al valor en escala Pa de la Fase
+0.5). El benchmark pasa `MATERIAL_YOUNG_MPA` al post-proceso de energía; los baselines de solvers de
+esta Fase ya están en N·mm.
+
+## 3. Fiabilidad: importar `LinearSolversApplication` explícitamente
+
+`sparse_lu` fallaba de forma **intermitente** en medium/large cuando la app no se importaba primero
+(race de lazy-load al construir el solver tras otra app). Se añadió en `benchmark_fase0.py` un
+`import KratosMultiphysics.LinearSolversApplication` temprano (con try/except), lo que lo vuelve
+confiable. `amgcl` vive en el core y no lo requiere.
+
+## 4. BLAS/LAPACK y paralelismo OpenMP
+
+- **Hilos OpenMP**: Kratos reporta y usa **12 hilos** (`OpenMPUtils.GetNumThreads()` = 12);
+  `OMP_NUM_THREADS` no está fijado (default = 12 del hardware).
+- **BLAS del entorno (Python/NumPy)**: scipy-openblas 0.3.34 (OpenBLAS, SkylakeX, MAX_THREADS=24).
+  Es el BLAS del lado Python; el solve estructural es C++ propio de Kratos (Eigen/amgcl) vía OpenMP.
+- **Escalado medido**: `amgcl` en large_50k con **1 hilo = 1.78 s** vs **12 hilos = 1.15 s**
+  (≈1.5×). El threading ayuda moderadamente, pero los niveles gruesos del AMG son seriales por
+  diseño. **El factor dominante es la elección de solver**, no el paralelismo: skyline→amgcl
+  aporta el ~86×.
+
+## 5. Archivos de la Fase 1
+
+| Archivo | Tipo | Cambio |
+|---|---|---|
+| `benchmarks/benchmark_fase0.py` | Modificado | `--solver` + `SOLVER_PRESETS` (skyline_lu/sparse_lu/amgcl); constants E_Pa/E_MPa; compliance en N·mm; import temprano de LinearSolversApplication |
+| `benchmarks/compare_solvers.py` | **Nuevo** | Compara los JSON de baselines por solver y muestra tabla de tiempos + compliance |
+| `benchmarks/results/benchmark_fase0_imposed_disp_{sparse_lu,amgcl}_baseline.json` | **Nuevo** | Baselines por solver (N·mm) |
+| `benchmarks/results/benchmark_fase0_imposed_disp_baseline.json` | Regenerado | Baseline skyline actualizado a N·mm |
+
+Regresión tras los cambios del adaptador y el benchmark: **32 tests** (compliance, core, kratos
+real-flow, topopt) → **32 passed**.
+
+---
+
+# INTERVENCIÓN — FASE 2 DE RENDIMIENTO: OVERHEAD PYTHON→C++ EN LA POBLACIÓN DEL MODELPART
+
+## Resultado: el import de malla `large_50k` baja de ~0.34 s a ~0.26 s (bucle de elementos)
+
+La Fase 2 perfilaba el coste de **poblar el ModelPart de Kratos** (nodos + elementos) desde Python,
+que se hace bucle a bucle con `CreateNewNode`/`CreateNewElement`. Tras la Fase 1 (solve amgcl en
+1.15 s), el import (~0.34 s) pasó a ser ~20% del total (~1.74 s), así que valía la pena mirarlo.
+
+## 1. Diagnóstico: el coste es C++, no del bucle Python
+
+- **cProfile no ve dentro de las llamadas nativas** (`CreateNewNode`/`CreateNewElement` son pybind):
+  solo capturó 13 frames Python en 0.000 s. El tiempo está dentro del C++.
+- **Aislando cada etapa** en `large_50k`:
+  - **Nodos**: `CreateNewNode` = **~3 µs/nodo** → ~0.02 s. Despreciable, ligado a C++.
+  - **Elementos**: `CreateNewElement` = **~7 µs/elemento** → **~0.31 s**. Es el coste dominante.
+- **Micro-variantes del bucle de nodos**: iterar filas numpy vs `.tolist()` vs floats pre-hechos
+  dan ~0.021–0.027 s: **sin cambio** → no hay grasa Python que recortar ahí (es puro C++).
+
+## 2. La optimización: pre-convertir la conectividad fuera del bucle de elementos
+
+El bucle de elementos hacía `node_ids = [int(x) + 1 for x in el]` **dentro de cada iteración**
+(conversión por-nodo repetida). Sacar esa conversión del bucle recorta el costo:
+
+| Variante del bucle de elementos (large_50k) | Tiempo |
+|---|---|
+| Actual (`int(x)+1` + try/except por elemento) | 0.319 s |
+| Sin `try/except` | 0.324 s (no ayuda) |
+| **Conectividad pre-hecha** (`(elements+1).tolist()`, vectorizada) | **0.223 s (~1.4×)** |
+
+La mejora se aplicó en `core/kratos_adapter.py` (`import_mesh_from_core_format`): se precomputa
+`connectivity_1based = (elements + 1).tolist()` (o el equivalente por listas) **una sola vez** antes
+del bucle, preservando el `try/except` de robustez por elemento.
+
+## 3. Verificación end-to-end (large_50k, amgcl, imposed_disp)
+
+| Etapa | Antes (Fase 1) | Después (Fase 2) |
+|---|---|---|
+| mesh_import | 0.338 s | **0.264 s** |
+| **total FEA** | **1.74 s** | **1.67 s** |
+| compliance (N·mm) | 2,037,479.8995 | 2,037,479.8995 (**idéntica**) |
+| `success` / `max_abs_disp` / elementos | True / 1.0 / 47611 | True / 1.0 / 47611 |
+
+Regresión tras el cambio del adaptador: **32 tests → 32 passed**.
+
+## 4. Alternativa descartada: `.mdpa` + `ModelPartIO`
+
+Se probó la ruta canónica de import masivo (escribir un `.mdpa` temporal y `ReadModelPart`). El
+formato `.mdpa` es estricto (falló el parseo de un `.mdpa` a mano) y el mapeo de nombres de
+elemento/flags es frágil; además `AddNodes` en este build solo acepta **ids** (no coordenadas), así
+que no hay API de create-batch con coordenadas. El overhead de escribir/parsear un archivo hace que
+la ganancia neta frente al recorte de ~0.1 s ya logrado sea marginal y frágil → **no adoptado**.
+
+---
+
+# INTERVENCIÓN — FASE 3 DE RENDIMIENTO: MEDICIÓN DE MEMORIA PICO POR RSS
+
+## Problema: `tracemalloc` no medía la memoria real y ralentizaba
+
+La Fase 0 registraba el pico de memoria con `tracemalloc.get_traced_memory()`:
+- **Solo ve las allocaciones de Python**; Kratos hace la mayor parte de su memoria
+  (nodos/elementos, matrices sparse y vectores) en **C++/nativo**, que `tracemalloc` no mide
+  (por eso en Fase 0 `peak_memory_kb` era del orden de ~3 MB para la malla de 5k, un orden de
+  magnitud por debajo del footprint real).
+- Añade **overhead a cada allocación de Python**, penalizando la parte Python del benchmark.
+
+## Solución: muestreo de Working Set Size (RSS) del proceso
+
+Nuevo `benchmarks/memory.py` (sin dependencia externa):
+- **Windows**: `ctypes` → `psapi.GetProcessMemoryInfo` → `WorkingSetSize` (RSS).
+- **Unix**: `/proc/self/statm` → páginas residentes × page size.
+- `PeakRSS`: hilo en segundo plano que muestrea cada 50 ms y guarda el pico; `start()`/`stop()`.
+
+Se reemplazó `tracemalloc` por el monitor RSS en `benchmark_fase0.py` (`run_fea`). El pico ahora
+sí captura la memoria nativa de Kratos. Verificación del helper: baseline ~15 MB → pico ~496 MB
+tras alocar 480 MB (el pico sube y se detecta).
+
+## 1. Pico RSS por malla (amgcl, imposed_disp)
+
+| Malla | Peak RSS |
+|---|---|
+| small_500 | 373,836 kB (~365 MB) |
+| medium_5k | 381,232 kB (~372 MB) |
+| large_50k | 494,052 kB (~482 MB) |
+
+El RSS está dominado por las **aplicaciones Kratos cargadas** (se cargan una vez → ~365 MB de
+"piso" incluso en la malla pequeña); la malla + matriz sparse añaden ~130 MB al pasar de small a
+large. Este es el footprint real que `tracemalloc` nunca capturaba.
+
+## 2. Verificación
+
+- `peak_memory_kb` deja de ser `null`/subestimado: medium_5k → 380,140 kB, large_50k → 513,452 kB.
+- Los **tiempos no cambian** (el hilo muestreador es despreciable): solve/compliance idénticos.
+- Regresión: **32 tests → 32 passed**.
+
+| Archivo | Tipo | Cambio |
+|---|---|---|
+| `benchmarks/memory.py` | **Nuevo** | Muestreo de RSS/WSS del proceso por ctypes (Windows) con fallback `/proc` (Unix); clase `PeakRSS` |
+| `benchmarks/benchmark_fase0.py` | Modificado | Reemplaza `tracemalloc` por `PeakRSS`; ayuda de `--no-memory` actualizada |
+
+---
+
+# INTERVENCIÓN — FASE 4: DESTINO DE `core/fea.py` Y `core/topopt.py`
+
+## Resultado: sin acción (los módulos no existen y nada los referencia)
+
+El plan de rendimiento mencionaba `core/fea.py` y `core/topopt.py`, pero **ninguno de los dos
+existe** en el repo. Verificado:
+
+- `core/` contiene: `boundary.py, geometry.py, kratos_adapter.py, materials.py, meshing.py,
+  models.py, solver_interface.py, study.py`.
+- **Ningún archivo `.py`** importa o referencia `core.fea` / `core.topopt` (grep sobre `*.py`:
+  sin resultados).
+- Las **responsabilidades** que esos módulos habrían cubierto ya están cubiertas bajo otros nombres:
+  - **Orquestación FEA** → `core/solver_interface.py` (`create_kratos_fea_solver`) +
+    `core/kratos_adapter.py` (adaptador Kratos concreto).
+  - **Optimización topológica** → `topopt_solver.py` (raíz, `TopOptSolver` SIMP) +
+    `core/solver_interface.py:28` (otro `TopOptSolver`).
+
+Conclusión: la nomenclatura del plan no coincidía con el repo real; no hay que crear, borrar ni
+renombrar nada. El pipeline FEA real queda en `core/kratos_adapter.py` + `core/solver_interface.py`
+(sin `core/fea.py`), y la topología en `topopt_solver.py` + `core/solver_interface.py` (sin
+`core/topopt.py`).
+
+---
+
+## Estado general actual del pipeline
+
+| Etapa | large_50k |
+|---|---|
+| Import de malla (nodo+elemento) a Kratos | 0.26 s (Fase 2: 0.34 → 0.26) |
+| Solve amgcl | 1.11 s (Fase 1: 99 → 1.15) |
+| TOTAL corrida FEA | **1.63 s** (baseline físico Fase 0.5: 100.15 s → ~61×) |
+| Peak RSS | ~482 MB (Fase 3: medido correctamente) |
+| Compliance | 2.037e6 N·mm (idéntica entre solvers; converge con la malla) |
+
+---
+
+# VALIDACIÓN DE CORRECTITUD Y ROBUSTEZ ANTES DE CAMBIAR EL SOLVER POR DEFECTO
+
+Antes de aprobar pasar el solver por defecto a `amgcl`, se revisaron y cerraron
+exhaustivamente los 4 puntos de robustez pedidos. Conclusión: la decisión de hacer
+`amgcl` el default pasa a ser de **una línea y bajo riesgo**, porque el adaptador
+ahora **detecta y revierte** automáticamente cualquier fallo o no-convergencia.
+
+## (a) Causa del `success=False` previo — corregido el diagnóstico
+
+Durante la Fase 1 se observó **una** corrida de `sparse_lu` en medium_5k con
+`success=False` instantáneo (0.0007 s), y se atribuyó (por hipótesis no probada) a un
+"race de lazy-load" de `LinearSolversApplication`, añadiendo un import temprano.
+
+**Reinvestigación posterior (esta sección) demuestra que esa hipótesis era incorrecta:**
+- `core/kratos_adapter.py:17-20` importa a nivel de módulo `StructuralMechanicsApplication`
+  y `OptimizationApplication`, que a su vez cargan `LinearSolversApplication` de forma
+  **eager**. Para cuando `ConstructSolver("amgcl"/"sparse_lu")` corre, la app **ya está
+  cargada** en cualquier uso real del adaptador → no puede haber race de lazy-load.
+- Reproducción deliberada: **15/15 × 2 solvers** (`sparse_lu`, `amgcl`) en la malla media
+  **sin** el import temprano → 0 fallos. El `success=False` previo **no se volvió a
+  reproducir**; fue un fallo puntual no reproducible (probablemente transitorio de un
+  proceso/conjunto de condiciones puntual).
+- El import temprano añadido se conserva (inofensivo), pero **no era la causa real**.
+
+**El riesgo real sí es reproducible** y NO era el import: `amgcl` puede no converger y
+dar una respuesta **silenciosamente incorrecta** con `success=True` (ver punto d).
+
+## (b) Correctness en las 3 mallas — autoridad: `skyline_lu` (directa)
+
+`amgcl` vs la factorización directa `skyline_lu` (referencia exacta) sobre las 3 mallas
+(load-mode `imposed_disp`, u impuesto):
+
+| malla | rel. (campo u, norma L2) | rel. (compliance) |
+|---|---|---|
+| small_500 | 8.8e-16 | 0.0 |
+| medium_5k | 1.06e-6 | 2.4e-12 |
+| large_50k | 1.07e-6 | 2.9e-12 |
+
+- Delta de **compliance ≤ 3e-12** en las 3 mallas.
+- Delta del **campo de desplazamientos ≤ 1.1e-6** (norma L2), coherente con el
+  `tolerance=1e-6` de amgcl: el iterativo converge a su propia tolerancia especificada.
+- Bien dentro de cualquier `rtol` de producción.
+
+## (c) El salto de ~6 órdenes en compliance (2.070e12 → 2.037e6 N·mm) ES el fix de unidades
+
+Se verificó computando la compliance con las DOS escalas de E sobre el **mismo** campo de
+desplazamientos (mismo ModelPart, mismo solve) en las 3 mallas:
+
+| malla | compliance con E_Pa | compliance con E_MPa (N·mm) | ratio |
+|---|---|---|---|
+| small_500 | 2.144453e12 | 2.144453e6 | 1,000,000.0000 |
+| medium_5k | 2.070496e12 | 2.070496e6 | 1,000,000.0000 |
+| large_50k | 2.037480e12 | 2.037480e6 | 1,000,000.0000 |
+
+Como la compliance es ∝ E y `E_Pa = 1e6 × E_MPa`, el salto de 6 órdenes es **exactamente**
+la conversión de unidades Pa→N/mm², **idéntica (1,000,000.0000) en las 3 mallas**. No es un
+bug ni una coincidencia: es el rescale de unidades limpio que quedó pendiente de revisar
+(E en Pa vs geometría en mm), y el campo desplazado es el mismo en ambas escalas (el solve
+es agnóstico a unidades con u fijo).
+
+## (d) Fallback automático a `skyline_lu` si el iterativo no converge o falla
+
+**Problema detectado:** en este build de Kratos **no hay señal accesible y confiable** de
+convergencia para amgcl: `GetIterationsNumber()`=0 siempre, `IsConverged`=True en todos los
+casos, y `GetResidualNorm()` devuelve un valor constante (norma del RHS/restricciones), no el
+residual del sistema. Por tanto `AMGCLSolver` puede devolver una **respuesta incorrecta con
+`success=True`** si no converge (reproducido: con `max_iteration=1`, compliance 2.3499e6 vs
+2.0375e6 correcto, ~15 % de error, y `success=True`).
+
+**Mecanismo implementado (corre `core/kratos_adapter.run_analysis`):**
+1. **Verificación por re-resolución (estabilidad del campo):** tras un solve iterativo
+   (`amgcl`), se re-resuelve con un presupuesto de iteraciones mucho mayor y se compara el
+   campo; si el delta relativo excede la tolerancia (×10 de la del solver), el primer solve
+   no convergió → fallback. Reproducido: no-convergido (maxit=1) delta 17 % frente a
+   convergido (maxit=500 vs 5000) delta 7.9e-16.
+2. **Fallback directo:** ante no-convergencia **o** fallo de construcción (`solver_type`
+   inválido o excepción en el Solve), se reconstruye el strategy con
+   `skyline_lu` **in-place** (validado: re-resolver en el mismo ModelPart da compliance
+   idéntica a un ModelPart fresco, rel 3.4e-16), se emite un **warning** en el log y se marca
+   el resultado con `fallback_used=True`.
+
+Comportamiento verificado (small_500 y large_50k):
+
+| escenario | success | fallback_used | compliance |
+|---|---|---|---|
+| amgcl que converge | True | False | correcto |
+| amgcl forzado a no converger (maxit=1) | True | **True** | **corregido** a skyline |
+| solver_type inválido | True | **True** | **corregido** a skyline |
+| default (sin config) | True | False | correcto |
+
+**Coste de la garantía:** en large_50k el amgcl verificado tarda 2.35 s total (vs 1.12 s sin
+verificar, vs 98 s skyline). Sigue siendo **~42× más rápido que skyline** con la garantía de
+correctitud.
+
+Tests añadidos: `benchmarks/test_kratos_fallback.py` (4 tests: convergente sin fallback,
+no-convergente→skyline, solver inválido→skyline, default sin config) → **4 passed**. Regresión
+autoritativa tras el refactor de `run_analysis`: **36 passed** (los 8 `error` de
+`test_kratos_adapter_initialization.py`/`test_kratos_model_part.py` son **pre-existentes**:
+scripts legacy "Etapa A" que reclaman una fixture `adapter` inexistente y fallan en el *setup*
+de pytest, antes de ejecutar nada).
+
+## Decisión sobre el default
+
+Con los 4 puntos cerrados, cambiar el default del adaptador (`setup_solver_and_strategy`
+None → `amgcl` con verificación activa) es un cambio de una línea y bajo riesgo: si amgcl no
+converge en la geometría particular de un usuario, se cae automáticamente a `skyline_lu` con
+warning. **Pendiente de aprobación explícita**: modificarlo afecta a `solver_interface` y a
+todo el pipeline de producción (no solo al benchmark), por lo que se decide al cerrar esta
+sección junto al usuario.

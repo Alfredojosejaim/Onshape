@@ -167,7 +167,7 @@ class Renderer:
             self._axes_actor = None
 
     # ------------------------------------------------------------------ #
-    # Camera proxy (delegated to Camera layer but exposed for renderer init)
+    # Camera proxy (delegated to CameraController layer but exposed for renderer init)
     # ------------------------------------------------------------------ #
     def make_triangle_actor(
         self,

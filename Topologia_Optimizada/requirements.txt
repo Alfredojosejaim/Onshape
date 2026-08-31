@@ -9,3 +9,12 @@ gmsh>=4.13.0
 # Native desktop UI (PySide6) and GPU-accelerated 3D viewport (VTK)
 PySide6>=6.6.0
 vtk>=9.2.0
+
+# Kratos Multiphysics FEA engine (bundled, self-contained in the .venv).
+# The StructuralMechanicsApplication provides the 3D solid elements used by
+# core/kratos_adapter.py; OptimizationApplication is imported by that adapter.
+# Wheels are published on PyPI for CPython 3.11 / win_amd64; pin exact versions
+# so the FEA path is reproducible across fresh environments.
+KratosMultiphysics==10.4.3
+KratosStructuralMechanicsApplication==10.4.3
+KratosOptimizationApplication==10.4.3

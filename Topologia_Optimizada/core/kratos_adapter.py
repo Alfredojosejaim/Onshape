@@ -197,15 +197,20 @@ class KratosAdapter:
     
     def import_mesh_from_core_format(self, model_part: Any, nodes: List[List[float]], 
                                      elements: List[List[int]], element_type: str = "tet4",
-                                     material_properties: Any = None) -> None:
+                                     material_properties: Any = None,
+                                     physical_groups: Optional[Dict[str, List[int]]] = None) -> None:
         """Import mesh from Core's MeshResult format to Kratos ModelPart.
-        
+
         Args:
             model_part: Kratos ModelPart to populate with mesh
             nodes: List of node coordinates [[x, y, z], ...]
             elements: List of element connectivity [[n0, n1, n2, n3], ...]
             element_type: Type of elements (default "tet4")
             material_properties: Optional Kratos Properties object (if None, creates placeholder)
+            physical_groups: Optional ``{name: [0-based node indices]}`` mapping.
+                Each named group is rebuilt as a Kratos SubModelPart containing
+                exactly those nodes (Fase 2: gmsh physical groups -> submodelparts),
+                so boundary conditions can select nodes by group name.
         """
         try:
             logger.info(f"Importing mesh: {len(nodes)} nodes, {len(elements)} {element_type} elements")
@@ -254,10 +259,40 @@ class KratosAdapter:
                     logger.warning(f"Failed to create element {element_id}: {e}")
             
             logger.info(f"Created {model_part.NumberOfElements()} elements in ModelPart")
+
+            # Fase 2: rebuild named SubModelParts from physical groups.
+            if physical_groups:
+                self._create_submodelparts_from_groups(model_part, physical_groups)
             
         except Exception as e:
             logger.error(f"Failed to import mesh from Core format: {e}")
             raise
+
+    def _create_submodelparts_from_groups(
+        self, model_part: Any, physical_groups: Dict[str, List[int]]
+    ) -> None:
+        """Create a Kratos SubModelPart per named physical group.
+
+        Each SubModelPart receives the exact nodes of the corresponding boundary
+        group (0-based indices -> Kratos 1-based node ids). These are the
+        submodelparts that :meth:`get_nodes_from_submodelpart` looks up when a
+        constraint/load is applied with ``submodelpart_name`` / ``boundary_name``.
+        """
+        n_nodes = model_part.NumberOfNodes()
+        for name, indices in physical_groups.items():
+            valid = [i for i in indices if 0 <= i < n_nodes]
+            try:
+                sub = model_part.CreateSubModelPart(str(name))
+            except Exception as e:
+                logger.warning(
+                    "Could not create submodelpart %r (maybe a duplicate name?): %s", name, e
+                )
+                continue
+            if valid:
+                sub.AddNodes([i + 1 for i in valid])  # Kratos 1-based node ids
+            logger.info(
+                "SubModelPart %r created with %d nodes", name, len(valid)
+            )
     
     def import_mesh_from_gmsh(self, model_part: Any, msh_file: str, 
                                material_properties: Any = None) -> None:
@@ -357,7 +392,8 @@ class KratosAdapter:
                 model_part, 
                 mesh_result.nodes, 
                 mesh_result.elements, 
-                mesh_result.element_type
+                mesh_result.element_type,
+                physical_groups=getattr(mesh_result, "physical_groups", None),
             )
             
             logger.info("Mesh import from MeshResult completed")

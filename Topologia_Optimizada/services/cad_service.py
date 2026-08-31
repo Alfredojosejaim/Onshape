@@ -136,8 +136,14 @@ class CADService:
         model_id: str,
         target_element_size: float = 2.0,
         element_type: str = "tet4",
+        physical_groups: Optional[Dict[str, List[int]]] = None,
     ) -> Dict[str, Any]:
-        """Generate volumetric finite element mesh from CAD model."""
+        """Generate volumetric finite element mesh from CAD model.
+
+        ``physical_groups`` (``{name: [face_indices]}``) is forwarded to the
+        Gmsh mesher so the returned mesh exposes exact per-boundary node sets
+        (Fase 2).
+        """
         shape = self.get_model_shape(model_id)
         if not shape:
             return {
@@ -164,6 +170,7 @@ class CADService:
                         shape,
                         target_element_size=target_element_size,
                         element_type=element_type,
+                        physical_groups=physical_groups,
                     )
                 except (ImportError, RuntimeError, ValueError, FileNotFoundError) as exc:
                     logger.warning(
@@ -311,6 +318,7 @@ class CADService:
         min_size: float = 0.5,
         element_type: str = "tet4",
         refinement: str = "density",
+        physical_groups: Optional[Dict[str, List[int]]] = None,
     ) -> Dict[str, Any]:
         """Generate an adaptively refined FE mesh, optionally driven by the
         topology-optimization density field.
@@ -360,10 +368,12 @@ class CADService:
                     mesh_result = self.gmsh_mesher.generate_adaptive_mesh(
                         tmp, size_points=size_points,
                         base_size=base_size, min_size=min_size, element_type=element_type,
+                        physical_groups=physical_groups,
                     )
                 else:
                     mesh_result = self.gmsh_mesher.generate_mesh_from_step(
-                        tmp, target_element_size=base_size, element_type=element_type
+                        tmp, target_element_size=base_size, element_type=element_type,
+                        physical_groups=physical_groups,
                     )
             finally:
                 if _os.path.exists(tmp):

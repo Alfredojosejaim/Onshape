@@ -2,6 +2,17 @@
 five numbered step pills, a convergence chip, a scrub track and playback
 buttons (Reiniciar / ▶ / Ejecutar). The play actions are forwarded to the
 main window through signals.
+
+Architecture integration (Phase 1):
+    The timeline now supports two modes:
+
+    1. Pipeline mode (default): the fixed 5-step optimization pipeline.
+       Controlled via ``set_pipeline_step()`` — backward compatible.
+
+    2. Feature mode: the step pills dynamically reflect the feature history
+       from the Document model.  Controlled via ``set_features()``.
+       When features are set, the timeline title changes to "Historial de
+       Operaciones" and each feature becomes a step pill.
 """
 
 from __future__ import annotations
@@ -34,6 +45,7 @@ class TimelinePanel(QWidget):
         super().__init__(parent)
         self._steps = list(steps or DEFAULT_STEPS)
         self._step_widgets: list[QPushButton] = []
+        self._feature_mode = False
 
         frame = QFrame()
         frame.setObjectName("timelinePanel")
@@ -47,9 +59,9 @@ class TimelinePanel(QWidget):
 
         # ---- Header ---- (title + convergence chip)
         header = QHBoxLayout()
-        title = QLabel("Progreso del estudio")
-        title.setStyleSheet("font-size: 13px; font-weight: 600;")
-        header.addWidget(title)
+        self._title = QLabel("Progreso del estudio")
+        self._title.setStyleSheet("font-size: 13px; font-weight: 600;")
+        header.addWidget(self._title)
         header.addStretch(1)
         self._chip = QLabel("✔ Convergido")
         self._chip.setProperty("chipok", True)
@@ -62,16 +74,10 @@ class TimelinePanel(QWidget):
         col.addLayout(header)
 
         # ---- Step pills ----
-        steps_h = QHBoxLayout()
-        steps_h.setSpacing(10)
-        for i, label in enumerate(self._steps, start=1):
-            pill = QPushButton(f"{i}  {label}")
-            pill.setProperty("pill", True)
-            pill.setCursor(Qt.CursorShape.PointingHandCursor)
-            self._step_widgets.append(pill)
-            steps_h.addWidget(pill)
-        steps_h.addStretch(1)
-        col.addLayout(steps_h)
+        self._steps_layout = QHBoxLayout()
+        self._steps_layout.setSpacing(10)
+        col.addLayout(self._steps_layout)
+        self._build_step_pills(self._steps)
 
         # ---- Scrub track ----
         self._scrub = QProgressBar()
@@ -108,7 +114,24 @@ class TimelinePanel(QWidget):
         self.set_pipeline_step(0)
 
     # ------------------------------------------------------------------ #
-    # Pipeline state
+    # Step pill builder
+    # ------------------------------------------------------------------ #
+    def _build_step_pills(self, labels: list[str]) -> None:
+        """Remove old pills and create new ones for the given labels."""
+        for pill in self._step_widgets:
+            pill.setParent(None)
+            pill.deleteLater()
+        self._step_widgets.clear()
+        for i, label in enumerate(labels, start=1):
+            pill = QPushButton(f"{i}  {label}")
+            pill.setProperty("pill", True)
+            pill.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._step_widgets.append(pill)
+            self._steps_layout.addWidget(pill)
+        self._steps_layout.addStretch(1)
+
+    # ------------------------------------------------------------------ #
+    # Pipeline mode (backward compatible)
     # ------------------------------------------------------------------ #
     def set_pipeline_step(self, index: int) -> None:
         """Mark steps [0..index] as active/completed (0 = nothing done yet)."""
@@ -126,5 +149,67 @@ class TimelinePanel(QWidget):
         self._chip_iter.setText(f"Iter {iteration} · V={volume_fraction:.0%}")
 
     def reset(self) -> None:
+        if self._feature_mode:
+            self._feature_mode = False
+            self._title.setText("Progreso del estudio")
+            self._build_step_pills(self._steps)
+            self._scrub.setRange(0, len(self._steps))
         self.set_pipeline_step(0)
         self._chip_iter.setText("")
+
+    # ------------------------------------------------------------------ #
+    # Feature mode (architecture layer)
+    # ------------------------------------------------------------------ #
+    def set_features(self, features: list) -> None:
+        """Switch to feature mode and display the feature history as step pills.
+
+        ``features`` is a list of Feature objects (or dicts) from
+        ``core.features.FeatureHistory``.  Each feature becomes a step pill.
+        The status of each feature determines its visual state.
+        """
+        self._feature_mode = True
+        self._title.setText("Historial de Operaciones")
+
+        if not features:
+            self._build_step_pills(["(sin operaciones)"])
+            self._scrub.setRange(0, 0)
+            self._scrub.setValue(0)
+            return
+
+        labels = []
+        completed_count = 0
+        for feat in features:
+            name = getattr(feat, "name", None) or (feat.get("name", "?") if isinstance(feat, dict) else "?")
+            ftype = getattr(feat, "feature_type", None)
+            status = getattr(feat, "status", None) if hasattr(feat, "status") else None
+            if ftype is not None:
+                label = f"{name}  [{ftype.value if hasattr(ftype, 'value') else ftype}]"
+            else:
+                ftype_val = feat.get("feature_type", "?") if isinstance(feat, dict) else "?"
+                label = f"{name}  [{ftype_val}]"
+            labels.append(label)
+            # Count completed/executed features
+            if status is not None:
+                status_val = status.value if hasattr(status, "value") else str(status)
+                if status_val == "executed":
+                    completed_count += 1
+
+        self._build_step_pills(labels)
+        self._scrub.setRange(0, len(labels))
+        self._scrub.setValue(completed_count)
+
+        # Mark pills by status
+        for k, pill in enumerate(self._step_widgets):
+            if k < completed_count:
+                pill.setProperty("active", True)
+                pill.setProperty("done", True)
+            elif k == completed_count:
+                pill.setProperty("active", True)
+                pill.setProperty("done", False)
+            else:
+                pill.setProperty("active", False)
+                pill.setProperty("done", False)
+            _repolish(pill)
+
+    def is_feature_mode(self) -> bool:
+        return self._feature_mode

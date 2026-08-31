@@ -31,6 +31,8 @@ from desktop.ui.panels.properties import PropertiesPanel
 from desktop.ui.panels.results import ResultsPanel
 from desktop.ui.panels.timeline import TimelinePanel
 from desktop.ui.style import PALETTE
+from core.user_preferences import UserPreferences
+from core.navigation import NavigationManager
 
 ACCENT = PALETTE["accent"]
 TEXT_DIM = PALETTE["text_dim"]
@@ -139,9 +141,25 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(980, 640)
 
         self.controller = PipelineController()
+        # Local user preferences (persisted locally; no network involvement).
+        self.preferences = UserPreferences()
 
         self._build_menus()
         self._build_central()
+
+        # Restore the user's saved navigation profile onto the viewport
+        # (profiles come from the existing NavigationManager; only the
+        # preference is persisted locally here).
+        saved_profile = self.preferences.navigation_profile
+        if saved_profile in {p["name"] for p in NavigationManager.available_profiles()}:
+            self.viewport.set_navigation_profile(saved_profile)
+
+        # Reflect license state and stay in sync when it changes.  Only the
+        # state string is consumed here -- no HTTP/network logic in the UI.
+        self._sync_license_status()
+        self.controller.license.add_listener(
+            lambda st: self.chip_status.setText(f"☁ {st.value.replace('_', ' ')}")
+        )
 
         self.statusBar().showMessage("Listo. Importe un archivo STEP local (paso 1 de 5).")
 
@@ -764,6 +782,19 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Malla: {nodes.shape[0]} nodos, {elements.shape[0]} elementos.")
         self._set_busy(False, "Malla generada.")
+
+    # ------------------------------------------------------------------ #
+    # Licensing status (read-only; policy lives in LicenseManager)
+    # ------------------------------------------------------------------ #
+    def _sync_license_status(self) -> None:
+        """Reflect the license state in the top-bar chip.
+
+        The UI merely *displays* the state produced by ``controller.license``;
+        it does not perform any network check itself.  The offline/grace
+        policy stays fully encapsulated inside LicenseManager.
+        """
+        st = self.controller.license.state
+        self.chip_status.setText(f"☁ {st.value.replace('_', ' ')}")
 
     def _on_generate_adaptive_mesh(self) -> None:
         """Generate an adaptively refined mesh (density-driven if possible)."""

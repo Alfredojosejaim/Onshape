@@ -135,10 +135,27 @@ Cambio de perfil **en tiempo de ejecución** sin tocar los observers del viewpor
 
 ## Boolean
 
-**PARCIAL**
+**IMPLEMENTADO**
 
-Operaciones booleanas disponibles en el core de CAD/Features. Según el prompt vigente
-(§19), **no se implementan nuevos booleanos** en esta etapa. La base existente está operativa.
+Operación booleana CAD funcional e integrada (ver `prompts.md`):
+
+- **Menú superior**: `Operaciones → Boolean → {Unión, Corte, Intersección}`.
+- **Panel Qt** (`desktop/ui/panels/boolean_panel.py`): tipo de operación,
+  cuerpo objetivo, cuerpos herramienta, conservar herramientas, Aceptar/Cancelar.
+- **Selección** reutiliza el `SelectionManager` existente (captura de cuerpos
+  objetivo/herramienta desde el viewport).
+- **Ejecución CAD** por cuerpos (`services/cad_service.py::boolean_bodies`):
+  unión / corte / intersección sobre cuerpos de un compuesto, reensamblado del
+  modelo y almacenado como nuevo modelo.
+- **Keep tools**: ON mantiene las herramientas; OFF las consume (sin ocultarlas
+  solo visualmente).
+- **Feature + Timeline + Design Tree**: `Boolean <op>` en `FeatureHistory`,
+  timeline en modo features y árbol de diseño actualizado.
+- **Validación**: cuerpo objetivo obligatorio, ≥1 herramienta, herramienta ≠
+  objetivo, operación válida, índices en rango. Los errores CAD conservan el
+  modelo anterior sin crear Feature.
+- **Cancelación**: no crea Feature ni modifica el modelo.
+- Validado con `test_boolean_operation.py` (19 casos).
 
 ---
 

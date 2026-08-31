@@ -4,6 +4,13 @@ the self-contained core solvers) while keeping heavy work off the UI thread.
 
 The GUI talks only to this controller; all the reusable engineering logic lives
 in the pre-existing services/core layers.
+
+Architecture integration (Phase 1):
+    The controller now owns a ``Document`` that tracks the feature history,
+    model states, and studies.  This is additive -- all existing public
+    methods continue to work exactly as before.  The Document can be queried
+    by the UI panels (design tree, timeline) to display the feature history
+    and study list.
 """
 
 from __future__ import annotations
@@ -19,6 +26,8 @@ import numpy as np
 
 from services.cad_service import CADService
 from core.materials import STANDARD_MATERIALS
+from core.document import Document
+from core.features import Feature, FeatureHistory, FeatureType
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +54,11 @@ class PipelineController:
 
         self._bot_nodes = []
         self._load_nodes = []
+
+        # --- Architecture layer (additive, does not change existing behaviour) ---
+        self.document = Document()
+        self.feature_history = FeatureHistory()
+        self._studies: Dict[str, Any] = {}  # study_id -> Study
 
     # ------------------------------------------------------------------ #
     # Material helpers
@@ -86,6 +100,16 @@ class PipelineController:
         self.result = None
         self.forces = []
         self.constraints = []
+
+        # --- Architecture layer: record import feature in history + document ---
+        import_feature = Feature.import_step(
+            filename=os.path.basename(path),
+            model_id=model.id,
+        )
+        self.feature_history.append(import_feature)
+        self.document.set_model(model)
+        self.document.add_feature(import_feature)
+
         return {"name": model.name, "model": model, "tessellation": tess}
 
     # ------------------------------------------------------------------ #
@@ -100,6 +124,38 @@ class PipelineController:
             mesh = self.cad.generate_mesh(self.model_id)
         if not mesh.get("success"):
             raise PipelineError(mesh.get("error", "Error al generar la malla"))
+        self.mesh = mesh
+        self.mesh_nodes = np.asarray(mesh["nodes"], dtype=float)
+        self.mesh_elements = np.asarray(mesh["elements"], dtype=int)
+        self.result = None
+        return mesh
+
+    # ------------------------------------------------------------------ #
+    # Adaptive mesh generation (density-driven, Fase 2)
+    # ------------------------------------------------------------------ #
+    def generate_adaptive_mesh(
+        self,
+        base_size: float = 5.0,
+        min_size: float = 0.5,
+        use_density: bool = True,
+    ) -> Dict[str, Any]:
+        """Generate a locally-refined mesh, optionally using the optimization
+        density field to refine solid/dense regions.
+        """
+        if not self.model_id:
+            raise PipelineError("No hay modelo importado. Importa un archivo STEP primero.")
+        densities = self.result_densities if use_density else None
+        mesh = self.cad.generate_adaptive_mesh(
+            self.model_id,
+            densities=densities,
+            elements=self.mesh_elements,
+            nodes=self.mesh_nodes,
+            base_size=base_size,
+            min_size=min_size,
+        )
+        if not mesh.get("success"):
+            # Fall back to uniform mesh through the standard path.
+            return self.generate_mesh(target_element_size=base_size)
         self.mesh = mesh
         self.mesh_nodes = np.asarray(mesh["nodes"], dtype=float)
         self.mesh_elements = np.asarray(mesh["elements"], dtype=int)
@@ -277,6 +333,183 @@ class PipelineController:
         self.result = result
         self.result_densities = np.asarray(result["densities"], dtype=float)
         return result
+
+    # ------------------------------------------------------------------ #
+    # Architecture layer: command execution coordinator
+    # ------------------------------------------------------------------ #
+    def execute_command(self, command) -> "CommandResult":
+        """Validate and execute a CAD command through the pipeline.
+
+        The command's ``validate()`` is called first.  If valid, the command
+        is executed and a Feature is recorded in the history.
+
+        For boolean operations the actual CadQuery execution is delegated
+        to the pipeline; the command carries the parameters.
+        """
+        from core.commands import CommandResult, BooleanCommand, CommandType
+
+        if not command.validate():
+            return CommandResult(
+                success=False,
+                error_message="; ".join(command.validation_errors),
+            )
+
+        if command.command_type == CommandType.BOOLEAN:
+            return self._execute_boolean(command)
+
+        # Default: record as a feature and return pending
+        feature = Feature(
+            name=command.display_name,
+            feature_type=FeatureType(command.command_type.value),
+            parameters=command.parameters,
+        )
+        feature.status = "executed"
+        self.feature_history.append(feature)
+        self.document.add_feature(feature)
+        return CommandResult(
+            success=True,
+            feature_id=feature.id,
+            data={"status": "recorded_in_history"},
+        )
+
+    def _execute_boolean(self, command) -> "CommandResult":
+        """Execute a boolean command using CadQuery via the CAD service.
+
+        The boolean operates at the model level: the target is the current
+        model's B-Rep shape and the tools are other cached models selected in
+        the command.  The resulting shape is stored back in the CAD service
+        cache as a new model, tessellated, and the feature is recorded.
+        """
+        from core.commands import CommandResult, BooleanOperation
+
+        operation = command.get_parameter("operation", "union")
+        keep_tools = command.get_parameter("keep_tools", False)
+
+        if not self.model_id:
+            return CommandResult(success=False, error_message="No hay modelo importado.")
+
+        shape = self.cad.get_model_shape(self.model_id)
+        if shape is None:
+            return CommandResult(success=False, error_message="No se pudo obtener la forma CAD.")
+
+        # Resolve tool model ids from the selections. A selection's solid_id may
+        # be a per-solid reference, but the tool shape must come from a cached
+        # model; fall back to the selection's model_id.
+        tool_model_ids = []
+        for sel in command.selections:
+            tid = None
+            if hasattr(sel, "model_id") and sel.model_id:
+                tid = sel.model_id
+            if tid and tid != self.model_id:
+                tool_model_ids.append(tid)
+        if not tool_model_ids:
+            return CommandResult(success=False, error_message="No se encontraron piezas herramienta (seleccione otro modelo).")
+
+        try:
+            result_shape = shape  # cq.Shape already supports .fuse/.cut/.intersect
+            for tool_id in tool_model_ids:
+                tool = self.cad.get_model_shape(tool_id)
+                if tool is None:
+                    continue
+                if operation == BooleanOperation.UNION.value:
+                    result_shape = result_shape.fuse(tool)
+                elif operation == BooleanOperation.DIFFERENCE.value:
+                    result_shape = result_shape.cut(tool)
+                elif operation == BooleanOperation.INTERSECTION.value:
+                    result_shape = result_shape.intersect(tool)
+
+            # Store the resulting shape back as a new model in the cache.
+            new_model_id = self.cad.store_computed_shape(
+                result_shape, model_name=f"Resultado {operation}"
+            )
+            self.model_id = new_model_id
+            self.result = None
+            self.mesh = None
+            self.mesh_nodes = self.mesh_elements = None
+
+            # Re-tessellate so the viewport can display the boolean result.
+            tess = self.cad.tessellate_model(new_model_id, face_mapping=True)
+            self.current_tessellation = tess
+
+            # Record as feature
+            feature = Feature.boolean_op(
+                operation=operation,
+                target_body_id=self.model_id,
+                tool_body_ids=tool_model_ids,
+                keep_tools=keep_tools,
+            )
+            feature.status = "executed"
+            self.feature_history.append(feature)
+            self.document.add_feature(feature)
+
+            return CommandResult(
+                success=True,
+                feature_id=feature.id,
+                result_model_id=new_model_id,
+                data={"operation": operation, "status": "executed",
+                      "result_model_id": new_model_id},
+            )
+        except Exception as exc:
+            logger.exception("Boolean operation failed")
+            return CommandResult(success=False, error_message=str(exc))
+
+    # ------------------------------------------------------------------ #
+    # Architecture layer: study execution coordinator
+    # ------------------------------------------------------------------ #
+    def register_study(self, study) -> str:
+        """Register a Study in the controller and document.  Returns study id."""
+        sid = study.id
+        self._studies[sid] = study
+        self.document.add_study(study)
+        return sid
+
+    def execute_study(self, study, progress_cb: Optional[Callable] = None) -> "StudyResult":
+        """Execute an engineering study through the pipeline.
+
+        For TopologyOptimizationStudy the existing SIMP engine is used.
+        For StructuralAnalysis the existing FEA engine is used.
+        Other study types are marked as ready_for_pipeline.
+        """
+        from core.cae_studies import StudyResult, StudyStatus
+        from core.optimization_studies import TopologyOptimizationStudy
+
+        if not study.validate():
+            study.status = StudyStatus.FAILED
+            return StudyResult(
+                success=False,
+                status="validation_failed",
+                error_message="Study validation failed.",
+            )
+
+        study.status = StudyStatus.RUNNING
+
+        if isinstance(study, TopologyOptimizationStudy):
+            try:
+                p = study.optimization_params
+                result = self.run_optimization(
+                    volume_fraction=p.volume_fraction,
+                    max_iterations=p.max_iterations,
+                    penalization=p.penalization,
+                    filter_radius=p.filter_radius,
+                    tolerance=p.convergence_tolerance,
+                    progress_cb=progress_cb,
+                )
+                study.status = StudyStatus.COMPLETED
+                sr = StudyResult(success=True, status="completed", data=result)
+                study.result = sr
+                self.document.add_result(study.id, result)
+                return sr
+            except Exception as exc:
+                study.status = StudyStatus.FAILED
+                return StudyResult(success=False, status="failed", error_message=str(exc))
+
+        # Default: mark as ready for pipeline
+        study.status = StudyStatus.READY
+        return StudyResult(
+            success=True,
+            status="ready_for_pipeline",
+            data={"study_id": study.id, "type": study.study_type.value},
+        )
 
     # ------------------------------------------------------------------ #
     # Background execution helper

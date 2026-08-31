@@ -1,389 +1,469 @@
-AUDITORÍA Y LIMPIEZA DEL REPOSITORIO — ELIMINACIÓN DE ARQUITECTURA OBSOLETA
+CONSOLIDACIÓN DEL PROYECTO + NAVEGACIÓN + CÁMARA 3D
 
 ROL
 
-Actúa como PROGRAMADOR SENIOR Y ARQUITECTO DE SOFTWARE especializado en aplicaciones CAD/CAE desktop.
+Actúa como PROGRAMADOR SENIOR Y ARQUITECTO DE SOFTWARE especializado en aplicaciones CAD/CAE desktop, Python, PySide6, VTK, cámaras 3D y visualización científica.
 
 Trabaja directamente sobre el repositorio existente.
 
-NO desarrolles funcionalidades nuevas en esta tarea.
+No desarrolles desde cero y no repitas trabajos que ya estén implementados.
 
-El objetivo exclusivo de esta fase es auditar, detectar y eliminar inconsistencias y restos de etapas anteriores del proyecto.
-
----
-
-OBJETIVO
-
-El proyecto ha evolucionado considerablemente y existen documentos, código, comentarios, configuraciones o estructuras pertenecientes a etapas anteriores que pueden estar desactualizados.
-
-Necesitamos dejar el repositorio limpio y coherente con la arquitectura ACTUAL.
-
-No asumas que una implementación mencionada en documentación antigua sigue existiendo.
-
-No implementes nuevamente funcionalidades que ya fueron reemplazadas.
-
-No reintroduzcas arquitecturas abandonadas.
+El proyecto ya pasó por varias etapas de desarrollo. Debes trabajar sobre el estado REAL actual del código.
 
 ---
 
-1. AUDITORÍA COMPLETA
+1. ESTADO REAL DEL PROYECTO
 
-Antes de modificar cualquier cosa, revisa:
+Audita brevemente el código actual, dando prioridad al código sobre informes antiguos.
 
-- estructura completa del repositorio;
-- código fuente;
-- desktop;
-- viewport;
-- renderer;
-- scene;
-- selección;
-- navegación;
-- CAD;
-- mallado;
-- FEA;
-- optimización;
-- servicios;
-- API;
-- scripts;
-- configuraciones;
-- requirements;
-- README;
-- documentación;
-- prompts;
-- comentarios relevantes.
+Determina el estado actual de:
 
-Determina qué corresponde al estado actual y qué pertenece a etapas anteriores.
-
----
-
-2. CLASIFICACIÓN
-
-Clasifica los elementos encontrados en:
-
-ACTUAL
-
-Código/documentación que corresponde a la arquitectura vigente.
-
-NECESARIO
-
-Código antiguo que todavía es utilizado por componentes actuales.
-
-LEGADO
-
-Código perteneciente a una etapa anterior pero que todavía podría ser necesario temporalmente.
-
-OBSOLETO
-
-Código que ya no tiene ninguna dependencia ni función actual.
-
-DOCUMENTACIÓN OBSOLETA
-
-Documentación que describe una arquitectura que ya no existe.
-
-REFERENCIA HISTÓRICA
-
-Información que puede conservarse únicamente si tiene valor histórico o técnico.
-
-No elimines elementos sin comprobar dependencias.
-
----
-
-3. ARQUITECTURA VIGENTE
-
-Toma como dirección actual del proyecto:
-
-APLICACIÓN DESKTOP NATIVA
-        ↓
-PySide6
-        ↓
-Application / Core
-        ↓
-CAD / Mesh / FEA / Optimization
-        ↓
-VTK / GPU
-
-La aplicación debe funcionar localmente.
-
-Internet no debe ser necesaria para utilizar las funciones CAD/CAE.
-
-La conexión a Internet quedará reservada para la futura validación de licencia/suscripción.
-
----
-
-4. CÓDIGO WEB OBSOLETO
-
-Busca específicamente:
-
-- servidores localhost;
-- FastAPI;
-- endpoints internos;
-- HTML;
-- JavaScript;
-- WebView;
-- dashboards web;
-- comunicación HTTP interna;
-- APIs utilizadas únicamente para comunicar módulos locales.
-
-Para cada componente determina si:
-
-1. todavía es utilizado;
-2. tiene una función vigente;
-3. pertenece a una integración futura;
-4. es legado;
-5. es completamente obsoleto.
-
-NO elimines automáticamente todo código web.
-
-Si un componente todavía es necesario, documenta por qué.
-
-Si solamente pertenece a la antigua interfaz web y ya no tiene ninguna dependencia vigente, elimínalo.
-
----
-
-5. REFERENCIAS A ARQUITECTURAS ANTIGUAS
-
-Busca referencias a conceptos que ya no representen el estado actual.
-
-Por ejemplo:
-
-- aplicación web como interfaz principal;
-- navegador como requisito;
-- localhost como requisito;
-- iFrame;
-- FeatureScript como núcleo de la aplicación;
-- Onshape como dependencia obligatoria;
-- conexión permanente a Onshape;
-- arquitectura exclusivamente basada en REST;
-- versiones anteriores del pipeline;
-- prototipos reemplazados;
-- sistemas duplicados.
-
-No elimines una referencia simplemente porque contenga una palabra antigua.
-
-Determina primero si sigue siendo técnicamente relevante.
-
----
-
-6. PROMPTS Y DOCUMENTACIÓN
-
-Revisa todos los archivos de documentación relacionados con instrucciones de desarrollo.
-
-Especialmente:
-
-prompts.md
-
-"prompts.md" debe contener ÚNICAMENTE el prompt de desarrollo actualmente vigente.
-
-Eliminar los prompts anteriores que ya fueron reemplazados.
-
-No conservar una cadena de prompts históricos dentro de "prompts.md".
-
-Si existe documentación que contradice la arquitectura actual:
-
-- actualizarla;
-- o eliminarla si ya no tiene utilidad.
-
----
-
-7. COMENTARIOS Y DOCSTRINGS
-
-Busca comentarios que describan arquitecturas antiguas.
-
-Ejemplos:
-
-"la aplicación funciona mediante navegador"
-"FastAPI controla la interfaz"
-"FeatureScript comunica con Python"
-"Onshape es obligatorio"
-
-Si ya no son ciertos, actualízalos o elimínalos.
-
-No modifiques comentarios técnicos que continúen siendo correctos.
-
----
-
-8. DEPENDENCIAS
-
-Revisa:
-
-- requirements;
-- pyproject;
-- configuraciones;
-- scripts de instalación;
-- dependencias JavaScript;
-- dependencias web.
-
-Identifica dependencias que solamente existen por la antigua interfaz web.
-
-Elimínalas únicamente si no son utilizadas por ningún componente vigente.
-
-No elimines:
-
+- aplicación desktop;
 - PySide6;
 - VTK;
-- Gmsh;
-- CadQuery/OCP;
-- dependencias FEA;
-- dependencias de optimización;
+- viewport;
+- cámara;
+- navegación;
+- selección;
+- CAD/STEP;
+- Document;
+- Features;
+- Commands;
+- Timeline;
+- Booleanos;
+- mallado;
+- FEA;
+- Kratos;
+- optimización;
+- diseño generativo.
 
-si todavía son utilizadas.
-
----
-
-9. ARCHIVOS DUPLICADOS
-
-Busca implementaciones duplicadas o reemplazadas.
-
-Especialmente:
-
-- múltiples sistemas de viewport;
-- múltiples cámaras;
-- múltiples renderers;
-- múltiples sistemas de navegación;
-- múltiples pipelines;
-- múltiples cargadores CAD;
-- APIs antiguas y nuevas para la misma función.
-
-Si existen dos implementaciones:
-
-1. determina cuál utiliza realmente la aplicación;
-2. determina cuál es la arquitectura vigente;
-3. conserva la vigente;
-4. elimina la obsoleta si no tiene dependencias.
-
-No mantengas dos sistemas funcionales para hacer lo mismo sin una razón técnica.
+No vuelvas a implementar funcionalidades que ya existan.
 
 ---
 
-10. NAVIGATION MANAGER
+2. LIMPIEZA
 
-El proyecto ya dispone de un sistema de navegación.
+Identifica documentación y código claramente obsoletos.
 
-No crees otro.
+Busca:
 
-Audita el "NavigationManager" existente y determina qué partes son actuales.
+- informes de etapas anteriores;
+- prompts antiguos;
+- arquitecturas abandonadas;
+- implementaciones duplicadas;
+- interfaces web antiguas;
+- endpoints sin uso;
+- imports innecesarios;
+- código de prototipos reemplazados.
 
-Conserva la arquitectura existente.
+Elimina únicamente aquello cuya obsolescencia pueda verificarse.
 
-No implementes todavía nuevos perfiles de navegación salvo que sea estrictamente necesario para corregir una inconsistencia.
-
----
-
-11. DESKTOP
-
-La aplicación debe continuar siendo desktop.
-
-El punto de entrada debe abrir directamente la aplicación gráfica.
-
-No convertir nuevamente el proyecto a una aplicación web.
-
-Si existe un fallback web antiguo únicamente para desarrollo, determina si sigue siendo necesario.
-
-Si no lo es, elimínalo o sepáralo claramente del flujo normal de la aplicación.
+No realices una reescritura general.
 
 ---
 
-12. ON-SHAPE
-
-Onshape ya no debe considerarse el núcleo obligatorio de la aplicación.
-
-La aplicación debe poder funcionar independientemente.
-
-Cualquier integración futura con Onshape debe estar conceptualmente separada del núcleo.
-
-No elimines código de integración si todavía es necesario para una fase posterior, pero evita que el código actual dependa de Onshape para funcionar.
-
----
-
-13. NO IMPLEMENTAR NUEVAS FUNCIONES
-
-En esta tarea NO implementar:
-
-- nuevos booleanos;
-- nuevo sistema de Features;
-- nuevo sistema de Studies;
-- diseño generativo;
-- nueva UI;
-- nuevo diseño visual;
-- nuevos perfiles de navegación;
-- nuevo solver;
-- nueva FEA.
-
-Esta tarea es exclusivamente de:
-
-AUDITORÍA + LIMPIEZA + CONSOLIDACIÓN.
-
----
-
-14. VALIDACIÓN DE LA LIMPIEZA
-
-Después de eliminar o modificar componentes:
-
-1. ejecuta la aplicación;
-2. verifica que inicia;
-3. verifica que el viewport funciona;
-4. verifica la navegación;
-5. verifica la carga de modelos;
-6. verifica la selección;
-7. verifica el pipeline existente;
-8. verifica que no existen imports rotos;
-9. verifica que no existen referencias a archivos eliminados;
-10. verifica que requirements sigue siendo correcto;
-11. verifica que la aplicación no requiere navegador;
-12. verifica que las funcionalidades actuales siguen funcionando.
-
----
-
-15. INFORME FINAL
-
-Entrega un informe breve con:
-
-Eliminado
-
-Lista de archivos/componentes eliminados y motivo.
-
-Conservado
-
-Componentes antiguos que todavía son necesarios y por qué.
-
-Actualizado
-
-Archivos de documentación, comentarios o configuración corregidos.
-
-Dependencias
-
-Dependencias eliminadas, conservadas o modificadas.
-
-Arquitectura actual
-
-Describe brevemente cómo funciona realmente el proyecto después de la limpieza.
-
-Problemas pendientes
-
-Indica problemas que encontraste pero que deliberadamente NO corregiste porque pertenecen a fases posteriores.
-
----
-
-REGLAS ABSOLUTAS
-
-NO desarrolles funcionalidades nuevas.
-
-NO rediseñes la interfaz.
-
-NO reconstruyas el proyecto.
-
-NO reemplaces tecnologías funcionales.
-
-NO elimines código sin comprobar dependencias.
-
-NO vuelvas a introducir arquitecturas abandonadas.
-
-NO conserves documentación que contradiga deliberadamente el estado actual.
-
-NO utilices "prompts.md" como historial de prompts.
+3. "prompts.md"
 
 "prompts.md" debe contener únicamente el prompt vigente.
 
-La prioridad es:
+Eliminar los prompts anteriores.
 
-DEJAR EL REPOSITORIO LIMPIO, COHERENTE Y SIN RESTOS CONFUSOS DE ETAPAS ANTERIORES.
+No utilizarlo como historial.
+
+---
+
+4. ESTADO DEL PROYECTO
+
+Crear o actualizar:
+
+PROJECT_STATUS.md
+
+Debe representar exclusivamente el estado REAL actual.
+
+Incluir:
+
+Desktop
+Viewport
+Camera
+Navigation
+Selection
+CAD
+Features
+Commands
+Boolean
+Mesh
+FEA
+Kratos
+Structural Optimization
+Generative Design
+CAD Reconstruction
+UI
+License
+
+Indicar para cada elemento:
+
+IMPLEMENTADO
+PARCIAL
+PENDIENTE
+
+---
+
+5. APLICACIÓN DESKTOP
+
+La aplicación debe funcionar como aplicación desktop nativa.
+
+El flujo normal debe ser:
+
+PySide6
+   ↓
+Application
+   ↓
+Core
+   ↓
+CAD / Mesh / FEA / Optimization
+
+No utilizar navegador ni servidor HTTP local para funcionalidades que puedan ejecutarse directamente.
+
+Mantener separadas las futuras integraciones externas.
+
+---
+
+6. LICENCIA
+
+Preparar una abstracción:
+
+LicenseManager
+
+La aplicación solo deberá necesitar Internet para la futura validación de licencia/suscripción.
+
+CAD, mallado, FEA, optimización y visualización deben funcionar localmente.
+
+No implementar todavía el servidor comercial de licencias.
+
+No dispersar comprobaciones de Internet por el código.
+
+---
+
+7. NAVEGACIÓN — "NavigationManager"
+
+El proyecto ya dispone de "NavigationManager".
+
+NO crear otro sistema de navegación.
+
+Completar su integración para permitir diferentes perfiles:
+
+Onshape
+AutoCAD
+Fusion 360
+Blender
+
+La configuración debe modificar el comportamiento de:
+
+- Orbit;
+- Pan;
+- Zoom;
+- botones del mouse;
+- modificadores de teclado cuando corresponda.
+
+La preferencia debe poder guardarse localmente.
+
+---
+
+8. CÁMARA 3D — SISTEMA INDEPENDIENTE
+
+IMPORTANTE: este sistema NO forma parte de "NavigationManager".
+
+Separar claramente:
+
+NavigationManager
+        ↓
+interpreta entradas del usuario
+        ↓
+CameraController
+        ↓
+transforma la cámara
+
+"NavigationManager" determina qué acción solicita el usuario.
+
+"CameraController" determina cómo se transforma la cámara en el espacio 3D.
+
+---
+
+9. LIBERTAD DE MOVIMIENTO DE LA CÁMARA
+
+Actualmente la cámara presenta un comportamiento excesivamente dependiente de los ejes del mundo.
+
+Corregir este comportamiento.
+
+La cámara debe permitir una navegación 3D libre y natural.
+
+Como referencia conceptual utilizar el comportamiento de cámara de Onshape.
+
+No copiar código ni depender de Onshape.
+
+La cámara debe poder:
+
+- orbitar libremente alrededor del punto de interés;
+- cambiar su orientación espacial;
+- rotar en cualquier dirección necesaria;
+- realizar pan independientemente de los ejes globales;
+- hacer zoom respecto del punto de interés;
+- mantener una orientación coherente durante la navegación.
+
+Evitar imponer restricciones artificiales como:
+
+X
+Y
+Z
+
+para determinar cómo puede moverse la cámara.
+
+Los ejes globales deben representar el mundo 3D, no limitar la libertad de orientación de la cámara.
+
+---
+
+10. ORBITA
+
+La órbita debe realizarse alrededor de un:
+
+Target / Focal Point
+
+y no mediante desplazamientos arbitrarios de posición.
+
+Conceptualmente:
+
+Camera
+   ↘
+    Target
+   ↗
+Orbit
+
+El punto de interés debe poder actualizarse según:
+
+- modelo;
+- selección;
+- fit-to-view;
+- interacción del usuario.
+
+La rotación debe modificar la orientación y posición de la cámara manteniendo una relación coherente con el punto de interés.
+
+---
+
+11. PAN
+
+El Pan debe mover:
+
+Camera
++
+Target
+
+manteniendo la misma orientación relativa.
+
+El movimiento debe realizarse según el espacio de la cámara, no según X/Y/Z globales arbitrarios.
+
+Esto debe permitir desplazar el modelo visualmente de forma natural independientemente de la orientación actual.
+
+---
+
+12. ZOOM
+
+El Zoom debe estar basado en la dirección de observación de la cámara.
+
+Cuando sea apropiado, el punto bajo el cursor debe poder actuar como referencia para acercar/alejar la vista.
+
+Evitar implementar zoom simplemente modificando una coordenada global.
+
+---
+
+13. VISTAS PREDEFINIDAS
+
+Las vistas:
+
+- frontal;
+- posterior;
+- superior;
+- inferior;
+- izquierda;
+- derecha;
+- isométrica;
+
+deben seguir existiendo.
+
+Estas vistas son posiciones/orientaciones predefinidas y no deben limitar la libertad posterior de la cámara.
+
+Después de utilizar una vista predefinida, el usuario debe poder orbitar libremente desde ella.
+
+---
+
+14. FIT TO VIEW
+
+"Fit to View" debe calcular una posición apropiada de la cámara respecto del bounding box/modelo.
+
+No debe forzar permanentemente una orientación restringida.
+
+Después de ejecutar Fit, el usuario debe recuperar inmediatamente el control libre de la cámara.
+
+---
+
+15. SEPARACIÓN DE RESPONSABILIDADES
+
+Mantener conceptualmente:
+
+Input
+ ↓
+NavigationManager
+ ↓
+CameraController
+ ↓
+VTK Camera
+
+Y:
+
+Scene
+ ↓
+Geometry
+ ↓
+Renderer
+
+No mezclar:
+
+- eventos de mouse;
+- lógica de navegación;
+- cálculos de cámara;
+- renderizado;
+
+en una única clase.
+
+---
+
+16. NO MODIFICAR INNECESARIAMENTE
+
+No reemplazar VTK.
+
+No crear otro viewport.
+
+No crear otra cámara si la actual puede evolucionarse correctamente.
+
+No crear otro NavigationManager.
+
+No reescribir el sistema CAD.
+
+No modificar innecesariamente FEA, Kratos o optimización.
+
+---
+
+17. VALIDACIÓN DE CÁMARA
+
+Probar explícitamente:
+
+1. Orbit desde la vista isométrica.
+2. Orbit desde la vista frontal.
+3. Orbit desde la vista superior.
+4. Orbit desde una orientación arbitraria.
+5. Rotación alrededor del modelo.
+6. Pan con cámara inclinada.
+7. Zoom con cámara inclinada.
+8. Zoom hacia el punto de interés.
+9. Fit to View.
+10. Cambio de vista predefinida.
+11. Volver a orbitar después de una vista predefinida.
+12. Combinación Orbit → Pan → Zoom.
+13. Combinación Pan → Orbit → Zoom.
+14. Movimiento en orientaciones que no coincidan con X/Y/Z.
+15. Cambio de perfil de navegación sin romper la cámara.
+
+El comportamiento debe sentirse como una cámara CAD 3D libre y natural.
+
+---
+
+18. NO DETENER EL DESARROLLO
+
+Después de limpiar y corregir la cámara/navegación, no conviertas la tarea nuevamente en una auditoría.
+
+Si encuentras problemas menores relacionados directamente con esta tarea:
+
+corrígelos y continúa.
+
+Si encuentras problemas pertenecientes a etapas posteriores:
+
+documentarlos y continuar.
+
+---
+
+19. NO IMPLEMENTAR TODAVÍA
+
+No implementar:
+
+- diseño visual definitivo;
+- estética AutoCAD;
+- nuevos booleanos;
+- nuevas Features;
+- nuevos Studies;
+- algoritmo completo de diseño generativo;
+- reconstrucción CAD avanzada;
+- nuevas simulaciones.
+
+---
+
+20. VALIDACIÓN GENERAL
+
+Al finalizar verifica:
+
+1. Aplicación desktop inicia.
+2. No necesita navegador.
+3. Viewport funciona.
+4. STEP funciona.
+5. Selección funciona.
+6. Pipeline existente funciona.
+7. Kratos funciona.
+8. Optimización existente funciona.
+9. NavigationManager funciona.
+10. Los perfiles existentes funcionan.
+11. CameraController permite libertad de movimiento.
+12. La documentación ya no contradice el código.
+13. No existen imports rotos.
+14. No existen referencias a archivos eliminados.
+
+---
+
+INFORME FINAL
+
+Entrega un informe breve con:
+
+Limpieza
+
+Qué fue eliminado o actualizado.
+
+Estado
+
+Qué está realmente implementado.
+
+Navegación
+
+Qué perfiles funcionan.
+
+Cámara
+
+Qué se corrigió y cómo está separada de NavigationManager.
+
+Licencia
+
+Qué arquitectura quedó preparada.
+
+Próximo paso
+
+Cuál es la siguiente funcionalidad concreta que debe implementarse.
+
+No propongas volver a realizar auditorías generales ya completadas.
+
+---
+
+REGLA PRINCIPAL
+
+AUDITA LO NECESARIO → CORRIGE → IMPLEMENTA → PRUEBA → AVANZA.
+
+No conviertas esta tarea en una auditoría interminable.
+
+El objetivo es terminar esta fase con:
+
+repositorio limpio + aplicación nativa + navegación configurable + cámara 3D libre y funcional.

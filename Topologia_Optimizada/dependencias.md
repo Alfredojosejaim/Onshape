@@ -1,5 +1,13 @@
 # Dependencias para Kratos Multiphysics
 
+> ⚠️ **DOCUMENTO HISTÓRICO — DESACTUALIZADO**
+> Este documento registra las dificultades iniciales para integrar KratosMultiphysics
+> en Windows (agosto 2026) y concluye erróneamente que Kratos era "IMPOSIBLE" para
+> uso standalone. **Ese diagnóstico fue superado**: Kratos está hoy plenamente
+> integrado como motor FEA del proyecto (ver `core/kratos_adapter.py`) y validado
+> de punta a punta con resolución amgcl + fallback a skyline_lu.
+> Estado actual y evidencia: ver `RESUMEN_IMPLEMENTACION.md`.
+
 ## Fecha de Documentación
 2026-08-26
 

@@ -13,8 +13,12 @@ import unittest
 import numpy as np
 from typing import Dict, Any
 
-# Import the TopOpt solver
-from topopt_solver import TopOptSolver, run_topology_optimization, NOT_IMPLEMENTED
+# Import the TopOpt solver (canonical implementation lives in core.solver_interface)
+from core.solver_interface import (
+    TopOptSolver,
+    run_topology_optimization,
+    NOT_IMPLEMENTED_MSG as NOT_IMPLEMENTED,
+)
 
 
 class MockFEASolver:

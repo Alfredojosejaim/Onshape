@@ -34,6 +34,9 @@ jobs.sqlite3
 *.sqlite3-journal
 *.log
 
+# Profiling / benchmark byproducts
+*.prof
+
 # Testing & quality caches
 .pytest_cache/
 .mypy_cache/

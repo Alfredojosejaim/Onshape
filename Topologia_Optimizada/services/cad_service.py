@@ -6,7 +6,6 @@ without any dependency on external CAD platforms. It works with local STEP files
 
 import logging
 import os
-import tempfile
 import uuid
 from typing import Any, Dict, List, Optional
 

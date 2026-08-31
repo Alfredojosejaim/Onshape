@@ -2,7 +2,73 @@
 
 ## Especificación maestra del proyecto
 
+> **Estado**: aplicación standalone funcional — FEA con Kratos verificado, mallado
+> Gmsh implementado, app de escritorio PySide6 + VTK, benchmark de rendimiento con
+> resolución amgcl + fallback a skyline_lu. Documentación de referencia en
+> `RESUMEN_IMPLEMENTACION.md`.
+
 ---
+
+## 0. INSTALACIÓN Y PUESTA EN MARCHA (QUICKSTART)
+
+### Requisitos
+
+- Python 3.10 o superior (el proyecto se distribuye con un runtime embebido en `runtime/`).
+- Windows (scripts de lanzamiento incluidos) — multiplataforma posible con Python propio.
+
+### Instalación de dependencias
+
+Desde la raíz del repositorio:
+
+```bash
+pip install -r requirements.txt
+```
+
+o, para un entorno de desarrollo completo con herramientas de test/lint:
+
+```bash
+pip install -e ".[dev]"
+```
+
+### Lanzar la aplicación de escritorio (PySide6 + VTK)
+
+En Windows, ejecutar:
+
+```bat
+INICIAR_APP_DESKTOP.bat
+```
+
+El script detecta el runtime embebido (`runtime\python`), `.venv`, o el Python del sistema,
+valida que `PySide6` y `vtk` estén instalados e inicia la GUI.
+
+Equivalentemente, desde la raíz:
+
+```bash
+python main.py
+```
+
+### Servidor API (alternativa web)
+
+```bash
+python api_server.py
+```
+
+Levanta un servidor FastAPI que sirve la interfaz web legacy (`optimization-app.html`)
+y expone los endpoints de trabajo de estudios.
+
+### Ejecutar los tests
+
+Los tests de la aplicación standalone (no requieren Kratos) se ejecutan con:
+
+```bash
+pytest -m "not kratos"
+```
+
+> Los tests heredados de la integración con Kratos que requieren `KratosMultiphysics`
+> están movidos a `experimentos/test_kratos_legacy/` y se excluyen por defecto.
+
+---
+
 
 ## 1. VISIÓN DEL PROYECTO
 
@@ -284,6 +350,20 @@ El proyecto se encuentra en desarrollo incremental.
 
 La prioridad es construir primero una base standalone funcional y verificable.
 
+**Resumen de avance** (detalles y evidencia en `RESUMEN_IMPLEMENTACION.md`):
+
+- ✅ **Etapa 1 (Standalone)**: importación STEP, CADModel, app de escritorio
+  (PySide6 + VTK), API/Services y persistencia implementadas.
+- ✅ **Etapa 2 (Infraestructura FEA)**: mallado Gmsh (`GmshTet4Mesher`), Tet4,
+  aplicación de condiciones de frontera y cargas, resolución `K·u=F` con Kratos
+  (amgcl + fallback skyline_lu) y con motor self-contained (`core/fea.py`), validación
+  numérica y benchmark de rendimiento completos.
+- 🚧 **Etapa 3 (Optimización topológica)**: interfaz `TopOptSolver` y motor SIMP
+  self-contained (`core/topopt.py`) presentes; integración completa con el pipeline
+  en curso.
+- ✅ **Etapa 4 (Visualización / exportación)**: viewport 3D VTK (malla, resultados) en
+  la app de escritorio.
+
 Las etapas principales son:
 
 Etapa 1 — Aplicación Standalone
@@ -374,9 +454,11 @@ Exportación del resultado.
 
 11. MALLADO
 
-La solución prevista para la generación de malla volumétrica es Gmsh.
+La solución de generación de malla volumétrica es **Gmsh**, implementada en
+`core/meshing.py` mediante `GmshTet4Mesher` (motor OpenCASCADE de Gmsh para producir
+una malla tetraédrica Tet4 conforme, anclada a la frontera real del STEP).
 
-Gmsh será utilizado para:
+Gmsh se utiliza para:
 
 importar/procesar geometría STEP;
 
@@ -388,15 +470,22 @@ controlar tamaño y calidad de malla;
 
 proporcionar conectividad y nodos al solver FEA.
 
-
-La implementación definitiva debe validarse durante el desarrollo.
+> Existe además `ProvisionalTet4Mesher` como fallback de voxelización para pruebas de
+> la tubería de condiciones de frontera cuando Gmsh no está disponible. No es el
+> generador definitivo.
 
 
 ---
 
 12. FEA
 
-La aplicación tendrá un módulo FEA 3D.
+## 12. FEA
+
+La aplicación tiene un módulo FEA 3D operativo. La arquitectura está orientada a
+elementos **Tet4** (tetraedro lineal de 4 nodos).
+
+En el diseño se implementó un motor FEA self-contained (`core/fea.py`) y el motor
+principal real es **Kratos Multiphysics** a través del adaptador `core/kratos_adapter.py`:
 
 La arquitectura está orientada inicialmente a elementos:
 
@@ -424,7 +513,13 @@ Tensiones
  ↓
 Compliance
 
-El solver debe diseñarse pensando en su futura integración con optimización SIMP.
+El adaptador Kratos incluye una red de seguridad: resolución iterativa por defecto
+(**amgcl**) con verificación de convergencia y fallback determinista a **skyline_lu**
+(directo) en caso de fallo del solver o de no-convergencia. Elección validada en
+`benchmarks/` (compliance coincide frente a la línea base skyline a 7 cifras
+significativas, con aceleración de ~61× en el total de la malla grande).
+
+El solver está diseñado pensando en su integración con optimización SIMP.
 
 
 ---
@@ -937,5 +1032,68 @@ Cada nuevo componente deberá evaluarse según su función, rendimiento, integra
 Principio rector
 
 > No migrar por migrar ni proteger por proteger. Compilar y proteger únicamente aquello que realmente lo necesite.
+
+---
+
+## 27. ESTRUCTURA ACTUAL DEL REPOSITORIO
+
+```
+Topologia_Optimizada/
+│
+├─ main.py                    Entrada de la app de escritorio
+├─ api_server.py              Servidor FastAPI (alternativa web + endpoints de estudio)
+├─ optimization-app.html      Interfaz web legacy servida por api_server
+├─ geometry_processor.py      Shim de compatibilidad (delega en services/core)
+│
+├─ core/                      Núcleo CAD-agnóstico (sin dependencia de CAD externo)
+│  ├─ models.py               Representación interna del modelo (CADModel, etc.)
+│  ├─ geometry.py             Motor geométrico (GeometryEngine, análisis B-Rep)
+│  ├─ meshing.py              Mallado volumétrico Gmsh (GmshTet4Mesher)
+│  ├─ boundary.py             Mapeo de condiciones de frontera
+│  ├─ selection.py            Engine de selección geométrica de nodos
+│  ├─ fea.py                  Motor FEA self-contained (Tet4, NumPy/SciPy)
+│  ├─ kratos_adapter.py       Adaptador Kratos (motor FEA principal + fallback)
+│  ├─ solver_interface.py     Interfaz TopOpt (TopOptSolver, create_kratos_fea_solver)
+│  ├─ topopt.py               Motor SIMP self-contained
+│  ├─ materials.py            Materiales
+│  └─ study.py                Orquestación de estudio
+│
+├─ adapters/cad/
+│  ├─ step_adapter.py         Importación STEP → CADModel
+│  └─ base.py
+│
+├─ services/
+│  ├─ cad_service.py          Servicio de capa de aplicación (CAD)
+│  └─ study_service.py        Servicio de capa de aplicación (estudios)
+│
+├─ desktop/                   App de escritorio PySide6 + VTK
+│  ├─ app.py
+│  ├─ pipeline/controller.py  Orquestación del pipeline
+│  ├─ ui/                     main_window, panels, style
+│  └─ viewport/               viewport 3D (camera, scene, renderer, selection)
+│
+├─ benchmarks/                Rendimiento: solvers, memoria, compliance
+│  ├─ meshes/                 Mallas de referencia (small/medium/large)
+│  ├─ results/                Baselines JSON + perfiles
+│  ├─ test_kratos_fallback.py Tests del fallback de solver (amgcl→skyline_lu)
+│  └─ test_compliance.py
+│
+├─ experimentos/
+│  ├─ kratos_topopt_poc/      PoC descartable (histórico de integración Kratos)
+│  └─ test_kratos_legacy/     Tests heredados que requieren KratosMultiphysics
+│
+├─ requirements.txt           Dependencias de la app
+├─ pyproject.toml             Metadatos del paquete, pytest, herramientas
+├─ INICIAR_APP_DESKTOP.bat    Lanzador Windows de la app de escritorio
+├─ cono.step                  Fixture CAD de prueba
+├─ .env.example               Plantilla de variables de entorno
+│
+├─ runtime/                   Runtime Python embebido (no versionado; .gitignore)
+└─ .venv/                     Entorno virtual local (no versionado; .gitignore)
+```
+
+> `runtime/`, `.venv/`, `certs/`, `mkcert.exe`, los instaladores `python-*.exe` y
+> `jobs.sqlite3` no se versionan (ver `.gitignore`). Se excluyen de Git por ser
+> entornos/binarios locales regenerables o sensibles.
 
 

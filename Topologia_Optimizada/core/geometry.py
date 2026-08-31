@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import cadquery as cq
 import numpy as np
 
-from core.models import BoundingBox3D, CADFace, CADSolid, TessellatedMesh
+from core.models import BoundingBox3D, CADFace, TessellatedMesh
 
 logger = logging.getLogger(__name__)
 

@@ -18,7 +18,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from core.fea import FEASolver, FEAError
+from core.fea import FEASolver
 
 logger = logging.getLogger(__name__)
 

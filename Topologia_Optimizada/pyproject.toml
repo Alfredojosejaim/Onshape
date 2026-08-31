@@ -12,6 +12,8 @@ dependencies = [
     "scikit-fem>=1.3.0",
     "cadquery>=2.3.0",
     "gmsh>=4.13.0",
+    "PySide6>=6.6.0",
+    "vtk>=9.2.0",
 ]
 
 [project.optional-dependencies]
@@ -30,7 +32,6 @@ dev = [
 py-modules = [
     "api_server",
     "geometry_processor",
-    "topopt_solver",
 ]
 
 [tool.pytest.ini_options]

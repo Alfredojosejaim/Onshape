@@ -1068,9 +1068,7 @@ class KratosAdapter:
             }
 
         except Exception as e:
-            logger.error(f"Analysis failed: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception(f"Analysis failed: {e}")
 
             return {
                 "success": False,

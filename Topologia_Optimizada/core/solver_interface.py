@@ -18,7 +18,7 @@ KRATOS_AVAILABLE = True
 KRATOS_IMPORT_ERROR = None
 
 try:
-    from core.kratos_adapter import KratosAdapter, is_kratos_available, get_kratos_import_error
+    from core.kratos_adapter import KratosAdapter
 except ImportError as e:
     KRATOS_AVAILABLE = False
     KRATOS_IMPORT_ERROR = str(e)
@@ -255,9 +255,7 @@ def create_kratos_fea_solver(
                 }
                 
         except Exception as e:
-            logger.error(f"Kratos FEA solver failed: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception(f"Kratos FEA solver failed: {e}")
             return {
                 "success": False,
                 "status": "failed",

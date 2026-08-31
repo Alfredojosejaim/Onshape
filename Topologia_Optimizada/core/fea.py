@@ -366,7 +366,6 @@ def solve_fea(
     # nodal displacements as 3-vector
     displacements = u.reshape(-1, 3).tolist()
 
-    kkt = K
     max_disp = float(np.max(np.abs(u))) if u.size else 0.0
     return {
         "success": True,

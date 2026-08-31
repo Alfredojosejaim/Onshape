@@ -32,10 +32,10 @@ register_kratos_dll_directory()
 # Legacy Kratos experiments
 # ---------------------------------------------------------------------------
 # The self-contained application no longer depends on KratosMultiphysics (see
-# ``dependencias.md``). The ``test_kratos_*.py`` modules at the repository root
-# are legacy experiment harnesses that require the (unavailable) Kratos native
-# libraries, so they are excluded from the default suite. They are preserved in
-# source control for reference, not run in the self-contained pipeline.
+# ``dependencias.md``). The legacy ``test_kratos_*.py`` harnesses (that require the
+# native Kratos libraries) were moved to ``experimentos/test_kratos_legacy/``, which
+# is already excluded from test discovery via ``norecursedirs`` in pyproject.toml.
+# The glob below is kept as a safety net in case any such file reappears at the root.
 collect_ignore_glob = [
     "test_kratos_*.py",
     "test_linear_solver_repro.py",

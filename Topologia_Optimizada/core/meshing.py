@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 import logging
 import os
 import tempfile
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import cadquery as cq
 import numpy as np

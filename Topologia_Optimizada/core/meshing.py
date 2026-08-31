@@ -27,7 +27,17 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class MeshResult:
-    """Volumetric finite element mesh data container."""
+    """Volumetric finite element mesh data container.
+
+    * ``nodes`` / ``elements`` hold the raw Tet4 mesh.
+    * ``physical_groups`` maps each named boundary group (gmsh physical group)
+      to the **0-based** mesh node indices belonging to that boundary. Consumed
+      by the FEA import (e.g. Kratos) to rebuild named submodelparts so that
+      boundary conditions can be applied to the *exact* nodes of a CAD face
+      instead of a coordinate/face-distance approximation.
+    * ``metadata`` carries extra generator information (mesher id, step file,
+      refinement parameters, etc.).
+    """
     nodes: List[List[float]]  # [[x, y, z], ...]
     elements: List[List[int]]  # [[n0, n1, n2, n3], ...]
     num_nodes: int
@@ -35,6 +45,7 @@ class MeshResult:
     element_type: str = "tet4"
     is_provisional: bool = True
     metadata: Dict[str, Any] = field(default_factory=dict)
+    physical_groups: Dict[str, List[int]] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -47,6 +58,7 @@ class MeshResult:
             "elements": self.elements,
             "is_provisional": self.is_provisional,
             "metadata": self.metadata,
+            "physical_groups": self.physical_groups,
         }
 
 
@@ -83,11 +95,84 @@ class GmshTet4Mesher(BaseMesher):
         self.mesh_size_max = mesh_size_max
         self.mesh_order = mesh_order
 
+    def _emit_physical_groups(
+        self,
+        gmsh,
+        physical_groups: Optional[Dict[str, List[int]]],
+    ) -> Dict[str, int]:
+        """Define gmsh surface physical groups from the caller's mapping.
+
+        ``physical_groups`` maps a group **name** to a list of **CAD face
+        indices** (0-based, sequential over the gmsh surfaces, i.e. the same
+        convention used by :mod:`core.boundary` / the Core's ``CADFace.id``).
+        For each entry a gmsh physical group (dim=2) is created on those surface
+        entities with the given name.
+
+        Returns a dict ``{group_name: gmsh_physical_group_tag}``.
+        """
+        if not physical_groups:
+            return {}
+
+        surfaces = gmsh.model.getEntities(2)  # [(dim, tag), ...]
+        surface_tags = [tag for dim, tag in surfaces if dim == 2]
+        # Resolve a CAD face index (position in the surface list) to its gmsh tag.
+        index_to_tag = {i: tag for i, tag in enumerate(surface_tags)}
+
+        group_tags: Dict[str, int] = {}
+        for name, face_indices in physical_groups.items():
+            tags = []
+            for fi in face_indices:
+                if fi in index_to_tag:
+                    tags.append(index_to_tag[fi])
+            if not tags:
+                logger.warning(
+                    "Physical group %r has no resolvable face indices; skipped", name
+                )
+                continue
+            phy_tag = gmsh.model.addPhysicalGroup(2, tags)
+            gmsh.model.setPhysicalName(2, phy_tag, str(name))
+            group_tags[name] = phy_tag
+        return group_tags
+
+    @staticmethod
+    def _nodes_for_physical_groups(
+        gmsh, group_tags: Dict[str, int]
+    ) -> Dict[str, List[int]]:
+        """Map each named physical group to its 0-based mesh node indices.
+
+        The returned indices are aligned with the mesh's ``nodes``/``elements``
+        lists (which are built from ``gmsh.model.mesh.getNodes()`` in the same
+        order as the node tags array).
+        """
+        if not group_tags:
+            return {}
+
+        node_tags, _node_coords, _ = gmsh.model.mesh.getNodes()
+        tag_to_index = {tag: i for i, tag in enumerate(node_tags)}
+
+        groups: Dict[str, List[int]] = {}
+        for name, phy_tag in group_tags.items():
+            try:
+                # gmsh returns a tuple (node_tags, node_coords) for a physical
+                # group; we only need the node tags.
+                group_node_tags = gmsh.model.mesh.getNodesForPhysicalGroup(2, phy_tag)
+                if isinstance(group_node_tags, (tuple, list)) and len(group_node_tags) >= 1:
+                    group_node_tags = group_node_tags[0]
+                group_node_tags = np.asarray(group_node_tags).reshape(-1)
+            except Exception as e:  # pragma: no cover - gmsh API dependent
+                logger.warning("Could not query nodes for group %r: %s", name, e)
+                groups[name] = []
+                continue
+            indices = sorted(int(t) for t in group_node_tags if int(t) in tag_to_index)
+            groups[name] = indices
+        return groups
+
     def generate_mesh_from_step(
         self,
         step_file: str,
         target_element_size: Optional[float] = None,
         element_type: str = "tet4",
+        physical_groups: Optional[Dict[str, List[int]]] = None,
     ) -> MeshResult:
         """Generate a Tet4 volumetric mesh from a real STEP file via Gmsh.
 
@@ -99,6 +184,11 @@ class GmshTet4Mesher(BaseMesher):
                 characteristic length (``self.mesh_size_max``) is used.
             element_type: Mesh element type. Only ``"tet4"`` is supported by this
                 generator; any other value raises ``ValueError``.
+            physical_groups: Optional ``{name: [face_indices]}`` mapping the
+                boundary faces that should be exposed as named physical groups
+                after meshing. The returned :class:`MeshResult.physical_groups`
+                then contains the exact 0-based node indices per named group
+                (Fase 2: robust, CAD-faithful boundary selection).
 
         Returns:
             :class:`MeshResult` with real nodes/elements (``is_provisional=False``).
@@ -126,7 +216,7 @@ class GmshTet4Mesher(BaseMesher):
             gmsh.model.add("topologia_optimizada_mesh")
             gmsh.option.setNumber("Geometry.OCCImportLabels", 1)
 
-            imported = gmsh.model.occ.importShapes(step_file, format="step")
+            gmsh.model.occ.importShapes(step_file, format="step")
             gmsh.model.occ.synchronize()
 
             volumes = gmsh.model.getEntities(dim=3)
@@ -134,6 +224,10 @@ class GmshTet4Mesher(BaseMesher):
                 raise ValueError(
                     f"STEP '{step_file}' contains no 3D solid/volume to mesh"
                 )
+
+            # Fase 2: define requested boundary physical groups BEFORE meshing so
+            # their node sets are available afterwards.
+            group_tags = self._emit_physical_groups(gmsh, physical_groups)
 
             if target_element_size and target_element_size > 0:
                 gmsh.option.setNumber("Mesh.CharacteristicLengthMin", float(target_element_size))
@@ -165,6 +259,8 @@ class GmshTet4Mesher(BaseMesher):
 
             elements = (np.array(tet_connectivity).reshape(-1, 4) - 1).tolist()
 
+            physical_group_nodes = self._nodes_for_physical_groups(gmsh, group_tags)
+
             return MeshResult(
                 nodes=nodes,
                 elements=elements,
@@ -178,6 +274,7 @@ class GmshTet4Mesher(BaseMesher):
                     "mesh_size_max": self.mesh_size_max,
                     "gmsh_volumes": len(volumes),
                 },
+                physical_groups=physical_group_nodes,
             )
         finally:
             gmsh.finalize()
@@ -190,6 +287,7 @@ class GmshTet4Mesher(BaseMesher):
         min_size: float = 0.5,
         element_type: str = "tet4",
         density: Optional[list] = None,
+        physical_groups: Optional[Dict[str, List[int]]] = None,
     ) -> MeshResult:
         """Generate a Tet4 mesh adaptively refined according to a scalar field.
 
@@ -200,6 +298,9 @@ class GmshTet4Mesher(BaseMesher):
 
         Falls back to a uniform mesh (base_size) if no refinement points and no
         gmsh field support are available.
+
+        ``physical_groups`` behaves exactly as in :meth:`generate_mesh_from_step`
+        (named boundary groups exposed in the returned mesh).
         """
         if not os.path.exists(step_file):
             raise FileNotFoundError(f"STEP file not found: {step_file}")
@@ -267,6 +368,9 @@ class GmshTet4Mesher(BaseMesher):
             else:
                 gmsh.option.setNumber("Mesh.CharacteristicLengthMax", float(base_size))
 
+            # Fase 2: define requested boundary physical groups BEFORE meshing.
+            group_tags = self._emit_physical_groups(gmsh, physical_groups)
+
             gmsh.model.mesh.generate(3)
 
             _, node_coords, _ = gmsh.model.mesh.getNodes()
@@ -285,6 +389,8 @@ class GmshTet4Mesher(BaseMesher):
                 raise ValueError(f"Gmsh produced no Tet4 elements for '{step_file}'")
             elements = (np.array(tet_connectivity).reshape(-1, 4) - 1).tolist()
 
+            physical_group_nodes = self._nodes_for_physical_groups(gmsh, group_tags)
+
             return MeshResult(
                 nodes=nodes,
                 elements=elements,
@@ -299,6 +405,7 @@ class GmshTet4Mesher(BaseMesher):
                     "adaptive": True,
                     "n_size_points": len(size_points) if size_points else 0,
                 },
+                physical_groups=physical_group_nodes,
             )
         finally:
             gmsh.finalize()
@@ -308,11 +415,14 @@ class GmshTet4Mesher(BaseMesher):
         shape: cq.Shape,
         target_element_size: float = 2.0,
         element_type: str = "tet4",
+        physical_groups: Optional[Dict[str, List[int]]] = None,
     ) -> MeshResult:
         """Mesh a CAD shape by exporting it to a temporary STEP file first.
 
         Keeps the uniform :class:`BaseMesher` interface while delegating to the
-        Gmsh pipeline. Raises ``ValueError`` if the shape is null/empty.
+        Gmsh pipeline. ``physical_groups`` is forwarded to
+        :meth:`generate_mesh_from_step`. Raises ``ValueError`` if the shape is
+        null/empty.
         """
         if shape is None or shape.isNull():
             raise ValueError("Cannot mesh a null/empty CAD shape")
@@ -324,6 +434,7 @@ class GmshTet4Mesher(BaseMesher):
                 tmp_path,
                 target_element_size=target_element_size,
                 element_type=element_type,
+                physical_groups=physical_groups,
             )
         finally:
             try:

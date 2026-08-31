@@ -13,8 +13,7 @@ Declarative, CAD-agnostic selection of **mesh nodes** (0-based indices into a
 
 Regions are described with JSON-compatible dicts so they can travel through the
 API / the UI / study persistence exactly as :class:`ConstraintDefinition` and
-:class:`LoadDefinition` do (the ``GeometryReference.geometry`` contract of
-``api_server.py``).
+:class:`LoadDefinition` do (the ``GeometryReference.geometry`` contract).
 
 The engine does NOT depend on a CAD platform: face-based regions only need an
 optional CadQuery/OpenCASCADE ``Shape`` (provided by the STEP adapter).

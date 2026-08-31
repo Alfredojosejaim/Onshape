@@ -1,10 +1,8 @@
 # Runtime dependencies for the DESKTOP CAD/CAE application.
 # These are sufficient to run `python main.py` fully offline (no browser, no
-# local HTTP server).  The web stack (FastAPI/uvicorn/pydantic/dotenv) needed
-# by the optional `api_server.py` front-end lives in `requirements-web.txt`.
+# local HTTP server, no web stack).
 numpy>=1.24.0
 scipy>=1.11.0
-scikit-fem>=1.3.0
 cadquery>=2.3.0
 gmsh>=4.13.0
 

@@ -76,7 +76,7 @@ class Viewport3D(QWidget):
         self._interactor.SetInteractorStyle(vtkInteractorStyleUser())
         self._install_observers()
 
-        # Background matches the optimization-app.html viewport palette (#46474b -> #3c3d41)
+        # Background matches the native viewport palette (#46474b -> #3c3d41)
         self.renderer.set_background((0.278, 0.282, 0.302), (0.239, 0.243, 0.256))
         self.scene.set_grid_visible(True)
         self.scene.set_axes_visible(True)

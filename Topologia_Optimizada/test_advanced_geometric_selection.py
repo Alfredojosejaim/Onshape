@@ -4,7 +4,7 @@ Cubre:
 
   1. Regiones puntuales: plano arbitrario, caja AABB, esfera, cilindro.
   2. Composición booleana: unión / intersección / exclusión.
-  3. Parser de descriptores JSON (contract api_server GeometryReference.geometry).
+  3. Parser de descriptores JSON (contract GeometryReference.geometry).
   4. Inyección de tolerancia por defecto solo en regiones puntuales.
   5. Selección por cara CAD exacta y selección automática por normal sobre STEP real
      (cono.step) — sin gmsh, solo mapeo geométrico.

@@ -1,4 +1,4 @@
-"""TimelinePanel - the "Progreso del estudio" playhead from optimization-app.html:
+"""TimelinePanel - native "Progreso del estudio" playhead widget:
 five numbered step pills, a convergence chip, a scrub track and playback
 buttons (Reiniciar / ▶ / Ejecutar). The play actions are forwarded to the
 main window through signals.

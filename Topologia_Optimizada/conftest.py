@@ -2,7 +2,7 @@
 
 Registers the KratosMultiphysics ``.libs`` directory with ``os.add_dll_directory``
 before any test module imports Kratos. This is required on Windows so that the
-KratosCore.dll dependency graph can be resolved (see ``dependencias.md``).
+KratosCore.dll dependency graph can be resolved.
 """
 
 import importlib.util
@@ -31,11 +31,10 @@ register_kratos_dll_directory()
 # ---------------------------------------------------------------------------
 # Legacy Kratos experiments
 # ---------------------------------------------------------------------------
-# The self-contained application no longer depends on KratosMultiphysics (see
-# ``dependencias.md``). The legacy ``test_kratos_*.py`` harnesses (that require the
-# native Kratos libraries) were moved to ``experimentos/test_kratos_legacy/``, which
-# is already excluded from test discovery via ``norecursedirs`` in pyproject.toml.
-# The glob below is kept as a safety net in case any such file reappears at the root.
+# The self-contained application no longer depends on KratosMultiphysics. Tests
+# that require the native Kratos libraries are marked ``@pytest.mark.kratos`` and
+# skipped by default. The globs below are kept as a safety net in case any stray
+# Kratos test file reappears at the root.
 collect_ignore_glob = [
     "test_kratos_*.py",
     "test_linear_solver_repro.py",

@@ -121,7 +121,7 @@ Resultado esperado: **Viga cantilever con un extremo fijo, el otro libre**.
 
 La solución definitiva requiere crear **grupos físicos en gmsh** antes de mallar:
 
-#### 1. En el código de mallado (ej: `geometry_processor.py` o función que use gmsh):
+#### 1. En el código de mallado (`core/meshing.py` → `GmshTet4Mesher`):
 
 ```python
 import gmsh
@@ -193,7 +193,7 @@ Amplía la selección de nodos FEM más allá de cara única / plano coordenado 
 motor declarativo y CAD-agnóstico: `core/selection.py` (`NodeSelectionEngine`).
 
 Regiones soportadas (descriptores JSON, compatibles con
-`GeometryReference.geometry` de `api_server.py`):
+`GeometryReference.geometry`):
 
 | type       | Campos                                               | Requiere `cad_shape` |
 |------------|------------------------------------------------------|----------------------|
@@ -357,7 +357,7 @@ def test_submodelpart_selection():
 | `core/kratos_adapter.py` | +4 métodos nuevos (submodelpart, coord filter) | ✅ Implementado |
 | `core/solver_interface.py` | Refactor: reemplaza "all_node_indices" con selección geométrica | ✅ Implementado |
 | Documentación | Este archivo + inline comments en código | ✅ Hecho |
-| `geometry_processor.py` | Necesita integración gmsh (TODO: Fase 2) | ⏳ Pendiente |
+| `core/meshing.py` | Necesita integración gmsh physical groups (TODO: Fase 2) | ⏳ Pendiente |
 | Tests | Validar viga cantilever con resultados analíticos | ⏳ Pendiente |
 
 ---
@@ -371,7 +371,7 @@ def test_submodelpart_selection():
 4. ⏳ Verificar que solo nodos de frontera están constrictos
 
 ### Mediano Plazo (Implementar Fase 2)
-1. Integrar gmsh.model.addPhysicalGroup() en geometry_processor.py
+1. Integrar gmsh.model.addPhysicalGroup() en core/meshing.py (GmshTet4Mesher)
 2. Actualizar import_mesh_from_mdpa() en kratos_adapter.py para preservar submodelparts
 3. Agregar campos `submodelpart_name` a ConstraintDefinition y LoadDefinition
 4. Reemplazar coordinate-based con submodelpart-based en tests

@@ -49,12 +49,9 @@ python main.py
 
 ### Servidor API (alternativa web)
 
-```bash
-python api_server.py
-```
-
-Levanta un servidor FastAPI que sirve la interfaz web legacy (`optimization-app.html`)
-y expone los endpoints de trabajo de estudios.
+> ⚠️ La antigua interfaz web (FastAPI / `api_server.py` / `optimization-app.html`) fue
+> **eliminada** del repositorio. La aplicación es exclusivamente desktop nativa y se
+> ejecuta de forma totalmente local sin navegador ni servidor HTTP.
 
 ### Ejecutar los tests
 
@@ -64,8 +61,8 @@ Los tests de la aplicación standalone (no requieren Kratos) se ejecutan con:
 pytest -m "not kratos"
 ```
 
-> Los tests heredados de la integración con Kratos que requieren `KratosMultiphysics`
-> están movidos a `experimentos/test_kratos_legacy/` y se excluyen por defecto.
+> Los tests que requieren `KratosMultiphysics` están marcados con `@pytest.mark.kratos` y
+> se omiten automáticamente cuando el motor no está instalado.
 
 ---
 
@@ -1041,9 +1038,6 @@ Principio rector
 Topologia_Optimizada/
 │
 ├─ main.py                    Entrada de la app de escritorio
-├─ api_server.py              Servidor FastAPI (alternativa web + endpoints de estudio)
-├─ optimization-app.html      Interfaz web legacy servida por api_server
-├─ geometry_processor.py      Shim de compatibilidad (delega en services/core)
 │
 ├─ core/                      Núcleo CAD-agnóstico (sin dependencia de CAD externo)
 │  ├─ models.py               Representación interna del modelo (CADModel, etc.)
@@ -1077,10 +1071,6 @@ Topologia_Optimizada/
 │  ├─ results/                Baselines JSON + perfiles
 │  ├─ test_kratos_fallback.py Tests del fallback de solver (amgcl→skyline_lu)
 │  └─ test_compliance.py
-│
-├─ experimentos/
-│  ├─ kratos_topopt_poc/      PoC descartable (histórico de integración Kratos)
-│  └─ test_kratos_legacy/     Tests heredados que requieren KratosMultiphysics
 │
 ├─ requirements.txt           Dependencias de la app
 ├─ pyproject.toml             Metadatos del paquete, pytest, herramientas

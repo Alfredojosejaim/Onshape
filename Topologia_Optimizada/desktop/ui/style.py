@@ -1,10 +1,9 @@
-"""Application-wide Qt stylesheet mirroring the optimization-app.html palette.
+"""Application-wide Qt stylesheet for the native desktop UI.
 
-The tokens below reproduce the reference web UI (dark engineering theme):
+The tokens define the dark engineering theme of the application:
 app shell #1b1c1e, panels #232427 / #2a2b2f, accent #2f7bf6, borders
 #38393d / #313236. Widgets are styled through custom dynamic properties
-(ribbon, tab, pill, section, chip, avatar, ...) so the native windows match
-the appearance of the HTML interface.
+(ribbon, tab, pill, section, chip, avatar, ...).
 """
 
 ACCENT = "#2f7bf6"

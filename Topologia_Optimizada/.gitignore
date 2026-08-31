@@ -19,17 +19,8 @@ env/
 # Environment and secrets (Do NOT commit secrets)
 .env
 .env.*
-!.env.example
-
-# Local HTTPS & certificates (managed by mkcert / INICIAR_APLICACION.bat)
-mkcert.exe
-certs/
-*.pem
-*.key
-*.crt
 
 # Runtime SQLite databases & logs
-jobs.sqlite3
 *.sqlite3
 *.sqlite3-journal
 *.log

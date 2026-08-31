@@ -1,5 +1,4 @@
-"""MainWindow - native desktop window whose layout & look mirror the reference
-web interface (optimization-app.html):
+"""MainWindow - native desktop window for the CAD/CAE application:
 
   menu bar (Archivo · Editar · Diseño · Herramientas · Ayuda)
   top bar (app title centered · ⛁ Standalone chip · Importar STEP · avatar)
@@ -1106,8 +1105,7 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self,
             "Topología Optimizada — Desktop",
-            "Interfaz desktop nativa (PySide6 + VTK) con la apariencia de "
-            "optimization-app.html.\n\n"
+            "Interfaz desktop nativa (PySide6 + VTK).\n\n"
             "Flujo: Importar STEP → Cargas/Restricciones → Malla → FEA → "
             "Optimización SIMP.\n"
             "Navegación (estilo AutoCAD): zoom [rueda], pan [rueda pulsada], "

@@ -37,8 +37,8 @@ def run() -> int:
             "Ocurrió un error al crear la ventana principal (posiblemente el "
             "entorno no tiene soporte OpenGL para VTK):\n\n"
             f"{exc}\n\n"
-            "Alternativa: ejecute `python api_server.py` y abra "
-            "http://localhost:8000 en el navegador.",
+            "Verifique que dispone de una GPU con OpenGL o ejecute la "
+            "aplicación en una máquina con renderizado 3D disponible.",
         )
         return 1
 

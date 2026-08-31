@@ -158,26 +158,5 @@ class TestCoreIndependence(unittest.TestCase):
         except FileNotFoundError:
             pass  # Si no existe .env.example, no hay problema
 
-    def test_api_server_standalone(self):
-        """Verifica que api_server no tiene dependencias Onshape obligatorias."""
-        # Leer el archivo api_server.py directamente
-        try:
-            with open("api_server.py", "r") as f:
-                api_source = f.read()
-            
-            # Verificar que no hay imports de onshape_client
-            self.assertNotIn("onshape_client", api_source,
-                "api_server contiene import de onshape_client")
-            
-            # Verificar que no hay OAuth
-            self.assertNotIn("OAuthTokenStore", api_source,
-                "api_server contiene OAuthTokenStore")
-            self.assertNotIn("oauth_configured", api_source,
-                "api_server contiene oauth_configured")
-            
-        except FileNotFoundError:
-            self.fail("No se encontró api_server.py")
-
-
 if __name__ == "__main__":
     unittest.main()

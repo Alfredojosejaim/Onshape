@@ -1,6 +1,0 @@
-# Optional web front-end dependencies (only needed to run `api_server.py`,
-# the browser-based alternative UI).  NOT required for the desktop app.
-fastapi>=0.104.0
-uvicorn[standard]>=0.24.0
-pydantic>=2.0.0
-python-dotenv>=1.0.0

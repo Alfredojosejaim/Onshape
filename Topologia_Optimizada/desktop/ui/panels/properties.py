@@ -1,11 +1,11 @@
-"""PropertiesPanel - parameters + run controls styled like optimization-app.html.
+"""PropertiesPanel - parameters + run controls for the native desktop UI.
 
-Sections mirror the reference web interface: "Optimizar (SIMP)" fields
-(objective, target volume fraction, algorithm, penalization, filter radius,
-max iterations), Material, Cargas / Fuerzas, Restricciones, Visibilidad and
-Estado. All the values feed the SIMP engine through the controller; the
-public API used by MainWindow is preserved (signals, set_enabled, set_busy,
-material_name, fixed axis helpers, _element_size, _progress, _status).
+Sections: "Optimizar (SIMP)" fields (objective, target volume fraction,
+algorithm, penalization, filter radius, max iterations), Material,
+Cargas / Fuerzas, Restricciones, Visibilidad and Estado. All the values feed
+the SIMP engine through the controller; the public API used by MainWindow is
+preserved (signals, set_enabled, set_busy, material_name, fixed axis helpers,
+_element_size, _progress, _status).
 """
 
 from __future__ import annotations

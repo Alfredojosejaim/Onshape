@@ -32,6 +32,7 @@ from desktop.ui.panels.timeline import TimelinePanel
 from desktop.ui.style import PALETTE
 from core.user_preferences import UserPreferences
 from core.navigation import NavigationManager
+from core.cad_entity import EntityType
 
 ACCENT = PALETTE["accent"]
 TEXT_DIM = PALETTE["text_dim"]
@@ -192,6 +193,19 @@ class MainWindow(QMainWindow):
         act_reset = QAction("Reiniciar flujo", self)
         act_reset.triggered.connect(self._on_reset_flow)
         edit_menu.addAction(act_reset)
+
+        # Operaciones (CAD operations; extensible to future ops)
+        ops_menu = menubar.addMenu("&Operaciones")
+        boolean_sub = ops_menu.addMenu("Boolean")
+        act_bool_union = QAction("Unión", self)
+        act_bool_union.triggered.connect(lambda: self._on_boolean_op("union"))
+        boolean_sub.addAction(act_bool_union)
+        act_bool_cut = QAction("Corte", self)
+        act_bool_cut.triggered.connect(lambda: self._on_boolean_op("difference"))
+        boolean_sub.addAction(act_bool_cut)
+        act_bool_intersect = QAction("Intersección", self)
+        act_bool_intersect.triggered.connect(lambda: self._on_boolean_op("intersection"))
+        boolean_sub.addAction(act_bool_intersect)
 
         # Diseño (vistas + representación)
         view_menu = menubar.addMenu("&Diseño")
@@ -970,46 +984,96 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Configure el radio de filtro de densidad en el panel de propiedades.")
 
     def _on_boolean_op(self, operation: str) -> None:
-        """Handle boolean operation button clicks from the ribbon."""
+        """Handle boolean operation entry points (menu + ribbon).
+
+        Opens the functional BooleanPanel dialog, which reuses the existing
+        SelectionManager for capturing the target / tool bodies from the
+        viewport.  Only on *Aceptar* is a BooleanCommand built and executed
+        through the pipeline; *Cancelar* leaves the model untouched.
+        """
         if not self.controller.model_id:
-            self.statusBar().showMessage("Importe un modelo STEP primero.")
+            QMessageBox.warning(self, "Sin modelo", "Importe un modelo STEP primero.")
             return
-        from core.commands import BooleanCommand, BooleanOperation
-        sel = self.viewport.selection_manager
-        cad_entities = []
-        for item in (sel.multi_selection if sel.multi_selection else ([sel.last_payload] if sel.last_payload else [])):
-            ce = item.get("cad_entity")
-            if ce is not None:
-                cad_entities.append(ce)
-        cmd = BooleanCommand(
+        if len(self.controller.cad.list_solids(self.controller.model_id)) < 1:
+            QMessageBox.warning(self, "Boolean", "El modelo no contiene cuerpos seleccionables.")
+            return
+
+        from desktop.ui.panels.boolean_panel import BooleanPanel
+
+        panel = BooleanPanel(
+            parent=self,
             operation=operation,
-            selections=cad_entities,
-            keep_tools=False,
+            get_solid_selections=self._current_solid_selections,
         )
-        self._set_busy(True, f"Ejecutando {operation}...")
+        result = panel.exec()
+        if result != BooleanPanel.Accepted or panel.command is None:
+            # Cancellation: no Feature, no model change.  Just restore/keep
+            # the viewport selection state.
+            self.statusBar().showMessage("Operación booleana cancelada.")
+            return
+
+        cmd = panel.command
+        self._set_busy(True, f"Ejecutando boolean {cmd.get_parameter('operation', 'union')}...")
+        self.statusBar().showMessage("Ejecutando operación booleana...")
         self.controller.run_in_background(
             lambda: self.controller.execute_command(cmd),
-            on_done=lambda result: self._on_boolean_done(result),
+            on_done=self._on_boolean_done,
             on_error=lambda e: self._on_error("Operación booleana", e),
         )
 
+    def _current_solid_selections(self):
+        """Return the solid CadEntityRefs currently selected in the viewport.
+
+        Reuses the existing SelectionManager: faces are promoted to their
+        parent solid (``solid_entity``) when available, otherwise the solid
+        reference is derived from the picked entity.
+        """
+        sel = self.viewport.selection_manager
+        refs = []
+        source = sel.multi_selection if sel.multi_selection else ([sel.last_payload] if sel.last_payload else [])
+        for item in source:
+            if item is None:
+                continue
+            solid = item.get("solid_entity")
+            if solid is not None:
+                refs.append(solid)
+                continue
+            ce = item.get("cad_entity")
+            if ce is not None and ce.entity_type == EntityType.SOLID:
+                refs.append(ce)
+        # De-duplicate while preserving order.
+        seen = set()
+        out = []
+        for r in refs:
+            key = (r.solid_id, r.model_id)
+            if key not in seen:
+                seen.add(key)
+                out.append(r)
+        return out
+
     def _on_boolean_done(self, result) -> None:
         self._set_busy(False)
-        if result.success:
-            self.statusBar().showMessage(f"Operación booleana completada: {result.feature_id[:8]}...")
-            # Re-render the boolean result model in the viewport
-            tess = self.controller.current_tessellation
-            if tess and tess.get("vertices"):
-                self._show_tessellation(tess)
-                self.placeholder.hide()
-                self.design_tree.set_context(
-                    self.controller.model_name if self.controller.model_id else None,
-                    has_mesh=False, has_result=False,
-                )
-            self.design_tree.set_bodies(self.controller.cad.list_solids(self.controller.model_id))
-            self._sync_architecture_tree()
-        else:
+        if not result.success:
+            # CAD error: keep the previous model and surface the reason.
             self.statusBar().showMessage(f"Error: {result.error_message}")
+            QMessageBox.warning(self, "Operación booleana",
+                                f"No se pudo completar la operación:\n{result.error_message}")
+            return
+
+        self.statusBar().showMessage(
+            f"Operación booleana completada: {result.feature_id[:8]}...")
+        # Re-render the boolean result model in the viewport.
+        tess = self.controller.current_tessellation
+        if tess and tess.get("vertices"):
+            self._show_tessellation(tess)
+            self.placeholder.hide()
+            self.design_tree.set_context(
+                self.controller.model_name if self.controller.model_id else None,
+                has_mesh=False, has_result=False,
+            )
+        self.design_tree.set_bodies(self.controller.cad.list_solids(self.controller.model_id))
+        self.timeline.set_features(self.controller.feature_history.features)
+        self._sync_architecture_tree()
 
     # ------------------------------------------------------------------ #
     # Guided flow (timeline playback)

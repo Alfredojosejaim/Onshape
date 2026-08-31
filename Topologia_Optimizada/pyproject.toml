@@ -13,6 +13,10 @@ dependencies = [
 
 # The desktop CAD/CAE application is fully self-contained and does NOT require
 # a web stack.  The former FastAPI web front-end (api_server.py) was removed.
+#
+# The FEA engine is Kratos Multiphysics, bundled self-contained in the venv via
+# `requirements.txt` (wheels published on PyPI for CPython 3.11 / win_amd64).
+# `kratos` extra documents the same pinned set for pip-based installs.
 [project.optional-dependencies]
 dev = [
     "pytest>=7.4.0",
@@ -20,11 +24,16 @@ dev = [
     "black>=23.0.0",
     "ruff>=0.1.0",
 ]
+kratos = [
+    "KratosMultiphysics==10.4.3",
+    "KratosStructuralMechanicsApplication==10.4.3",
+    "KratosOptimizationApplication==10.4.3",
+]
 
 [tool.pytest.ini_options]
-# The self-contained application is independent of KratosMultiphysics and other
-# external CAD solvers. Tests that require KratosMultiphysics are marked ``kratos``
-# and skipped when it is unavailable.
+# KratosMultiphysics is bundled with the app (see requirements.txt), so the
+# FEA path (and `kratos`-marked tests) normally run. The `kratos` marker is
+# still available for environments where it cannot be installed.
 norecursedirs = [
     ".*",
     "build",
@@ -34,7 +43,7 @@ norecursedirs = [
 ]
 testpaths = ["."]
 markers = [
-    "kratos: requires KratosMultiphysics (optional; skipped when unavailable)",
+    "kratos: requires KratosMultiphysics (bundled; skipped only when unavailable)",
     "slow: long-running validation tests that are skipped by default",
 ]
-addopts = "-m 'not kratos'"
+addopts = "-m 'not slow'"

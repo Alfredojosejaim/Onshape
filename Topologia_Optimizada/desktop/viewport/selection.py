@@ -10,7 +10,18 @@ tessellation).
 
     * ``{"key": "...", "kind": "actor", "actor": <vtkActor>}``       whole object
     * ``{"key": "...", "kind": "face", "face_index": N, "center": [..],
-         "normal": [..], "area": ..}``                              CAD face
+         "normal": [..], "area": .., "cad_entity": <CadEntityRef>}`` CAD face
+
+Architecture integration (Phase 1):
+    When a face is picked, the payload now includes a ``cad_entity`` key
+    holding a ``CadEntityRef`` object.  This gives the rest of the system a
+    stable, serialisable reference to the CAD entity that is independent of
+    the VTK viewport.  The existing ``kind``/``face_index`` keys are
+    preserved for backward compatibility.
+
+    Multi-entity selection: holding Ctrl while clicking adds the picked
+    entity to the current selection set.  The callback receives a list
+    of all selected payloads via ``selectionChanged``.
 """
 
 from __future__ import annotations
@@ -19,6 +30,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 from vtkmodules.vtkRenderingCore import vtkCellPicker, vtkActor
 from vtkmodules.vtkCommonColor import vtkNamedColors
+
+from core.cad_entity import CadEntityRef, EntityType, SelectionSet
 
 
 class SelectionManager:
@@ -33,24 +46,43 @@ class SelectionManager:
         self._on_selection: Callable[[Optional[Dict[str, Any]]], None] | None = None
         self._scene = None
 
+        # Optional body-level resolver: ``callable(model_id, face_index) -> 
+        # Optional[Dict]`` returning ``{"solid_id", "index"}`` so a picked face
+        # can be promoted to its parent solid for body-level selection.
+        self._solid_resolver: Optional[Callable[[Optional[str], int], Optional[Dict[str, Any]]]] = None
+
+        # Multi-entity selection state
+        self._multi_selection: List[Dict[str, Any]] = []
+        self._multi_identifications: List[vtkActor] = []
+
     def attach(self, scene) -> None:
         self._scene = scene
 
     def set_selection_callback(self, cb: Callable[[Optional[Dict[str, Any]]], None]) -> None:
         self._on_selection = cb
 
-    def pick(self, display_x: int, display_y: int) -> Optional[Dict[str, Any]]:
-        """Convert a Qt display coordinate to a VTK world pick and update state."""
+    def set_solid_resolver(self, resolver: Optional[Callable[[Optional[str], int], Optional[Dict[str, Any]]]]) -> None:
+        """Register an optional callable to promote a picked face to its solid."""
+        self._solid_resolver = resolver
+
+    def pick(self, display_x: int, display_y: int, ctrl: bool = False) -> Optional[Dict[str, Any]]:
+        """Convert a Qt display coordinate to a VTK world pick and update state.
+
+        When *ctrl* is True the picked entity is added to (or removed from)
+        the multi-entity selection set instead of replacing it.
+        """
         x = float(display_x)
         y_win = self._renderer.GetSize()[1] - float(display_y)
         picked = self._picker.Pick(x, y_win, 0.0, self._renderer)
         if not picked:
-            self.clear()
+            if not ctrl:
+                self.clear()
             return None
 
         actor = self._picker.GetActor()
         if actor is None or self._scene is None:
-            self.clear()
+            if not ctrl:
+                self.clear()
             return None
 
         key = self._actor_to_key(actor)
@@ -72,10 +104,111 @@ class SelectionManager:
                         "normal": meta.get("normal", []),
                         "area": meta.get("area", 0.0),
                     })
+                # Architecture layer: stable CAD entity reference
+                payload["cad_entity"] = CadEntityRef.from_face(
+                    face_index=face_index,
+                    model_id=key,
+                    center=meta.get("center") if meta else None,
+                    normal=meta.get("normal") if meta else None,
+                    area=meta.get("area") if meta else None,
+                )
+                # Body-level promotion: resolve the parent solid so the
+                # selection can refer to a whole body (Fase 2).
+                if self._solid_resolver is not None:
+                    solid = self._solid_resolver(key, face_index)
+                    if solid:
+                        payload["solid_entity"] = CadEntityRef.from_solid(
+                            solid_id=solid.get("solid_id", "solid_0"),
+                            model_id=key,
+                            index=solid.get("index"),
+                        )
 
-        self.set_selected(payload)
+        if ctrl:
+            self._toggle_multi(payload)
+        else:
+            self.set_selected(payload)
         return self._last_payload
 
+    # ------------------------------------------------------------------ #
+    # Multi-entity selection
+    # ------------------------------------------------------------------ #
+    def _toggle_multi(self, payload: Dict[str, Any]) -> None:
+        """Add or remove an entity from the multi-selection set."""
+        identifier = self._selection_key(payload)
+        existing_idx = None
+        for i, sel in enumerate(self._multi_selection):
+            if self._selection_key(sel) == identifier:
+                existing_idx = i
+                break
+
+        if existing_idx is not None:
+            # Remove from selection
+            self._multi_selection.pop(existing_idx)
+            self._rebuild_multi_highlights()
+        else:
+            # Add to selection
+            self._multi_selection.append(payload)
+            if payload.get("kind") == "face" and self._scene is not None:
+                self._scene.highlight_faces([payload["face_index"]])
+            elif payload.get("actor") is not None:
+                self._build_identification(payload["actor"])
+
+        self._last_payload = payload
+        if self._on_selection:
+            cleaned = [{k: v for k, v in s.items() if k != "actor"} for s in self._multi_selection]
+            self._on_selection(cleaned if cleaned else None)
+
+    @staticmethod
+    def _selection_key(payload: Dict[str, Any]) -> str:
+        """Return a hashable key for de-duplicating multi-selection."""
+        if payload.get("kind") == "face":
+            return f"face:{payload.get('face_index')}:{payload.get('key')}"
+        return f"actor:{payload.get('key')}"
+
+    def _rebuild_multi_highlights(self) -> None:
+        """Remove all current highlight actors and re-add for the remaining selection."""
+        # Remove old identifications
+        for actor in self._multi_identifications:
+            self._renderer.RemoveActor(actor)
+        self._multi_identifications.clear()
+        if self._scene is not None:
+            self._scene.clear_highlight()
+        # Re-add highlights for remaining selection
+        face_indices = []
+        for sel in self._multi_selection:
+            if sel.get("kind") == "face":
+                face_indices.append(sel["face_index"])
+            elif sel.get("actor") is not None:
+                self._build_identification(sel["actor"])
+        if face_indices and self._scene is not None:
+            self._scene.highlight_faces(face_indices)
+        self._renderer.Render()
+
+    @property
+    def multi_selection(self) -> List[Dict[str, Any]]:
+        """Return the current multi-entity selection (without actor refs)."""
+        return [{k: v for k, v in s.items() if k != "actor"} for s in self._multi_selection]
+
+    @property
+    def selection_set(self) -> SelectionSet:
+        """Return the current selection as a core SelectionSet."""
+        ss = SelectionSet(name="Viewport Selection")
+        for sel in self._multi_selection:
+            ce = sel.get("cad_entity")
+            if ce is not None:
+                ss.add(ce)
+        return ss
+
+    def clear_multi(self) -> None:
+        """Clear the multi-entity selection set."""
+        for actor in self._multi_identifications:
+            self._renderer.RemoveActor(actor)
+        self._multi_identifications.clear()
+        self._multi_selection.clear()
+
+    # ------------------------------------------------------------------ #
+    # Single-entity selection (backward compatible)
+    # ------------------------------------------------------------------ #
     def _actor_to_key(self, actor: vtkActor) -> Optional[str]:
         for key, scene_actor in (self._scene._actors.items() if hasattr(self._scene, "_actors") else []):
             if scene_actor is actor:
@@ -84,6 +217,7 @@ class SelectionManager:
 
     def set_selected(self, payload: Optional[Dict[str, Any]]) -> None:
         self.clear(notify=False)
+        self.clear_multi()
         if payload is None:
             self._picked_key = None
             self._picked_actor = None
@@ -122,6 +256,7 @@ class SelectionManager:
         outline.GetProperty().SetRepresentationToWireframe()
         self._renderer.AddActor(outline)
         self._identification = outline
+        self._multi_identifications.append(outline)
         self._renderer.Render()
 
     def clear(self, notify: bool = True) -> None:

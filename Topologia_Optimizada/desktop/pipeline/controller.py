@@ -60,6 +60,11 @@ class PipelineController:
         self.feature_history = FeatureHistory()
         self._studies: Dict[str, Any] = {}  # study_id -> Study
 
+        # --- Licensing (single, encapsulated object; no scattered internet
+        #     checks anywhere else in the app) ---
+        from core.license import LicenseManager
+        self.license = LicenseManager()
+
     # ------------------------------------------------------------------ #
     # Material helpers
     # ------------------------------------------------------------------ #

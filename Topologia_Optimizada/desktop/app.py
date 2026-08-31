@@ -30,15 +30,22 @@ def run() -> int:
 
     try:
         window = MainWindow()
-    except Exception as exc:  # e.g. VTK/OpenGL unavailable (VM, RDP, sin GPU)
+    except Exception as exc:  # any error during window/viewport construction
+        detail = f"{type(exc).__name__}: {exc}"
+        # A common real-world cause is lack of GPU/OpenGL support (VM, RDP,
+        # integrated graphics without a GL driver), but we never guess: the
+        # actual error is always shown so code bugs are not masked as a
+        # hardware problem.
         QMessageBox.critical(
             None,
             "No se pudo iniciar la interfaz 3D",
-            "Ocurrió un error al crear la ventana principal (posiblemente el "
-            "entorno no tiene soporte OpenGL para VTK):\n\n"
-            f"{exc}\n\n"
-            "Verifique que dispone de una GPU con OpenGL o ejecute la "
-            "aplicación en una máquina con renderizado 3D disponible.",
+            "Ocurrió un error al crear la ventana principal.\n\n"
+            f"{detail}\n\n"
+            "Si el error menciona OpenGL / pixel format / GPU, ejecute la "
+            "aplicación en una máquina con renderizado 3D disponible o "
+            "habilite el renderizado por software. En otro caso, revise el "
+            "error indicado (puede tratarse de un problema interno del "
+            "programa, no de la tarjeta gráfica).",
         )
         return 1
 

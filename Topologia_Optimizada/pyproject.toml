@@ -3,10 +3,6 @@ name = "topologia-optimizada"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
-    "fastapi>=0.104.0",
-    "uvicorn[standard]>=0.24.0",
-    "pydantic>=2.0.0",
-    "python-dotenv>=1.0.0",
     "numpy>=1.24.0",
     "scipy>=1.11.0",
     "scikit-fem>=1.3.0",
@@ -16,7 +12,17 @@ dependencies = [
     "vtk>=9.2.0",
 ]
 
+# The desktop CAD/CAE application is fully self-contained and does NOT require
+# a web stack.  ``fastapi``, ``uvicorn``, ``pydantic`` and ``python-dotenv`` are
+# used ONLY by the optional ``api_server.py`` web front-end, so they are kept in
+# the optional ``web`` extra rather than as required runtime dependencies.
 [project.optional-dependencies]
+web = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+]
 topopt = [
     "topopt-python>=0.1.0",
 ]

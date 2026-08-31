@@ -3,16 +3,23 @@
 Composition:  Viewport3D -> Scene -> Renderer -> GPU
                           -> Camera -> (renderer active camera)
                           -> SelectionManager
+                          -> NavigationManager  (Phase 1 architecture)
 
 Navigation is driven through VTK interactor observers (so it works regardless of
 how Qt routes mouse events to the embedded window) and follows the standard
-AutoCAD scheme: scroll wheel = zoom, middle button drag = pan, Shift+middle
-button drag = orbit, left click = select/pick, N = fit view to model.
-Right click is left unbound for a future context menu.
+AutoCAD scheme by default: scroll wheel = zoom, middle button drag = pan,
+Shift+middle button drag = orbit, left click = select/pick, N = fit view to
+model.  Right click is left unbound for a future context menu.
 
 The orbit itself is a free trackball rotation (Onshape-style field motion): the
 camera follows the pointer along a great circle and can reach any orientation
 without being locked to fixed axes.
+
+Architecture integration (Phase 1):
+    A ``NavigationManager`` from ``core.navigation`` is created at init time
+    with the default AutoCAD profile.  The existing VTK observer handlers
+    continue to work exactly as before; the NavigationManager is available
+    for the UI to query and swap profiles without touching the viewport.
 """
 
 from __future__ import annotations
@@ -29,6 +36,7 @@ from desktop.viewport.renderer import Renderer
 from desktop.viewport.camera import Camera, StandardView
 from desktop.viewport.scene import Scene
 from desktop.viewport.selection import SelectionManager
+from core.navigation import NavigationManager, InputEvent, MouseButton, ViewportAction
 
 
 class Viewport3D(QWidget):
@@ -58,6 +66,9 @@ class Viewport3D(QWidget):
         self.selection = SelectionManager(self.renderer.vtk_renderer)
         self.selection.attach(self.scene)
         self.selection.set_selection_callback(self._emit_selection)
+
+        # Architecture layer: navigation profile manager
+        self.navigation = NavigationManager(profile_name="autocad")
 
         # Use a passive interactor style so the VTK default navigation
         # (Trackball: left=rotate, middle=pan, right=zoom) is fully disabled
@@ -114,15 +125,73 @@ class Viewport3D(QWidget):
         except Exception:
             return False
 
+    def _ctrl_held(self) -> bool:
+        inter = self._interactor
+        try:
+            return bool(inter.GetControlKey())
+        except Exception:
+            return False
+
+    def _alt_held(self) -> bool:
+        inter = self._interactor
+        try:
+            return bool(inter.GetAltKey())
+        except Exception:
+            return False
+
+    def _make_input_event(
+        self,
+        mouse_button: MouseButton | None = None,
+        wheel_delta: float = 0.0,
+        key_sym: str | None = None,
+        double_click: bool = False,
+    ) -> InputEvent:
+        """Build a normalised InputEvent from the current VTK modifier state."""
+        return InputEvent(
+            mouse_button=mouse_button,
+            shift=self._shift_held(),
+            ctrl=self._ctrl_held(),
+            alt=self._alt_held(),
+            wheel_delta=wheel_delta,
+            key_sym=key_sym,
+            double_click=double_click,
+        )
+
+    def _resolve_and_execute(self, event: InputEvent) -> None:
+        """Resolve an input event through the NavigationManager and act."""
+        action = self.navigation.resolve(event)
+        act = action.action
+        if act == ViewportAction.ORBIT:
+            self._mode = "orbit"
+        elif act == ViewportAction.PAN:
+            self._mode = "pan"
+        elif act == ViewportAction.ZOOM_IN:
+            self.camera.dolly(-0.8)
+            self.renderer.render()
+            self._mode = "idle"
+        elif act == ViewportAction.ZOOM_OUT:
+            self.camera.dolly(0.8)
+            self.renderer.render()
+            self._mode = "idle"
+        elif act == ViewportAction.SELECT:
+            self._mode = "idle"
+            self._click_start = True
+        elif act == ViewportAction.FIT:
+            self.fit_to_view()
+            self._mode = "idle"
+        elif act == ViewportAction.CONTEXT_MENU:
+            self._mode = "idle"
+        else:
+            self._mode = "idle"
+
     def _on_left_press(self, obj, ev) -> None:
-        # AutoCAD: left button = select/pick, no navigation
-        self._mode = "idle"
-        self._click_start = True
+        event = self._make_input_event(mouse_button=MouseButton.LEFT)
+        self._resolve_and_execute(event)
         self._last_x, self._last_y = self._xy()
 
     def _on_middle_press(self, obj, ev) -> None:
-        # AutoCAD: middle button = pan; Shift+middle button = orbit
-        self._mode = "orbit" if self._shift_held() else "pan"
+        event = self._make_input_event(mouse_button=MouseButton.MIDDLE)
+        self._resolve_and_execute(event)
         self._last_x, self._last_y = self._xy()
 
     def _generic_release(self, obj, ev) -> None:
@@ -131,8 +200,7 @@ class Viewport3D(QWidget):
     def _on_left_release(self, obj, ev) -> None:
         if self._click_start:
             x, y = self._xy()
-            window_height = self._interactor.size().height()
-            self.selection.pick(int(x), int(y))
+            self.selection.pick(int(x), int(y), ctrl=self._ctrl_held())
         self._mode = "idle"
 
     def _on_move(self, obj, ev) -> None:
@@ -152,20 +220,20 @@ class Viewport3D(QWidget):
         self.renderer.render()
 
     def _on_wheel_forward(self, obj, ev) -> None:
-        self.camera.dolly(-0.8)
-        self.renderer.render()
+        event = self._make_input_event(wheel_delta=1.0)
+        self._resolve_and_execute(event)
 
     def _on_wheel_backward(self, obj, ev) -> None:
-        self.camera.dolly(0.8)
-        self.renderer.render()
+        event = self._make_input_event(wheel_delta=-1.0)
+        self._resolve_and_execute(event)
 
     def _on_key_press(self, obj, ev) -> None:
         try:
             key = self._interactor.GetKeySym() or ""
         except Exception:
             return
-        if key in ("n", "N"):
-            self.fit_to_view()
+        event = self._make_input_event(key_sym=key)
+        self._resolve_and_execute(event)
 
     def _emit_selection(self, payload) -> None:
         try:
@@ -223,3 +291,14 @@ class Viewport3D(QWidget):
             self._interactor.Finalize()
         except Exception:
             pass
+
+    # ------------------------------------------------------------------ #
+    # Navigation profile (architecture layer)
+    # ------------------------------------------------------------------ #
+    def set_navigation_profile(self, profile_name: str) -> bool:
+        """Swap the navigation profile at runtime without touching observers."""
+        return self.navigation.set_profile(profile_name)
+
+    @property
+    def navigation_profile_name(self) -> str:
+        return self.navigation.profile_name

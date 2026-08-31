@@ -100,6 +100,42 @@ def test_orbit_from_arbitrary(controller):
 
 
 # --------------------------------------------------------------------------- #
+# Vertical orbit sense (follow-the-pointer; horizontal must be unaffected)
+# --------------------------------------------------------------------------- #
+
+def test_orbit_vertical_sense_follows_pointer(controller):
+    """Dragging UP on screen (dy<0) must make the view move up: the camera
+    drops (its world-space normal-to-view offset decreases) so the model goes
+    up on screen. This pins the fix for the reported inverted vertical orbit.
+    Horizontal and vertical use independent senses; we only assert vertical.
+    """
+    controller.set_view(StandardView.FRONT)
+    cam_z0 = controller.position[2]
+    controller.orbit(0.0, -5.0, sensitivity=0.01)   # drag up on screen
+    cam_z1 = controller.position[2]
+    assert cam_z1 < cam_z0, (
+        "dragging up should lower the camera in the view-normal direction"
+    )
+
+
+def test_orbit_horizontal_sense_unaffected(controller):
+    """Flipping the vertical sense must NOT change the horizontal one.
+
+    The horizontal drag sign is left as the original (user-reported correct)
+    behaviour: dragging right on screen moves the camera toward -X in FRONT view.
+    """
+    right_pos = _orbit_drag(controller, dx=6.0, dy=0.0)
+    assert right_pos[0] < 0, "drag right must keep its original -X motion"
+
+
+def _orbit_drag(controller, dx, dy, sensitivity=0.01):
+    """Return the camera position after a single orbit drag."""
+    controller.set_view(StandardView.FRONT)
+    controller.orbit(dx, dy, sensitivity=sensitivity)
+    return controller.position
+
+
+# --------------------------------------------------------------------------- #
 # 5. Rotation stays anchored on the model (focal point + distance preserved)
 # --------------------------------------------------------------------------- #
 

@@ -1,0 +1,104 @@
+{
+  "small_500": {
+    "runs": [
+      {
+        "modelpart_and_vars_s": 0.0002,
+        "mesh_import_s": 0.0033,
+        "material_and_dofs_s": 0.0028,
+        "bc_apply_s": 0.003,
+        "solve_and_extract_s": 0.0378,
+        "success": true,
+        "num_nodes_with_displacement": 206,
+        "max_abs_disp": 1.0,
+        "compliance": 2144453.485669582,
+        "total_s": 0.0471,
+        "peak_memory_kb": 373836.0,
+        "num_nodes": 206,
+        "num_elements": 643
+      }
+    ],
+    "average": {
+      "modelpart_and_vars_s": 0.0002,
+      "mesh_import_s": 0.0033,
+      "material_and_dofs_s": 0.0028,
+      "bc_apply_s": 0.003,
+      "solve_and_extract_s": 0.0378,
+      "success": true,
+      "num_nodes_with_displacement": 206.0,
+      "max_abs_disp": 1.0,
+      "compliance": 2144453.4857,
+      "total_s": 0.0471,
+      "peak_memory_kb": 373836.0,
+      "num_nodes": 206.0,
+      "num_elements": 643.0
+    }
+  },
+  "medium_5k": {
+    "runs": [
+      {
+        "modelpart_and_vars_s": 0.0002,
+        "mesh_import_s": 0.0566,
+        "material_and_dofs_s": 0.0277,
+        "bc_apply_s": 0.0156,
+        "solve_and_extract_s": 0.185,
+        "success": true,
+        "num_nodes_with_displacement": 1358,
+        "max_abs_disp": 1.0,
+        "compliance": 2070495.8114447074,
+        "total_s": 0.2851,
+        "peak_memory_kb": 381232.0,
+        "num_nodes": 1358,
+        "num_elements": 5778
+      }
+    ],
+    "average": {
+      "modelpart_and_vars_s": 0.0002,
+      "mesh_import_s": 0.0566,
+      "material_and_dofs_s": 0.0277,
+      "bc_apply_s": 0.0156,
+      "solve_and_extract_s": 0.185,
+      "success": true,
+      "num_nodes_with_displacement": 1358.0,
+      "max_abs_disp": 1.0,
+      "compliance": 2070495.8114,
+      "total_s": 0.2851,
+      "peak_memory_kb": 381232.0,
+      "num_nodes": 1358.0,
+      "num_elements": 5778.0
+    }
+  },
+  "large_50k": {
+    "runs": [
+      {
+        "modelpart_and_vars_s": 0.0001,
+        "mesh_import_s": 0.2613,
+        "material_and_dofs_s": 0.1563,
+        "bc_apply_s": 0.0958,
+        "solve_and_extract_s": 1.1259,
+        "success": true,
+        "num_nodes_with_displacement": 9316,
+        "max_abs_disp": 1.0,
+        "compliance": 2037479.8994548067,
+        "total_s": 1.6394,
+        "peak_memory_kb": 494052.0,
+        "num_nodes": 9316,
+        "num_elements": 47611
+      }
+    ],
+    "average": {
+      "modelpart_and_vars_s": 0.0001,
+      "mesh_import_s": 0.2613,
+      "material_and_dofs_s": 0.1563,
+      "bc_apply_s": 0.0958,
+      "solve_and_extract_s": 1.1259,
+      "success": true,
+      "num_nodes_with_displacement": 9316.0,
+      "max_abs_disp": 1.0,
+      "compliance": 2037479.8995,
+      "total_s": 1.6394,
+      "peak_memory_kb": 494052.0,
+      "num_nodes": 9316.0,
+      "num_elements": 47611.0
+    }
+  }
+}

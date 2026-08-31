@@ -1,602 +1,618 @@
-FASE 1 — ARQUITECTURA CAD/CAE Y SISTEMA DE FEATURES
+FASE 1 — CONSOLIDACIÓN DE ARQUITECTURA DESKTOP NATIVA Y DESACOPLAMIENTO WEB
 
 ROL
 
-Actúa como PROGRAMADOR SENIOR Y ARQUITECTO DE SOFTWARE especializado en aplicaciones CAD/CAE, geometría computacional, visualización 3D, FEA y optimización.
+Actúa como PROGRAMADOR SENIOR Y ARQUITECTO DE SOFTWARE especializado en aplicaciones CAD/CAE desktop, Python, PySide6, VTK, geometría CAD, FEA y arquitecturas de software desacopladas.
 
 Trabaja directamente sobre el repositorio existente.
 
 NO desarrolles una aplicación desde cero.
 
-Antes de modificar código, audita la implementación actual y comprende cómo están conectados el desktop, viewport, geometría, selección, pipeline, FEA y optimización.
+Antes de modificar cualquier archivo, audita nuevamente el estado ACTUAL del repositorio y comprende las modificaciones realizadas anteriormente.
 
 ---
 
-OBJETIVO DE ESTA FASE
+OBJETIVO
 
-Preparar la arquitectura existente para evolucionar desde el actual visor/aplicación de optimización hacia una aplicación CAD/CAE independiente, capaz de incorporar progresivamente operaciones CAD, estudios de ingeniería, optimización estructural y diseño generativo.
+Consolidar el proyecto como una aplicación CAD/CAE desktop nativa, ejecutándose localmente y sin depender de un navegador ni de un servidor web local para su funcionamiento normal.
 
-Esta fase es principalmente arquitectónica y funcional.
+La aplicación debe poder:
 
-NO realizar todavía un rediseño visual de la interfaz.
+- iniciar como aplicación desktop;
+- cargar y procesar modelos localmente;
+- visualizar geometría localmente;
+- realizar selección local;
+- ejecutar mallado local;
+- ejecutar FEA local;
+- ejecutar optimización local;
+- gestionar sus Features y Studies localmente;
+- funcionar sin conexión a Internet durante el uso normal.
 
-La estética será una fase posterior.
-
----
-
-REGLA PRINCIPAL
-
-REUTILIZA TODO LO QUE YA FUNCIONE.
-
-No reemplaces componentes existentes simplemente para crear una arquitectura nueva.
-
-Antes de modificar algo determina:
-
-- qué existe;
-- qué funciona;
-- qué está incompleto;
-- qué es provisional;
-- qué puede reutilizarse;
-- qué necesita ser adaptado;
-- qué realmente debe reemplazarse.
-
-No elimines funcionalidades existentes sin verificar sus dependencias.
+La única comunicación obligatoria con Internet en esta etapa será la necesaria para validar la licencia/suscripción.
 
 ---
 
-1. AUDITORÍA
+REGLA FUNDAMENTAL
 
-Audita como mínimo:
+NO reemplaces la arquitectura existente sin auditarla primero.
 
-- punto de entrada;
-- aplicación desktop;
-- MainWindow;
+El repositorio ya contiene una implementación desktop, viewport, renderer, escena, selección, navegación, CAD, mallado y pipeline.
+
+Debes reutilizarla y corregir únicamente aquello que sea necesario.
+
+No dupliques sistemas que ya existen.
+
+No crees una segunda implementación de:
+
 - viewport;
 - cámara;
 - renderer;
-- escena;
 - selección;
-- carga STEP;
-- CadQuery/OCP;
-- tessellation;
-- Gmsh;
-- FEA;
-- optimización;
+- navegación;
+- pipeline;
+- carga CAD.
+
+---
+
+1. AUDITORÍA OBLIGATORIA
+
+Antes de modificar código identifica:
+
+- punto de entrada real;
+- flujo de inicialización;
+- MainWindow;
+- UI;
+- Viewport3D;
+- Camera;
+- Scene;
+- Renderer;
+- SelectionManager;
+- NavigationManager;
+- CADService;
 - PipelineController;
 - servicios;
-- dependencias;
-- interfaz web/API restante.
+- módulos de geometría;
+- mallado;
+- FEA;
+- optimización;
+- servidor/API;
+- dependencias web;
+- cualquier comunicación HTTP interna;
+- cualquier dependencia del navegador.
 
-Identifica acoplamientos innecesarios y responsabilidades mal ubicadas.
+Determina exactamente qué componentes son:
 
-Antes de implementar nuevas estructuras, documenta brevemente qué arquitectura existe actualmente y qué modificaciones son realmente necesarias.
+A. Parte del núcleo desktop
 
----
+B. Servicios locales reutilizables
 
-2. MODELO DE DOCUMENTO
+C. Código web heredado
 
-Introduce, adapta o prepara una abstracción de documento CAD/CAE.
+D. Código que debe mantenerse temporalmente por compatibilidad
 
-Conceptualmente:
+E. Código obsoleto que puede eliminarse
 
-Document
-├── Models
-├── Features
-├── Studies
-├── Results
-└── Metadata
-
-El documento debe poder representar la evolución del modelo y no solamente el estado final del viewport.
-
-No es necesario desarrollar todavía un sistema completo de persistencia de documentos.
-
-Lo importante es establecer una base extensible.
+No elimines código únicamente porque parezca relacionado con la web.
 
 ---
 
-3. FEATURE HISTORY
+2. ARQUITECTURA NATIVA
 
-Preparar una línea de operaciones reproducible.
+El flujo normal de la aplicación debe ser:
 
-Conceptualmente:
+Desktop Application
+        ↓
+PySide6 UI
+        ↓
+Application Layer
+        ↓
+Core
+        ↓
+CAD / Mesh / FEA / Optimization
+        ↓
+GPU / CPU
 
-Document
+NO:
+
+Desktop
    ↓
-Feature 1
+HTTP localhost
    ↓
-Feature 2
+FastAPI
    ↓
-Feature 3
-   ↓
-Study
-   ↓
+Python
+
+si la operación puede ejecutarse directamente dentro del proceso de la aplicación.
+
+El servidor HTTP local no debe ser un requisito para ejecutar las funcionalidades principales.
+
+---
+
+3. ELIMINAR LA DEPENDENCIA FUNCIONAL DE LA WEB
+
+Identifica todas las funcionalidades que actualmente dependan de:
+
+- FastAPI;
+- Flask;
+- servidor HTTP;
+- endpoints localhost;
+- JavaScript;
+- HTML;
+- navegador;
+- WebView;
+- REST interno.
+
+Para cada una determina si:
+
+1. puede migrarse directamente a Python;
+2. puede convertirse en un servicio interno;
+3. debe mantenerse por una razón técnica;
+4. pertenece exclusivamente a una futura integración externa.
+
+Migra a llamadas internas aquellas funcionalidades que no necesitan HTTP.
+
+No mantengas una API REST simplemente por conservar la arquitectura anterior.
+
+---
+
+4. SEPARACIÓN DE RESPONSABILIDADES
+
+La aplicación debe aproximarse conceptualmente a:
+
+UI
+ ↓
+Commands
+ ↓
+Application Services
+ ↓
+Core
+ ├── CAD
+ ├── Mesh
+ ├── FEA
+ └── Optimization
+
+La UI no debe contener:
+
+- operaciones CAD;
+- lógica FEA;
+- algoritmos de optimización;
+- generación de mallas;
+- llamadas directas a APIs externas.
+
+La UI debe coordinar acciones y presentar resultados.
+
+---
+
+5. MAINWINDOW
+
+Audita "MainWindow".
+
+Extrae de ella cualquier lógica que no pertenezca a la interfaz.
+
+Evita que "MainWindow" se convierta en un controlador monolítico.
+
+La ventana debe encargarse principalmente de:
+
+- composición de widgets;
+- menús;
+- toolbars;
+- acciones;
+- paneles;
+- conexión de señales;
+- actualización visual.
+
+La lógica de negocio debe vivir fuera de ella.
+
+---
+
+6. COMMANDS / ACTIONS
+
+Preparar una capa de comandos que permita posteriormente implementar operaciones como:
+
+Boolean
+Transform
+Mirror
+Pattern
+Fillet
+Chamfer
+Measure
+
+y estudios como:
+
+Structural Optimization
+Generative Design
+Strength
+Elasticity
+Deformation
+
+Un comando debe separar:
+
+Parameters
+Selections
+Validation
+Execution
 Result
 
-Cada Feature debe representar una operación o transformación del modelo.
+No implementar todas las operaciones ahora.
 
-Crear una abstracción que permita posteriormente incorporar:
-
-- Boolean;
-- transformación;
-- mirror;
-- pattern;
-- fillet;
-- chamfer;
-- shell;
-- medición;
-- otras operaciones CAD.
-
-NO implementar todas estas operaciones ahora.
-
-Crear únicamente la arquitectura necesaria.
+Crear la infraestructura para que puedan incorporarse posteriormente.
 
 ---
 
-4. SISTEMA DE COMMANDS / FEATURES
+7. DOCUMENTO Y MODELO
 
-Separar:
+Preparar una abstracción de documento local:
 
-- parámetros;
-- selección;
-- validación;
-- ejecución;
-- resultado.
+Document
+├── Model
+├── Bodies
+├── Features
+├── Studies
+└── Results
 
-Conceptualmente:
+El documento debe representar el estado de la aplicación independientemente de la interfaz gráfica.
 
-Command
-├── parameters
-├── selections
-├── validate()
-└── execute()
-
-Ejemplo futuro:
-
-BooleanCommand
-├── operation
-├── target_body
-├── tool_bodies
-├── keep_tools
-├── validate()
-└── execute()
-
-La UI no debe contener la lógica geométrica de la operación.
+No es necesario implementar todavía un formato definitivo de guardado.
 
 ---
 
-5. SISTEMA DE SELECCIÓN
+8. FEATURE HISTORY
 
-Conservar y evolucionar el sistema de selección existente.
+Preparar la infraestructura para que las operaciones puedan formar una secuencia reproducible:
 
-Prepararlo para distinguir:
-
-- cuerpos/sólidos;
-- caras;
-- aristas;
-- vértices;
-- múltiples entidades.
-
-Una selección debe contener suficiente información para identificar de forma estable la entidad CAD seleccionada.
-
-No depender únicamente del actor gráfico de VTK.
-
-El viewport representa la selección, pero la selección pertenece al modelo CAD.
-
----
-
-6. SISTEMA DE NAVEGACIÓN
-
-Crear una abstracción "NavigationManager".
-
-Debe permitir posteriormente seleccionar diferentes esquemas de navegación:
-
-- Onshape;
-- AutoCAD;
-- Fusion 360;
-- Blender;
-- otros.
-
-No implementar todavía todos los perfiles si no es necesario.
-
-Crear la arquitectura para que cada perfil traduzca entradas de:
-
-- mouse;
-- rueda;
-- teclado;
-- botones;
-- modificadores;
-
-a acciones internas como:
-
-Orbit
-Pan
-Zoom
-Rotate
-Select
-Fit
-
-El viewport no debe contener lógica específica de un único esquema de navegación.
-
----
-
-7. ESTUDIOS CAE
-
-Separar el concepto de "Study" del concepto de "Feature".
-
-Un estudio representa un análisis físico o de ingeniería.
-
-Conceptualmente:
-
+Import STEP
+      ↓
+Boolean
+      ↓
+Transform
+      ↓
 Study
-├── geometry
-├── material
-├── loads
-├── constraints
-├── objectives
-├── solver
-└── results
+      ↓
+Result
 
-Preparar la arquitectura para:
+El sistema debe permitir posteriormente tener una línea de tiempo CAD real.
 
-- resistencia;
-- elasticidad;
-- deformación;
-- tensión;
-- factor de seguridad;
-- análisis posteriores.
-
-No es necesario implementar todos los estudios ahora.
+No conviertas todavía el Timeline visual en un simple sustituto del antiguo flujo de optimización.
 
 ---
 
-8. OPTIMIZACIÓN ESTRUCTURAL
+9. SELECCIÓN
 
-Mantener la optimización estructural existente como un tipo específico de estudio.
+Conservar el sistema de selección existente y desacoplarlo del viewport cuando sea necesario.
 
-Conceptualmente:
+La selección debe representar entidades CAD, no solamente actores gráficos.
 
-StructuralOptimizationStudy
-├── design_region
-├── loads
-├── constraints
-├── material
-├── objective
-├── volume_fraction
-├── solver
-└── result
+Prepararla para:
 
-No romper la implementación SIMP existente.
+- Body;
+- Solid;
+- Face;
+- Edge;
+- Vertex;
+- selección múltiple.
 
-Adaptarla progresivamente a esta arquitectura.
+El viewport debe visualizar la selección, pero el modelo debe ser quien la interprete.
 
 ---
 
-9. DISEÑO GENERATIVO
+10. NAVEGACIÓN
 
-Preparar desde ahora una arquitectura diferente para el diseño generativo.
+Conservar el "NavigationManager" existente.
 
-NO asumir que diseño generativo significa simplemente ejecutar SIMP sobre una pieza existente.
+NO crear otro sistema de navegación.
 
-Debe soportar dos escenarios:
+Audita y consolida el sistema actual.
 
-ESCENARIO A — Pieza existente
+Debe quedar preparado para perfiles como:
 
-El usuario proporciona una geometría CAD existente.
+Onshape
+AutoCAD
+Fusion 360
+Blender
+
+El cambio de perfil debe modificar el comportamiento de navegación sin duplicar el viewport.
+
+Si actualmente existen perfiles implementados, mantenlos y corrige solamente problemas encontrados.
+
+Preparar la posibilidad de guardar la preferencia del usuario localmente.
+
+---
+
+11. CAD Y GEOMETRÍA
+
+Mantener el sistema CAD existente siempre que sea funcional.
+
+El procesamiento de:
+
+- STEP;
+- CadQuery;
+- OpenCascade/OCP;
+- tessellation;
+
+debe ejecutarse localmente.
+
+No introducir una API web para operaciones que ya pueden realizarse directamente mediante las bibliotecas locales.
+
+---
+
+12. MALLADO, FEA Y OPTIMIZACIÓN
+
+El mallado, FEA y optimización deben ejecutarse localmente.
+
+Las operaciones pesadas deben ejecutarse fuera del hilo principal de Qt cuando corresponda.
+
+La UI debe permanecer responsiva.
+
+No introducir comunicación HTTP entre componentes locales solamente para separar procesos lógicos.
+
+Si una operación requiere aislamiento de procesos por estabilidad o rendimiento, puede utilizarse un proceso local, pero debe estar justificado.
+
+---
+
+13. DISEÑO GENERATIVO
+
+Mantener preparada la arquitectura para dos casos:
+
+Caso A
 
 CAD existente
-      ↓
-Condiciones físicas
-      ↓
-Espacio de diseño
       ↓
 Optimización
       ↓
 Geometría optimizada
 
-ESCENARIO B — Conexión entre piezas
-
-El usuario proporciona, por ejemplo:
+Caso B
 
 Pieza A
+    ↓
+Espacio de diseño
+    ↓
+Generación de conexión
+    ↓
 Pieza B
+    ↓
+Optimización
+    ↓
+CAD generado
 
-y define que ambas deben quedar conectadas físicamente.
+No implementar todavía el algoritmo completo de diseño generativo.
 
-El sistema debe poder crear material/geometría en el espacio disponible entre ellas y optimizar dicha conexión.
+Pero no diseñes la arquitectura suponiendo que el resultado final será únicamente una malla STL.
+
+Debe quedar preparada para:
+
+Generated Geometry
+       ↓
+CAD / B-Rep
+       ↓
+STEP
+
+---
+
+14. INTERNET Y LICENCIA
+
+La aplicación será comercial y funcionará mediante suscripción.
+
+Por diseño:
+
+Internet NO debe ser necesaria para utilizar las funciones CAD/CAE normales.
+
+La conexión a Internet se utilizará para validar la licencia.
+
+Crear una abstracción independiente:
+
+LicenseManager
 
 Conceptualmente:
 
-Pieza A
-   │
-   │
-   │ ← geometría generada
-   │
-Pieza B
+Application
+    ↓
+LicenseManager
+    ↓
+License Server
 
-La arquitectura debe contemplar:
+El resto de la aplicación NO debe conocer detalles de HTTP, URLs, tokens o servidores de licencia.
 
-GenerativeDesignStudy
-├── input_geometry
-├── connection_targets
-├── design_space
-├── loads
-├── constraints
-├── objectives
-├── geometry_generation
-├── optimization
-└── generated_cad
+Debe recibir únicamente estados como:
 
-La generación de geometría y la optimización deben ser componentes diferenciables.
+Licensed
+Trial
+Expired
+Invalid
+OfflineGracePeriod
+
+No implementar todavía un backend comercial de licencias si no existe.
+
+Preparar únicamente la arquitectura local necesaria para integrarlo posteriormente.
 
 ---
 
-10. CAD GENERADO
+15. MODO OFFLINE
 
-El diseño generativo debe quedar preparado para producir geometría CAD, no únicamente una malla visual.
+Diseñar la aplicación para que una interrupción temporal de Internet no destruya el estado de trabajo ni bloquee innecesariamente operaciones locales.
 
-La arquitectura futura debe permitir:
+La política exacta de funcionamiento offline debe quedar encapsulada dentro de "LicenseManager".
 
-Condiciones
-     ↓
-Generación / optimización
-     ↓
-Representación volumétrica o malla
-     ↓
-Reconstrucción geométrica
-     ↓
-CAD/B-Rep
-     ↓
-STEP
+No dispersar comprobaciones como:
 
-No es necesario implementar todavía el algoritmo completo de reconstrucción CAD.
+if internet:
 
-Pero NO diseñes la arquitectura suponiendo que el resultado final será únicamente STL o una malla.
+por toda la aplicación.
 
-El resultado generativo debe poder convertirse posteriormente en una geometría CAD utilizable.
+Las funcionalidades CAD/CAE no deben consultar directamente el estado de Internet.
 
 ---
 
-11. PIPELINE
+16. FUTURA INTEGRACIÓN CON CAD EXTERNOS
 
-Adaptar el "PipelineController" existente para que funcione como coordinador de operaciones y estudios, evitando que concentre toda la lógica.
+No eliminar la posibilidad de integrar posteriormente:
 
-Separar conceptualmente:
+- Onshape;
+- otros CAD;
+- importadores;
+- plugins;
+- conectores externos.
 
-UI
- ↓
-Commands / Studies
- ↓
-Application Services
- ↓
-Core
- ↓
-Solvers / Geometry / Meshing
+Pero estas integraciones deben considerarse adaptadores externos, no parte del núcleo de la aplicación.
 
-Las operaciones pesadas no deben bloquear la interfaz.
+Conceptualmente:
 
-Reutilizar los mecanismos existentes de ejecución en segundo plano cuando sean adecuados.
+Core Application
+       ↑
+       │
+Integration Adapters
+ ├── Onshape
+ ├── Other CAD
+ └── Future integrations
+
+El núcleo debe seguir funcionando independientemente de ellos.
 
 ---
 
-12. INTERFAZ ACTUAL
+17. INTERFAZ
 
-NO rediseñar visualmente la interfaz en esta fase.
+En esta fase:
 
-No cambiar todavía:
+NO realizar el rediseño visual definitivo.
+
+No modificar todavía de forma significativa:
 
 - colores;
-- iconografía;
-- estilo visual;
-- dimensiones;
+- iconos;
+- estética;
 - tema;
-- estética.
+- estilo visual.
 
-Sí se permite modificar la estructura interna necesaria para soportar:
+Sí puedes realizar cambios estructurales necesarios para soportar la nueva arquitectura.
 
-- árbol de modelo;
-- historial de Features;
-- selección;
-- comandos;
-- estudios;
-- propiedades.
-
-La mejora visual se realizará posteriormente.
+La interfaz visual definitiva será una fase posterior.
 
 ---
 
-13. ÁRBOL DE MODELO Y TIMELINE
+18. DEPENDENCIAS
 
-Preparar conceptualmente el actual "DesignTreePanel" y "TimelinePanel" para evolucionar desde el flujo fijo de optimización hacia:
+Audita "requirements" y cualquier sistema de dependencias.
 
-ÁRBOL
+Elimina únicamente dependencias web que ya no sean necesarias para la aplicación desktop.
 
-Modelo
-├── Cuerpos
-├── Operaciones
-├── Estudios
-└── Resultados
+No elimines dependencias que pertenezcan a:
 
-y:
+- CAD;
+- VTK;
+- PySide6;
+- Gmsh;
+- FEA;
+- optimización;
+- procesamiento geométrico.
 
-TIMELINE
-
-Importar STEP
-      ↓
-Boolean
-      ↓
-Otra Feature
-      ↓
-Estudio
-      ↓
-Resultado
-
-No implementar todavía todas las operaciones.
-
-La arquitectura debe permitir agregarlas sin rehacer la interfaz.
+Si una dependencia tiene múltiples usos, verifica todos ellos antes de eliminarla.
 
 ---
 
-14. BARRA SUPERIOR
+19. VALIDACIÓN
 
-Preparar la arquitectura para que posteriormente la barra superior pueda organizar las funciones por categorías, por ejemplo:
+Después de los cambios verifica:
 
-Modelo
-Optimización
-Pruebas de rendimiento
-Visualización
-Herramientas
+1. La aplicación inicia directamente como desktop.
+2. No necesita navegador.
+3. No necesita levantar manualmente un servidor web.
+4. El viewport funciona.
+5. La navegación funciona.
+6. Los perfiles de navegación existentes funcionan.
+7. STEP continúa cargándose.
+8. La selección continúa funcionando.
+9. La tessellation continúa funcionando.
+10. El mallado continúa funcionando.
+11. FEA continúa funcionando.
+12. SIMP/optimización existente continúa funcionando.
+13. Las operaciones pesadas no bloquean la UI.
+14. El proyecto puede ejecutarse sin conexión a Internet, salvo la validación de licencia.
+15. La ausencia temporal de Internet no provoca errores internos en CAD/CAE.
+16. No existen dependencias HTTP innecesarias entre componentes locales.
+17. No existen referencias rotas por la eliminación de componentes web.
+18. La futura integración con servicios externos sigue siendo arquitectónicamente posible.
 
-Dentro de Optimización:
-
-Optimización estructural
-Diseño generativo
-
-Dentro de Pruebas:
-
-Resistencia
-Elasticidad
-Deformación
-...
-
-No es necesario realizar todavía el rediseño visual de esta barra.
-
-Preparar únicamente las acciones y comandos necesarios para que pueda implementarse posteriormente.
-
----
-
-15. BOOLEANOS
-
-Como primera Feature CAD futura, preparar la arquitectura para:
-
-Boolean
-
-Operación:
-- Unión
-- Diferencia
-- Intersección
-
-Pieza principal:
-[ selección ]
-
-Piezas herramienta:
-[ selección múltiple ]
-
-☑ Conservar herramientas
-
-No implementar la operación si requiere modificar demasiadas capas en esta fase.
-
-Primero asegúrate de que el sistema de selección, comandos, parámetros, historial y ejecución puede soportarla correctamente.
+Corrige los errores encontrados antes de finalizar.
 
 ---
 
-16. COMPATIBILIDAD TECNOLÓGICA
+REGLAS ABSOLUTAS
 
-Python continúa siendo la base actual del proyecto.
+NO desarrolles desde cero.
 
-No conviertas todo el proyecto a otro lenguaje.
+NO rediseñes visualmente la aplicación todavía.
 
-Sin embargo, no cierres la arquitectura a Python de forma artificial.
+NO reemplaces VTK/PySide6 sin una justificación técnica.
 
-Si una parte futura requiere una tecnología especializada para:
+NO crees otro sistema de navegación si ya existe "NavigationManager".
 
-- rendering;
-- geometría;
-- generación de malla;
-- solver;
-- reconstrucción CAD;
+NO dupliques funcionalidades existentes.
 
-podrá evaluarse una arquitectura híbrida si existe una justificación técnica real.
+NO conviertas Python a otro lenguaje.
 
-No introducir tecnologías adicionales sin necesidad.
+NO cierres la puerta a componentes especializados en otros lenguajes cuando exista una justificación técnica futura.
 
----
+NO utilices HTTP localhost para comunicar componentes que pueden comunicarse directamente.
 
-17. VALIDACIÓN
+NO hagas que Internet sea necesaria para CAD/CAE.
 
-Después de realizar los cambios verifica como mínimo:
+NO disperses la lógica de licencia por la aplicación.
 
-1. La aplicación desktop inicia correctamente.
-2. El viewport continúa funcionando.
-3. Los modelos STEP continúan cargándose.
-4. La tessellation continúa funcionando.
-5. La selección existente continúa funcionando.
-6. El sistema de cámara continúa funcionando.
-7. El pipeline existente continúa funcionando.
-8. El mallado continúa funcionando.
-9. La FEA existente no se rompe.
-10. La optimización SIMP existente no se rompe.
-11. Las operaciones pesadas no bloquean innecesariamente la UI.
-12. La nueva arquitectura permite representar Features y Studies.
-13. El código no introduce dependencias circulares.
-14. No quedan funcionalidades existentes inutilizadas.
+NO elimines la posibilidad de futuras integraciones con Onshape u otros CAD.
 
-Corrige los errores encontrados.
+NO implementes todavía el algoritmo completo de diseño generativo.
 
----
-
-REGLAS
-
-NO rediseñar todavía la interfaz visual.
-
-NO eliminar la implementación existente sin justificarlo.
-
-NO reescribir el proyecto desde cero.
-
-NO reemplazar VTK/PySide6 simplemente por preferencia personal.
-
-NO convertir Python a otro lenguaje.
-
-NO cerrar la puerta a arquitecturas híbridas justificadas técnicamente.
-
-NO implementar todas las funciones CAD ahora.
-
-NO implementar todavía un sistema completo de diseño generativo.
-
-La prioridad de esta fase es construir una arquitectura que permita implementar esas funciones correctamente después.
+NO implementes todavía todas las operaciones CAD.
 
 ---
 
 RESULTADO FINAL
 
-Al finalizar, el proyecto debe conservar sus funcionalidades actuales y disponer de una base arquitectónica preparada para evolucionar hacia:
+La aplicación debe quedar consolidada como:
 
-CAD
-│
-├── Modelado
-├── Features
-├── Selección
-├── Historial
-│
-CAE
-│
-├── Estudios
-├── Materiales
-├── Cargas
-├── Restricciones
-├── FEA
-│
-Optimización
-│
-├── Estructural
-└── Generativa
-      │
-      ├── Geometría existente
-      └── Generación de geometría
-             ↓
-          CAD generado
+┌─────────────────────────────────────┐
+│       DESKTOP CAD/CAE APP           │
+│                                     │
+│  PySide6                            │
+│      ↓                              │
+│  Application Layer                 │
+│      ↓                              │
+│  Document / Commands / Studies     │
+│      ↓                              │
+│  Core                               │
+│   ├── CAD                           │
+│   ├── Mesh                          │
+│   ├── FEA                           │
+│   └── Optimization                  │
+│                                     │
+│  VTK → GPU                          │
+│                                     │
+└─────────────────────────────────────┘
+             │
+             │ únicamente licencia
+             ▼
+       License Server
 
-Entrega al finalizar un informe breve indicando:
+La aplicación debe poder ejecutarse y realizar sus funciones principales completamente de forma local.
+
+Entrega un informe final breve indicando:
 
 - arquitectura encontrada;
+- problemas detectados;
 - cambios realizados;
 - archivos creados;
 - archivos modificados;
 - archivos eliminados;
+- dependencias eliminadas/agregadas;
+- código web conservado y motivo;
+- código web eliminado;
 - componentes reutilizados;
-- componentes reemplazados;
-- nuevas abstracciones creadas;
-- dependencias agregadas;
-- funcionalidades verificadas;
-- problemas encontrados;
+- componentes desacoplados;
+- estado de "NavigationManager";
+- estado del sistema de selección;
+- estado del pipeline;
+- estado de la arquitectura CAD/CAE;
+- estado de "LicenseManager";
+- pruebas realizadas;
 - problemas pendientes;
 - recomendaciones para la siguiente fase.

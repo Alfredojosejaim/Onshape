@@ -1,9 +1,19 @@
-"""Camera - view transformation, navigation and preset standard views.
+"""CameraController - independent camera transformation and standard views.
 
 This layer owns all the math and view-algebra around the renderer's active
-camera. It exposes CAD-like navigation primitives (orbit, zoom, pan, fit, and
-the six standard orthographic views plus isometric) without the interface
-knowing anything about the underlying graphics API.
+camera. It is an independent system that is NOT part of ``NavigationManager``:
+
+    NavigationManager   ->  determines WHAT action the user asks for
+    CameraController    ->  determines HOW the camera is transformed in 3D
+
+It exposes CAD-like navigation primitives (orbit, zoom, pan, fit, and the six
+standard orthographic views plus isometric) without the interface knowing
+anything about the underlying graphics API.
+
+The camera is deliberately free: orbit is a trackball rotation around the
+focal point (not locked to world axes), pan moves in camera space, and zoom is
+aligned with the view direction.  Standard views and fit-to-view are one-shot
+repositionings and never permanently restrict subsequent free navigation.
 """
 
 from __future__ import annotations
@@ -63,7 +73,7 @@ def _rodrigues(axis: np.ndarray, angle: float) -> np.ndarray:
     )
 
 
-class Camera:
+class CameraController:
     def __init__(self, vtk_camera) -> None:
         self._cam = vtk_camera
         self._focal = np.array([0.0, 0.0, 0.0])
@@ -111,7 +121,7 @@ class Camera:
         direction and re-orthonormalized, which lets the camera reach any
         orientation (including rolled) without gimbal hangups.
         """
-        forward = self._focal - self._cam.GetPosition()
+        forward = self.focal_point - self.position
         dist = float(np.linalg.norm(forward))
         if dist < 1e-12:
             return
@@ -152,22 +162,28 @@ class Camera:
         else:
             new_up = new_up / np.linalg.norm(new_up)
 
-        self._cam.SetPosition(*(self._focal - new_forward * dist))
+        self._cam.SetPosition(*(self.focal_point - new_forward * dist))
         self._cam.SetViewUp(*new_up)
 
     def dolly(self, steps: float, sensitivity: float = 0.8) -> None:
-        """Zoom by scaling the camera distance along the view direction."""
+        """Zoom by scaling the camera distance along the view direction.
+
+        Works from the camera's actual current state (position + focal point),
+        so the step size is always correct regardless of the starting view or
+        previously applied navigation.
+        """
         factor = math.exp(-steps * sensitivity)
-        self._distance = max(1e-4, self._distance * factor)
-        forward = self._focal - self._cam.GetPosition()
-        forward = forward / np.linalg.norm(forward)
-        self._cam.SetPosition(*(self._focal - forward * self._distance))
-        self._fit_plane(self._distance)
+        dist = max(1e-4, self.distance * factor)
+        self._distance = dist  # keep the fit anchor in sync
+        forward = self.focal_point - self.position
+        forward = forward / (np.linalg.norm(forward) + 1e-12)
+        self._cam.SetPosition(*(self.focal_point - forward * dist))
+        self._fit_plane(dist)
 
     def pan(self, dx: float, dy: float, sensitivity: float = 0.002) -> None:
         """Translate the focal point (and camera) in the image plane."""
         distance = self.distance
-        forward = self._focal - self._cam.GetPosition()
+        forward = self.focal_point - self.position
         forward = forward / np.linalg.norm(forward)
         up = np.array(self._cam.GetViewUp())
         right = np.cross(forward, up)
@@ -176,8 +192,9 @@ class Camera:
 
         scale = distance * sensitivity
         delta = right * (-dx * scale) + up * (dy * scale)
-        self._focal = self._focal + delta
-        self._cam.SetFocalPoint(*self._focal)
+        focal = self.focal_point + delta
+        self._focal = focal
+        self._cam.SetFocalPoint(*focal)
         self._cam.SetPosition(*(self.position + delta))
         self._fit_plane(distance)
 
@@ -191,10 +208,11 @@ class Camera:
         direction = np.array(_VIEW_DIRS[view], dtype=float)
         direction = direction / np.linalg.norm(direction)
         up = np.array(_VIEW_UPS[view], dtype=float)
+        focal = self.focal_point
         distance = self.distance
-        self._cam.SetPosition(*(self._focal - direction * distance))
+        self._cam.SetPosition(*(focal - direction * distance))
         self._cam.SetViewUp(*up)
-        self._cam.SetFocalPoint(*self._focal)
+        self._cam.SetFocalPoint(*focal)
         self._fit_plane(distance)
 
     def fit(self) -> None:

@@ -20,6 +20,19 @@ from core.models import (
 from core.geometry import GeometryEngine
 from core.meshing import BaseMesher, GmshTet4Mesher, MeshResult, ProvisionalTet4Mesher
 from core.boundary import BoundaryConditionMapper, MappedFace
+from core.selection import (
+    AllRegion,
+    BoxRegion,
+    CompositionRegion,
+    CylinderRegion,
+    FaceRegion,
+    NodeSelectionEngine,
+    NormalRegion,
+    PlaneRegion,
+    RegionType,
+    SphereRegion,
+    parse_region,
+)
 from core.materials import Material, STANDARD_MATERIALS
 from core.study import (
     ConstraintDefinition,
@@ -50,6 +63,17 @@ __all__ = [
     "ProvisionalTet4Mesher",
     "BoundaryConditionMapper",
     "MappedFace",
+    "RegionType",
+    "AllRegion",
+    "PlaneRegion",
+    "BoxRegion",
+    "SphereRegion",
+    "CylinderRegion",
+    "FaceRegion",
+    "NormalRegion",
+    "CompositionRegion",
+    "NodeSelectionEngine",
+    "parse_region",
     "Material",
     "STANDARD_MATERIALS",
     "ConstraintDefinition",

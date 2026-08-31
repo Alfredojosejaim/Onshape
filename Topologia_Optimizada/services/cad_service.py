@@ -98,8 +98,13 @@ class CADService:
         model_id: str,
         linear_deflection: float = 0.1,
         angular_deflection: float = 0.1,
+        face_mapping: bool = False,
     ) -> Dict[str, Any]:
-        """Generate triangular tessellation for 3D visualization."""
+        """Generate triangular tessellation for 3D visualization.
+
+        ``face_mapping=True`` builds the mesh per face so the desktop viewport
+        can attribute every triangle to a B-Rep face (entity-level picking).
+        """
         cad_model = self.get_model(model_id)
         if not cad_model:
             return {
@@ -114,6 +119,7 @@ class CADService:
                 cad_model,
                 linear_deflection=linear_deflection,
                 angular_deflection=angular_deflection,
+                face_mapping=face_mapping,
             )
             cad_model.tessellation = tessellation
             return tessellation.to_dict()

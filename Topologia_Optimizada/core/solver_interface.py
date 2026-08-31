@@ -374,6 +374,73 @@ def _apply_constraint_by_face_mapping(adapter: Any, model_part: Any, constraint:
     return "APPLIED"
 
 
+def _advanced_selection_failure_log(kind: str, cond_id: str, matched_nodes: int,
+                                    reason: str) -> None:
+    """Emit the structured ``ADVANCED SELECTION FAILED`` diagnostic block.
+
+    Mirrors ``_face_mapping_failure_log``: whenever an explicit advanced
+    selection is present but cannot be resolved, the failure must be loud and
+    must NOT fall through to a coordinate region (which would silently select
+    an unintended region).
+    """
+    raw_log = (
+        f"ADVANCED SELECTION FAILED\n"
+        f"{kind}: {cond_id}\n"
+        f"matched_nodes: {matched_nodes}\n"
+        f"reason: {reason}"
+    )
+    logger.warning(raw_log)
+
+
+def _apply_advanced_selection(adapter: Any, model_part: Any, condition: Any,
+                              nodes_list: List[List[float]], cad_shape: Any,
+                              is_load: bool) -> bool:
+    """Apply a constraint/load using the advanced geometric selection engine.
+
+    Strategy 0 (highest priority): when ``condition.selection`` is set, resolve
+    the region/composition descriptor with :class:`NodeSelectionEngine` and
+    apply the condition exclusively to the matched nodes. If the user supplied
+    an explicit selection that matches no nodes, report ``ADVANCED SELECTION
+    FAILED`` and return True WITHOUT falling back to face/coordinate strategies
+    (consistent with the REGLA FINAL).
+
+    Returns True when the selection was consumed (applied or failed loudly),
+    False when no advanced selection was specified and the caller should
+    continue with the other strategies.
+    """
+    from core.selection import NodeSelectionEngine
+
+    selection = getattr(condition, "selection", None)
+    if selection is None:
+        return False
+
+    apply = adapter.apply_load_from_core if is_load else adapter.apply_constraint_from_core
+    kind = "load" if is_load else "constraint"
+
+    try:
+        node_indices = NodeSelectionEngine.select_nodes(
+            nodes_list, selection, cad_shape=cad_shape,
+            default_tolerance=getattr(condition, "tolerance", None),
+        )
+    except Exception as e:
+        _advanced_selection_failure_log(kind, condition.id, 0, f"exception during selection: {e}")
+        return True
+
+    if not node_indices:
+        _advanced_selection_failure_log(
+            kind, condition.id, 0,
+            "advanced selection resolved to zero mesh nodes",
+        )
+        return True
+
+    apply(model_part, condition, node_indices)
+    logger.info(
+        f"{kind.title()} {condition.id} applied to {len(node_indices)} nodes "
+        f"via advanced geometric selection METHOD=ADVANCED_SELECTION"
+    )
+    return True
+
+
 def _apply_constraint_geometrically(adapter: Any, model_part: Any, constraint: Any,
                                     nodes_list: List[List[float]], cad_shape: Any = None) -> None:
     """Apply constraint using geometric node selection.
@@ -382,7 +449,10 @@ def _apply_constraint_geometrically(adapter: Any, model_part: Any, constraint: A
     This function implements proper geometric node selection for boundary conditions.
     Previously, constraints were applied to ALL nodes, creating an over-constrained system.
 
-    Three strategies are attempted in order:
+    Four strategies are attempted in order:
+    0. Advanced geometric selection (new): JSON-compatible region/composition
+       resolved by NodeSelectionEngine (planes/boxes/spheres/cylinders/faces/
+       normal matching with booleans). Takes precedence over everything else.
     1. Named submodelpart (exact, if the mesh was imported with physical groups)
     2. CAD face mapping (primary geometric mechanism): maps ``location_face_id``
        to the mesh nodes lying on that real CAD face using BoundaryConditionMapper
@@ -398,6 +468,11 @@ def _apply_constraint_geometrically(adapter: Any, model_part: Any, constraint: A
     """
     try:
         from core.study import ConstraintType
+        
+        # Strategy 0: Advanced geometric selection (explicit, highest priority)
+        if _apply_advanced_selection(adapter, model_part, constraint, nodes_list,
+                                     cad_shape, is_load=False):
+            return
         
         # Strategy 1: Try to use named submodelpart (e.g., from gmsh physical groups)
         submodelpart_name = getattr(constraint, 'submodelpart_name', None) or \
@@ -538,7 +613,10 @@ def _apply_load_geometrically(adapter: Any, model_part: Any, load: Any,
     This function implements proper geometric node selection for loads.
     Previously, loads were applied to ALL nodes, creating an over-loaded system.
     
-    Three strategies are attempted in order:
+    Four strategies are attempted in order:
+    0. Advanced geometric selection (new): JSON-compatible region/composition
+       resolved by NodeSelectionEngine (planes/boxes/spheres/cylinders/faces/
+       normal matching with booleans). Takes precedence over everything else.
     1. Named submodelpart (exact, if the mesh was imported with physical groups)
     2. CAD face mapping (primary geometric mechanism): maps ``application_face_id``
        to the mesh nodes lying on that real CAD face using BoundaryConditionMapper
@@ -554,6 +632,11 @@ def _apply_load_geometrically(adapter: Any, model_part: Any, load: Any,
     """
     try:
         from core.study import LoadType
+        
+        # Strategy 0: Advanced geometric selection (explicit, highest priority)
+        if _apply_advanced_selection(adapter, model_part, load, nodes_list,
+                                     cad_shape, is_load=True):
+            return
         
         # Strategy 1: Try to use named submodelpart (e.g., from gmsh physical groups)
         submodelpart_name = getattr(load, 'submodelpart_name', None) or \

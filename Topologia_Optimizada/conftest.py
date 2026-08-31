@@ -25,5 +25,19 @@ def register_kratos_dll_directory() -> None:
         os.add_dll_directory(libs_dir)
         logger.info("Kratos DLL directory registered: %s", libs_dir)
 
-
 register_kratos_dll_directory()
+
+
+# ---------------------------------------------------------------------------
+# Legacy Kratos experiments
+# ---------------------------------------------------------------------------
+# The self-contained application no longer depends on KratosMultiphysics (see
+# ``dependencias.md``). The ``test_kratos_*.py`` modules at the repository root
+# are legacy experiment harnesses that require the (unavailable) Kratos native
+# libraries, so they are excluded from the default suite. They are preserved in
+# source control for reference, not run in the self-contained pipeline.
+collect_ignore_glob = [
+    "test_kratos_*.py",
+    "test_linear_solver_repro.py",
+    "test_stage_i_integration.py",
+]

@@ -378,85 +378,123 @@ class PipelineController:
         )
 
     def _execute_boolean(self, command) -> "CommandResult":
-        """Execute a boolean command using CadQuery via the CAD service.
+        """Execute a boolean command using the existing CadQuery backend (Fase 2).
 
-        The boolean operates at the model level: the target is the current
-        model's B-Rep shape and the tools are other cached models selected in
-        the command.  The resulting shape is stored back in the CAD service
-        cache as a new model, tessellated, and the feature is recorded.
+        The boolean operates at the **body level** on the current model: the
+        target body and the tool bodies are resolved from the command and the
+        ``boolean_bodies`` CAD service routine modifies the current model in
+        place (re-stored as a new model).  ``keep_tools`` controls whether the
+        tool bodies are consumed by the operation or remain available.
+
+        On failure the previous model is left untouched and a failing
+        ``CommandResult`` is returned so no invalid Feature is recorded.
         """
         from core.commands import CommandResult, BooleanOperation
 
         operation = command.get_parameter("operation", "union")
         keep_tools = command.get_parameter("keep_tools", False)
 
+        # Resolve target + tools from the command.  Prefer the explicit
+        # target/tools fields; fall back to the selections list.
+        target_id = None
+        if hasattr(command, "target") and command.target is not None:
+            target_id = self._body_index(command.target)
+        tool_ids = []
+        if hasattr(command, "tools") and command.tools:
+            tool_ids = [self._body_index(t) for t in command.tools]
+        else:
+            for sel in command.selections:
+                bid = self._body_index(sel)
+                if bid is None:
+                    continue
+                if target_id is None:
+                    target_id = bid
+                else:
+                    tool_ids.append(bid)
+
+        if target_id is None:
+            return CommandResult(success=False, error_message="No se definió un cuerpo objetivo.")
+        tool_ids = [i for i in tool_ids if i is not None]
+        if not tool_ids:
+            return CommandResult(success=False,
+                                 error_message="No se encontraron cuerpos herramienta (seleccione al menos uno).")
+
         if not self.model_id:
             return CommandResult(success=False, error_message="No hay modelo importado.")
 
-        shape = self.cad.get_model_shape(self.model_id)
-        if shape is None:
-            return CommandResult(success=False, error_message="No se pudo obtener la forma CAD.")
+        result = self.cad.boolean_bodies(
+            self.model_id,
+            operation=operation,
+            target_index=target_id,
+            tool_indices=tool_ids,
+            keep_tools=keep_tools,
+        )
+        if not result.get("success"):
+            return CommandResult(success=False, error_message=result.get("error", "Operación booleana fallida."))
 
-        # Resolve tool model ids from the selections. A selection's solid_id may
-        # be a per-solid reference, but the tool shape must come from a cached
-        # model; fall back to the selection's model_id.
-        tool_model_ids = []
-        for sel in command.selections:
-            tid = None
-            if hasattr(sel, "model_id") and sel.model_id:
-                tid = sel.model_id
-            if tid and tid != self.model_id:
-                tool_model_ids.append(tid)
-        if not tool_model_ids:
-            return CommandResult(success=False, error_message="No se encontraron piezas herramienta (seleccione otro modelo).")
+        new_model_id = result["model_id"]
+        self.model_id = new_model_id
+        self.result = None
+        self.mesh = None
+        self.mesh_nodes = self.mesh_elements = None
+        self.current_tessellation = None
 
-        try:
-            result_shape = shape  # cq.Shape already supports .fuse/.cut/.intersect
-            for tool_id in tool_model_ids:
-                tool = self.cad.get_model_shape(tool_id)
-                if tool is None:
-                    continue
-                if operation == BooleanOperation.UNION.value:
-                    result_shape = result_shape.fuse(tool)
-                elif operation == BooleanOperation.DIFFERENCE.value:
-                    result_shape = result_shape.cut(tool)
-                elif operation == BooleanOperation.INTERSECTION.value:
-                    result_shape = result_shape.intersect(tool)
+        # Re-tessellate so the viewport can display the boolean result.
+        tess = self.cad.tessellate_model(new_model_id, face_mapping=True)
+        self.current_tessellation = tess
 
-            # Store the resulting shape back as a new model in the cache.
-            new_model_id = self.cad.store_computed_shape(
-                result_shape, model_name=f"Resultado {operation}"
-            )
-            self.model_id = new_model_id
-            self.result = None
-            self.mesh = None
-            self.mesh_nodes = self.mesh_elements = None
+        # Record as feature (uses the existing Feature.boolean_op).
+        feature = Feature.boolean_op(
+            operation=operation,
+            target_body_id=str(target_id),
+            tool_body_ids=[str(i) for i in tool_ids],
+            keep_tools=keep_tools,
+        )
+        feature.name = f"Boolean {operation}"
+        feature.status = "executed"
+        self.feature_history.append(feature)
+        self.document.add_feature(feature)
 
-            # Re-tessellate so the viewport can display the boolean result.
-            tess = self.cad.tessellate_model(new_model_id, face_mapping=True)
-            self.current_tessellation = tess
+        return CommandResult(
+            success=True,
+            feature_id=feature.id,
+            result_model_id=new_model_id,
+            data={"operation": operation, "status": "executed",
+                  "target_body_id": str(target_id),
+                  "tool_body_ids": [str(i) for i in tool_ids],
+                  "keep_tools": keep_tools,
+                  "result_model_id": new_model_id},
+        )
 
-            # Record as feature
-            feature = Feature.boolean_op(
-                operation=operation,
-                target_body_id=self.model_id,
-                tool_body_ids=tool_model_ids,
-                keep_tools=keep_tools,
-            )
-            feature.status = "executed"
-            self.feature_history.append(feature)
-            self.document.add_feature(feature)
+    @staticmethod
+    def _body_index(ref) -> Optional[int]:
+        """Extract a solid body index from a CadEntityRef/selection.
 
-            return CommandResult(
-                success=True,
-                feature_id=feature.id,
-                result_model_id=new_model_id,
-                data={"operation": operation, "status": "executed",
-                      "result_model_id": new_model_id},
-            )
-        except Exception as exc:
-            logger.exception("Boolean operation failed")
-            return CommandResult(success=False, error_message=str(exc))
+        Returns ``None`` when the reference cannot be reduced to an index.
+        Falls back to parsing ``solid_<n>`` ids and the model-level index.
+        """
+        import re
+        if ref is None:
+            return None
+        solid_id = getattr(ref, "solid_id", None)
+        if solid_id:
+            m = re.match(r"solid_(\d+)", str(solid_id))
+            if m:
+                return int(m.group(1))
+        index = getattr(ref, "index", None)
+        if index is not None:
+            return int(index)
+        solid = getattr(ref, "solid", None)
+        if solid is not None:
+            sid = getattr(solid, "solid_id", None)
+            if sid:
+                m = re.match(r"solid_(\d+)", str(sid))
+                if m:
+                    return int(m.group(1))
+        idx = getattr(ref, "solid_index", None)
+        if idx is not None:
+            return int(idx)
+        return None
 
     # ------------------------------------------------------------------ #
     # Architecture layer: study execution coordinator

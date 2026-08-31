@@ -1017,28 +1017,22 @@ class KratosAdapter:
 
             if not result.get("success"):
                 # Fallo de construcción o de Solve -> fallback determinista a directo
-                if _linear_settings is not None:
-                    self._record_fallback(
-                        "fallo_del_solver_primer_intento", model_part, solver_type
-                    )
-                    fb = self._solve_to_results(model_part, self._DEFAULT_SKYLINE_SETTINGS)
-                    fallback_used = True
-                    if not fb.get("success"):
-                        return {
-                            "success": False,
-                            "status": "failed",
-                            "error": fb.get("error"),
-                            "message": "Analysis execution failed",
-                            "fallback_used": True,
-                        }
-                    result = fb
-                else:
+                # _linear_settings nunca es None aquí (se defaulted en la guarda superior),
+                # pero se mantiene el check defensivo para claridad de intención.
+                self._record_fallback(
+                    "fallo_del_solver_primer_intento", model_part, solver_type
+                )
+                fb = self._solve_to_results(model_part, self._DEFAULT_SKYLINE_SETTINGS)
+                fallback_used = True
+                if not fb.get("success"):
                     return {
                         "success": False,
-                        "status": result.get("status", "failed"),
-                        "error": result.get("error"),
-                        "message": result.get("message", "Analysis execution failed"),
+                        "status": "failed",
+                        "error": fb.get("error"),
+                        "message": "Analysis execution failed",
+                        "fallback_used": True,
                     }
+                result = fb
             elif is_iterative and verify:
                 # Verificación de convergencia para iterativos (amgcl)
                 d1 = np.asarray(result["results"]["displacements"], dtype=float)

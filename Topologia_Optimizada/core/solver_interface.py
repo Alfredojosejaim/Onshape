@@ -139,6 +139,7 @@ def create_kratos_fea_solver(
     constraints: Any,
     loads: Any,
     cad_shape: Any = None,
+    physical_groups: Optional[Dict[str, List[int]]] = None,
 ) -> Callable[..., Dict[str, Any]]:
     """Create a Kratos-based FEA solver for use with TopOptSolver.
     
@@ -156,6 +157,10 @@ def create_kratos_fea_solver(
             1. Named Kratos submodelpart (``submodelpart_name`` / ``boundary_name``).
             2. CAD face mapping (``location_face_id`` / ``application_face_id`` → real mesh nodes).
             3. Coordinate-based filtering (fallback, kept for backward compatibility).
+        physical_groups: Optional ``{name: [0-based node indices]}`` mapping
+            (normally sourced from ``MeshResult.physical_groups``). When provided
+            each named group is rebuilt as a Kratos SubModelPart during import,
+            enabling exact boundary selection by name (Fase 2: gmsh physical groups).
         
     Returns:
         Callable function that can be used as fea_solver for TopOptSolver
@@ -209,7 +214,8 @@ def create_kratos_fea_solver(
                 model_part,
                 nodes_list,
                 elements_list,
-                element_type="tet4"
+                element_type="tet4",
+                physical_groups=physical_groups,
             )
             
             # Configure material

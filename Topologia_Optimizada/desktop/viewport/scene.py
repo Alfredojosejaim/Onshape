@@ -15,6 +15,32 @@ from typing import Any, Callable, Dict, Optional
 import numpy as np
 
 
+# Multi-stop density colormaps: list of (t, r, g, b) with t in [0, 1].
+_COLORMAPS: Dict[str, list] = {
+    "jet": [
+        (0.0, 0.00, 0.00, 0.50), (0.15, 0.00, 0.00, 1.00),
+        (0.35, 0.00, 0.50, 1.00), (0.5, 0.00, 1.00, 1.00),
+        (0.65, 0.50, 1.00, 0.00), (0.85, 1.00, 1.00, 0.00),
+        (1.0, 0.85, 0.20, 0.15),
+    ],
+    "viridis": [
+        (0.0, 0.267, 0.004, 0.329), (0.25, 0.223, 0.322, 0.568),
+        (0.5, 0.127, 0.567, 0.550), (0.75, 0.267, 0.784, 0.439),
+        (1.0, 0.993, 0.906, 0.145),
+    ],
+    "coolwarm": [
+        (0.0, 0.230, 0.299, 0.754), (0.5, 0.867, 0.867, 0.867),
+        (1.0, 0.706, 0.016, 0.150),
+    ],
+    "inferno": [
+        (0.0, 0.000, 0.000, 0.216), (0.25, 0.253, 0.086, 0.517),
+        (0.5, 0.568, 0.152, 0.434), (0.75, 0.866, 0.303, 0.196),
+        (1.0, 0.987, 0.741, 0.063),
+    ],
+}
+
+
+
 @dataclass
 class SceneObject:
     """Base record for a renderable object in the scene."""
@@ -306,8 +332,15 @@ class Scene:
         elements: np.ndarray,
         densities: np.ndarray,
         opacity: float = 0.92,
+        colormap: str = "jet",
     ) -> None:
-        """Render the Tet4 mesh colored by material density (blue=low, red=high)."""
+        """Render the Tet4 mesh colored by material density.
+
+        ``colormap`` selects a multi-stop color transfer function (default
+        ``"jet"`` used to be a simple blue->red; now a richer gradient is used
+        for better readability).  Supported: ``"jet"``, ``"viridis"``,
+        ``"coolwarm"``, ``"inferno"``.
+        """
         from vtkmodules.vtkCommonDataModel import (
             vtkUnstructuredGrid, vtkCellArray,
         )
@@ -340,9 +373,7 @@ class Scene:
             scalar.SetValue(i, float(d))
         grid.GetCellData().SetScalars(scalar)
 
-        ctf = vtkColorTransferFunction()
-        ctf.AddRGBPoint(0.0, 0.20, 0.35, 0.70)   # blue -> low density
-        ctf.AddRGBPoint(1.0, 0.85, 0.20, 0.15)   # red  -> high density
+        ctf = self._density_colormap(colormap)
 
         mapper = vtkDataSetMapper()
         mapper.SetInputData(grid)
@@ -362,6 +393,17 @@ class Scene:
         self.remove_by_kind("density")
         self.add_object(SceneObject("Densidad de material", "density"), actor)
         self._notify()
+
+    @staticmethod
+    def _density_colormap(colormap: str) -> "vtkColorTransferFunction":
+        """Build a multi-stop density color transfer function."""
+        from vtkmodules.vtkRenderingCore import vtkColorTransferFunction
+
+        ctf = vtkColorTransferFunction()
+        stops = _COLORMAPS.get(colormap, _COLORMAPS["jet"])
+        for t, r, g, b in stops:
+            ctf.AddRGBPoint(t, r, g, b)
+        return ctf
 
     # ------------------------------------------------------------------ #
     # Display modes

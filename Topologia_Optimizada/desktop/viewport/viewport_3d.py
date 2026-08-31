@@ -309,3 +309,8 @@ class Viewport3D(QWidget):
     @property
     def navigation_profile_name(self) -> str:
         return self.navigation.profile_name
+
+    @property
+    def selection_manager(self):
+        """Alias for the SelectionManager (UI code references ``selection_manager``)."""
+        return self.selection

@@ -139,8 +139,11 @@ class CameraController:
         right = right / nr
         up = np.cross(right, forward)
 
-        # drag vector in the view plane (mouse y grows downward on screen)
-        drag = right * dx - up * dy
+        # drag vector in the view plane (mouse y grows downward on screen).
+        # The +up*dy sign makes the model follow the pointer vertically (drag
+        # up -> view moves up); only the vertical sense is inverted relative to
+        # the horizontal by design choice, keeping horizontal (right*dx) as-is.
+        drag = right * dx + up * dy
         dmg = float(np.linalg.norm(drag))
         if dmg < 1e-12:
             return

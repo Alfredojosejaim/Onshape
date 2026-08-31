@@ -1,0 +1,26 @@
+[
+  {
+    "name": "small_500",
+    "element_size": 11.5,
+    "num_nodes": 206,
+    "num_elements": 643,
+    "mesh_time_s": 0.0595,
+    "npz": "D:\\Documentos\\GitHub\\Onshape\\Topologia_Optimizada\\benchmarks\\meshes\\small_500.npz"
+  },
+  {
+    "name": "medium_5k",
+    "element_size": 5.2,
+    "num_nodes": 1358,
+    "num_elements": 5778,
+    "mesh_time_s": 0.1254,
+    "npz": "D:\\Documentos\\GitHub\\Onshape\\Topologia_Optimizada\\benchmarks\\meshes\\medium_5k.npz"
+  },
+  {
+    "name": "large_50k",
+    "element_size": 2.5,
+    "num_nodes": 9316,
+    "num_elements": 47611,
+    "mesh_time_s": 0.8437,
+    "npz": "D:\\Documentos\\GitHub\\Onshape\\Topologia_Optimizada\\benchmarks\\meshes\\large_50k.npz"
+  }
+]

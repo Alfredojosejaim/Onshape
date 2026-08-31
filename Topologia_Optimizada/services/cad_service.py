@@ -191,6 +191,196 @@ class CADService:
                 "error": str(exc),
             }
 
+    # ------------------------------------------------------------------ #
+    # Fase 2: Boolean operations, solid queries, STEP export
+    # ------------------------------------------------------------------ #
+    def list_solids(self, model_id: str) -> List[Dict[str, Any]]:
+        """Enumerate the solid bodies of a model with their stable ids.
+
+        Returns a list of dicts: ``{"solid_id", "index", "volume",
+        "faces_count", "center", "name"}``.
+        """
+        shape = self.get_model_shape(model_id)
+        if shape is None:
+            return []
+        try:
+            solids = list(shape.Solids())
+            out = []
+            for idx, solid in enumerate(solids):
+                center = None
+                try:
+                    bb = solid.BoundingBox()
+                    center = [bb.xmin + (bb.xmax - bb.xmin) / 2.0,
+                              bb.ymin + (bb.ymax - bb.ymin) / 2.0,
+                              bb.zmin + (bb.zmax - bb.zmin) / 2.0]
+                except Exception:
+                    center = None
+                try:
+                    volume = solid.Volume()
+                except Exception:
+                    volume = None
+                try:
+                    faces_count = len(list(solid.Faces()))
+                except Exception:
+                    faces_count = 0
+                out.append({
+                    "solid_id": f"solid_{idx}",
+                    "index": idx,
+                    "volume": volume,
+                    "faces_count": faces_count,
+                    "center": center,
+                    "name": f"Cuerpo {idx + 1}",
+                })
+            return out
+        except Exception as exc:
+            logger.exception("list_solids failed for model %s", model_id)
+            return []
+
+    def resolve_solid_for_face(self, model_id: str, face_index: int) -> Optional[Dict[str, Any]]:
+        """Determine which solid a given face (by global face index) belongs to.
+
+        Returns a dict with ``solid_id``/``index`` or ``None``.  Used by the
+        viewport to resolve body-level selection when a face is picked, so the
+        selection can refer to the whole solid rather than the single face.
+        """
+        shape = self.get_model_shape(model_id)
+        if shape is None:
+            return None
+        try:
+            solids = list(shape.Solids())
+            if not solids:
+                return None
+            if len(solids) == 1:
+                return {"solid_id": "solid_0", "index": 0}
+            try:
+                all_faces = list(shape.Faces())
+                if 0 <= face_index < len(all_faces):
+                    center = all_faces[face_index].Center()
+                    vec = cq.Vector(center.x, center.y, center.z)
+                    for idx, solid in enumerate(solids):
+                        try:
+                            if solid.isInside(vec):
+                                return {"solid_id": f"solid_{idx}", "index": idx}
+                        except Exception:
+                            continue
+            except Exception:
+                logger.debug("face->solid containment failed for face %d", face_index)
+            # Fall back to the first solid.
+            return {"solid_id": "solid_0", "index": 0}
+        except Exception as exc:
+            logger.exception("resolve_solid_for_face failed for model %s", model_id)
+            return None
+
+    def store_computed_shape(self, shape: cq.Shape, model_name: str = "Resultado CAD") -> str:
+        """Store a computed CadQuery Shape in the cache and return a new model_id."""
+        model_id = str(uuid.uuid4())
+        cad_model = CADModel(
+            id=model_id,
+            name=model_name,
+            source=SourceReference(source_type=SourceType.SYNTHETIC, metadata={"origin": "computed"}),
+        )
+        # Keep both caches (service + adapter) in sync so tessellation works.
+        self._model_cache[model_id] = (cad_model, shape)
+        self.step_adapter.cache_shape(model_id, shape)
+        logger.info("Stored computed shape: %s (ID: %s)", model_name, model_id)
+        return model_id
+
+    def export_step(self, model_id: str, file_path: str) -> bool:
+        """Export a model's B-Rep shape to a STEP file using CadQuery/OCC."""
+        shape = self.get_model_shape(model_id)
+        if shape is None:
+            return False
+        try:
+            import cadquery as cq
+            # cq.exporters.export expects a Workplane or Shape; values support exportType="STEP".
+            cq.exporters.export(shape.val() if hasattr(shape, "val") else shape,
+                                file_path, exportType="STEP")
+            logger.info("Exported STEP for model %s -> %s", model_id, file_path)
+            return True
+        except Exception as exc:
+            logger.exception("export_step failed for model %s", model_id)
+            return False
+
+    def generate_adaptive_mesh(
+        self,
+        model_id: str,
+        densities: Optional[Any] = None,
+        elements: Optional[Any] = None,
+        nodes: Optional[Any] = None,
+        base_size: float = 5.0,
+        min_size: float = 0.5,
+        element_type: str = "tet4",
+        refinement: str = "density",
+    ) -> Dict[str, Any]:
+        """Generate an adaptively refined FE mesh, optionally driven by the
+        topology-optimization density field.
+
+        When ``densities`` (per-element), ``elements`` (tet connectivity) and
+        ``nodes`` are supplied, element centroids are computed and the element
+        size is scaled by density so that solid/dense regions get a finer mesh
+        (density-driven local refinement).  Falls back to a uniform Gmsh mesh.
+        """
+        shape = self.get_model_shape(model_id)
+        if not shape:
+            return {"success": False, "status": "failed", "code": "MODEL_NOT_FOUND",
+                    "error": f"Model {model_id} not found in cache"}
+        try:
+            size_points = None
+            if densities is not None and elements is not None and nodes is not None:
+                import numpy as _np
+                nparr = _np.asarray(nodes, dtype=float)
+                elems = _np.asarray(elements, dtype=int)
+                dens = _np.asarray(densities, dtype=float)
+                size_points = []
+                for k, tet in enumerate(elems):
+                    if k >= len(dens):
+                        break
+                    d = float(dens[k])
+                    if d < 1e-6:
+                        continue
+                    verts = nparr[tet]
+                    cx = float(verts[:, 0].mean())
+                    cy = float(verts[:, 1].mean())
+                    cz = float(verts[:, 2].mean())
+                    # Elements with high density (solid, structural) get finer.
+                    s = base_size * (1.0 - 0.7 * d)
+                    s = max(s, min_size)
+                    size_points.append([cx, cy, cz, s])
+                if len(size_points) < 8:
+                    size_points = None
+
+            # Export to temp STEP for Gmsh
+            import tempfile, os as _os
+            import cadquery as _cq
+            fd, tmp = tempfile.mkstemp(suffix=".step")
+            _os.close(fd)
+            try:
+                _cq.exporters.export(shape, tmp, exportType="STEP")
+                if size_points:
+                    mesh_result = self.gmsh_mesher.generate_adaptive_mesh(
+                        tmp, size_points=size_points,
+                        base_size=base_size, min_size=min_size, element_type=element_type,
+                    )
+                else:
+                    mesh_result = self.gmsh_mesher.generate_mesh_from_step(
+                        tmp, target_element_size=base_size, element_type=element_type
+                    )
+            finally:
+                if _os.path.exists(tmp):
+                    try:
+                        _os.unlink(tmp)
+                    except OSError:
+                        pass
+            logger.info("Adaptive mesh for %s: %d nodes, %d elems (refinement=%s)",
+                        model_id, mesh_result.num_nodes, mesh_result.num_elements, refinement)
+            return mesh_result.to_dict()
+        except (ImportError, RuntimeError, ValueError, FileNotFoundError) as exc:
+            logger.warning("Adaptive mesh failed (%s); falling back to uniform mesh.", exc)
+            return self.generate_mesh(model_id, target_element_size=base_size, element_type=element_type)
+        except Exception as exc:
+            logger.exception("generate_adaptive_mesh failed for model %s", model_id)
+            return {"success": False, "status": "failed", "code": "MESHING_FAILED", "error": str(exc)}
+
     def map_boundary_conditions(
         self,
         model_id: str,

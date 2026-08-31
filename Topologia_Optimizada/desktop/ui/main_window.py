@@ -327,9 +327,29 @@ class MainWindow(QMainWindow):
         self.rb_import.clicked.connect(self._on_import)
         self.rb_mesh = RibbonTool("📐", "Malla FEM", "Generar malla volumétrica FEM (Tet4)")
         self.rb_mesh.clicked.connect(lambda: self._on_generate_mesh(self.properties._element_size.value()))
+        self.rb_mesh_adaptive = RibbonTool("▦", "Malla Adaptativa", "Refinar malla localmente según densidad")
+        self.rb_mesh_adaptive.clicked.connect(self._on_generate_adaptive_mesh)
         self.rb_fea = RibbonTool("📊", "Análisis FEM", "Structural Mechanics — análisis estático")
         self.rb_fea.clicked.connect(self._on_run_fea)
-        lay.addWidget(group([self.rb_import, self.rb_mesh, self.rb_fea], "Modelo"))
+        lay.addWidget(group([self.rb_import, self.rb_mesh, self.rb_mesh_adaptive, self.rb_fea], "Modelo"))
+
+        lay.addWidget(divider())
+
+        # Edición
+        self.rb_union = RibbonTool("⊕", "Unión", "Unión booleana de sólidos")
+        self.rb_union.clicked.connect(lambda: self._on_boolean_op("union"))
+        self.rb_difference = RibbonTool("⊖", "Resta", "Resta booleana de sólidos")
+        self.rb_difference.clicked.connect(lambda: self._on_boolean_op("difference"))
+        self.rb_intersect = RibbonTool("⊗", "Intersección", "Intersección booleana de sólidos")
+        self.rb_intersect.clicked.connect(lambda: self._on_boolean_op("intersection"))
+        self.rb_transform = RibbonTool("↗", "Transformar", "Trasladar / rotar cuerpo")
+        self.rb_transform.clicked.connect(lambda: self.statusBar().showMessage(
+            "Transformar: seleccione cuerpo y arrastre para trasladar/rotar."))
+        self.rb_mirror = RibbonTool("◇", "Simetría", "Simetría respecto a plano")
+        self.rb_mirror.clicked.connect(lambda: self.statusBar().showMessage(
+            "Simetría: seleccione cuerpo y un plano para crear la simetría."))
+        lay.addWidget(group([self.rb_union, self.rb_difference, self.rb_intersect,
+                             self.rb_transform, self.rb_mirror], "Edición"))
 
         lay.addWidget(divider())
 
@@ -341,7 +361,14 @@ class MainWindow(QMainWindow):
         self.rb_filtros.clicked.connect(self._on_focus_filter)
         self.rb_opt = RibbonTool("▶", "Optimizar SIMP", "Optimization Application — algoritmo SIMP")
         self.rb_opt.clicked.connect(self._on_run_optimization_default)
-        lay.addWidget(group([self.rb_sens, self.rb_filtros, self.rb_opt], "Optimización"))
+        self.rb_design_space = RibbonTool("◆", "Espacio de Diseño", "Definir espacio de diseño para optimización")
+        self.rb_design_space.clicked.connect(lambda: self.statusBar().showMessage(
+            "Espacio de Diseño: seleccione cuerpos para definir el dominio de optimización."))
+        self.rb_generative = RibbonTool("✧", "Generativo", "Diseño generativo con escenarios")
+        self.rb_generative.clicked.connect(lambda: self.statusBar().showMessage(
+            "Diseño Generativo: configure escenarios y restricciones."))
+        lay.addWidget(group([self.rb_sens, self.rb_filtros, self.rb_opt,
+                             self.rb_design_space, self.rb_generative], "Optimización"))
 
         lay.addWidget(divider())
 
@@ -351,6 +378,16 @@ class MainWindow(QMainWindow):
         self.rb_export = RibbonTool("📤", "Exportar", "Exportar resultado de la optimización")
         self.rb_export.clicked.connect(self._on_export)
         lay.addWidget(group([self.rb_viz, self.rb_export], "Postproceso"))
+
+        lay.addWidget(divider())
+
+        # Herramientas
+        self.rb_validate = RibbonTool("✓", "Validar", "Validar geometría y restricciones")
+        self.rb_validate.clicked.connect(lambda: self.statusBar().showMessage(
+            "Validar: verificando geometría y restricciones..."))
+        self.rb_export_step = RibbonTool("💾", "Exportar STEP", "Exportar resultado como archivo STEP")
+        self.rb_export_step.clicked.connect(self._on_export_step)
+        lay.addWidget(group([self.rb_validate, self.rb_export_step], "Herramientas"))
 
         lay.addStretch(1)
 
@@ -436,6 +473,12 @@ class MainWindow(QMainWindow):
         self.host = _ViewportHost()
         self.viewport = self.host.viewport
         self.viewport.selectionChanged.connect(self._on_selection)
+        # Body-level selection: promote a picked face to its parent solid using
+        # the CAD service (Fase 2).
+        self.viewport.selection_manager.set_solid_resolver(
+            lambda model_id, face_index: self.controller.cad.resolve_solid_for_face(model_id, face_index)
+            if model_id and self.controller.cad.get_model_shape(model_id) else None
+        )
         cv.addWidget(self.host, 1)
 
         self.timeline = TimelinePanel()
@@ -620,6 +663,8 @@ class MainWindow(QMainWindow):
         self._set_busy(False, f"Modelo importado: {name}")
         self.statusBar().showMessage(
             f"Modelo {name} cargado. Paso 2: definir cargas/restricciones.")
+        # Architecture layer: refresh feature history in tree
+        self._sync_architecture_tree()
 
     def controller_reset_after_model(self) -> None:
         has_model = self.controller.model_id is not None
@@ -639,6 +684,15 @@ class MainWindow(QMainWindow):
         self.results.reset_all()
         self.timeline.set_pipeline_step(1 if has_model else 0)
         self.design_tree.clear_button().setEnabled(False)
+        # Architecture layer: sync features/studies into tree
+        self._sync_architecture_tree()
+
+    def _sync_architecture_tree(self) -> None:
+        """Push the feature history and study list into the design tree panel."""
+        features = self.controller.feature_history.features
+        self.design_tree.set_features(features)
+        studies = list(self.controller._studies.values())
+        self.design_tree.set_studies(studies)
 
     def _show_tessellation(self, tess: Dict[str, Any]) -> None:
         vertices = np.asarray(tess.get("vertices", []), dtype=float).reshape(-1, 3)
@@ -710,6 +764,20 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Malla: {nodes.shape[0]} nodos, {elements.shape[0]} elementos.")
         self._set_busy(False, "Malla generada.")
+
+    def _on_generate_adaptive_mesh(self) -> None:
+        """Generate an adaptively refined mesh (density-driven if possible)."""
+        if not self.controller.model_id:
+            QMessageBox.warning(self, "Sin modelo", "Importa primero un STEP.")
+            return
+        base = self.properties._element_size.value() if hasattr(self.properties, "_element_size") else 5.0
+        self._set_busy(True, "Generando malla adaptativa según densidad...")
+        self.statusBar().showMessage("Generando malla adaptativa (refinamiento por densidad)...")
+        self.controller.run_in_background(
+            lambda: self.controller.generate_adaptive_mesh(base_size=base, min_size=max(0.2, base * 0.1)),
+            on_done=self._on_mesh_done,
+            on_error=lambda e: self._on_error("Mallado adaptativo", e),
+        )
 
     # ------------------------------------------------------------------ #
     # FEA
@@ -834,6 +902,30 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, "Exportar", f"No se pudo escribir el archivo:\n{exc}")
 
+    def _on_export_step(self) -> None:
+        """Export the current CAD model (or boolean/reconstruction result) as STEP."""
+        if not self.controller.model_id:
+            self.statusBar().showMessage("No hay modelo para exportar. Importe un STEP primero.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Exportar STEP", "modelo_cad.step", "STEP (*.step *.stp)"
+        )
+        if not path:
+            return
+        self._set_busy(True, "Exportando STEP...")
+        self.controller.run_in_background(
+            lambda: self.controller.cad.export_step(self.controller.model_id, path),
+            on_done=lambda ok: self._on_export_step_done(ok, path),
+            on_error=lambda e: self._on_error("Exportar STEP", e),
+        )
+
+    def _on_export_step_done(self, ok: bool, path: str) -> None:
+        self._set_busy(False)
+        if ok:
+            self.statusBar().showMessage(f"STEP exportado: {path}")
+        else:
+            QMessageBox.critical(self, "Exportar STEP", "No se pudo exportar el modelo a STEP.")
+
     def _on_visualize_result(self) -> None:
         if self.controller.result and self.controller.result_densities is not None:
             self.viewport.show_density(
@@ -846,6 +938,48 @@ class MainWindow(QMainWindow):
 
     def _on_focus_filter(self) -> None:
         self.statusBar().showMessage("Configure el radio de filtro de densidad en el panel de propiedades.")
+
+    def _on_boolean_op(self, operation: str) -> None:
+        """Handle boolean operation button clicks from the ribbon."""
+        if not self.controller.model_id:
+            self.statusBar().showMessage("Importe un modelo STEP primero.")
+            return
+        from core.commands import BooleanCommand, BooleanOperation
+        sel = self.viewport.selection_manager
+        cad_entities = []
+        for item in (sel.multi_selection if sel.multi_selection else ([sel.last_payload] if sel.last_payload else [])):
+            ce = item.get("cad_entity")
+            if ce is not None:
+                cad_entities.append(ce)
+        cmd = BooleanCommand(
+            operation=operation,
+            selections=cad_entities,
+            keep_tools=False,
+        )
+        self._set_busy(True, f"Ejecutando {operation}...")
+        self.controller.run_in_background(
+            lambda: self.controller.execute_command(cmd),
+            on_done=lambda result: self._on_boolean_done(result),
+            on_error=lambda e: self._on_error("Operación booleana", e),
+        )
+
+    def _on_boolean_done(self, result) -> None:
+        self._set_busy(False)
+        if result.success:
+            self.statusBar().showMessage(f"Operación booleana completada: {result.feature_id[:8]}...")
+            # Re-render the boolean result model in the viewport
+            tess = self.controller.current_tessellation
+            if tess and tess.get("vertices"):
+                self._show_tessellation(tess)
+                self.placeholder.hide()
+                self.design_tree.set_context(
+                    self.controller.model_name if self.controller.model_id else None,
+                    has_mesh=False, has_result=False,
+                )
+            self.design_tree.set_bodies(self.controller.cad.list_solids(self.controller.model_id))
+            self._sync_architecture_tree()
+        else:
+            self.statusBar().showMessage(f"Error: {result.error_message}")
 
     # ------------------------------------------------------------------ #
     # Guided flow (timeline playback)

@@ -52,6 +52,10 @@ class FeatureType(str, Enum):
     CHAMFER = "chamfer"
     SHELL = "shell"
     MEASUREMENT = "measurement"
+    CONDITION_LOAD = "condition_load"
+    CONDITION_ELASTICITY = "condition_elasticity"
+    CONDITION_OBSTRUCTION = "condition_obstruction"
+    CONDITION_PROTECTED_REGION = "condition_protected_region"
     CUSTOM = "custom"
 
 
@@ -128,6 +132,24 @@ class Feature:
                 "target_body_id": target_body_id,
                 **kw,
             },
+        )
+
+    @classmethod
+    def condition(cls, condition_type: str, name: str,
+                  condition: Dict[str, Any], **kw: Any) -> "Feature":
+        """Record a reusable condition as a Feature in the history.
+
+        ``condition_type`` is the feature discriminator (``condition_load``,
+        ``condition_elasticity``, ``condition_obstruction``,
+        ``condition_protected_region``) and ``condition`` is the full
+        serialised Condition dict produced by the condition commands.
+        """
+        return cls(
+            name=name,
+            feature_type=FeatureType(condition_type),
+            parameters={"condition": condition},
+            status=FeatureStatus.EXECUTED,
+            **kw,
         )
 
     # ---- Serialisation ---- #

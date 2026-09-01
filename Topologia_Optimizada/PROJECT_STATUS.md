@@ -120,7 +120,7 @@ Cambio de perfil **en tiempo de ejecución** sin tocar los observers del viewpor
 
 **IMPLEMENTADO**
 
-`core/features.py` (183 líneas): sistema de Features de modelado paramétrico
+`core/features.py` (203 líneas): sistema de Features de modelado paramétrico
 (extrusión, chaflán, etc.). Validado con `test_fase2_features.py`.
 
 ---
@@ -129,7 +129,27 @@ Cambio de perfil **en tiempo de ejecución** sin tocar los observers del viewpor
 
 **IMPLEMENTADO**
 
-`core/commands.py` (202 líneas): patrón command y timeline de operaciones.
+`core/commands.py` (577 líneas): patrón command y timeline de operaciones,
+incluidos los comandos de condiciones CAD/CAE (`ConditionCommandBase` →
+`build_condition()`, llamado una sola vez).
+
+---
+
+## Conditions
+
+**IMPLEMENTADO**
+
+`core/conditions.py` (287 líneas): sistema de condiciones CAD/CAE reutilizables
+exigido por `prompts.md`:
+
+- Tipos: `LoadCondition`, `ElasticityCondition`, `ObstructionCondition`,
+  `ProtectedRegion` (`core/conditions.py`).
+- `ConditionManager`: registro, `consume_conditions()` y `resolve()` (deduplica ids).
+- Comandos tipo condición → Feature → `FeatureHistory` → timeline → árbol de diseño.
+- UI: panel de condiciones, menú superior "Condiciones" y nodo "Condiciones" en el
+  design tree (`desktop/ui/panels/design_tree.py`).
+- Consumidas **por id** por estudios de optimización y diseño generativo, sin duplicarse.
+- Validado con `test_conditions.py` (272 líneas) y `test_pruebas_base.py`.
 
 ---
 
@@ -201,29 +221,47 @@ Kratos Multiphysics autocontenido instalado vía pip en `.venv` (no conda):
 
 **IMPLEMENTADO**
 
-- `core/topopt.py` (322 líneas): motor SIMP de optimización topológica.
+- `core/topopt.py` (373 líneas): motor SIMP de optimización topológica.
+  - Subdominios: `set_preserved_elements()` / `set_void_elements()`; actualización OC y
+    `volfrac` restringidos al **dominio activo** `~(preservado | vacío)`.
+  - Preservados fijos a `1.0`, vacíos fijos a `rho_min`; resultado con máscaras
+    `preserved_elements` / `void_elements`.
+  - Consume las condiciones compartidas (ver Conditions).
 - `core/optimization_studies.py`: parámetros de optimización (`TopOptParameters`).
 
 ---
 
 ## Generative Design
 
-**PARCIAL**
+**IMPLEMENTADO**
 
-`core/generative.py` (152 líneas): **solo el backbone arquitectónico** (métodos de
-generación VOXEL_FILL/LEVEL_SET/GROWTH/AI_GUIDED, métodos de reconstrucción
-MARCHING_CUBES/POISSON/BREP_FITTING, `DesignSpace`). Los algoritmos de generación y
-reconstrucción **no están implementados** (etapa posterior, §19 del prompt).
+- `core/generative.py` (170 líneas): backbone del estudio (`GenerativeDesignStudy`,
+  escenarios A y B, `DesignSpace`, configs). `validate()` acepta **o** `loads` **o**
+  `conditions` **o** `constraints`.
+- `core/generative_engine.py` (368 líneas, nuevo): motor real puro Python —
+  `generate_bridge_mesh` (hex → 6 tets), `consume_conditions`, `direction_vector`
+  (perpendicular / paralela / ángulo + sentido), `GenerativeDesignEngine.solve_simp`
+  (traduce condiciones → fuerzas/fijaciones/preservados/vacíos) y
+  `run_generative_design` (escenarios A y B + reconstrucción). Sin skimage/OCSMeshing.
+- Los métodos de generación `VOXEL_FILL` / `LEVEL_SET` / `GROWTH` / `AI_GUIDED` quedan
+  como configuración (`GenerationMethod`); el algoritmo real implementado es SIMP sobre
+  malla puente (escenario B) y sobre la geometría existente (escenario A).
+- Validado con `test_resolved_pendientes.py` (8 tests).
 
 ---
 
 ## CAD Reconstruction
 
-**PARCIAL**
+**IMPLEMENTADO**
 
-`core/cad_reconstruction.py` (215 líneas): arquitectura y utilidades para conversión de
-resultado volumétrico/malla a B-Rep. Algoritmo completo de reconstrucción avanzada
-**pendiente** (etapa posterior, §19).
+`core/cad_reconstruction.py` (435 líneas): conversión resultado volumétrico/malla → B-Rep.
+
+- `MarchingTetrahedraExtractor`: isosuperficie real (densidades por elemento → nodos,
+  dedup de vértices por posición).
+- `OCPBRepFitter`: sewing → wiring → solid → exportación **STEP** (vía OCP).
+- `ReconstructionPipeline` con componentes reales por defecto; política "best effort":
+  devuelve el mejor resultado disponible (SURFACE_MESH completed como mínimo).
+- Pendiente: robustez B-Rep sobre isosuperficies ruidosas (post-proceso de malla).
 
 ---
 
@@ -259,3 +297,10 @@ OFFLINE_GRACE_PERIOD), protocolo `LicenseServerProtocol`, `NoOpLicenseServer`.
 - Tests nuevos de cámara/navegación en `test_camera_controller.py` (16 casos).
 - `prompt.md` → `prompts.md` (solo el prompt vigente); `prompt_investigacion.md` eliminado
   (prompt anterior).
+- **Condiciones CAD/CAE reutilizables** implementadas y consumidas por id (ver Conditions).
+- **Pendientes resueltos**: SIMP consumidor (subdominios preservado/vacío), motor de
+  diseño generativo real, reconstrucción B-Rep real (STEP). Ver `RESUMEN_IMPLEMENTACION.md`
+  (sección "INTERVENCIÓN - SISTEMA DE CONDICIONES REUTILIZABLES + PENDIENTES RESUELTOS...").
+- Verificación: suite completa **176 passed, 6 deselected, 1 warning**.
+- Pendientes reales: mapeo obstrucciones→elementos sin `model_shape`; rendimiento del
+  marching tetrahedra; robustez del B-Rep sobre isosuperficies ruidosas.

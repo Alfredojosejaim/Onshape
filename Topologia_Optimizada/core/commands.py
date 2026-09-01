@@ -34,6 +34,16 @@ from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Type
 
 from core.cad_entity import CadEntityRef, EntityType
+from core.conditions import (
+    ElasticityCondition,
+    LoadCondition,
+    LoadOrientation,
+    LoadSense,
+    ObstructionCondition,
+    ProtectedRegion,
+    _faces_selection,
+    _solids_selection,
+)
 
 
 class CommandType(str, Enum):
@@ -46,6 +56,10 @@ class CommandType(str, Enum):
     SHELL = "shell"
     IMPORT_STEP = "import_step"
     MEASUREMENT = "measurement"
+    CONDITION_LOAD = "condition_load"
+    CONDITION_ELASTICITY = "condition_elasticity"
+    CONDITION_OBSTRUCTION = "condition_obstruction"
+    CONDITION_PROTECTED_REGION = "condition_protected_region"
     CUSTOM = "custom"
 
 
@@ -125,10 +139,11 @@ class Command(ABC):
                 self._add_error(f"Required parameter '{param.label}' is missing.")
             if name in self.parameters:
                 val = self.parameters[name]
-                if param.min_value is not None and val < param.min_value:
-                    self._add_error(f"{param.label} must be >= {param.min_value}")
-                if param.max_value is not None and val > param.max_value:
-                    self._add_error(f"{param.label} must be <= {param.max_value}")
+                if val is not None:
+                    if param.min_value is not None and val < param.min_value:
+                        self._add_error(f"{param.label} must be >= {param.min_value}")
+                    if param.max_value is not None and val > param.max_value:
+                        self._add_error(f"{param.label} must be <= {param.max_value}")
         return len(self._validation_errors) == 0
 
     @abstractmethod
@@ -328,6 +343,308 @@ class BooleanCommand(Command):
 
 
 # ====================================================================== #
+# Condition Commands (Carga, Elasticidad, Obstrucción, Región protegida)
+# ====================================================================== #
+# Each condition command is a *configuration* command: it validates the user
+# inputs, builds a reusable Condition object, and returns it in the
+# CommandResult data.  The pipeline layer then registers the condition and
+# records it as a Feature in the history (existing flow).  No geometric
+# execution is performed here -- conditions are consumed later by studies.
+
+class LoadConditionCommand(Command):
+    """Configure a reusable Carga (load) condition."""
+    command_type = CommandType.CONDITION_LOAD
+    display_name = "Carga"
+    description = "Carga sobre una o varias caras (orientación, sentido y magnitud)"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._faces: List[CadEntityRef] = []
+
+    def add_face(self, ref: CadEntityRef) -> None:
+        if ref not in self._faces:
+            self._faces.append(ref)
+
+    @property
+    def faces(self) -> List[CadEntityRef]:
+        return list(self._faces)
+
+    @property
+    def parameters_spec(self) -> List[CommandParameter]:
+        return [
+            CommandParameter(
+                name="orientation", label="Orientación", param_type="enum",
+                options=[o.value for o in LoadOrientation],
+                default=LoadOrientation.PERPENDICULAR.value, required=False,
+                tooltip="Orientación de la dirección respecto al plano de referencia",
+            ),
+            CommandParameter(
+                name="reference_plane_normal", label="Normal del plano", param_type="vector3",
+                default=[0.0, 0.0, 1.0], required=False,
+                tooltip="Vector normal al plano de referencia",
+            ),
+            CommandParameter(
+                name="angle_deg", label="Ángulo (º)", param_type="float",
+                min_value=0.0, required=False,
+                tooltip="Ángulo respecto al plano de referencia (orientación = ángulo)",
+            ),
+            CommandParameter(
+                name="sense", label="Sentido", param_type="enum",
+                options=[s.value for s in LoadSense],
+                default=LoadSense.INDETERMINATE.value, required=False,
+                tooltip="Sentido de la dirección",
+            ),
+            CommandParameter(
+                name="magnitude", label="Magnitud (N)", param_type="float",
+                min_value=0.0, required=False,
+                tooltip="Magnitud de la carga",
+            ),
+            CommandParameter(
+                name="indeterminate", label="Magnitud indeterminada", param_type="bool",
+                default=True, required=False,
+                tooltip="Permite dejar la magnitud indeterminada (valor válido del modelo)",
+            ),
+            CommandParameter(
+                name="unit", label="Unidad", param_type="str",
+                default="N", required=False,
+            ),
+        ]
+
+    def build_condition(self) -> LoadCondition:
+        orientation = LoadOrientation(self.get_parameter("orientation", LoadOrientation.PERPENDICULAR.value))
+        normal = self.get_parameter("reference_plane_normal", [0.0, 0.0, 1.0])
+        angle_deg = self.get_parameter("angle_deg")
+        magnitude = self.get_parameter("magnitude")
+        indeterminate = bool(self.get_parameter("indeterminate", magnitude is None))
+        return LoadCondition(
+            name=self.get_parameter("name", "Carga"),
+            faces=_faces_selection(self._faces, "Caras de carga"),
+            orientation=orientation,
+            reference_plane_normal=tuple(float(v) for v in normal),
+            angle_deg=float(angle_deg) if angle_deg is not None else None,
+            sense=LoadSense(self.get_parameter("sense", LoadSense.INDETERMINATE.value)),
+            magnitude=float(magnitude) if magnitude is not None else None,
+            indeterminate=indeterminate,
+            unit=self.get_parameter("unit", "N"),
+        )
+
+    def validate(self) -> bool:
+        super().validate()
+        if not self._faces:
+            self._add_error("Seleccione al menos una cara para la carga.")
+        magnitude = self.get_parameter("magnitude")
+        indeterminate = bool(self.get_parameter("indeterminate", True))
+        if not indeterminate and magnitude is None:
+            self._add_error("Debe introducir una magnitud (o marcar la carga como indeterminada).")
+        if not indeterminate and magnitude is not None and float(magnitude) <= 0:
+            self._add_error("La magnitud de la carga debe ser positiva.")
+        if self.get_parameter("orientation") == LoadOrientation.ANGLE.value and \
+                self.get_parameter("angle_deg") is None:
+            self._add_error("La orientación 'ángulo' requiere un ángulo (angle_deg).")
+        normal = self.get_parameter("reference_plane_normal", [0.0, 0.0, 1.0])
+        if normal is not None and _vec_norm(normal) < 1e-12:
+            self._add_error("El vector normal del plano de referencia no puede ser cero.")
+        return len(self._validation_errors) == 0
+
+    def execute(self) -> CommandResult:
+        if not self.validate():
+            return CommandResult(success=False,
+                                 error_message="; ".join(self._validation_errors))
+        condition = self.build_condition()
+        return CommandResult(
+            success=True,
+            data={"status": "condition_configured",
+                  "condition_id": condition.id,
+                  "condition": condition.to_dict()},
+        )
+
+
+class ElasticityCommand(Command):
+    """Configure a reusable Elasticidad (elasticity) condition."""
+    command_type = CommandType.CONDITION_ELASTICITY
+    display_name = "Elasticidad"
+    description = "Rango/magnitud de flexión en mm sobre una o varias caras"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._faces: List[CadEntityRef] = []
+
+    def add_face(self, ref: CadEntityRef) -> None:
+        if ref not in self._faces:
+            self._faces.append(ref)
+
+    @property
+    def faces(self) -> List[CadEntityRef]:
+        return list(self._faces)
+
+    @property
+    def parameters_spec(self) -> List[CommandParameter]:
+        return [
+            CommandParameter(
+                name="flex_range_mm", label="Rango de flexión (mm)", param_type="float",
+                min_value=0.0, required=False,
+                tooltip="Rango/magnitud de flexión permitida en milímetros",
+            ),
+        ]
+
+    def build_condition(self) -> ElasticityCondition:
+        return ElasticityCondition(
+            name=self.get_parameter("name", "Elasticidad"),
+            faces=_faces_selection(self._faces, "Caras de elasticidad"),
+            flex_range_mm=float(self.get_parameter("flex_range_mm"))
+            if self.get_parameter("flex_range_mm") is not None else None,
+        )
+
+    def validate(self) -> bool:
+        super().validate()
+        if not self._faces:
+            self._add_error("Seleccione al menos una cara para la elasticidad.")
+        flex = self.get_parameter("flex_range_mm")
+        if flex is not None and float(flex) < 0:
+            self._add_error("El rango de flexión no puede ser negativo.")
+        return len(self._validation_errors) == 0
+
+    def execute(self) -> CommandResult:
+        if not self.validate():
+            return CommandResult(success=False,
+                                 error_message="; ".join(self._validation_errors))
+        condition = self.build_condition()
+        return CommandResult(
+            success=True,
+            data={"status": "condition_configured",
+                  "condition_id": condition.id,
+                  "condition": condition.to_dict()},
+        )
+
+
+class ObstructionCommand(Command):
+    """Configure a reusable Obstrucción (obstruction) condition."""
+    command_type = CommandType.CONDITION_OBSTRUCTION
+    display_name = "Obstrucción"
+    description = "Piezas que obstruyen el espacio de optimización (offset opcional)"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._bodies: List[CadEntityRef] = []
+
+    def add_body(self, ref: CadEntityRef) -> None:
+        if ref not in self._bodies:
+            self._bodies.append(ref)
+
+    @property
+    def bodies(self) -> List[CadEntityRef]:
+        return list(self._bodies)
+
+    @property
+    def parameters_spec(self) -> List[CommandParameter]:
+        return [
+            CommandParameter(
+                name="offset_mm", label="Offset (mm)", param_type="float",
+                min_value=0.0, required=False,
+                tooltip="Distancia de separación adicional respecto a las piezas",
+            ),
+        ]
+
+    def build_condition(self) -> ObstructionCondition:
+        return ObstructionCondition(
+            name=self.get_parameter("name", "Obstrucción"),
+            bodies=_solids_selection(self._bodies, "Cuerpos de obstrucción"),
+            offset_mm=float(self.get_parameter("offset_mm"))
+            if self.get_parameter("offset_mm") is not None else None,
+        )
+
+    def validate(self) -> bool:
+        super().validate()
+        if not self._bodies:
+            self._add_error("Seleccione al menos una pieza para la obstrucción.")
+        offset = self.get_parameter("offset_mm")
+        if offset is not None and float(offset) < 0:
+            self._add_error("El offset no puede ser negativo.")
+        return len(self._validation_errors) == 0
+
+    def execute(self) -> CommandResult:
+        if not self.validate():
+            return CommandResult(success=False,
+                                 error_message="; ".join(self._validation_errors))
+        condition = self.build_condition()
+        return CommandResult(
+            success=True,
+            data={"status": "condition_configured",
+                  "condition_id": condition.id,
+                  "condition": condition.to_dict()},
+        )
+
+
+class ProtectedRegionCommand(Command):
+    """Configure a reusable Región protegida (protected region) condition."""
+    command_type = CommandType.CONDITION_PROTECTED_REGION
+    display_name = "Región protegida"
+    description = "Geometría (caras) que la optimización no debe modificar"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._faces: List[CadEntityRef] = []
+        self.parameters["geometry_refs"] = []
+
+    def add_face(self, ref: CadEntityRef) -> None:
+        if ref not in self._faces:
+            self._faces.append(ref)
+
+    @property
+    def faces(self) -> List[CadEntityRef]:
+        return list(self._faces)
+
+    @property
+    def parameters_spec(self) -> List[CommandParameter]:
+        return [
+            CommandParameter(
+                name="geometry_refs", label="Referencias geométricas",
+                param_type="list", default=[], required=False,
+                tooltip="Descriptores de regiones geométricas complejas (extensible)",
+            ),
+        ]
+
+    def add_geometry_ref(self, ref: Dict[str, Any]) -> None:
+        # Mutate the tracked list so ``parameters["geometry_refs"]`` stays
+        # in sync (the property below returns the same list).
+        self.parameters.setdefault("geometry_refs", []).append(ref)
+
+    @property
+    def geometry_refs(self) -> List[Dict[str, Any]]:
+        return list(self.parameters.get("geometry_refs", []))
+
+    def build_condition(self) -> ProtectedRegion:
+        return ProtectedRegion(
+            name=self.get_parameter("name", "Región protegida"),
+            faces=_faces_selection(self._faces, "Caras protegidas"),
+            geometry_refs=list(self.get_parameter("geometry_refs", [])),
+        )
+
+    def validate(self) -> bool:
+        super().validate()
+        if not self._faces and not self.geometry_refs:
+            self._add_error("Seleccione al menos una cara (o referencia geométrica) a proteger.")
+        return len(self._validation_errors) == 0
+
+    def execute(self) -> CommandResult:
+        if not self.validate():
+            return CommandResult(success=False,
+                                 error_message="; ".join(self._validation_errors))
+        condition = self.build_condition()
+        return CommandResult(
+            success=True,
+            data={"status": "condition_configured",
+                  "condition_id": condition.id,
+                  "condition": condition.to_dict()},
+        )
+
+
+def _vec_norm(v) -> float:
+    v = list(v)
+    return sum(float(x) ** 2 for x in v) ** 0.5
+
+
+# ====================================================================== #
 # Command Registry
 # ====================================================================== #
 
@@ -362,3 +679,7 @@ class CommandRegistry:
 # Default registry instance (populated at module level)
 DEFAULT_REGISTRY = CommandRegistry()
 DEFAULT_REGISTRY.register(BooleanCommand)
+DEFAULT_REGISTRY.register(LoadConditionCommand)
+DEFAULT_REGISTRY.register(ElasticityCommand)
+DEFAULT_REGISTRY.register(ObstructionCommand)
+DEFAULT_REGISTRY.register(ProtectedRegionCommand)

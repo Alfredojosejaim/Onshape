@@ -207,6 +207,21 @@ class MainWindow(QMainWindow):
         act_bool_intersect.triggered.connect(lambda: self._on_boolean_op("intersection"))
         boolean_sub.addAction(act_bool_intersect)
 
+        # Condiciones (reusable CAD/CAE conditions)
+        cond_menu = menubar.addMenu("&Condiciones")
+        act_cond_load = QAction("Carga", self)
+        act_cond_load.triggered.connect(lambda: self._on_condition_op("load"))
+        cond_menu.addAction(act_cond_load)
+        act_cond_elast = QAction("Elasticidad", self)
+        act_cond_elast.triggered.connect(lambda: self._on_condition_op("elasticity"))
+        cond_menu.addAction(act_cond_elast)
+        act_cond_obstr = QAction("Obstrucción", self)
+        act_cond_obstr.triggered.connect(lambda: self._on_condition_op("obstruction"))
+        cond_menu.addAction(act_cond_obstr)
+        act_cond_prot = QAction("Región protegida", self)
+        act_cond_prot.triggered.connect(lambda: self._on_condition_op("protected"))
+        cond_menu.addAction(act_cond_prot)
+
         # Diseño (vistas + representación)
         view_menu = menubar.addMenu("&Diseño")
         presets = [
@@ -719,9 +734,11 @@ class MainWindow(QMainWindow):
         self._sync_architecture_tree()
 
     def _sync_architecture_tree(self) -> None:
-        """Push the feature history and study list into the design tree panel."""
+        """Push the feature history, conditions and study list into the design tree panel."""
         features = self.controller.feature_history.features
         self.design_tree.set_features(features)
+        conditions = self.controller.conditions.all
+        self.design_tree.set_conditions(conditions)
         studies = list(self.controller._studies.values())
         self.design_tree.set_studies(studies)
 
@@ -1051,8 +1068,67 @@ class MainWindow(QMainWindow):
                 out.append(r)
         return out
 
-    def _on_boolean_done(self, result) -> None:
+    def _on_condition_op(self, kind: str) -> None:
+        """Handle condition entry points (menu).
+
+        Opens the functional ConditionPanel dialog, which reuses the existing
+        SelectionManager for capturing faces/bodies from the viewport.  Only on
+        *Aceptar* is a condition Command built and executed through the
+        pipeline (registering the reusable condition + recording a Feature).
+        """
+        from desktop.ui.panels.condition_panel import ConditionPanel
+
+        if not self.controller.model_id:
+            QMessageBox.warning(self, "Sin modelo", "Importe un modelo STEP primero.")
+            return
+
+        panel = ConditionPanel(
+            parent=self,
+            condition_kind=kind,
+            get_face_selections=self._current_face_selections,
+            get_solid_selections=self._current_solid_selections,
+        )
+        result = panel.exec()
+        if result != ConditionPanel.Accepted or panel.command is None:
+            self.statusBar().showMessage("Condición cancelada.")
+            return
+
+        cmd = panel.command
+        self._set_busy(True, f"Configurando {cmd.display_name}...")
+        self.statusBar().showMessage("Registrando condición reutilizable...")
+        self.controller.run_in_background(
+            lambda: self.controller.execute_command(cmd),
+            on_done=self._on_condition_done,
+            on_error=lambda e: self._on_error("Condición", e),
+        )
+
+    def _current_face_selections(self):
+        """Return the face CadEntityRefs currently selected in the viewport."""
+        sel = self.viewport.selection_manager
+        refs = []
+        source = sel.multi_selection if sel.multi_selection else ([sel.last_payload] if sel.last_payload else [])
+        for item in source:
+            if item is None:
+                continue
+            ce = item.get("cad_entity")
+            if ce is not None and ce.entity_type == EntityType.FACE:
+                refs.append(ce)
+        return refs
+
+    def _on_condition_done(self, result) -> None:
         self._set_busy(False)
+        if not result.success:
+            self.statusBar().showMessage(f"Error: {result.error_message}")
+            QMessageBox.warning(self, "Condición",
+                                f"No se pudo registrar la condición:\n{result.error_message}")
+            return
+        self.timeline.set_features(self.controller.feature_history.features)
+        self._sync_architecture_tree()
+        kind = result.data.get("condition_type", "condición")
+        self.statusBar().showMessage(
+            f"Condición registrada ({kind}): {result.data.get('condition_id', '')[:8]}...")
+
+    def _on_boolean_done(self, result) -> None:
         if not result.success:
             # CAD error: keep the previous model and surface the reason.
             self.statusBar().showMessage(f"Error: {result.error_message}")

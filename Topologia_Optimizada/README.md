@@ -4,8 +4,9 @@
 
 > **Estado**: aplicación standalone funcional — FEA con Kratos verificado, mallado
 > Gmsh implementado, app de escritorio PySide6 + VTK, benchmark de rendimiento con
-> resolución amgcl + fallback a skyline_lu. Documentación de referencia en
-> `RESUMEN_IMPLEMENTACION.md`.
+> resolución amgcl + fallback a skyline_lu. Condiciones CAD/CAE reutilizables
+> consumidas por id (SIMP, diseño generativo) y reconstrucción B-Rep real (STEP).
+> Documentación de referencia en `RESUMEN_IMPLEMENTACION.md`.
 
 ---
 
@@ -355,9 +356,16 @@ La prioridad es construir primero una base standalone funcional y verificable.
   aplicación de condiciones de frontera y cargas, resolución `K·u=F` con Kratos
   (amgcl + fallback skyline_lu) y con motor self-contained (`core/fea.py`), validación
   numérica y benchmark de rendimiento completos.
-- 🚧 **Etapa 3 (Optimización topológica)**: interfaz `TopOptSolver` y motor SIMP
-  self-contained (`core/topopt.py`) presentes; integración completa con el pipeline
-  en curso.
+- ✅ **Etapa 3 (Optimización topológica)**: interfaz `TopOptSolver`, motor SIMP
+  self-contained (`core/topopt.py`) con **subdominios preservados/vacíos** consumiendo
+  las condiciones compartidas, integrado con el pipeline (`PipelineController`).
+- ✅ **Condiciones CAD/CAE reutilizables** (`core/conditions.py`): Carga, Elasticidad,
+  Obstrucciones y Regiones protegidas, creadas vía comandos → Feature → timeline →
+  árbol de diseño, y consumidas **por id** (nunca duplicadas).
+- ✅ **Diseño generativo** (`core/generative_engine.py`): motores reales de escenario A/B
+  (SIMP sobre la geometría/malla puente) y reconstrucción B-Rep.
+- ✅ **Reconstrucción B-Rep** (`core/cad_reconstruction.py`): marching tetrahedra →
+  sewing → solid → exportación STEP vía OCP.
 - ✅ **Etapa 4 (Visualización / exportación)**: viewport 3D VTK (malla, resultados) en
   la app de escritorio.
 
@@ -1048,9 +1056,19 @@ Topologia_Optimizada/
 │  ├─ fea.py                  Motor FEA self-contained (Tet4, NumPy/SciPy)
 │  ├─ kratos_adapter.py       Adaptador Kratos (motor FEA principal + fallback)
 │  ├─ solver_interface.py     Interfaz TopOpt (TopOptSolver, create_kratos_fea_solver)
-│  ├─ topopt.py               Motor SIMP self-contained
+│  ├─ topopt.py               Motor SIMP self-contained (subdominios preservado/vacío)
 │  ├─ materials.py            Materiales
-│  └─ study.py                Orquestación de estudio
+│  ├─ study.py                Orquestación de estudio
+│  ├─ conditions.py           Condiciones CAD/CAE reutilizables + ConditionManager
+│  ├─ commands.py             Patrón command, timeline y comandos de condiciones
+│  ├─ features.py             Sistema de Features paramétricas
+│  ├─ testing.py              Categoría base para pruebas/tests
+│  ├─ optimization_studies.py Parámetros de optimización (TopOptParameters)
+│  ├─ cae_studies.py          Estudios CAE y casos de carga (Study, StudyResult)
+│  ├─ generative.py           Estudio de diseño generativo (escenarios A/B, configs)
+│  ├─ generative_engine.py    Motor de diseño generativo (bridge mesh, SIMP, B-Rep)
+│  ├─ cad_reconstruction.py   Reconstrucción B-Rep (marching tetrahedra + OCP/STEP)
+│  └─ cad_entity.py           Referencias de entidades CAD (CadEntityRef, SelectionSet)
 │
 ├─ adapters/cad/
 │  ├─ step_adapter.py         Importación STEP → CADModel

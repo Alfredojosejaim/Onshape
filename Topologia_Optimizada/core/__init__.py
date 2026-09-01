@@ -53,6 +53,52 @@ from core.license import (
 )
 from core.user_preferences import UserPreferences
 
+# Reusable CAD/CAE conditions (Carga, Elasticidad, Obstrucción, Región protegida)
+from core.conditions import (
+    Condition,
+    ConditionManager,
+    ConditionType,
+    ElasticityCondition,
+    LoadCondition,
+    LoadOrientation,
+    LoadSense,
+    ObstructionCondition,
+    ProtectedRegion,
+    condition_from_dict,
+)
+
+# Pruebas - extensible base category
+from core.testing import (
+    TestCase,
+    TestKind,
+    TestRegistry,
+    TestResult,
+    TestStatus,
+    TestSuite,
+    DEFAULT_TEST_REGISTRY,
+)
+
+# Generative design engine + CAD reconstruction (B-Rep / STEP)
+from core.cad_reconstruction import (
+    BRepFitter,
+    DummyBRepFitter,
+    MarchingTetrahedraExtractor,
+    OCPBRepFitter,
+    ReconstructionPipeline,
+    ReconstructionResult,
+    ReconstructionStage,
+    ReconstructionStatus,
+    SurfaceExtractor,
+)
+from core.generative_engine import (
+    GenerativeDesignEngine,
+    BridgeMesh,
+    consume_conditions,
+    direction_vector,
+    generate_bridge_mesh,
+    run_generative_design,
+)
+
 __all__ = [
     "BoundingBox3D",
     "CADEdge",
@@ -99,4 +145,36 @@ __all__ = [
     "LicenseManager",
     "NoOpLicenseServer",
     "UserPreferences",
+    "Condition",
+    "ConditionManager",
+    "ConditionType",
+    "LoadOrientation",
+    "LoadSense",
+    "LoadCondition",
+    "ElasticityCondition",
+    "ObstructionCondition",
+    "ProtectedRegion",
+    "condition_from_dict",
+    "TestStatus",
+    "TestKind",
+    "TestResult",
+    "TestCase",
+    "TestSuite",
+    "TestRegistry",
+    "DEFAULT_TEST_REGISTRY",
+    "SurfaceExtractor",
+    "MarchingTetrahedraExtractor",
+    "OCPBRepFitter",
+    "BRepFitter",
+    "ReconstructionPipeline",
+    "ReconstructionResult",
+    "ReconstructionStage",
+    "ReconstructionStatus",
+    "DummyBRepFitter",
+    "GenerativeDesignEngine",
+    "BridgeMesh",
+    "consume_conditions",
+    "direction_vector",
+    "generate_bridge_mesh",
+    "run_generative_design",
 ]

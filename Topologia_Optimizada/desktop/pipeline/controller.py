@@ -60,6 +60,10 @@ class PipelineController:
         self.feature_history = FeatureHistory()
         self._studies: Dict[str, Any] = {}  # study_id -> Study
 
+        # --- Reusable conditions (shared, never duplicated by studies) ---
+        from core.conditions import ConditionManager
+        self.conditions = ConditionManager()
+
         # --- Licensing (single, encapsulated object; no scattered internet
         #     checks anywhere else in the app) ---
         from core.license import LicenseManager
@@ -314,10 +318,50 @@ class PipelineController:
         filter_radius: float = 1.5,
         tolerance: float = 1e-3,
         progress_cb: Optional[Callable[[dict], None]] = None,
+        conditions=None,
     ) -> Dict[str, Any]:
-        nodes, elements, force, fixed = self.build_problem()
+        """Run the self-contained SIMP topology optimisation.
+
+        When ``conditions`` is provided (an iterable of reusable Condition
+        objects), the load/elasticity/protected/obstruction conditions are
+        translated into the SIMP forces / fixed DOFs / preserved elements /
+        void elements, so the solve *consumes* the pre-created conditions
+        instead of the bare ``self.forces`` / ``self.constraints`` arrays.
+        """
+        if self.mesh is None:
+            raise PipelineError("No hay malla. Genera la malla primero.")
+        nodes, elements = self.mesh_nodes, self.mesh_elements
         mat = self.material()
         from core.topopt import SIMPSolver
+
+        if conditions:
+            from core.generative_engine import GenerativeDesignEngine, consume_conditions
+            engine = GenerativeDesignEngine(
+                model_id=self.model_id,
+                mesh_nodes=nodes,
+                mesh_elements=elements,
+                material=mat,
+                condition_manager=self.conditions,
+                model_shape=self.cad.get_model_shape(self.model_id) if self.model_id else None,
+            )
+            by_type = consume_conditions(self.conditions, [c.id for c in conditions])
+            g = engine.solve_simp(
+                by_type,
+                volume_fraction=volume_fraction,
+                max_iterations=max_iterations,
+                penalization=penalization,
+                filter_radius=filter_radius,
+                tolerance=tolerance,
+                progress_cb=progress_cb,
+            )
+            self.result = g
+            self.result_densities = np.asarray(g["densities"], dtype=float)
+            return g
+
+        if not self.constraints:
+            self.set_simple_boundaries()
+        force = self._apply_loads(nodes, int(nodes.shape[0] * 3))
+        fixed = self._apply_constraints(nodes)
 
         solver = SIMPSolver(
             nodes=nodes,
@@ -361,6 +405,14 @@ class PipelineController:
 
         if command.command_type == CommandType.BOOLEAN:
             return self._execute_boolean(command)
+
+        if command.command_type in (
+            CommandType.CONDITION_LOAD,
+            CommandType.CONDITION_ELASTICITY,
+            CommandType.CONDITION_OBSTRUCTION,
+            CommandType.CONDITION_PROTECTED_REGION,
+        ):
+            return self._execute_condition(command)
 
         # Default: record as a feature and return pending
         feature = Feature(
@@ -466,6 +518,60 @@ class PipelineController:
                   "result_model_id": new_model_id},
         )
 
+    # ------------------------------------------------------------------ #
+    # Architecture layer: condition command coordinator
+    # ------------------------------------------------------------------ #
+    def _execute_condition(self, command) -> "CommandResult":
+        """Register a reusable Condition and record it as a Feature.
+
+        Conditions are stored in the shared :class:`ConditionManager` (owned by
+        this controller) so optimization / generative studies can later consume
+        them *by id* without duplicating them.  Executing the command does not
+        mutate the CAD geometry -- conditions are reusable configuration.
+        """
+        from core.commands import CommandResult
+        from core.features import Feature
+
+        # Build the condition once; register the exact same object so the id
+        # reported to the caller always matches the registered condition.
+        if not hasattr(command, "build_condition"):
+            return CommandResult(success=False,
+                                 error_message="El comando no produce una condición.")
+        if not command.validate():
+            return CommandResult(success=False,
+                                 error_message="; ".join(command.validation_errors))
+
+        condition = command.build_condition()
+
+        # Register in the shared manager + document, then record a Feature.
+        self.conditions.add(condition)
+        if hasattr(self.document, "add_condition"):
+            self.document.add_condition(condition)
+
+        feature = Feature.condition(
+            condition_type=command.command_type.value,
+            name=condition.name,
+            condition=condition.to_dict(),
+        )
+        self.feature_history.append(feature)
+        self.document.add_feature(feature)
+
+        return CommandResult(
+            success=True,
+            feature_id=feature.id,
+            result_model_id=self.model_id,
+            data={
+                "status": "condition_registered",
+                "condition_id": condition.id,
+                "condition_type": command.command_type.value,
+                "feature_id": feature.id,
+            },
+        )
+
+    def list_conditions(self) -> list:
+        """Return all registered reusable conditions (for the design tree)."""
+        return self.conditions.all
+
     @staticmethod
     def _body_index(ref) -> Optional[int]:
         """Extract a solid body index from a CadEntityRef/selection.
@@ -529,6 +635,8 @@ class PipelineController:
         if isinstance(study, TopologyOptimizationStudy):
             try:
                 p = study.optimization_params
+                conditions = study.consume_conditions(self.conditions) \
+                    if study.conditions else None
                 result = self.run_optimization(
                     volume_fraction=p.volume_fraction,
                     max_iterations=p.max_iterations,
@@ -536,7 +644,30 @@ class PipelineController:
                     filter_radius=p.filter_radius,
                     tolerance=p.convergence_tolerance,
                     progress_cb=progress_cb,
+                    conditions=conditions,
                 )
+                study.status = StudyStatus.COMPLETED
+                sr = StudyResult(success=True, status="completed", data=result)
+                study.result = sr
+                self.document.add_result(study.id, result)
+                return sr
+            except Exception as exc:
+                study.status = StudyStatus.FAILED
+                return StudyResult(success=False, status="failed", error_message=str(exc))
+
+        if study.study_type.value == "generative_design":
+            try:
+                from core.generative_engine import GenerativeDesignEngine, run_generative_design
+                engine = GenerativeDesignEngine(
+                    model_id=getattr(study, "model_id", self.model_id),
+                    mesh_nodes=self.mesh_nodes,
+                    mesh_elements=self.mesh_elements,
+                    material=self.material(),
+                    condition_manager=self.conditions,
+                    model_shape=self.cad.get_model_shape(self.model_id) if self.model_id else None,
+                )
+                result = run_generative_design(study, self.conditions, engine,
+                                               progress_cb=progress_cb)
                 study.status = StudyStatus.COMPLETED
                 sr = StudyResult(success=True, status="completed", data=result)
                 study.result = sr

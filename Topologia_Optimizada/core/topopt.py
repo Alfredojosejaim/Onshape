@@ -71,6 +71,15 @@ class SIMPSolver:
         self._volumes = self._element_volumes()
         self._vol0 = float(self._volumes.sum())
 
+        # Design-subdomain masks (protected / void).  Protected elements are
+        # forced to stay dense (material always present); void elements (e.g.
+        # obstructions) stay at rho_min (no material).  Neither participates in
+        # the volume-constrained OC update.
+        self._preserved: Optional[np.ndarray] = None
+        self._void: Optional[np.ndarray] = None
+        self._active: np.ndarray = np.ones(self.num_elements, dtype=bool)
+        self._vol0_free = float(self._vol0)
+
     # ------------------------------------------------------------------ #
     # Mesh helpers
     # ------------------------------------------------------------------ #
@@ -160,6 +169,41 @@ class SIMPSolver:
         self._fixed_dofs = np.sort(np.asarray(fixed_dofs, dtype=np.int64))
 
     # ------------------------------------------------------------------ #
+    # Design subdomains
+    # ------------------------------------------------------------------ #
+    def _finalize_active(self) -> None:
+        """Recompute the active (designable) mask and free volume after the
+        protected/void element sets change."""
+        preserved = self._preserved if self._preserved is not None else \
+            np.zeros(self.num_elements, dtype=bool)
+        void = self._void if self._void is not None else \
+            np.zeros(self.num_elements, dtype=bool)
+        self._active = ~(preserved | void)
+        self._vol0_free = float(self._volumes[self._active].sum())
+
+    def set_preserved_elements(self, indices) -> None:
+        """Mark elements that must keep material (protected regions).
+
+        These elements are pinned at density 1.0 and excluded from the
+        volume-constrained OC update.
+        """
+        mask = np.zeros(self.num_elements, dtype=bool)
+        mask[np.asarray(indices, dtype=np.int64)] = True
+        self._preserved = mask
+        self._finalize_active()
+
+    def set_void_elements(self, indices) -> None:
+        """Mark elements that must stay empty (obstructions / no-go zones).
+
+        These elements are pinned at ``rho_min`` and excluded from the
+        volume-constrained OC update.
+        """
+        mask = np.zeros(self.num_elements, dtype=bool)
+        mask[np.asarray(indices, dtype=np.int64)] = True
+        self._void = mask
+        self._finalize_active()
+
+    # ------------------------------------------------------------------ #
     # Objective / sensitivity
     # ------------------------------------------------------------------ #
     def _solve(self, x: np.ndarray) -> np.ndarray:
@@ -194,36 +238,47 @@ class SIMPSolver:
         dv: Optional[np.ndarray],
     ) -> np.ndarray:
         """Optimality criteria (Bendsoe & Sigmund) with bisection on the
-        Lagrange multiplier for the volume constraint and a 99-line-like OC."""
+        Lagrange multiplier for the volume constraint and a 99-line-like OC.
+
+        Only the *active* subdomain participates.  Protected elements stay at
+        1.0 and void elements stay at ``rho_min``.
+        """
         move = 0.2
         if dv is None:
             dv = self._volumes
+        active = self._active
         l1, l2 = 0.0, 1e6
         xnew = np.copy(x)
         xmin = self.rho_min
         xmax = 1.0
+        target_vol = self.volfrac * self._vol0_free
         for _ in range(100):
             mid = 0.5 * (l1 + l2)
-            xnew = np.maximum(
+            xnew[active] = np.maximum(
                 xmin,
                 np.minimum(
                     xmax,
                     np.maximum(
                         xmin,
-                        x * np.sqrt(
-                            np.abs(-dc) / np.maximum(np.abs(mid * dv), 1e-12)
+                        x[active] * np.sqrt(
+                            np.abs(-dc[active]) / np.maximum(np.abs(mid * dv[active]), 1e-12)
                         ),
                     ),
                 ),
             )
-            xnew = np.maximum(x - move, np.minimum(x + move, xnew))
-            vol = float(np.dot(xnew, dv))
-            if vol > self.volfrac * self._vol0 + 1e-12:
+            xnew[active] = np.maximum(x[active] - move, np.minimum(x[active] + move, xnew[active]))
+            vol = float(np.dot(xnew[active], dv[active]))
+            if vol > target_vol + 1e-12:
                 l1 = mid
-            elif vol < self.volfrac * self._vol0 - 1e-12:
+            elif vol < target_vol - 1e-12:
                 l2 = mid
             else:
                 break
+        # Re-pin the pinned subdomains
+        if self._preserved is not None:
+            xnew[self._preserved] = 1.0
+        if self._void is not None:
+            xnew[self._void] = xmin
         return xnew
 
     # ------------------------------------------------------------------ #
@@ -244,7 +299,8 @@ class SIMPSolver:
             xnew = self._oc_update(x, dc_f, self._volumes)
 
             change = float(np.max(np.abs(xnew - x)))
-            vol_frac = float(np.dot(xnew, self._volumes) / self._vol0)
+            # volume fraction relative to the active, designable subdomain
+            vol_frac = float(np.dot(xnew[self._active], self._volumes[self._active]) / max(self._vol0_free, 1e-12))
 
             history.append(
                 {
@@ -292,13 +348,15 @@ class SIMPSolver:
             "iterations": len(history),
             "max_iterations": max_iterations,
             "tolerance": tolerance,
-            "final_volume_fraction": float(np.dot(x, self._volumes) / self._vol0),
+            "final_volume_fraction": float(np.dot(x[self._active], self._volumes[self._active]) / max(self._vol0_free, 1e-12)),
             "target_volume_fraction": float(self.volfrac),
             "final_compliance": float(compliance_final),
             "compliance_history": [h["compliance"] for h in history],
             "volume_fraction_history": [h["volume_fraction"] for h in history],
             "max_density_change": float(np.max(np.abs(x - self.x))),
             "densities": x.tolist(),
+            "preserved_elements": (self._preserved.tolist() if self._preserved is not None else None),
+            "void_elements": (self._void.tolist() if self._void is not None else None),
             "displacements": final_u.tolist(),
             "max_displacement": max_disp,
             "element_strain_energy": ke_term.tolist(),

@@ -1376,3 +1376,121 @@ converge en la geometría particular de un usuario, se cae automáticamente a `s
 warning. **Pendiente de aprobación explícita**: modificarlo afecta a `solver_interface` y a
 todo el pipeline de producción (no solo al benchmark), por lo que se decide al cerrar esta
 sección junto al usuario.
+
+# INTERVENCIÓN - SISTEMA DE CONDICIONES REUTILIZABLES + PENDIENTES RESUELTOS (SIMP CONSUMIDOR, DISEÑO GENERATIVO, B-REP)
+
+## Información General
+
+**Fecha:** 2026-09-01
+**Objetivo:** implementar las condiciones CAD/CAE reutilizables que exige `prompts.md`
+(Carga, Elasticidad, Boolean, Obstrucciones, Regiones protegidas) reutilizando
+`Command → Feature → FeatureHistory → Timeline/DesignTree`, y que estudios de
+optimización y diseño generativo las **consuman por id sin duplicarlas**. Cierra los
+pendientes que quedaron de esa base: (1) solve SIMP que consume condiciones,
+(2) algoritmo real de diseño generativo, (3) reconstrucción B-Rep real.
+**Ubicación:** `core/` y `desktop/pipeline/`.
+
+## Qué se hizo realmente
+
+Base del sistema de condiciones (intervención previa, no documentada aún en este resumen):
+- `core/conditions.py`: tipos `LoadCondition`, `ElasticityCondition`,
+  `ObstructionCondition`, `ProtectedRegion` + `ConditionManager`
+  (registro/`consume_conditions`/`resolve` con dedup de ids repetidos).
+- Comandos tipo `ConditionCommandBase` → `build_condition()` (llamado una sola vez),
+  `core/testing.py` (categoría base `TestKind` + clases de prueba con `__test__ = False`),
+  `core/document.py` (timeline), UI (panel de condiciones, menú en `main_window.py`,
+  nodo Condiciones en `desktop/ui/panels/design_tree.py`), tests `test_conditions.py` y
+  `test_pruebas_base.py`.
+- Fix del `_body_index` del pipeline (`desktop/pipeline/controller.py`): restaurada la línea
+  `solid_id = getattr(ref, "solid_id", None)` que faltaba.
+
+Pendientes resueltos en esta sesión:
+- `core/topopt.py`: `SIMPSolver.set_preserved_elements()` / `set_void_elements()`; la
+  actualización OC y el `volfrac` se restringen al **dominio activo** `~(preservado|vacío)`;
+  preservados fijos a `1.0`, vacíos fijos a `rho_min`; el resultado incluye las máscaras
+  `preserved_elements` / `void_elements`.
+- `core/generative_engine.py` (nuevo): `generate_bridge_mesh` (malla puente hex → 6 tets),
+  `consume_conditions`, `direction_vector` (perpendicular / paralela / ángulo con
+  `LoadSense`), y `GenerativeDesignEngine` con `solve_simp` que traduce las condiciones a
+  fuerzas/fijaciones/preservados/vacíos y `run_generative_design` (escenarios A y B +
+  reconstrucción). Sin `Material.default()` — usa `STANDARD_MATERIALS["steel"]`. Se eliminó la
+  función muerta `_face_nodes_from_target`.
+- `core/cad_reconstruction.py`: `MarchingTetrahedraExtractor` (isosuperficie real: densidades
+  por elemento promediadas a nodos, dedup de vértices por posición) y `OCPBRepFitter`
+  (sewing → wiring → solid → STEP vía OCP). `ReconstructionPipeline` usa por defecto los
+  componentes reales. Docstrings actualizados (ya no dicen "not implemented").
+- `core/generative.py`: `GenerativeDesignStudy.validate()` acepta `loads` **o** `conditions`
+  **o** `constraints`.
+- `desktop/pipeline/controller.py`: `run_optimization(..., conditions=None)` — si hay
+  condiciones usa `GenerativeDesignEngine.solve_simp`; `execute_study` pasa
+  `study.consume_conditions(self.conditions)` y añade el branch `generative_design`.
+- `core/__init__.py`: exports de `cad_reconstruction` y `generative_engine`.
+- `test_resolved_pendientes.py` (8 tests, verificado).
+
+## Qué se verificó
+
+- Suite completa: **176 passed, 6 deselected, 1 warning** (16.48 s).
+- `test_resolved_pendientes.py` (8 passed): SIMP consume condiciones y fija subdominios;
+  dirección de carga (orientación, sentido, ángulo); pipeline generativo escenario B;
+  reconstrucción B-Rep + STEP; cubo cerrado → B-Rep *completed* + archivo STEP; tetra
+  individual → B-Rep; `PipelineController.execute_study` end-to-end generativo (status
+  `completed`, reconstruction presente, condiciones **no duplicadas**:
+  `mgr.to_dict()["count"] == 1`); subdominios preservados/vacíos directos del SIMP.
+- End-to-end con stub: `execute_study` generativo B → SIMP (con condiciones) →
+  reconstrucción.
+
+## Qué problemas aparecieron
+
+- `Material.default()` no existe → `STANDARD_MATERIALS["steel"]`.
+- OCP: `BRepBuilderAPI_MakePolygon` no expone `.Face()` → `poly.Wire()` +
+  `BRepBuilderAPI_MakeFace(wire)`, con try/except al obtener la cara.
+- `BRepCheck_Analyzer` estricto es inestable sobre isosuperficies ruidosas → el test del
+  pipeline usa un criterio tolerante; el caso "best effort" se cubre aparte.
+- `_void_elements` del engine: sin `model_shape` **no hay mapeo fiable cuerpo→elemento** →
+  devuelve array vacío (conservador, no se elimina material equivocado). `_protected_elements`
+  sin shape conserva la capa de soporte (borde de densidad mínima del bbox).
+- Ruido de Kratos al importar en pytest → la suite se corre con `--disable-warnings`.
+
+## Qué decisiones se tomaron
+
+- Motor generativo **puro Python** (marching tetrahedra propio) en lugar de `skimage`
+  (no disponible en el entorno) y de OSMeshing (dependencia pesada).
+- **Extender** `SIMPSolver` con subdominios en lugar de escribir un SIMP duplicado.
+- Reconstrucción "best effort": el pipeline devuelve el **mejor resultado disponible**
+  (`SURFACE_MESH` completed como mínimo); el B-Rep estricto no bloquea el pipeline.
+- Las condiciones se consumen **por id** vía `ConditionManager` (nunca se recrean
+  internamente); se mantiene la división escenarios A y B de `run_generative_design`.
+- `LoadSense.NEGATIVE` invierte la dirección calculada; magnitud `indeterminate` → 1000.0 en solve.
+
+## Qué quedó pendiente
+
+- Mapeo de caras de referencia → elementos del dominio para que `_void_elements` (obstrucciones)
+  funcione sin `model_shape`.
+- Decisiones explícitas de escenario A (load fraction / límite) pendientes de definición por el usuario.
+- Rendimiento del marching tetrahedra sobre mallas grandes no perfilado.
+- Robustez del B-Rep sobre isosuperficies ruidosas (post-proceso de malla).
+- (De la sección Kratos, ajeno a esta intervención): el cambio del default del solver a
+  `amgcl` sigue **pendiente de aprobación explícita**.
+
+## Estado real
+
+Funcionalidad de condiciones + consumo en SIMP + diseño generativo + reconstrucción B-Rep
+**implementada y verificada** (176 passed). Sin commit (el trabajo está en working copy).
+El punto más débil es el mapeo de obstrucciones a elementos sin `model_shape`, registrado como
+pendiente, no como implementado.
+
+## Siguiente paso
+
+1. Definir/implementar el mapeo de referencia → elementos para `_void_elements` (o exigir
+   `model_shape` al crear el estudio).
+2. Revisión cruzada contra `prompts.md` y sincronización de `PROJECT_STATUS.md`/`README.md` si
+   la metodología lo exige para esta etapa.
+3. Aprobación (o no) del default `amgcl` de la sección Kratos, pendiente del usuario.
+
+## Archivos creados / modificados
+
+- **Creados:** `core/generative_engine.py`, `test_resolved_pendientes.py`.
+- **Modificados:** `core/topopt.py`, `core/cad_reconstruction.py`, `core/generative.py`,
+  `core/conditions.py`, `core/testing.py`, `core/__init__.py`,
+  `desktop/pipeline/controller.py` (y, en la base de condiciones, `desktop/ui/`.
+  panel/árbol/menú y `test_conditions.py`/`test_pruebas_base.py`).

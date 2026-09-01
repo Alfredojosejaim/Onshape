@@ -91,6 +91,9 @@ class Document:
         # ---- Features (history) ----
         self._features: List[Any] = []  # List[Feature] -- Any avoids circular import
 
+        # ---- Conditions (reusable, shared) ----
+        self._conditions: Dict[str, Any] = {}  # Dict[condition_id, Condition]
+
         # ---- Studies ----
         self._studies: Dict[str, Any] = {}  # Dict[study_id, Study]
 
@@ -107,6 +110,8 @@ class Document:
         if self._studies:
             return DocumentState.HAS_STUDIES
         if self._features:
+            return DocumentState.HAS_FEATURES
+        if self._conditions:
             return DocumentState.HAS_FEATURES
         if self._models:
             return DocumentState.HAS_MODEL
@@ -177,6 +182,29 @@ class Document:
         return -1
 
     # ================================================================== #
+    # Conditions (reusable, shared across studies)
+    # ================================================================== #
+    def add_condition(self, condition: Any) -> str:
+        """Register a reusable Condition and return its id."""
+        cid = getattr(condition, "id", str(uuid.uuid4()))
+        self._conditions[cid] = condition
+        self.metadata.touch()
+        return cid
+
+    def get_condition(self, condition_id: str) -> Optional[Any]:
+        return self._conditions.get(condition_id)
+
+    def remove_condition(self, condition_id: str) -> bool:
+        removed = self._conditions.pop(condition_id, None) is not None
+        if removed:
+            self.metadata.touch()
+        return removed
+
+    @property
+    def conditions(self) -> List[Any]:
+        return list(self._conditions.values())
+
+    # ================================================================== #
     # Studies
     # ================================================================== #
     def add_study(self, study: Any) -> str:
@@ -230,6 +258,7 @@ class Document:
             "active_model_id": self._active_model_id,
             "models_count": len(self._models),
             "features_count": len(self._features),
+            "conditions_count": len(self._conditions),
             "studies_count": len(self._studies),
             "results_count": len(self._results),
         }

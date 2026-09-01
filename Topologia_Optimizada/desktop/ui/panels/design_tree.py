@@ -54,6 +54,7 @@ class DesignTreePanel(QWidget):
         self._model_item: QTreeWidgetItem | None = None
         self._bodies_item: QTreeWidgetItem | None = None
         self._features_item: QTreeWidgetItem | None = None
+        self._conditions_item: QTreeWidgetItem | None = None
         self._studies_item: QTreeWidgetItem | None = None
         self._results_item: QTreeWidgetItem | None = None
         self._mesh_item: QTreeWidgetItem | None = None
@@ -66,6 +67,7 @@ class DesignTreePanel(QWidget):
         self._model_item = None
         self._bodies_item = None
         self._features_item = None
+        self._conditions_item = None
         self._studies_item = None
         self._results_item = None
         self._mesh_item = None
@@ -89,6 +91,12 @@ class DesignTreePanel(QWidget):
             features.setData(0, Qt.UserRole, "features")
             model.addChild(features)
             self._features_item = features
+
+            # Conditions node (empty until conditions are set)
+            conditions = QTreeWidgetItem(["Condiciones"])
+            conditions.setData(0, Qt.UserRole, "conditions")
+            model.addChild(conditions)
+            self._conditions_item = conditions
 
             # Mesh node
             if has_mesh:
@@ -202,6 +210,32 @@ class DesignTreePanel(QWidget):
             child = QTreeWidgetItem([label])
             child.setData(0, Qt.UserRole, "feature")
             self._features_item.addChild(child)
+        self._tree.expandAll()
+
+    # ------------------------------------------------------------------ #
+    # Conditions display (architecture layer)
+    # ------------------------------------------------------------------ #
+    def set_conditions(self, conditions: list) -> None:
+        """Display reusable conditions under the Condiciones node."""
+        if self._conditions_item is None:
+            return
+        while self._conditions_item.childCount() > 0:
+            self._conditions_item.removeChild(self._conditions_item.child(0))
+        if not conditions:
+            self._conditions_item.addChild(QTreeWidgetItem(["(vacío)"]))
+            self._tree.expandAll()
+            return
+        for cond in conditions:
+            name = getattr(cond, "name", None) or (cond.get("name", "?") if isinstance(cond, dict) else "?")
+            ctype = getattr(cond, "condition_type", None)
+            if ctype is not None:
+                label = f"{name}  [{ctype.value if hasattr(ctype, 'value') else ctype}]"
+            else:
+                ctype_val = cond.get("condition_type", "?") if isinstance(cond, dict) else "?"
+                label = f"{name}  [{ctype_val}]"
+            child = QTreeWidgetItem([label])
+            child.setData(0, Qt.UserRole, "condition")
+            self._conditions_item.addChild(child)
         self._tree.expandAll()
 
     # ------------------------------------------------------------------ #

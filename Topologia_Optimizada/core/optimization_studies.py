@@ -20,6 +20,8 @@ from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
 from core.cae_studies import Study, StudyType, StudyStatus, StudyResult, LoadCase, ConstraintCase
+from core.cad_entity import CadEntityRef
+from core.conditions import Condition, ConditionManager
 from core.materials import Material, STANDARD_MATERIALS
 
 
@@ -70,6 +72,48 @@ class TopologyOptimizationStudy(Study):
         self.design_region: Optional[Dict[str, Any]] = None  # future: restrict optimization domain
         self._iteration_history: List[Dict[str, Any]] = []
 
+        # Structural optimization inputs (reuse pre-created conditions):
+        # - one or more parts (pieces) to optimize;
+        # - condition ids resolved against the shared ConditionManager.
+        self.parts: List[CadEntityRef] = []
+        self.conditions: List[str] = []
+
+    # ------------------------------------------------------------------ #
+    # Parts
+    # ------------------------------------------------------------------ #
+    def add_part(self, ref: CadEntityRef) -> None:
+        """Add a part/piece to be optimised (consumed, not copied)."""
+        if ref not in self.parts:
+            self.parts.append(ref)
+
+    def remove_part(self, solid_id: str) -> bool:
+        before = len(self.parts)
+        self.parts = [p for p in self.parts if str(getattr(p, "solid_id", "")) != str(solid_id)]
+        return len(self.parts) < before
+
+    # ------------------------------------------------------------------ #
+    # Conditions (shared, never duplicated)
+    # ------------------------------------------------------------------ #
+    def add_condition(self, condition_id: str) -> None:
+        """Reference a pre-created condition by id."""
+        cid = str(condition_id)
+        if cid not in self.conditions:
+            self.conditions.append(cid)
+
+    def remove_condition(self, condition_id: str) -> bool:
+        cid = str(condition_id)
+        before = len(self.conditions)
+        self.conditions = [c for c in self.conditions if c != cid]
+        return len(self.conditions) < before
+
+    def consume_conditions(self, manager: ConditionManager) -> List[Condition]:
+        """Resolve the referenced conditions without duplicating them.
+
+        The study references condition ids; the shared ConditionManager owns
+        the actual objects.  Unknown ids are skipped.
+        """
+        return manager.resolve(self.conditions)
+
     def set_params(
         self,
         volume_fraction: Optional[float] = None,
@@ -100,7 +144,7 @@ class TopologyOptimizationStudy(Study):
         return list(self._iteration_history)
 
     def validate(self) -> bool:
-        if self.model_id is None:
+        if self.model_id is None and not self.parts:
             return False
         if not self.loads and not self.constraints:
             return False
@@ -139,4 +183,6 @@ class TopologyOptimizationStudy(Study):
         base = super().to_dict()
         base["optimization_params"] = self.optimization_params.to_dict()
         base["iteration_history"] = self._iteration_history
+        base["parts"] = [p.to_dict() for p in self.parts]
+        base["conditions"] = [str(c) for c in self.conditions]
         return base

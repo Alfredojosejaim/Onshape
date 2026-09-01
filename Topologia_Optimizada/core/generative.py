@@ -17,9 +17,9 @@ The architecture separates:
 - ``optimisation``        -- algorithms that refine the proposal
 - ``cad_reconstruction``  -- conversion from volumetric/mesh result to B-Rep
 
-Neither the generation algorithm nor the reconstruction algorithm is
-implemented in this phase.  This module provides the architectural
-backbone so they can be plugged in later.
+The generation + optimisation + reconstruction algorithms are provided by
+the :mod:`core.generative_engine` module, which consumes the shared
+conditions through the ``ConditionManager``.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional
 
 from core.cae_studies import Study, StudyType, StudyStatus, StudyResult, LoadCase, ConstraintCase
 from core.cad_entity import CadEntityRef, SelectionSet
+from core.conditions import Condition, ConditionManager
 from core.optimization_studies import TopOptParameters
 
 
@@ -130,6 +131,26 @@ class GenerativeDesignStudy(Study):
         self._generated_geometry: Optional[Dict[str, Any]] = None  # volumetric/mesh result
         self._reconstructed_cad: Optional[Dict[str, Any]] = None   # B-Rep result
 
+        # Conditions consumed by the generation/optimisation stage: ids into
+        # the shared ConditionManager (never duplicated).
+        self.conditions: List[str] = []
+
+    def add_condition(self, condition_id: str) -> None:
+        """Reference a pre-created condition by id."""
+        cid = str(condition_id)
+        if cid not in self.conditions:
+            self.conditions.append(cid)
+
+    def remove_condition(self, condition_id: str) -> bool:
+        cid = str(condition_id)
+        before = len(self.conditions)
+        self.conditions = [c for c in self.conditions if c != cid]
+        return len(self.conditions) < before
+
+    def consume_conditions(self, manager: ConditionManager) -> List[Condition]:
+        """Resolve the referenced conditions without duplicating them."""
+        return manager.resolve(self.conditions)
+
     def set_scenario_a(self, model_id: str) -> None:
         """Configure for Scenario A: optimise existing geometry."""
         self.scenario = "A"
@@ -145,7 +166,7 @@ class GenerativeDesignStudy(Study):
             return False
         if self.scenario == "B" and len(self.connection_targets) < 2:
             return False
-        if not self.loads:
+        if not self.loads and not self.conditions and not self.constraints:
             return False
         return True
 
@@ -184,4 +205,5 @@ class GenerativeDesignStudy(Study):
         base["optimization_params"] = self.optimization_params.to_dict()
         base["generation_config"] = self.generation_config.to_dict()
         base["reconstruction_config"] = self.reconstruction_config.to_dict()
+        base["conditions"] = [str(c) for c in self.conditions]
         return base

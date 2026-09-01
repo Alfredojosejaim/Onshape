@@ -1,1 +1,0 @@
-Créame una app que me permita crear o editar interfaces gráficas de python (.py o .ui) que sea facil de usar e intuitiva, que sea gráfica. Algo como usar PowerPoint o canva. Si usas librerias, incluirlas de tal manera que sean auto contenidas en la la aplicación 

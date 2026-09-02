@@ -148,6 +148,108 @@ def _element_densities_to_nodes(
     return np.divide(accum, count, out=np.zeros_like(accum), where=count > 0)
 
 
+def _deduplicate_vertices(raw: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Merge coincident vertices (within 1e-9) and return (remap, unique_vertices).
+
+    Vectorised (structured-array unique) alternative to the per-vertex Python
+    dict, so marching tetrahedra scales to meshes with many iso triangles.
+    """
+    raw = np.asarray(raw, dtype=float)
+    n = raw.shape[0]
+    if n == 0:
+        return np.zeros(0, dtype=np.int64), raw
+    rounded = np.round(raw, 9)
+    view = rounded.view(
+        np.dtype([("x", "f8"), ("y", "f8"), ("z", "f8")])
+    ).reshape(n)
+    uniq, inverse = np.unique(view, return_inverse=True)
+    unique_verts = uniq.view(np.float64).reshape(-1, 3)
+    return inverse.astype(np.int64), unique_verts
+
+
+def _triangle_adjacency(triangles: np.ndarray, num_vertices: int) -> List[set]:
+    """Vertex adjacency lists built from the triangle connectivity."""
+    adj: List[set] = [set() for _ in range(num_vertices)]
+    for tri in triangles:
+        a, b, c = int(tri[0]), int(tri[1]), int(tri[2])
+        if b != a:
+            adj[a].add(b)
+            adj[b].add(a)
+        if c != a:
+            adj[a].add(c)
+            adj[c].add(a)
+        if c != b:
+            adj[b].add(c)
+            adj[c].add(b)
+    return adj
+
+
+def _boundary_vertices(adj: List[set], triangles: np.ndarray) -> set:
+    """Vertices on an open boundary (edge belonging to only one triangle)."""
+    edges: Dict[Tuple[int, int], int] = {}
+    for tri in triangles:
+        a, b, c = (int(tri[0]), int(tri[1]), int(tri[2]))
+        for e1, e2 in ((a, b), (b, c), (c, a)):
+            key = (min(e1, e2), max(e1, e2))
+            edges[key] = edges.get(key, 0) + 1
+    boundary = set()
+    for (u, v), count in edges.items():
+        if count == 1:
+            boundary.add(u)
+            boundary.add(v)
+    return boundary
+
+
+def smooth_surface_mesh(
+    vertices: np.ndarray,
+    triangles: np.ndarray,
+    iterations: int = 3,
+    alpha: float = 0.5,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Laplacian smoothing of a triangle mesh (post-process of noisy isosurfaces).
+
+    Boundary/edge vertices are held fixed so the overall shape is preserved
+    while high-frequency noise is reduced.  Returns the smoothed vertices and
+    the unchanged connectivity.
+    """
+    verts = np.asarray(vertices, dtype=float)
+    tris = np.asarray(triangles, dtype=int)
+    if verts.shape[0] == 0 or tris.shape[0] == 0:
+        return verts, tris
+    adj = _triangle_adjacency(tris, verts.shape[0])
+    fixed = _boundary_vertices(adj, tris)
+    work = verts.copy()
+    for _ in range(max(int(iterations), 0)):
+        new = work.copy()
+        for i in range(verts.shape[0]):
+            if i in fixed or not adj[i]:
+                continue
+            neigh = np.asarray([work[j] for j in adj[i]], dtype=float)
+            new[i] = work[i] + alpha * (np.mean(neigh, axis=0) - work[i])
+        work = new
+    return work, tris
+
+
+class MeshSmoother:
+    """Post-process smoothing of the extracted isosurface mesh."""
+
+    def smooth(
+        self,
+        vertices: np.ndarray,
+        triangles: np.ndarray,
+        iterations: int = 3,
+        alpha: float = 0.5,
+    ) -> ReconstructionResult:
+        smv, smt = smooth_surface_mesh(vertices, triangles, iterations, alpha)
+        return ReconstructionResult(
+            stage=ReconstructionStage.SMOOTHED_MESH,
+            status=ReconstructionStatus.COMPLETED,
+            data={"vertices": smv, "triangles": smt},
+            metadata={"iterations": int(iterations), "alpha": float(alpha),
+                      "triangles": int(smt.shape[0])},
+        )
+
+
 class MarchingTetrahedraExtractor(SurfaceExtractor):
     """Real isosurface extraction via marching tetrahedra on a Tet4 mesh.
 
@@ -198,18 +300,13 @@ class MarchingTetrahedraExtractor(SurfaceExtractor):
 
         # Deduplicate coincident vertices (shared tet faces otherwise double the
         # triangles edges) without changing the triangle connectivity.
-        raw = np.asarray(vertices, dtype=float)
-        unique_positions: Dict[Tuple[float, float, float], int] = {}
-        remap = np.empty(raw.shape[0], dtype=np.int64)
-        dedup_arr: List[np.ndarray] = []
-        for idx, p in enumerate(raw):
-            key = (round(float(p[0]), 9), round(float(p[1]), 9), round(float(p[2]), 9))
-            prev = unique_positions.get(key)
-            if prev is None:
-                prev = len(dedup_arr)
-                unique_positions[key] = prev
-                dedup_arr.append(p)
-            remap[idx] = prev
+        if vertices:
+            raw = np.asarray(vertices, dtype=float)
+            remap, dedup_arr = _deduplicate_vertices(raw)
+        else:
+            raw = np.zeros((0, 3), dtype=float)
+            remap = np.zeros(0, dtype=np.int64)
+            dedup_arr = raw
         tris = np.asarray(triangles, dtype=int)
         if tris.size:
             remapped = np.take(remap, tris)
@@ -281,8 +378,18 @@ class OCPBRepFitter(BRepFitter):
         builder = BRep_Builder()
         compound = TopoDS_Compound()
         builder.MakeCompound(compound)
+
+        added_faces = 0
+        skipped_degenerate = 0
         for tri in triangles:
             a, b, c = (int(tri[0]), int(tri[1]), int(tri[2]))
+            pa = np.asarray(vertices[a]); pb = np.asarray(vertices[b]); pc = np.asarray(vertices[c])
+            # Reject degenerate / zero-area triangles up front so a noisy
+            # isosurface cannot silently corrupt the sewn shell.
+            area2 = float(np.linalg.norm(_np.cross(pb - pa, pc - pa)))
+            if area2 < 1e-12:
+                skipped_degenerate += 1
+                continue
             from OCP.BRepBuilderAPI import BRepBuilderAPI_MakePolygon, BRepBuilderAPI_MakeFace
             try:
                 poly = BRepBuilderAPI_MakePolygon()
@@ -295,9 +402,17 @@ class OCPBRepFitter(BRepFitter):
                     continue
                 face = BRepBuilderAPI_MakeFace(wire).Face()
             except Exception:  # pragma: no cover - degenerate/colinear triangle
+                skipped_degenerate += 1
                 continue
             if not face.IsNull():
                 builder.Add(compound, face)
+                added_faces += 1
+        if added_faces == 0:
+            return ReconstructionResult(
+                stage=ReconstructionStage.BREP_SOLID,
+                status=ReconstructionStatus.FAILED,
+                error_message="No valid (non-degenerate) faces to build a solid",
+            )
         sewed = BRepBuilderAPI_Sewing(1e-6)
         sewed.Add(compound)
         sewed.Perform()
@@ -377,9 +492,11 @@ class ReconstructionPipeline:
         self,
         surface_extractor: Optional[SurfaceExtractor] = None,
         brep_fitter: Optional[BRepFitter] = None,
+        mesh_smoother: Optional["MeshSmoother"] = None,
     ) -> None:
         self._surface_extractor = surface_extractor or MarchingTetrahedraExtractor()
         self._brep_fitter = brep_fitter or OCPBRepFitter()
+        self._mesh_smoother = mesh_smoother
         self._stages: Dict[ReconstructionStage, ReconstructionResult] = {}
         self._status = ReconstructionStatus.NOT_STARTED
 
@@ -427,46 +544,65 @@ class ReconstructionPipeline:
             self._stages[ReconstructionStage.SURFACE_MESH] = result
             return result
 
-        # Stage 3: skip smoothing for now
-        self._stages[ReconstructionStage.SMOOTHED_MESH] = ReconstructionResult(
-            stage=ReconstructionStage.SMOOTHED_MESH,
-            status=ReconstructionStatus.NOT_STARTED,
-        )
-
-        # Stage 4: B-Rep fitting
+        # Stage 3: mesh smoothing (post-process of noisy isosurfaces)
+        smoothed_data = None
         if surface_result.status == ReconstructionStatus.COMPLETED and surface_result.data:
-            try:
-                mesh_data = surface_result.data
-                if isinstance(mesh_data, dict):
-                    verts = mesh_data.get("vertices")
-                    tris = mesh_data.get("triangles")
-                    if verts is not None and tris is not None:
-                        brep_result = self._brep_fitter.fit(
-                            np.asarray(verts), np.asarray(tris)
-                        )
-                    else:
-                        brep_result = ReconstructionResult(
-                            stage=ReconstructionStage.BREP_SOLID,
-                            status=ReconstructionStatus.NOT_STARTED,
-                        )
-                else:
-                    brep_result = ReconstructionResult(
-                        stage=ReconstructionStage.BREP_SOLID,
-                        status=ReconstructionStatus.NOT_STARTED,
+            mesh_data = surface_result.data
+            if isinstance(mesh_data, dict) and mesh_data.get("vertices") is not None:
+                try:
+                    if self._mesh_smoother is None:
+                        self._mesh_smoother = MeshSmoother()
+                    smooth_result = self._mesh_smoother.smooth(
+                        np.asarray(mesh_data["vertices"]), np.asarray(mesh_data["triangles"])
                     )
-                self._stages[ReconstructionStage.BREP_SOLID] = brep_result
-            except Exception as exc:
-                brep_result = ReconstructionResult(
-                    stage=ReconstructionStage.BREP_SOLID,
-                    status=ReconstructionStatus.FAILED,
-                    error_message=str(exc),
-                )
-                self._stages[ReconstructionStage.BREP_SOLID] = brep_result
-        else:
-            self._stages[ReconstructionStage.BREP_SOLID] = ReconstructionResult(
+                    smoothed_data = smooth_result.data
+                    self._stages[ReconstructionStage.SMOOTHED_MESH] = smooth_result
+                except Exception as exc:  # pragma: no cover - defensive
+                    self._stages[ReconstructionStage.SMOOTHED_MESH] = ReconstructionResult(
+                        stage=ReconstructionStage.SMOOTHED_MESH,
+                        status=ReconstructionStatus.FAILED,
+                        error_message=str(exc),
+                    )
+        if ReconstructionStage.SMOOTHED_MESH not in self._stages:
+            self._stages[ReconstructionStage.SMOOTHED_MESH] = ReconstructionResult(
+                stage=ReconstructionStage.SMOOTHED_MESH,
+                status=ReconstructionStatus.NOT_STARTED,
+            )
+
+        # Stage 4: B-Rep fitting (prefer the smoothed mesh, fall back to raw)
+        brep_result = None
+        if surface_result.status == ReconstructionStatus.COMPLETED and surface_result.data:
+            mesh_data = surface_result.data
+            candidates = []
+            if isinstance(mesh_data, dict):
+                if smoothed_data is not None and smoothed_data.get("vertices") is not None:
+                    candidates.append(smoothed_data)
+                if mesh_data.get("vertices") is not None:
+                    candidates.append(mesh_data)
+            for cand in candidates:
+                if cand.get("vertices") is None or cand.get("triangles") is None:
+                    continue
+                try:
+                    r = self._brep_fitter.fit(
+                        np.asarray(cand["vertices"]), np.asarray(cand["triangles"])
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    r = ReconstructionResult(
+                        stage=ReconstructionStage.BREP_SOLID,
+                        status=ReconstructionStatus.FAILED,
+                        error_message=str(exc),
+                    )
+                if r.status == ReconstructionStatus.COMPLETED:
+                    brep_result = r
+                    break
+                if brep_result is None:
+                    brep_result = r
+        if brep_result is None:
+            brep_result = ReconstructionResult(
                 stage=ReconstructionStage.BREP_SOLID,
                 status=ReconstructionStatus.NOT_STARTED,
             )
+        self._stages[ReconstructionStage.BREP_SOLID] = brep_result
 
         # Stage 5: STEP export (placeholder)
         self._stages[ReconstructionStage.STEP_FILE] = ReconstructionResult(

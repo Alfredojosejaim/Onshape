@@ -373,4 +373,24 @@ OFFLINE_GRACE_PERIOD), protocolo `LicenseServerProtocol`, `NoOpLicenseServer`.
   (Laplaciano con bordes fijos) como etapa `SMOOTHED_MESH` del pipeline, aplicado antes
   del fitting B-Rep y usado de forma preferente (fallback a la malla cruda). Reduce el
   ruido de isosuperficies; la conectividad no cambia.
-- Pendiente real restante: (Ajeno) default `amgcl` del solver Kratos pendiente de aprobación.
+- **Pendientes funcionales cerrados** (this cycle):
+  - **STEP export real del pipeline de reconstrucción**: `ReconstructionPipeline` ahora
+    acepta `step_path` y registra el `STEP_FILE` como `COMPLETED` cuando el `OCPBRepFitter`
+    exporta el sólido; `run_generative_design(..., step_path=...)` lo propaga
+    (`core/cad_reconstruction.py`, `core/generative_engine.py`).
+  - **Parámetros de optimización del estudio en el generativo**: `run_generative_design`
+    pasa ahora `volume_fraction`, `max_iterations`, `penalization`, `filter_radius` y
+    `convergence_tolerance` de `GenerativeDesignStudy.optimization_params` a `solve_simp`
+    (antes usaba defaults fijos).
+  - **Aviso visible de condiciones no soportadas**: `_on_run_study` abre un
+    `QMessageBox.warning` además del mensaje de la barra de estado cuando hay condiciones
+    que no pudieron mapearse (`desktop/ui/main_window.py`).
+  - **Selector de colormap en la UI**: el botón "Visualizar" permite elegir entre
+    `jet`, `viridis`, `coolwarm`, `inferno`; `Viewport3D.show_density(colormap=...)`
+    lo propaga a la escena.
+- Pendientes reales restantes (documentados, no resueltos por decisión de alcance):
+  - (Ajeno) default `amgcl` del solver Kratos pendiente de aprobación explícita.
+  - Comandos de edición **transform/mirror/pattern** reales via CadQuery (solo el
+    `CommandType` enum existe; no hay clases Command concretas) — fuera de alcance.
+  - Estudios **`ThermalAnalysis`** y **`ModalAnalysis`** son placeholders que devuelven
+    `not_implemented` (`core/cae_studies.py`) — fuera de alcance.

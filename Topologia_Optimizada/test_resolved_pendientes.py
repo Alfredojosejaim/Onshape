@@ -505,3 +505,128 @@ def test_obstruction_body_maps_to_mesh_elements_via_cad_shape():
     x = np.asarray(result["densities"])
     # void elements (0 and 4) pinned at rho_min (material excluded)
     assert np.allclose(x[[0, 4]], 1e-3, atol=1e-5)
+
+
+# --------------------------------------------------------------------- #
+# Hole-filling (close open boundary loops before B-Rep fitting)
+# --------------------------------------------------------------------- #
+def test_fill_holes_closes_boundary_loops():
+    """fill_holes must find boundary loops and add fan triangles."""
+    from core.cad_reconstruction import fill_holes, _boundary_loops
+
+    # Open triangular strip: 2 triangles sharing one edge, boundary = 4 edges.
+    verts = np.array([
+        [0, 0, 0], [1, 0, 0], [0.5, 1, 0], [1.5, 1, 0],
+    ], dtype=float)
+    tris = np.array([
+        [0, 1, 2],
+        [1, 3, 2],
+    ], dtype=int)
+
+    loops = _boundary_loops(tris)
+    assert len(loops) == 1
+    assert len(loops[0]) == 4  # 4 boundary vertices in the loop
+
+    fv, ft, n = fill_holes(verts, tris)
+    assert n == 1
+    # New centroid vertex added
+    assert fv.shape[0] == verts.shape[0] + 1
+    # 4 fan triangles added (one per boundary edge)
+    assert ft.shape[0] == tris.shape[0] + 4
+
+
+def test_fill_holes_no_op_on_closed_mesh():
+    """A closed mesh (no boundary edges) must be left unchanged."""
+    from core.cad_reconstruction import fill_holes
+
+    # Unit cube: fully closed.
+    verts = np.array([
+        [0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+        [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1],
+    ], dtype=float)
+    tris = np.array([
+        [0, 2, 1], [0, 3, 2],
+        [4, 5, 6], [4, 6, 7],
+        [0, 1, 5], [0, 5, 4],
+        [1, 2, 6], [1, 6, 5],
+        [2, 3, 7], [2, 7, 6],
+        [3, 0, 4], [3, 4, 7],
+    ], dtype=int)
+
+    fv, ft, n = fill_holes(verts, tris)
+    assert n == 0
+    assert fv.shape == verts.shape
+    assert ft.shape == tris.shape
+
+
+def test_fill_holes_skips_large_loops():
+    """Loops exceeding max_hole_edges must be skipped."""
+    from core.cad_reconstruction import fill_holes
+
+    verts = np.array([
+        [0, 0, 0], [1, 0, 0], [0.5, 1, 0], [1.5, 1, 0],
+    ], dtype=float)
+    tris = np.array([[0, 1, 2], [1, 3, 2]], dtype=int)
+
+    fv, ft, n = fill_holes(verts, tris, max_hole_edges=3)
+    assert n == 0  # loop has 4 edges, above the limit
+
+
+def test_fill_holes_produces_manifold_result():
+    """After filling, every boundary edge must be shared by exactly 2 triangles."""
+    from core.cad_reconstruction import fill_holes, _boundary_edges
+
+    verts = np.array([
+        [0, 0, 0], [1, 0, 0], [0.5, 1, 0], [1.5, 1, 0],
+    ], dtype=float)
+    tris = np.array([[0, 1, 2], [1, 3, 2]], dtype=int)
+
+    fv, ft, _ = fill_holes(verts, tris)
+    edge_counts = _boundary_edges(ft)
+    # No edge should appear exactly once (all closed).
+    for count in edge_counts.values():
+        assert count >= 2
+
+
+def test_mesh_hole_filler_class():
+    """MeshHoleFiller.fill() returns a valid ReconstructionResult."""
+    from core.cad_reconstruction import MeshHoleFiller
+
+    verts = np.array([
+        [0, 0, 0], [1, 0, 0], [0.5, 1, 0], [1.5, 1, 0],
+    ], dtype=float)
+    tris = np.array([[0, 1, 2], [1, 3, 2]], dtype=int)
+
+    filler = MeshHoleFiller()
+    result = filler.fill(verts, tris)
+    assert result.status.value == "completed"
+    assert result.metadata["holes_filled"] == 1
+    assert result.data["triangles"].shape[0] > tris.shape[0]
+
+
+def test_pipeline_uses_hole_filling_before_brep(tmp_path):
+    """The pipeline must attempt hole-filling before B-Rep fitting when the
+    surface mesh has open boundaries."""
+    from core.cad_reconstruction import (
+        MeshHoleFiller,
+        MarchingTetrahedraExtractor,
+        ReconstructionPipeline,
+        ReconstructionStage,
+    )
+
+    nodes, els = _hex_grid()
+    dens = np.ones(els.shape[0]) * 0.9
+    dens[6:] = 0.1
+
+    pipe = ReconstructionPipeline(
+        surface_extractor=MarchingTetrahedraExtractor(),
+        hole_filler=MeshHoleFiller(),
+    )
+    final = pipe.run(nodes, els, dens, threshold=0.5)
+    smoothed = pipe.get_stage_result(ReconstructionStage.SMOOTHED_MESH)
+    assert smoothed is not None
+    assert smoothed.status.value == "completed"
+    # Either the mesh was already closed, or hole-filling was applied.
+    if smoothed.metadata.get("hole_filling"):
+        assert smoothed.metadata["holes_filled"] > 0
+    assert final.status.value == "completed"

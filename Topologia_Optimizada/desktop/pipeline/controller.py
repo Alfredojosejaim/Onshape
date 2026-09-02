@@ -28,6 +28,7 @@ from services.cad_service import CADService
 from core.materials import STANDARD_MATERIALS
 from core.document import Document
 from core.features import Feature, FeatureHistory, FeatureType
+from core.cad_entity import EntityType
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +134,30 @@ class PipelineController:
             mesh = self.cad.generate_mesh(self.model_id)
         if not mesh.get("success"):
             raise PipelineError(mesh.get("error", "Error al generar la malla"))
+        self.mesh = mesh
+        self.mesh_nodes = np.asarray(mesh["nodes"], dtype=float)
+        self.mesh_elements = np.asarray(mesh["elements"], dtype=int)
+        self.result = None
+        return mesh
+
+    def generate_mesh_for_solid(self, solid_index: int, target_element_size: float = 0.0) -> Dict[str, Any]:
+        """Generate the FE mesh for a single selected solid body of the model.
+
+        Used by structural-topology studies so the analysis domain is exactly
+        the solid referenced by ``study.parts`` (deterministic), rather than
+        implicitly using the first solid or the whole compound.
+        """
+        if not self.model_id:
+            raise PipelineError("No hay modelo importado. Importa un archivo STEP primero.")
+        if solid_index is None:
+            raise PipelineError("No se pudo resolver el sólido seleccionado del estudio.")
+        if target_element_size and target_element_size > 0:
+            mesh = self.cad.generate_mesh_for_solid(
+                self.model_id, solid_index, target_element_size=target_element_size)
+        else:
+            mesh = self.cad.generate_mesh_for_solid(self.model_id, solid_index)
+        if not mesh.get("success"):
+            raise PipelineError(mesh.get("error", "Error al generar la malla del sólido seleccionado"))
         self.mesh = mesh
         self.mesh_nodes = np.asarray(mesh["nodes"], dtype=float)
         self.mesh_elements = np.asarray(mesh["elements"], dtype=int)
@@ -604,6 +629,30 @@ class PipelineController:
     # ------------------------------------------------------------------ #
     # Architecture layer: study execution coordinator
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def _resolve_study_solid_index(study, model_id: Optional[str]) -> Optional[int]:
+        """Resolve the body index of the solid selected on ``study.parts``.
+
+        Returns ``None`` when the study has no resolvable SOLID part for the
+        given model (zero parts, non-SOLID, incompatible model_id, or a solid
+        id that cannot be mapped to a body index).  This is the deterministic
+        domain selector: the first part is used only if it is the user's
+        explicit selection (never an implicit fallback).
+        """
+        parts = getattr(study, "parts", None) or []
+        if not parts:
+            return None
+        for ref in parts:
+            if getattr(ref, "entity_type", None) != EntityType.SOLID:
+                return None
+            ref_model = getattr(ref, "model_id", None)
+            if ref_model and model_id and ref_model != model_id:
+                return None
+            index = PipelineController._body_index(ref)
+            if index is not None:
+                return index
+        return None
+
     def register_study(self, study) -> str:
         """Register a Study in the controller and document.  Returns study id."""
         sid = study.id
@@ -642,9 +691,51 @@ class PipelineController:
 
         if isinstance(study, TopologyOptimizationStudy):
             try:
-                # Auto-generate mesh if none exists yet.
-                if self.mesh is None and effective_model_id:
-                    self.generate_mesh()
+                # The selected solid on ``study.parts`` is the deterministic
+                # domain of analysis.  Resolve its body index and validate that
+                # it is actually resolvable against the current model (never
+                # silently use an implicit "first solid").
+                solid_index = self._resolve_study_solid_index(study, effective_model_id)
+                if solid_index is None:
+                    study.status = StudyStatus.FAILED
+                    return StudyResult(
+                        success=False,
+                        status="invalid_part",
+                        error_message=(
+                            "El estudio no tiene una pieza (sólido) seleccionada válida para "
+                            "el modelo actual. Seleccione un sólido real en el viewport e "
+                            "intente de nuevo."
+                        ),
+                    )
+
+                # Validate that the selected solid is actually resolvable in the
+                # current model (in-range body index) -- refuse an unresolvable
+                # part instead of silently producing a wrong result.
+                if effective_model_id:
+                    solids = self.cad.list_solids(effective_model_id)
+                    if not solids:
+                        study.status = StudyStatus.FAILED
+                        return StudyResult(
+                            success=False,
+                            status="no_solids",
+                            error_message="El modelo no contiene sólidos resolubles para el estudio.",
+                        )
+                    if not (0 <= solid_index < len(solids)):
+                        study.status = StudyStatus.FAILED
+                        return StudyResult(
+                            success=False,
+                            status="unresolvable_part",
+                            error_message=(
+                                f"El sólido seleccionado (índice {solid_index}) no existe en el "
+                                "modelo actual. Seleccione un sólido válido en el viewport."
+                            ),
+                        )
+
+                # Auto-generate / refresh the mesh for the *selected solid* only,
+                # so the analysis domain matches study.parts (not the whole model).
+                if self.mesh is None or getattr(self, "_study_solid_index", None) != solid_index:
+                    self.generate_mesh_for_solid(solid_index)
+                    self._study_solid_index = solid_index
 
                 p = study.optimization_params
                 conditions = study.consume_conditions(self.conditions) \

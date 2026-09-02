@@ -1575,11 +1575,6 @@ Suite completa en `.venv` y `runtime/python`:
 
 ## Qué quedó pendiente (honesto)
 
-- **Cierre automático de huecos (hole-filling)** en shells abiertos no-manifold: hoy ese
-  caso se rechaza explícitamente como sólido inválido (nunca silencioso) y la
-  reconstrucción "best effort" devuelve la malla de superficie suavizada. Implementar un
-  algoritmo de rellenado de huecos robusto requiere validación adicional y no se incluyó
-  en esta intervención.
 - (Ajeno a esta intervención) default `amgcl` del solver Kratos pendiente de aprobación.
 
 ## Archivos creados / modificados (esta intervención)
@@ -1589,3 +1584,79 @@ Suite completa en `.venv` y `runtime/python`:
   `core/cad_reconstruction.py`, `desktop/ui/main_window.py`, `test_conditions.py`,
   `test_resolved_pendientes.py`, `PROJECT_STATUS.md`.
 - Sin commit (trabajo en working copy).
+
+---
+
+# INTERVENCIÓN — HOLE-FILLING EN SHELLS ABIERTOS NO-MANIFOLD
+
+## Información General
+
+**Fecha:** 2026-09-02
+**Objetivo:** implementar cierre automático de huecos en mallas abiertas extraídas de
+isosuperficies de marching tetrahedra, para que la reconstrucción B-Rep pueda convertir
+shells con bordes abiertos en sólidos válidos (sin rechazarlos como inválidos ni
+requerir intervención manual).
+**Estado:** ✅ **COMPLETADO**
+**Tests:** 6 nuevos (`test_resolved_pendientes.py`), suite completa 190 passed.
+
+## 1. Problema que resuelve
+
+La isosuperficie de marching tetrahedra a menudo produce mallas con **bordes abiertos**
+(salidas incompletas, artefactos del umbral de densidad). Sin hole-filling, el
+`OCPBRepFitter` recibía un shell abierto y lo rechazaba como inválido (nunca
+silenciosamente), devolviendo la malla de superficie suavizada como alternativa. Esto
+dejaba sin resolver la etapa B-Rep/SSTEP del pipeline para esos casos.
+
+## 2. Implementación
+
+**Funciones nuevas en `core/cad_reconstruction.py`:**
+
+- `_boundary_edges(triangles)` — cuenta cuántos triángulos comparten cada arista
+  (las aristas de borde aparecen exactamente una vez).
+- `_boundary_loops(triangles)` — extrae los loops ordenados de vértices de borde
+  a partir de las aristas de borde.
+- `fill_holes(vertices, triangles, max_hole_edges=None)` — cierra cada loop de borde
+  con **fan triangulation** desde el centroide del loop. Soporta `max_hole_edges`
+  para saltar huecos demasiado grandes.
+- `MeshHoleFiller` — clase con interfaz `fill()` que devuelve `ReconstructionResult`
+  consistente con el patrón del pipeline.
+
+**Integración en `ReconstructionPipeline`:**
+
+- Nuevo parámetro `hole_filler` en `__init__` (inyectable, como `mesh_smoother`).
+- Etapa **3.5** (entre `SMOOTHED_MESH` y `BREP_SOLID`): detecta aristas de borde,
+  ejecuta `MeshHoleFiller.fill()` si hay huecos, registra el resultado en `SMOOTHED_MESH`
+  con metadata `hole_filling=True`.
+- El B-Rep fitting ahora prueba **3 candidatos** en orden de preferencia:
+  1. Malla con huecos rellenados
+  2. Malla suavizada (sin hole-fill)
+  3. Malla cruda de la isosuperficie
+
+**Export:** `MeshHoleFiller` y `fill_holes` añadidos a `core/__init__.py` y `__all__`.
+
+## 3. Algoritmo
+
+El hole-filling usa **fan triangulation** (triángulos de abanico desde el centroide):
+
+1. Encontrar aristas de borde (count == 1).
+2. Construir la cadena ordenada de vértices de borde (loops).
+3. Para cada loop, calcular el centroide y añadirlo como nuevo vértice.
+4. Crear un triángulo por cada arista del loop: (centroide, v_i, v_{i+1}).
+
+Es robusto para huecos convexos y cóncavos moderados (el caso típico de
+isosuperficies de topología optimizada).
+
+## 4. Tests (6 nuevos)
+
+| Test | Qué verifica |
+|------|-------------|
+| `test_fill_holes_closes_boundary_loops` | Encuentra 1 loop de 4 vértices, añade 4 triángulos fan |
+| `test_fill_holes_no_op_on_closed_mesh` | Cubo cerrado sin aristas de borde → sin cambios |
+| `test_fill_holes_skips_large_loops` | `max_hole_edges=3` salta un loop de 4 |
+| `test_fill_holes_produces_manifold_result` | Tras filling, ninguna arista aparece solo 1 vez |
+| `test_mesh_hole_filler_class` | `MeshHoleFiller.fill()` devuelve `ReconstructionResult` válido |
+| `test_pipeline_uses_hole_filling_before_brep` | Pipeline aplica hole-filling antes de B-Rep |
+
+## 5. Suite completa
+
+**190 passed, 6 deselected, 1 warning pre-existente** (sin regresión).

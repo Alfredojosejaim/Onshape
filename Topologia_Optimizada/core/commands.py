@@ -343,6 +343,377 @@ class BooleanCommand(Command):
 
 
 # ====================================================================== #
+# Transform / Mirror / Pattern Commands
+# ====================================================================== #
+
+class TransformType(str, Enum):
+    """Kind of transformation applied to a body."""
+    TRANSLATE = "translate"
+    ROTATE = "rotate"
+    SCALE = "scale"
+
+
+class TransformCommand(Command):
+    """Move, rotate or scale a solid body.
+
+    The operation is performed at the geometry layer (CadQuery) by the
+    pipeline: ``TransformCommand`` only carries the parameters and the
+    selected body (``parameters["target"]``, a ``CadEntityRef`` to a solid).
+
+    Representation
+    --------------
+    - ``selections[0]`` (or ``parameters["target"]``) is the body to transform.
+    - ``parameters["transform_type"]``  translate | rotate | scale
+    - ``parameters["translation"]``    [dx, dy, dz] (translate)
+    - ``parameters["rotation_axis"]``   [ax, ay, az] unit axis (rotate)
+    - ``parameters["rotation_angle"]``  float degrees (rotate)
+    - ``parameters["scale_factor"]``    float (scale)
+    """
+
+    command_type = CommandType.TRANSFORM
+    display_name = "Transform"
+    description = "Move, rotate or scale a solid body"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._target_ref: Optional[CadEntityRef] = None
+
+    @property
+    def parameters_spec(self) -> List[CommandParameter]:
+        return [
+            CommandParameter(
+                name="transform_type", label="Transformación", param_type="enum",
+                options=[op.value for op in TransformType],
+                default=TransformType.TRANSLATE.value,
+                tooltip="Tipo de transformación",
+            ),
+            CommandParameter(
+                name="translation", label="Traslación (x, y, z)", param_type="str",
+                default="0, 0, 0", required=False,
+                tooltip="Vector de traslación, p. ej. '10, 0, 0'",
+            ),
+            CommandParameter(
+                name="rotation_axis", label="Eje de rotación (x, y, z)", param_type="str",
+                default="0, 0, 1", required=False,
+                tooltip="Eje de rotación normalizado",
+            ),
+            CommandParameter(
+                name="rotation_angle", label="Ángulo de rotación (°)", param_type="float",
+                default=0.0, required=False, tooltip="Ángulo de rotación en grados",
+            ),
+            CommandParameter(
+                name="scale_factor", label="Factor de escala", param_type="float",
+                default=1.0, min_value=0.01, max_value=100.0, required=False,
+                tooltip="Factor de escala (mayor que 0)",
+            ),
+            CommandParameter(
+                name="target", label="Cuerpo", param_type="selection",
+                required=True, tooltip="El cuerpo a transformar",
+            ),
+        ]
+
+    def set_target(self, ref: Optional[CadEntityRef]) -> None:
+        self._target_ref = ref
+        self.parameters["target"] = ref.to_dict() if ref is not None else None
+
+    @property
+    def target(self) -> Optional[CadEntityRef]:
+        return self._target_ref
+
+    def target_body_id(self) -> Optional[str]:
+        if self._target_ref is None:
+            return None
+        return self._target_ref.solid_id or self._target_ref.model_id
+
+    def set_parameter(self, name: str, value: Any) -> None:
+        if name == "target":
+            if isinstance(value, CadEntityRef):
+                self.set_target(value)
+            elif isinstance(value, str):
+                self.set_target(CadEntityRef.from_solid(value))
+            return
+        super().set_parameter(name, value)
+
+    def add_selection(self, entity: CadEntityRef) -> None:
+        super().add_selection(entity)
+        if self._target_ref is None:
+            self._target_ref = entity
+            self.parameters["target"] = entity.to_dict()
+
+    def validate(self) -> bool:
+        super().validate()
+        if self._target_ref is None:
+            self._add_error("A body must be selected.")
+        tt = self.parameters.get("transform_type")
+        if tt and tt not in [e.value for e in TransformType]:
+            self._add_error(f"Invalid transform type: {tt}")
+        if tt == TransformType.SCALE.value:
+            sf = self.parameters.get("scale_factor", 1.0)
+            if sf is None or float(sf) <= 0:
+                self._add_error("Scale factor must be greater than 0.")
+        return len(self._validation_errors) == 0
+
+    def execute(self) -> CommandResult:
+        if not self.validate():
+            return CommandResult(
+                success=False,
+                error_message="; ".join(self._validation_errors),
+            )
+        return CommandResult(
+            success=True,
+            data={"status": "ready_for_pipeline_execution", "command": self.to_dict()},
+        )
+
+
+class MirrorCommand(Command):
+    """Mirror (reflect) a solid body across a plane.
+
+    The mirror plane is defined by a point and a normal.  The operation is
+    performed by the geometry layer (CadQuery) via the pipeline.
+
+    Representation
+    --------------
+    - ``selections[0]`` (or ``parameters["target"]``) is the body to mirror.
+    - ``parameters["plane_point"]``    [px, py, pz]
+    - ``parameters["plane_normal"]``   [nx, ny, nz]
+    - ``parameters["keep_original"]``  whether to keep the original body.
+    """
+
+    command_type = CommandType.MIRROR
+    display_name = "Mirror"
+    description = "Reflect a solid body across a plane"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._target_ref: Optional[CadEntityRef] = None
+
+    @property
+    def parameters_spec(self) -> List[CommandParameter]:
+        return [
+            CommandParameter(
+                name="plane_point", label="Punto del plano (x, y, z)", param_type="str",
+                default="0, 0, 0", tooltip="Un punto del plano de espejo",
+            ),
+            CommandParameter(
+                name="plane_normal", label="Normal del plano (x, y, z)", param_type="str",
+                default="0, 1, 0", tooltip="Normal del plano de espejo",
+            ),
+            CommandParameter(
+                name="keep_original", label="Conservar original", param_type="bool",
+                default=True, tooltip="Conservar el cuerpo original",
+            ),
+            CommandParameter(
+                name="target", label="Cuerpo", param_type="selection",
+                required=True, tooltip="El cuerpo a reflejar",
+            ),
+        ]
+
+    def set_target(self, ref: Optional[CadEntityRef]) -> None:
+        self._target_ref = ref
+        self.parameters["target"] = ref.to_dict() if ref is not None else None
+
+    @property
+    def target(self) -> Optional[CadEntityRef]:
+        return self._target_ref
+
+    def target_body_id(self) -> Optional[str]:
+        if self._target_ref is None:
+            return None
+        return self._target_ref.solid_id or self._target_ref.model_id
+
+    def set_parameter(self, name: str, value: Any) -> None:
+        if name == "target":
+            if isinstance(value, CadEntityRef):
+                self.set_target(value)
+            elif isinstance(value, str):
+                self.set_target(CadEntityRef.from_solid(value))
+            return
+        super().set_parameter(name, value)
+
+    def add_selection(self, entity: CadEntityRef) -> None:
+        super().add_selection(entity)
+        if self._target_ref is None:
+            self._target_ref = entity
+            self.parameters["target"] = entity.to_dict()
+
+    def validate(self) -> bool:
+        super().validate()
+        if self._target_ref is None:
+            self._add_error("A body must be selected.")
+        normal = self.parameters.get("plane_normal")
+        try:
+            pts = [float(x) for x in str(normal or "0, 1, 0").replace(";", ",").split(",")[:3]]
+            import math
+            norm = math.sqrt(sum(p * p for p in pts))
+            if norm < 1e-9:
+                self._add_error("Mirror plane normal cannot be zero.")
+        except Exception:
+            self._add_error("Invalid mirror plane normal.")
+        return len(self._validation_errors) == 0
+
+    def execute(self) -> CommandResult:
+        if not self.validate():
+            return CommandResult(
+                success=False,
+                error_message="; ".join(self._validation_errors),
+            )
+        return CommandResult(
+            success=True,
+            data={"status": "ready_for_pipeline_execution", "command": self.to_dict()},
+        )
+
+
+class PatternType(str, Enum):
+    LINEAR = "linear"
+    RECTANGULAR = "rectangular"
+    CIRCULAR = "circular"
+
+
+class PatternCommand(Command):
+    """Create a linear/rectangular/circular pattern of a solid body.
+
+    The duplicated bodies are produced by the geometry layer (CadQuery) via
+    the pipeline and cached back as a new model.
+
+    Representation
+    --------------
+    - ``selections[0]`` (or ``parameters["target"]``) is the body to pattern.
+    - ``parameters["pattern_type"]``   linear | rectangular | circular
+    - ``parameters["direction"]``      [dx, dy, dz] (linear/rectangular)
+    - ``parameters["direction2"]``     [dx, dy, dz] (rectangular)
+    - ``parameters["count"]``          int (total instances, >= 2)
+    - ``parameters["count2"]``         int (rectangular)
+    - ``parameters["spacing"]``        float
+    - ``parameters["axis"]``           [ax, ay, az] (circular)
+    - ``parameters["center"]``         [cx, cy, cz] (circular)
+    - ``parameters["angle"]``          float degrees total (circular)
+    """
+
+    command_type = CommandType.PATTERN
+    display_name = "Pattern"
+    description = "Create a linear, rectangular or circular pattern of a body"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._target_ref: Optional[CadEntityRef] = None
+
+    @property
+    def parameters_spec(self) -> List[CommandParameter]:
+        return [
+            CommandParameter(
+                name="pattern_type", label="Tipo de patrón", param_type="enum",
+                options=[op.value for op in PatternType],
+                default=PatternType.LINEAR.value,
+                tooltip="Tipo de patrón",
+            ),
+            CommandParameter(
+                name="direction", label="Dirección (x, y, z)", param_type="str",
+                default="1, 0, 0", tooltip="Dirección del patrón lineal/rectangular",
+            ),
+            CommandParameter(
+                name="direction2", label="Segunda dirección (x, y, z)", param_type="str",
+                default="0, 1, 0", required=False,
+                tooltip="Segunda dirección del patrón rectangular",
+            ),
+            CommandParameter(
+                name="count", label="Cantidad de ejemplares", param_type="int",
+                default=3, min_value=2, max_value=100,
+                tooltip="Número total de instancias del patrón",
+            ),
+            CommandParameter(
+                name="count2", label="Cantidad (dir. 2)", param_type="int",
+                default=2, min_value=1, max_value=100, required=False,
+                tooltip="Instancias en la segunda dirección (rectangular)",
+            ),
+            CommandParameter(
+                name="spacing", label="Separación", param_type="float",
+                default=10.0, min_value=0.0,
+                tooltip="Separación entre instancias",
+            ),
+            CommandParameter(
+                name="axis", label="Eje del patrón circular (x, y, z)", param_type="str",
+                default="0, 0, 1", required=False,
+                tooltip="Eje de rotación del patrón circular",
+            ),
+            CommandParameter(
+                name="center", label="Centro del patrón circular", param_type="str",
+                default="0, 0, 0", required=False,
+                tooltip="Punto centro del patrón circular",
+            ),
+            CommandParameter(
+                name="angle", label="Ángulo total (°)", param_type="float",
+                default=360.0, min_value=1.0, max_value=360.0, required=False,
+                tooltip="Ángulo total barrido por el patrón circular",
+            ),
+            CommandParameter(
+                name="target", label="Cuerpo", param_type="selection",
+                required=True, tooltip="El cuerpo a duplicar",
+            ),
+        ]
+
+    def set_target(self, ref: Optional[CadEntityRef]) -> None:
+        self._target_ref = ref
+        self.parameters["target"] = ref.to_dict() if ref is not None else None
+
+    @property
+    def target(self) -> Optional[CadEntityRef]:
+        return self._target_ref
+
+    def target_body_id(self) -> Optional[str]:
+        if self._target_ref is None:
+            return None
+        return self._target_ref.solid_id or self._target_ref.model_id
+
+    def set_parameter(self, name: str, value: Any) -> None:
+        if name == "target":
+            if isinstance(value, CadEntityRef):
+                self.set_target(value)
+            elif isinstance(value, str):
+                self.set_target(CadEntityRef.from_solid(value))
+            return
+        super().set_parameter(name, value)
+
+    def add_selection(self, entity: CadEntityRef) -> None:
+        super().add_selection(entity)
+        if self._target_ref is None:
+            self._target_ref = entity
+            self.parameters["target"] = entity.to_dict()
+
+    def validate(self) -> bool:
+        super().validate()
+        if self._target_ref is None:
+            self._add_error("A body must be selected.")
+        pt = self.parameters.get("pattern_type")
+        if pt and pt not in [e.value for e in PatternType]:
+            self._add_error(f"Invalid pattern type: {pt}")
+        try:
+            cnt = int(self.parameters.get("count", 3))
+            if cnt < 2:
+                self._add_error("Pattern count must be at least 2.")
+        except Exception:
+            self._add_error("Invalid pattern count.")
+        if pt == PatternType.RECTANGULAR.value:
+            try:
+                cnt2 = int(self.parameters.get("count2", 1))
+                if cnt2 < 1:
+                    self._add_error("Second direction count must be at least 1.")
+            except Exception:
+                self._add_error("Invalid second-direction count.")
+        return len(self._validation_errors) == 0
+
+    def execute(self) -> CommandResult:
+        if not self.validate():
+            return CommandResult(
+                success=False,
+                error_message="; ".join(self._validation_errors),
+            )
+        return CommandResult(
+            success=True,
+            data={"status": "ready_for_pipeline_execution", "command": self.to_dict()},
+        )
+
+
+# ====================================================================== #
 # Condition Commands (Carga, Elasticidad, Obstrucción, Región protegida)
 # ====================================================================== #
 # Each condition command is a *configuration* command: it validates the user
@@ -679,6 +1050,9 @@ class CommandRegistry:
 # Default registry instance (populated at module level)
 DEFAULT_REGISTRY = CommandRegistry()
 DEFAULT_REGISTRY.register(BooleanCommand)
+DEFAULT_REGISTRY.register(TransformCommand)
+DEFAULT_REGISTRY.register(MirrorCommand)
+DEFAULT_REGISTRY.register(PatternCommand)
 DEFAULT_REGISTRY.register(LoadConditionCommand)
 DEFAULT_REGISTRY.register(ElasticityCommand)
 DEFAULT_REGISTRY.register(ObstructionCommand)

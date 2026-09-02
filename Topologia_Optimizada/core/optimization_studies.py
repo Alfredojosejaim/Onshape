@@ -146,7 +146,9 @@ class TopologyOptimizationStudy(Study):
     def validate(self) -> bool:
         if self.model_id is None and not self.parts:
             return False
-        if not self.conditions:
+        # The reusable conditions system is the primary source, but the legacy
+        # loads/constraints config remains accepted for existing flows.
+        if not self.conditions and not self.loads and not self.constraints:
             return False
         p = self.optimization_params
         if not (0.0 < p.volume_fraction <= 1.0):

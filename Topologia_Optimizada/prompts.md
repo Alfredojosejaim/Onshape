@@ -1,206 +1,273 @@
-ETAPA SIGUIENTE — CERRAR FLUJO END-TO-END CAD/CAE
+ETAPA — CERRAR SELECCIÓN DE PIEZA Y EJECUCIÓN ESTRUCTURAL REAL
 
-Trabaja directamente sobre el repositorio actual. El proyecto ya tiene implementados STEP, viewport VTK, selección, comandos, condiciones reutilizables, Boolean, mallado Gmsh, FEA, SIMP, diseño generativo y reconstrucción B-Rep. No reconstruyas esos sistemas.
+Trabaja directamente sobre el repositorio actual.
 
-El objetivo de esta etapa es convertir esa arquitectura en un flujo integrado y verificable de extremo a extremo.
+La arquitectura CAD/CAE base ya existe. No reconstruyas sistemas funcionales. Esta etapa se concentra exclusivamente en cerrar:
 
-1. Auditoría breve antes de modificar
+SELECCIÓN CAD
+↓
+"TopologyOptimizationStudy.parts"
+↓
+"PipelineController"
+↓
+MALLA
+↓
+CONDICIONES
+↓
+SIMP
+↓
+RESULTADO
 
-Inspecciona únicamente los puntos necesarios para detectar inconsistencias entre:
+1. Auditoría focalizada
 
-- "PROJECT_STATUS.md";
-- "core/optimization_studies.py";
-- "core/generative.py" / "core/generative_engine.py";
-- "desktop/pipeline/controller.py";
-- UI de condiciones, optimización, resultados, Design Tree y Timeline;
-- tests existentes.
+Revisa únicamente:
 
-No tomes "PROJECT_STATUS.md" como verdad absoluta: contrástalo con el código actual.
+- "desktop/ui/panels/study_panel.py"
+- "desktop/ui/main_window.py"
+- "desktop/pipeline/controller.py"
+- "core/optimization_studies.py"
+- "core/cad_entity.py"
+- "desktop/viewport/selection.py"
+- "core/conditions.py"
+- tests relacionados.
 
-2. Corregir la validación de Optimización estructural
+No hagas una auditoría general.
 
-"TopologyOptimizationStudy" ya utiliza:
+2. Selección real de la pieza
 
-parts
-conditions
+Actualmente "StudyPanel" representa la pieza objetivo mediante texto y permite implícitamente utilizar el primer sólido.
 
-pero verifica que "validate()" no siga exigiendo obligatoriamente los antiguos "loads"/"constraints" cuando el estudio está configurado mediante condiciones reutilizables.
+Esto debe corregirse.
 
-Debe aceptar una configuración válida basada en:
+El usuario debe poder seleccionar uno o más sólidos reales desde el viewport y esas selecciones deben convertirse en "CadEntityRef".
 
-Pieza(s) + una o más condiciones compatibles + parámetros de optimización
+Cada referencia debe conservar como mínimo:
 
-Las condiciones deben continuar siendo referencias por ID al "ConditionManager" compartido.
+- "entity_type = SOLID";
+- "model_id";
+- "solid_id" o identificador estable equivalente.
 
-No eliminar compatibilidad heredada si otros flujos todavía la necesitan.
+Después deben almacenarse mediante:
 
-3. Cerrar el flujo de estudio estructural
+"study.add_part(ref)"
 
-Garantiza que este flujo funcione realmente:
+No utilizar el primer sólido automáticamente cuando existe una selección explícita.
 
-Importar STEP
-     ↓
-Seleccionar/crear condiciones
-     ↓
-Crear TopologyOptimizationStudy
-     ↓
-Asignar pieza(s)
-     ↓
-Asignar condiciones por ID
-     ↓
-Validar
-     ↓
-Generar malla
-     ↓
-Ejecutar SIMP
-     ↓
-Obtener densidades/resultados
-     ↓
-Mostrar resultado en viewport
+No crear otro "SelectionManager".
 
-Debe utilizar el "PipelineController" existente como orquestador.
+3. Integración UI → selección → estudio
 
-No crear otro pipeline.
+Modifica únicamente lo necesario para que el flujo sea:
 
-4. Integración real con UI
+1. importar STEP;
+2. iniciar creación de estudio;
+3. activar selección de pieza;
+4. seleccionar sólido(s) en viewport;
+5. mostrar las piezas seleccionadas;
+6. confirmar;
+7. crear "TopologyOptimizationStudy.parts" con esas referencias.
 
-Audita las acciones actuales de la interfaz y conecta únicamente las que estén incompletas.
+Reutiliza el sistema de selección existente y sus callbacks/mecanismos actuales.
 
-La UI debe permitir, sin rediseñarla:
+No crear una interfaz paralela ni rediseñar la aplicación.
 
-- importar STEP;
-- crear condiciones mediante el "ConditionPanel";
-- crear/iniciar un estudio de optimización estructural;
-- seleccionar la pieza objetivo;
-- seleccionar condiciones existentes;
-- configurar al menos los parámetros ya existentes del estudio;
-- ejecutar el estudio;
-- visualizar el resultado generado;
-- mostrar errores de validación de forma clara.
+4. Validación de piezas
 
-Reutiliza "DesignTreePanel", "PropertiesPanel", "ResultsPanel", "TimelinePanel", "Viewport3D" y "PipelineController" existentes.
+El estudio debe rechazar:
 
-No hagas una nueva interfaz paralela.
+- cero piezas;
+- entidades que no sean "SOLID";
+- referencias incompatibles con el "model_id" actual;
+- sólidos imposibles de resolver.
 
-5. Resultados y estado del estudio
+Los errores deben llegar claramente a la UI.
 
-Verifica que el resultado de optimización tenga un flujo coherente entre:
+No basta con comprobar que "parts" tenga elementos: validar la coherencia de las referencias cuando la información disponible lo permita.
 
-Solver
- ↓
-StudyResult
- ↓
-Document
- ↓
-ResultsPanel / Viewport
+5. Hacer que "study.parts" gobierne la ejecución
 
-El usuario debe poder distinguir al menos:
+Existe actualmente una discrepancia:
 
-- listo para ejecutar;
-- ejecutando;
-- completado;
-- fallido.
+"TopologyOptimizationStudy" posee "parts", pero "PipelineController.execute_study()" continúa utilizando el estado global:
 
-Si ya existe infraestructura para esto, intégrala en lugar de crear otra.
+- "self.model_id"
+- "self.mesh_nodes"
+- "self.mesh_elements"
 
-6. Condiciones y malla
+Corrige esto.
 
-Comprueba que las condiciones creadas sobre caras del CAD puedan llegar al solver después del mallado.
+Para Optimización estructural, el sólido seleccionado en "study.parts" debe determinar inequívocamente la geometría utilizada por el estudio.
 
-En particular verifica:
+Si el modelo contiene varios sólidos:
 
-- cargas → nodos/DOF;
-- restricciones/elasticidad según el modelo actual;
+- no asumir el primero;
+- resolver el sólido seleccionado;
+- utilizarlo como dominio de análisis.
+
+No implementar todavía análisis multi-body avanzado. El objetivo es que el sólido seleccionado sea el dominio correcto y determinista.
+
+6. Malla automática
+
+"execute_study()" debe garantizar que exista una malla válida antes de ejecutar SIMP.
+
+Si no existe:
+
+- utilizar el generador de malla existente;
+- generar la malla;
+- actualizar "self.mesh", "self.mesh_nodes" y "self.mesh_elements";
+- continuar automáticamente con el estudio.
+
+No crear otro sistema de mallado.
+
+La ejecución desde UI debe continuar utilizando "run_in_background()".
+
+7. Condiciones reutilizables
+
+Mantener:
+
+"study.conditions" → IDs
+"ConditionManager" → objetos reales
+
+Al ejecutar:
+
+"study.consume_conditions(self.conditions)"
+
+debe obtenerse el conjunto real de condiciones y pasarse al camino de optimización.
+
+Verifica específicamente:
+
+- carga → fuerzas/nodos/DOF;
+- soporte/restricción → DOF fijos;
 - regiones protegidas → elementos preservados;
-- obstrucciones → elementos vacíos cuando exista información geométrica suficiente.
+- obstrucciones → elementos vacíos cuando puedan mapearse.
 
-No inventes un mapeo geométrico nuevo si ya existe uno.
+Una condición no mapeable debe generar un estado/error explícito.
 
-Si una condición no puede mapearse con la información disponible, debe producir un error explícito o un estado no soportado, nunca un resultado silenciosamente incorrecto.
+Nunca producir silenciosamente un resultado físicamente incorrecto.
 
-7. Diseño generativo
+No crear otro sistema de condiciones ni otro mapper si ya existe infraestructura reutilizable.
 
-Mantén el motor actual de "GenerativeDesignEngine".
+8. Resultado
 
-Comprueba únicamente que pueda recibir desde el estudio:
+Mantener exactamente el sistema existente:
 
-- pieza existente para escenario A;
-- pieza A + pieza B para escenario B;
-- condiciones compartidas por ID;
-- parámetros existentes.
+SIMP
+↓
+"StudyResult"
+↓
+"Document.add_result()"
+↓
+"ResultsPanel"
+↓
+"Viewport3D.show_density()"
 
-No reemplazar el algoritmo actual ni añadir otro método de generación.
+El resultado debe corresponder al sólido seleccionado.
 
-No realizar todavía mejoras avanzadas de rendimiento ni robustez B-Rep.
-
-8. Ejecución en segundo plano
-
-Las operaciones pesadas deben ejecutarse mediante el mecanismo existente de "run_in_background()" cuando sean invocadas desde la UI.
-
-La interfaz no debe congelarse durante:
-
-- mallado;
-- FEA;
-- optimización;
-- diseño generativo;
-- reconstrucción.
-
-No crear un segundo sistema de threading.
+No crear otro sistema de resultados.
 
 9. Tests
 
-Ejecuta la suite completa y añade únicamente pruebas necesarias para demostrar el flujo integrado.
+Añade o adapta únicamente los tests necesarios para demostrar:
 
-Como mínimo cubrir:
+1. selección de un sólido → "CadEntityRef";
+2. "study.parts" recibe la referencia seleccionada;
+3. no se acepta una entidad que no sea "SOLID";
+4. no se acepta un sólido incompatible;
+5. selección de múltiples sólidos no duplica referencias;
+6. las condiciones continúan referenciándose por ID;
+7. las condiciones llegan realmente a "run_optimization(..., conditions=...)";
+8. una condición de carga llega al solver;
+9. una restricción llega a los DOF fijos;
+10. preservados/obstrucciones se transmiten correctamente cuando son mapeables;
+11. una condición no soportada no produce un resultado silencioso;
+12. un estudio sin malla genera automáticamente la malla;
+13. el estudio utiliza la pieza seleccionada y no el primer sólido;
+14. "StudyResult" llega al "Document";
+15. las densidades quedan disponibles para "Viewport3D";
+16. la ejecución pesada desde UI continúa en background.
 
-1. estudio estructural válido con "parts + conditions";
-2. rechazo de estudio sin pieza/condiciones válidas;
-3. resolución de condiciones por ID;
-4. ejecución del estudio a través de "PipelineController";
-5. propagación del resultado al "Document";
-6. resultado visible/consumible por la capa de UI existente;
-7. escenario A de generative design;
-8. escenario B de generative design;
-9. que las condiciones no se dupliquen;
-10. que una condición geométrica no mapeable no genere resultados silenciosamente incorrectos;
-11. que las operaciones pesadas no se ejecuten directamente en el hilo de UI cuando corresponda.
+Utiliza mocks/stubs cuando sea apropiado para evitar geometrías pesadas innecesarias.
+
+10. Compatibilidad
+
+No romper:
+
+- Boolean;
+- Conditions;
+- "ConditionManager";
+- "SelectionManager";
+- "FeatureHistory";
+- Timeline;
+- Document;
+- Generative Design;
+- PySide6;
+- VTK;
+- flujos heredados basados en "forces"/"constraints".
+
+No modificar algoritmos de optimización salvo que sea imprescindible para conectar correctamente los datos.
 
 Restricciones estrictas
 
-- No reescribir sistemas funcionales.
 - No crear otro "SelectionManager".
-- No crear otro "FeatureHistory".
-- No crear otro "PipelineController".
 - No crear otro "ConditionManager".
-- No crear otro sistema de estudios.
-- No cambiar PySide6/VTK.
+- No crear otro "PipelineController".
+- No crear otro sistema de malla.
+- No crear otro sistema de resultados.
 - No migrar a C++.
 - No introducir dependencias innecesarias.
-- No rediseñar visualmente la aplicación en esta etapa.
-- No implementar nuevos tipos de pruebas.
+- No rediseñar visualmente la aplicación.
 - No hacer investigación extensa.
-- No detenerse únicamente en documentación: corregir el código y probarlo.
+- No reconstruir sistemas existentes.
+- No considerar la tarea terminada solo porque los tests unitarios pasan.
 
 Validación final
 
-Antes de terminar:
+Ejecuta la suite existente y los nuevos tests.
 
-1. Ejecuta todos los tests.
-2. Corrige los fallos provocados por la integración.
-3. Verifica el flujo STEP → condiciones → estudio → malla → optimización → resultado.
-4. Verifica que las condiciones continúen siendo compartidas por ID.
-5. Verifica que Boolean siga funcionando.
-6. Verifica que Generative Design siga funcionando.
-7. Verifica que la UI no se bloquee durante operaciones pesadas.
-8. Actualiza "PROJECT_STATUS.md" solo con el estado realmente comprobado.
+Después verifica el encadenamiento:
+
+STEP
+↓
+selección real de sólido
+↓
+"CadEntityRef"
+↓
+"study.parts"
+↓
+condiciones por ID
+↓
+validación
+↓
+malla automática si hace falta
+↓
+condiciones → solver
+↓
+SIMP
+↓
+"StudyResult"
+↓
+Document
+↓
+ResultsPanel / Viewport
+
+Comprueba específicamente que:
+
+- no se utilice implícitamente el primer sólido;
+- la malla corresponda al dominio seleccionado;
+- las condiciones no se dupliquen;
+- Boolean siga funcionando;
+- Generative Design siga funcionando;
+- la UI no se bloquee.
+
+Actualiza "PROJECT_STATUS.md" únicamente con funcionalidades realmente verificadas.
 
 Al finalizar informa solamente:
 
 - archivos modificados;
 - problemas reales encontrados;
 - correcciones realizadas;
-- flujo end-to-end conseguido;
+- flujo de selección → estudio → solver conseguido;
 - tests ejecutados y resultado;
 - pendientes reales.
 
-Prioridad: corregir → integrar → ejecutar → probar → avanzar.
+Prioridad: selección real → dominio correcto → malla → condiciones → solver → resultado → pruebas.

@@ -40,6 +40,7 @@ class StudyPanel(QDialog):
         default_name: str = "",
         parts: Optional[List[CadEntityRef]] = None,
         model_id: Optional[str] = None,
+        get_solid_selections: Optional[Any] = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Estudio de optimización")
@@ -51,6 +52,7 @@ class StudyPanel(QDialog):
             self._available = self._conditions.all
         self._default_name = default_name
         self._model_id = model_id
+        self._get_solid_selections = get_solid_selections
         self._parts = list(parts or [])
         self.study: Optional[TopologyOptimizationStudy] = None
         self._build_ui()
@@ -74,21 +76,17 @@ class StudyPanel(QDialog):
         root.addLayout(form)
 
         # --- Part selection display ---
-        root.addWidget(QLabel("Pieza(s) objetivo (seleccionada(s) en el viewport):"))
+        parts_row = QHBoxLayout()
+        parts_row.addWidget(QLabel("Pieza(s) objetivo:"), 1)
+        btn_capture = QPushButton("Capturar desde selección")
+        btn_capture.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_capture.clicked.connect(self._capture_parts)
+        parts_row.addWidget(btn_capture)
+        root.addLayout(parts_row)
 
         self._parts_list = QListWidget()
         self._parts_list.setMaximumHeight(100)
         self._parts_list.setFrameShape(QListWidget.Shape.NoFrame)
-        if self._parts:
-            for ref in self._parts:
-                item = QListWidgetItem(ref.display_name)
-                item.setData(Qt.ItemDataRole.UserRole, ref)
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self._parts_list.addItem(item)
-        else:
-            item = QListWidgetItem("(ninguna pieza seleccionada)")
-            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self._parts_list.addItem(item)
         root.addWidget(self._parts_list)
 
         # --- Optimization parameters ---
@@ -150,12 +148,54 @@ class StudyPanel(QDialog):
         self._error.setWordWrap(True)
         root.addWidget(self._error)
 
-        # Disable OK if no parts selected
-        self._btn_ok.setEnabled(bool(self._parts))
+        # Populate the parts list and disable OK if no parts selected.
+        self._refresh_parts_list()
 
     # ------------------------------------------------------------------ #
     # Actions
     # ------------------------------------------------------------------ #
+    def _refresh_parts_list(self) -> None:
+        """Rebuild the parts list widget from ``self._parts``."""
+        self._parts_list.clear()
+        if self._parts:
+            for ref in self._parts:
+                item = QListWidgetItem(ref.display_name)
+                item.setData(Qt.ItemDataRole.UserRole, ref)
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self._parts_list.addItem(item)
+        else:
+            item = QListWidgetItem("(ninguna pieza seleccionada)")
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self._parts_list.addItem(item)
+        self._btn_ok.setEnabled(bool(self._parts))
+
+    def _capture_parts(self) -> None:
+        """Capture the solid(s) selected in the viewport (reuses the existing
+        SelectionManager via the ``get_solid_selections`` callback)."""
+        if self._get_solid_selections is None:
+            self._error.setText("No hay sistema de selección disponible.")
+            return
+        refs = self._get_solid_selections() or []
+        valid = []
+        for ref in refs:
+            if ref is None:
+                continue
+            if ref.entity_type != EntityType.SOLID:
+                self._error.setText(
+                    f"Solo se aceptan sólidos. Entidad inválida: {ref.display_name}")
+                continue
+            if self._model_id and ref.model_id and ref.model_id != self._model_id:
+                self._error.setText(f"La pieza {ref.display_name} no pertenece al modelo actual.")
+                continue
+            if ref not in valid:
+                valid.append(ref)
+        if not valid:
+            self._error.setText("No hay sólidos seleccionados en el viewport.")
+            return
+        self._parts = valid
+        self._error.setText("")
+        self._refresh_parts_list()
+
     def _on_accept(self) -> None:
         # Validate parts
         if not self._parts:

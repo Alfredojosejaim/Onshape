@@ -328,3 +328,180 @@ def test_simp_pinned_preserved_and_void_direct():
     assert result["preserved_elements"] is not None
     assert result["void_elements"] is not None
     assert result["preserved_elements"][0] is True
+
+
+# --------------------------------------------------------------------- #
+# Unsupported-condition handling (never a silent wrong result)
+# --------------------------------------------------------------------- #
+def test_obstruction_without_cad_shape_is_marked_unsupported():
+    """Body-based obstructions without a CAD shape cannot be mapped to mesh
+    elements; solve_simp must surface an explicit unsupported marker instead
+    of silently ignoring the condition."""
+    nodes, els = _hex_grid()
+    mgr = _conditions_manager()
+
+    engine = GenerativeDesignEngine(
+        model_id=None, mesh_nodes=nodes, mesh_elements=els,
+        condition_manager=mgr, model_shape=None,
+    )
+    by_type = consume_conditions(mgr, [c.id for c in mgr.all])
+    result = engine.solve_simp(by_type, max_iterations=5, tolerance=1e-2)
+
+    assert result["_consumed_obstruction_conditions"] >= 1
+    assert "obstruction" in result["_unsupported_conditions"]
+    # with no unsupported-friendly geometry, the solve still succeeds
+    assert np.asarray(result["densities"]).size > 0
+
+
+# --------------------------------------------------------------------- #
+# Reconstruction robustness / performance helpers
+# --------------------------------------------------------------------- #
+def test_deduplicate_vertices_is_consistent():
+    """Coincident marching-tet vertices must collapse without changing
+    connectivity and reproduce the exact shared points."""
+    from core.cad_reconstruction import _deduplicate_vertices
+
+    raw = np.array([
+        [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 0.0],
+        [0.5, 0.5, 0.5], [1.0, 0.0, 0.0], [0.5, 0.5, 0.5000000001],
+    ], dtype=float)
+    remap, uniq = _deduplicate_vertices(raw)
+    assert uniq.shape[0] == 3
+    for i, p in enumerate(raw):
+        assert np.allclose(uniq[remap[i]], np.round(p, 9))
+    # coincident entries map to the same unique vertex
+    assert remap[0] == remap[2]
+    assert remap[1] == remap[4]
+    assert remap[3] == remap[5]
+
+
+def test_oct_brep_fitter_skips_degenerate_triangles(tmp_path):
+    """Degenerate triangles must be rejected before sewing so a noisy
+    isosurface cannot corrupt the B-Rep shell."""
+    from core.cad_reconstruction import OCPBRepFitter
+
+    # unit cube surface plus a degenerate (repeated-vertex) triangle
+    verts = np.array([
+        [0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+        [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1],
+    ], dtype=float)
+    tris = np.array([
+        [0, 2, 1], [0, 3, 2],
+        [4, 5, 6], [4, 6, 7],
+        [0, 1, 5], [0, 5, 4],
+        [1, 2, 6], [1, 6, 5],
+        [2, 3, 7], [2, 7, 6],
+        [3, 0, 4], [3, 4, 7],
+    ], dtype=int)
+    # degenerate triangles appended (repeated vertex -> zero area), reusing the
+    # existing cube vertices (indices 0-7) so no re-indexing is required
+    degenerate = np.array([
+        [0, 0, 1],
+        [1, 2, 2],
+        [3, 3, 5],
+    ], dtype=int).reshape(-1, 3)
+    verts_full = np.vstack([verts, [[2, 2, 2], [3, 3, 3], [10, 10, 10]]])
+    tris_full = np.vstack([tris, degenerate])
+
+    step_path = os.path.join(str(tmp_path), "cube_with_degenerate.step")
+    fitter = OCPBRepFitter(step_path=step_path)
+    brep = fitter.fit(verts_full, tris_full)
+    assert brep.status.value == "completed", brep.error_message
+    assert os.path.exists(step_path)
+    assert os.path.getsize(step_path) > 0
+
+
+def test_mesh_smoothing_reduces_noise_and_keeps_boundary():
+    """Laplacian post-process must reduce high-frequency noise on an open
+    surface while leaving the boundary (open) vertices fixed."""
+    from core.cad_reconstruction import smooth_surface_mesh
+
+    # A noisy flat patch: 4x4 grid in the XY plane + random z noise.
+    xs, ys = np.meshgrid(np.linspace(0, 1, 4), np.linspace(0, 1, 4))
+    verts = np.stack([xs.ravel(), ys.ravel(), np.zeros(16)], axis=1)
+    rng = np.random.default_rng(0)
+    verts[:, 2] = rng.normal(0.0, 0.1, size=16)
+    tris = []
+    idx = lambda i, j: i * 4 + j
+    for i in range(3):
+        for j in range(3):
+            a, b, c, d = idx(i, j), idx(i, j + 1), idx(i + 1, j + 1), idx(i + 1, j)
+            tris.append([a, b, c])
+            tris.append([a, c, d])
+    tris = np.asarray(tris, dtype=int)
+
+    smv, smt = smooth_surface_mesh(verts, tris, iterations=10, alpha=0.5)
+    assert np.array_equal(smt, tris)  # connectivity unchanged
+    # Smoothing reduces the *spread* of interior points (surface flattens).
+    interior = [5, 6, 9, 10]  # interior vertices of the 4x4 grid
+    spread_before = float(np.std(verts[interior, 2]))
+    spread_after = float(np.std(smv[interior, 2]))
+    noise_before = float(np.mean(np.abs(verts[interior, 2])))
+    noise_after = float(np.mean(np.abs(smv[interior, 2])))
+    assert noise_after < noise_before + 1e-9
+    assert spread_after < spread_before + 1e-9
+    # Boundary vertices stay fixed (open edge preserved).
+    boundary = {0, 1, 2, 3, 4, 7, 8, 11, 12, 13, 14, 15}
+    for i in boundary:
+        assert np.allclose(smv[i], verts[i])
+
+
+def test_reconstruction_pipeline_runs_smoothing_stage():
+    """The pipeline must now complete the SMOOTHED_MESH stage for a noisy
+    isosurface instead of skipping it."""
+    from core.cad_reconstruction import (
+        MeshSmoother,
+        ReconstructionPipeline,
+        ReconstructionStage,
+    )
+
+    nodes, els = _hex_grid()
+    dens = np.asarray([0.9, 0.1, 0.2, 0.8, 0.15, 0.85, 0.1, 0.2, 0.3, 0.7, 0.9, 0.05])
+    pipe = ReconstructionPipeline(mesh_smoother=MeshSmoother())
+    final = pipe.run(nodes, els, dens, threshold=0.5)
+    smoothed = pipe.get_stage_result(ReconstructionStage.SMOOTHED_MESH)
+    assert smoothed is not None
+    assert smoothed.status.value == "completed"
+    assert smoothed.data["triangles"].shape[0] > 0
+    assert final.status.value == "completed"
+
+
+# --------------------------------------------------------------------- #
+# Obstruction body -> mesh element mapping via the CAD shape
+# --------------------------------------------------------------------- #
+def test_obstruction_body_maps_to_mesh_elements_via_cad_shape():
+    """With a real CAD shape, body obstructions must map to mesh elements
+    (never silently ignored) and the SIMP solve must pin them to rho_min."""
+    import cadquery as cq
+
+    nodes, els = _hex_grid()
+
+    mgr = ConditionManager()
+    load = LoadCondition(name="Carga", magnitude=1000.0, indeterminate=False,
+                         sense=LoadSense.POSITIVE, orientation=LoadOrientation.PERPENDICULAR,
+                         faces=SelectionSet(name="c"))
+    obstr = ObstructionCondition(
+        name="Obst",
+        bodies=SelectionSet(name="obs", entities=[
+            CadEntityRef(entity_type=EntityType.SOLID, solid_id="solid_0")]),
+    )
+    for c in (load, obstr):
+        mgr.add(c)
+
+    # A unit box at the origin contains elements 0 and 4 of the hex grid
+    # (their centroids (0.5, 0.25, 0.25) and (0.25, 0.5, 0.25) lie inside).
+    shape = cq.Workplane("XY").box(1.0, 1.0, 1.0).val()
+
+    engine = GenerativeDesignEngine(
+        model_id=None, mesh_nodes=nodes, mesh_elements=els,
+        condition_manager=mgr, model_shape=shape,
+    )
+    by_type = consume_conditions(mgr, [c.id for c in mgr.all])
+    void = engine._void_elements(by_type.get(ConditionType.OBSTRUCTION, []))
+    assert set(void.tolist()) == {0, 4}
+
+    result = engine.solve_simp(by_type, max_iterations=8, tolerance=1e-2)
+    assert "obstruction" not in result["_unsupported_conditions"]
+    x = np.asarray(result["densities"])
+    # void elements (0 and 4) pinned at rho_min (material excluded)
+    assert np.allclose(x[[0, 4]], 1e-3, atol=1e-5)

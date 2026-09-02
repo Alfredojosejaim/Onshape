@@ -222,6 +222,15 @@ class MainWindow(QMainWindow):
         act_cond_prot.triggered.connect(lambda: self._on_condition_op("protected"))
         cond_menu.addAction(act_cond_prot)
 
+        # Estudio (architecture layer: create & run a topology study)
+        study_menu = menubar.addMenu("&Estudio")
+        act_study_new = QAction("Nuevo estudio de optimización...", self)
+        act_study_new.triggered.connect(self._on_create_study)
+        study_menu.addAction(act_study_new)
+        act_study_run = QAction("Ejecutar estudio (topología)", self)
+        act_study_run.triggered.connect(self._on_run_study)
+        study_menu.addAction(act_study_run)
+
         # Diseño (vistas + representación)
         view_menu = menubar.addMenu("&Diseño")
         presets = [
@@ -931,6 +940,82 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 f"Optimización: V={result.get('final_volume_fraction', 0):.2%}, "
                 f"c={result.get('final_compliance', 0):.4e}, iter={result.get('iterations')}")
+
+    # ------------------------------------------------------------------ #
+    # Studies (architecture layer)
+    # ------------------------------------------------------------------ #
+    def _on_create_study(self) -> None:
+        """Open the StudyPanel to build a fully configured topology study."""
+        from desktop.ui.panels.study_panel import StudyPanel
+
+        if not self.controller.model_id:
+            QMessageBox.warning(self, "Sin modelo", "Importe un modelo STEP primero.")
+            return
+        panel = StudyPanel(
+            parent=self,
+            condition_manager=self.controller.conditions,
+            default_name="Estudio de optimización",
+        )
+        result = panel.exec()
+        if result != StudyPanel.Accepted or panel.study is None:
+            self.statusBar().showMessage("Estudio cancelado.")
+            return
+        study = panel.study
+        sid = self.controller.register_study(study)
+        self._sync_architecture_tree()
+        self.statusBar().showMessage(
+            f"Estudio creado: {study.name} ({sid[:8]}...) con {len(study.conditions)} condición(es).")
+
+    def _on_run_study(self) -> None:
+        """Execute the selected / last topology study in the background."""
+        from core.cae_studies import StudyStatus
+
+        studies = list(self.controller._studies.values())
+        if not studies:
+            QMessageBox.information(
+                self, "Sin estudio",
+                "Cree primero un estudio desde Estudio → Nuevo estudio de optimización.")
+            return
+        study = studies[-1]
+        if not study.validate():
+            QMessageBox.warning(self, "Estudio incompleto",
+                                "El estudio no está configurado (pieza o condiciones).")
+            return
+        self._configure_boundaries()
+        self.results.clear_history()
+        self._set_busy(True, f"Ejecutando estudio '{study.name}' (SIMP)...")
+
+        def worker():
+            sr = self.controller.execute_study(study)
+            return sr
+
+        def done(sr) -> None:
+            self._set_busy(False)
+            self._sync_architecture_tree()
+            if not sr.success:
+                self.statusBar().showMessage(f"Estudio con errores: {sr.error_message}")
+                QMessageBox.warning(self, "Estudio", sr.error_message or "Error de ejecución.")
+                return
+            data = sr.data or {}
+            unsupported = data.get("_unsupported_conditions") or []
+            self.results.set_result(data, self.properties.material_name())
+            densities = self.controller.result_densities
+            if densities is not None and densities.size:
+                self.viewport.show_density(
+                    self.controller.mesh_nodes, self.controller.mesh_elements, densities
+                )
+                self.rb_viz.setEnabled(True)
+                self.rb_export.setEnabled(True)
+            msg = f"Estudio '{study.name}' completado."
+            if unsupported:
+                msg += f" Condiciones no soportadas: {', '.join(unsupported)}."
+            self.statusBar().showMessage(msg)
+
+        self.controller.run_in_background(
+            worker,
+            on_done=done,
+            on_error=lambda e: self._on_error("Estudio", e),
+        )
 
     # ------------------------------------------------------------------ #
     # Export

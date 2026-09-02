@@ -1,126 +1,185 @@
-AUDITORÍA Y AVANCE — FLUJO CAE COMPLETO
+IMPLEMENTACIÓN — CIERRE DEL MOTOR DUAL FEA
 
-Audita directamente el repositorio "Alfredojosejaim/Onshape", carpeta "Topologia_Optimizada", sobre el estado ACTUAL de "master".
+Audita y continúa el desarrollo directamente sobre el estado ACTUAL de "Alfredojosejaim/Onshape", carpeta "Topologia_Optimizada".
 
 OBJETIVO
 
-Determinar qué tan funcional y conectado está realmente el flujo:
+Cerrar la parte pendiente del motor dual FEA:
 
-CAD → Condiciones → Mallado → FEA → Topología → Reconstrucción CAD → Resultado
+Motor local NumPy/SciPy ↔ Motor Kratos
 
-No rehagas arquitectura ni investigues tecnologías alternativas. El objetivo es detectar únicamente funcionalidades declaradas como implementadas que todavía estén incompletas, desconectadas o simuladas.
+La arquitectura dual ya existe. NO la reemplaces.
 
-1. AUDITORÍA
+El objetivo es que ambos motores puedan recibir el mismo problema físico y que la aplicación pueda utilizarlos de forma verificable, diferenciando claramente:
 
-Revisa especialmente:
+- cálculo local;
+- cálculo Kratos;
+- comparación entre ambos;
+- disponibilidad/limitaciones reales del backend.
 
+1. AUDITORÍA FOCALIZADA
+
+Revisa únicamente el flujo relacionado con:
+
+- "core/fea.py"
+- "core/solver_interface.py"
+- "core/kratos_adapter.py"
+- "core/kratos_bridge.py"
+- "core/boundary.py"
 - "core/conditions.py"
 - "core/meshing.py"
-- "core/fea*"
-- "core/topology*"
-- "core/generative*"
-- "core/cad_reconstruction.py"
-- "services/"
-- "desktop/pipeline/"
-- "desktop/ui/"
-- tests relacionados.
+- "desktop/pipeline/controller.py"
+- tests FEA/Kratos/bridge/benchmarks.
 
-Verifica:
+Determina exactamente:
 
-Condiciones
+1. cómo el motor local construye y resuelve "K·u=f";
+2. cómo se construye el mismo problema para Kratos;
+3. cómo las restricciones llegan a ambos motores;
+4. cómo las cargas llegan a ambos motores;
+5. dónde se pierde actualmente la carga en la ruta Kratos;
+6. si el problema está en el tipo de condición Kratos, el ensamblado, el "ModelPart", el "BuilderAndSolver", el orden de aplicación o el mecanismo de carga;
+7. si existe una solución compatible con Kratos 10.4.3 sin introducir una dependencia externa innecesaria.
 
-- Las condiciones creadas desde la UI llegan realmente al estudio.
-- Las caras/entidades seleccionadas mantienen referencias CAD válidas.
-- Cargas, restricciones, elasticidad, obstrucciones y regiones protegidas conservan sus parámetros.
-- No existen datos ficticios o hardcodeados sustituyendo selecciones reales.
+2. REGLA FUNDAMENTAL
 
-Mallado
+No aceptes como solución:
 
-- El mallado recibe realmente la geometría CAD actual.
-- Las entidades CAD seleccionadas pueden convertirse en grupos/regiones utilizables por FEA.
-- Los grupos físicos o equivalentes conservan la correspondencia con las caras/zonas CAD.
-- El mallado no utiliza geometría artificial cuando debería utilizar la pieza real.
+- falsificar resultados;
+- copiar el resultado local dentro de Kratos;
+- introducir desplazamientos/compliance artificiales;
+- declarar "success=True" cuando el RHS real no contiene la carga;
+- ocultar el warning "setting the RHS to zero";
+- modificar los tests para aceptar un resultado físicamente incorrecto.
 
-FEA
+Si Kratos 10.4.3 realmente impone una limitación concreta, demuestra técnicamente dónde ocurre y busca la forma correcta de construir/aplicar la carga utilizando las capacidades disponibles en esa versión.
 
-- El estudio recibe geometría, malla, material y condiciones reales.
-- Las condiciones se traducen correctamente a las entidades de la malla.
-- El solver utilizado está realmente conectado al flujo.
-- Los resultados son reales y no valores simulados para completar la interfaz.
-- Los resultados pueden volver a asociarse con la geometría/malla visualizada.
+3. CARGAS
 
-Topología
+La ruta Kratos debe soportar correctamente las cargas que el sistema ya modela.
 
-- La optimización consume realmente los resultados/condiciones del estudio FEA.
-- El porcentaje de optimización y demás parámetros afectan el cálculo.
-- El resultado de la optimización representa una geometría/densidad derivada del problema real.
-- No aceptar como “implementado” un algoritmo que solamente genere datos de demostración.
+Verifica especialmente:
 
-Reconstrucción CAD
+- cargas puntuales;
+- cargas distribuidas/superficiales;
+- dirección;
+- magnitud;
+- selección geométrica de la cara;
+- mapeo CAD → nodos/entidades Kratos;
+- correspondencia con "physical_groups".
 
-- Existe una ruta real desde el resultado optimizado hasta geometría CAD.
-- La geometría reconstruida puede convertirse en un "CADModel".
-- El resultado puede volver al "Document", viewport, historial y Design Tree.
-- Se invalidan correctamente malla, resultados y estudios cuando corresponde.
+La carga debe terminar formando parte del sistema físico que Kratos ensambla.
 
-2. INTEGRACIÓN
+No basta con almacenar "FORCE_X/Y/Z" en nodos si el mecanismo de solución utilizado no las consume.
 
-Comprueba especialmente los puntos donde un módulo entrega datos al siguiente.
+4. RESTRICCIONES
 
-Para cada etapa indica:
+Mantén el mecanismo existente de:
 
-Entrada → procesamiento real → salida → consumidor
+condición CAD → selección → nodos → condición Kratos
 
-Si existe una desconexión, identifícala con archivo, clase/método y causa.
+y verifica que no se esté aplicando accidentalmente a todos los nodos.
 
-3. CLASIFICACIÓN
+Una condición explícita que no pueda resolverse debe producir un error claro, no una región alternativa silenciosa.
 
-Clasifica cada hallazgo:
+5. MOTOR DUAL
 
-- CRÍTICO: impide ejecutar el flujo.
-- ALTO: el flujo aparenta funcionar pero una etapa importante está simulada, desconectada o produce resultados incorrectos.
-- MEDIO: funcionalidad incompleta que no bloquea el flujo principal.
-- BAJO: deuda técnica o mejora futura.
+Mantén una interfaz común para ambos motores.
 
-No conviertas scaffolds intencionales en errores. Thermal/Modal y otras funciones explícitamente planificadas como futuras deben permanecer como tales si su arquitectura es correcta.
+El mismo problema de entrada debe poder expresarse como:
 
-4. REGLA IMPORTANTE
+Mesh
+Material
+Boundary Conditions
+Loads
 
-NO vuelvas a auditar como problemas abiertos:
+y enviarse a:
 
-- Transform
-- Mirror
-- Pattern
-- centro de Circular Pattern
-- sincronización básica "Document" después de operaciones CAD
-- resolución Face → Solid sin fallback arbitrario
+Local FEA
+Kratos FEA
 
-Solo revísalos si detectas una regresión real en el código actual.
+El resultado debe conservar una estructura compatible para poder comparar:
 
-5. IMPLEMENTACIÓN
+- success/status;
+- desplazamientos;
+- compliance;
+- energía elemental;
+- número de nodos;
+- número de elementos;
+- información de convergencia.
 
-Después de la auditoría:
+6. VALIDACIÓN CROSS-ENGINE
 
-1. Corrige únicamente los problemas CRÍTICOS y ALTOS que puedan resolverse con la arquitectura existente.
-2. No reemplaces sistemas funcionales.
-3. No migres Python a C++ salvo que exista una imposibilidad técnica demostrada.
-4. No rediseñes visualmente la aplicación.
-5. Mantén PySide6 + VTK y la arquitectura actual.
-6. Añade o corrige tests para cada problema solucionado.
-7. Ejecuta la suite completa de tests.
-8. Corrige cualquier regresión encontrada.
-9. Actualiza "PROJECT_STATUS.md" únicamente con el estado realmente comprobado.
+Una vez que ambos motores puedan resolver un caso físicamente válido:
 
-6. RESULTADO OBLIGATORIO
+crear una prueba de regresión que ejecute el MISMO caso en ambos motores.
 
-Al finalizar informa:
+Comparar con tolerancias explícitas:
 
-- qué estaba realmente implementado;
-- qué estaba desconectado o incompleto;
-- qué corregiste;
-- archivos modificados;
-- tests ejecutados y resultado;
-- qué bloquea todavía el flujo CAE completo;
-- cuál es el siguiente paso técnico más lógico.
+- desplazamientos;
+- compliance;
+- magnitudes relevantes de energía.
 
-No declares una etapa como IMPLEMENTADA solamente porque existan clases, interfaces o UI para ella. Debe existir integración funcional verificable de extremo a extremo.
+No exigir igualdad exacta: los métodos numéricos pueden producir pequeñas diferencias.
+
+La prueba debe detectar una regresión real del bridge, de las cargas, las restricciones o el ensamblado.
+
+7. CONVERGENCIA
+
+Audita además que "success=True" represente convergencia real.
+
+Especialmente en Kratos:
+
+- no confiar ciegamente en "IsConverged()";
+- no utilizar un residual que no represente realmente el residual del sistema;
+- comprobar que un solve deliberadamente insuficiente no sea reportado como correctamente convergido.
+
+Si el código actual ya tiene una estrategia de verificación/re-resolución, consérvala y corrígela únicamente si la auditoría demuestra un problema.
+
+8. IMPLEMENTACIÓN
+
+Después de identificar la causa:
+
+1. Implementa la corrección mínima necesaria.
+2. Mantén "local" como motor autocontenido.
+3. Mantén Kratos como segundo motor.
+4. No reemplaces el FEA local.
+5. No migres el proyecto a C++.
+6. No rediseñes la UI.
+7. No modifiques CAD, viewport o navegación salvo que exista una dependencia directa demostrada.
+8. No elimines funcionalidades existentes.
+9. Añade tests específicos para la corrección.
+10. Ejecuta los tests FEA/Kratos relacionados.
+11. Ejecuta posteriormente la suite completa.
+
+9. RESULTADO FINAL
+
+Al terminar informa claramente:
+
+Estado del motor local
+
+Qué está realmente funcionando.
+
+Estado del motor Kratos
+
+Qué está realmente funcionando y qué fue corregido.
+
+Causa raíz
+
+Por qué el RHS estaba quedando en cero, si continúa ocurriendo o cómo fue solucionado.
+
+Cross-engine
+
+Si ambos motores ya pueden resolver el mismo caso físico y compararse automáticamente.
+
+Tests
+
+Cantidad ejecutada y resultado.
+
+Pendientes
+
+Solo problemas reales restantes del motor dual.
+
+No declares el motor dual como COMPLETADO solamente porque existan dos backends. Debe existir una ruta verificable:
+
+mismo problema → dos motores → resultados físicos → comparación automatizada.

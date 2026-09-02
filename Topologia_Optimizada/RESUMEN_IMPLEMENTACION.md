@@ -1660,3 +1660,73 @@ isosuperficies de topología optimizada).
 ## 5. Suite completa
 
 **190 passed, 6 deselected, 1 warning pre-existente** (sin regresión).
+
+---
+
+# INTERVENCIÓN — CIERRE DE PENDIENTES FUNCIONALES + LIMPIEZA DE DOCUMENTACIÓN
+
+**Fecha:** 2026-09-02
+**Objetivo:** cerrar los pendientes funcionales reales detectados en la auditoría y
+dejar la documentación de pendientes sincronizada con el código.
+**Estado:** ✅ COMPLETADO (para el alcance acordado con el usuario).
+
+## 1. Pendientes funcionales resueltos
+
+### 1a. STEP export real del pipeline de reconstrucción
+`core/cad_reconstruction.py` — `ReconstructionPipeline` aceptaba `step_path` (a través del
+`OCPBRepFitter`) pero la etapa `STEP_FILE` siempre se registraba como `NOT_STARTED`
+("placeholder"). Ahora:
+- `ReconstructionPipeline.__init__` acepta `step_path` y lo pasa al `OCPBRepFitter` por defecto.
+- La etapa 5 (`STEP_FILE`) se registra como `COMPLETED` con `step_path`/`step_status` cuando
+  el B-Rep se exportó correctamente (leído de la metadata del fitter).
+- `run_generative_design(..., step_path=...)` y `_reconstruct(result, engine, step_path=...)`
+  propagan el `step_path` opcional al pipeline (`core/generative_engine.py`).
+
+### 1b. Parámetros de optimización del estudio en el generativo
+`run_generative_design` (`core/generative_engine.py`) invocaba `solve_simp` sin pasar
+los parámetros del estudio, por lo que SIMP usaba defaults fijos
+(`max_iterations=30`, `volume_fraction=0.3`, etc.). Ahora se propagan
+`volume_fraction`, `max_iterations`, `penalization`, `filter_radius` y `convergence_tolerance`
+desde `GenerativeDesignStudy.optimization_params`. Aplica a los escenarios A y B.
+
+### 1c. Aviso visible de condiciones no soportadas
+`desktop/ui/main_window.py` `_on_run_study` — cuando `_unsupported_conditions` no está vacío,
+además del mensaje de la barra de estado se abre un `QMessageBox.warning` explicando qué
+condiciones se ignoraron y por qué. El feed-back ya no depende de fijarse en el status bar.
+
+### 1d. Selector de colormap en la UI
+- `desktop/viewport/viewport_3d.py`: `Viewport3D.show_density(..., colormap="jet")` propaga el
+  colormap a `Scene.set_density_field`.
+- `desktop/ui/main_window.py`: el botón "Visualizar" (`_on_visualize_result`) abre un
+  `QInputDialog.getItem` para elegir entre `jet`, `viridis`, `coolwarm`, `inferno`.
+
+## 2. Pendientes evaluados (NO son gaps, no se resuelven)
+
+- **Selección directa de cuerpo**: ya funcional end-to-end vía promoción cara→sólido
+  (`SelectionManager` → `solid_entity` → `resolve_solid_for_face`). No se añadió un modo de
+  selección nuevo porque el picking de teselaciones por caras no lo requiere y añadiría
+  complejidad sin valor real.
+- **Smoothing/hole-filling en `_reconstruct`**: el `ReconstructionPipeline` los auto-instanccia
+  cuando no se inyectan, así que la ruta generativa ya los aplica (verificado).
+
+## 3. Pendientes documentados (decisión de alcance, NO resueltos)
+
+- (Ajeno) default `amgcl` del solver Kratos pendiente de aprobación explícita.
+- Comandos `transform`/`mirror`/`pattern` reales via CadQuery (solo el `CommandType` enum
+  existe, sin clases Command concretas).
+- Estudios `ThermalAnalysis` y `ModalAnalysis` placeholders (`not_implemented`).
+
+## 4. Validación
+
+- Suite completa `.venv`: **243 passed, 6 deselected, 1 warning** (tras los cambios).
+- `core/generative_engine.py` y `core/cad_reconstruction.py` sin regresión.
+
+## 5. Archivos modificados (sin commit, working copy)
+
+- `core/cad_reconstruction.py` (STEP export etapa 5 + `step_path` en `__init__`)
+- `core/generative_engine.py` (`run_generative_design`/`_reconstruct` con `step_path` +
+  parámetros del estudio)
+- `desktop/viewport/viewport_3d.py` (`show_density(colormap=...)`)
+- `desktop/ui/main_window.py` (aviso de condiciones no soportadas + selector de colormap +
+  import `QInputDialog`)
+- `PROJECT_STATUS.md` (pendientes sincronizados)

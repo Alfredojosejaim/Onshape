@@ -264,25 +264,30 @@ def test_study_consumes_conditions_without_owning():
 
 def test_topology_study_validation_uses_conditions():
     """TopologyOptimizationStudy must validate against the reusable
-    conditions system (referenced by id), not the legacy loads/constraints."""
+    conditions system (referenced by id); the legacy loads/constraints config
+    remains accepted for backward compatibility."""
     from core.cae_studies import ConstraintCase, LoadCase
 
     study = TopologyOptimizationStudy()
     study.add_part(_solid(0, mid="m"))
-    assert not study.validate()  # no conditions yet
+    assert not study.validate()  # no conditions and no legacy config yet
 
-    # Legacy loads/constraints must NOT satisfy the new validation.
+    # Legacy loads/constraints still satisfy validation (backward compat).
     study.add_load(LoadCase(magnitude=500.0))
     study.add_constraint(ConstraintCase())
-    assert not study.validate()
+    assert study.validate()
 
+    # Conditions-only path: a reusable condition referenced by id is enough
+    # even without any legacy loads/constraints.
+    study_b = TopologyOptimizationStudy()
+    study_b.add_part(_solid(0, mid="m"))
     ctrl = PipelineController()
     cmd = LoadConditionCommand()
     cmd.add_face(_face(0, mid="m"))
     cmd.set_parameter("indeterminate", True)
     r = ctrl.execute_command(cmd)
-    study.add_condition(r.data["condition_id"])
-    assert study.validate()  # reusable condition referenced by id -> valid
+    study_b.add_condition(r.data["condition_id"])
+    assert study_b.validate()
 
 
 def test_study_remove_reference_keeps_shared_condition():

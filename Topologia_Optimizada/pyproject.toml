@@ -40,6 +40,7 @@ norecursedirs = [
     "dist",
     "node_modules",
     ".venv",
+    "runtime",
 ]
 testpaths = ["."]
 markers = [

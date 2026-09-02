@@ -537,10 +537,9 @@ class PipelineController:
         if not hasattr(command, "build_condition"):
             return CommandResult(success=False,
                                  error_message="El comando no produce una condición.")
-        if not command.validate():
-            return CommandResult(success=False,
-                                 error_message="; ".join(command.validation_errors))
 
+        # Validation is performed exactly once by ``execute_command`` (the
+        # public entry point); this private coordinator only executes.
         condition = command.build_condition()
 
         # Register in the shared manager + document, then record a Feature.

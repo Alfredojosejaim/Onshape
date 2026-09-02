@@ -146,7 +146,7 @@ class TopologyOptimizationStudy(Study):
     def validate(self) -> bool:
         if self.model_id is None and not self.parts:
             return False
-        if not self.loads and not self.constraints:
+        if not self.conditions:
             return False
         p = self.optimization_params
         if not (0.0 < p.volume_fraction <= 1.0):

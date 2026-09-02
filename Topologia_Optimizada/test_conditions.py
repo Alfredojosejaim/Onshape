@@ -262,6 +262,51 @@ def test_study_consumes_conditions_without_owning():
     assert consumed[0].id == cid
 
 
+def test_topology_study_validation_uses_conditions():
+    """TopologyOptimizationStudy must validate against the reusable
+    conditions system (referenced by id), not the legacy loads/constraints."""
+    from core.cae_studies import ConstraintCase, LoadCase
+
+    study = TopologyOptimizationStudy()
+    study.add_part(_solid(0, mid="m"))
+    assert not study.validate()  # no conditions yet
+
+    # Legacy loads/constraints must NOT satisfy the new validation.
+    study.add_load(LoadCase(magnitude=500.0))
+    study.add_constraint(ConstraintCase())
+    assert not study.validate()
+
+    ctrl = PipelineController()
+    cmd = LoadConditionCommand()
+    cmd.add_face(_face(0, mid="m"))
+    cmd.set_parameter("indeterminate", True)
+    r = ctrl.execute_command(cmd)
+    study.add_condition(r.data["condition_id"])
+    assert study.validate()  # reusable condition referenced by id -> valid
+
+
+def test_study_remove_reference_keeps_shared_condition():
+    """Removing a study's reference must NOT destroy the shared condition:
+    it stays owned by the ConditionManager and remains reusable by others."""
+    ctrl = PipelineController()
+    cmd = LoadConditionCommand()
+    cmd.add_face(_face(0, mid="m"))
+    cmd.set_parameter("indeterminate", True)
+    r = ctrl.execute_command(cmd)
+    cid = r.data["condition_id"]
+
+    study_a = TopologyOptimizationStudy()
+    study_b = TopologyOptimizationStudy()
+    study_a.add_condition(cid)
+    study_b.add_condition(cid)
+
+    assert study_a.remove_condition(cid)
+    assert study_a.conditions == []
+    assert ctrl.conditions.get(cid) is not None
+    consumed = study_b.consume_conditions(ctrl.conditions)
+    assert len(consumed) == 1 and consumed[0].id == cid
+
+
 def test_conditions_coexist_with_boolean_history(ctrl):
     # Regression: registering a condition plus a boolean should coexist in a
     # single history with no parallel system.

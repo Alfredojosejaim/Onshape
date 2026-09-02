@@ -129,7 +129,7 @@ Cambio de perfil **en tiempo de ejecución** sin tocar los observers del viewpor
 
 **IMPLEMENTADO**
 
-`core/commands.py` (577 líneas): patrón command y timeline de operaciones,
+`core/commands.py` (≈1060 líneas): patrón command y timeline de operaciones,
 incluidos los comandos de condiciones CAD/CAE (`ConditionCommandBase` →
 `build_condition()`, llamado una sola vez).
 
@@ -176,6 +176,77 @@ Operación booleana CAD funcional e integrada (ver `prompts.md`):
   modelo anterior sin crear Feature.
 - **Cancelación**: no crea Feature ni modifica el modelo.
 - Validado con `test_boolean_operation.py` (19 casos).
+
+---
+
+## Transform
+
+**IMPLEMENTADO**
+
+Transformación CAD (trasladar / rotar / escalar) integrada de extremo a extremo:
+
+- **Comando**: `TransformCommand` (`core/commands.py`) — tipo de transformación,
+  traslación, eje/ángulo de rotación, factor de escala y cuerpo objetivo.
+- **Menú superior**: `Operaciones → Transformar...` y botón de cinta **Transformar**
+  (`desktop/ui/main_window.py`).
+- **Panel Qt** (`desktop/ui/panels/transform_panel.py`): tipo de transformación,
+  cuerpo capturado desde el viewport (reutiliza `SelectionManager` vía
+  `get_solid_selections`) y parámetros según tipo, Aceptar/Cancelar.
+- **Ejecución CAD** (`PipelineController::_execute_transform` →
+  `CADService::transform_bodies`): la geometría real se modifica y se almacena como
+  **nuevo modelo activo** (`model_id` actualizado).
+- **Invalidación**: al cambiar la geometría se limpian la malla FEM, resultados y
+  tessellation anteriores y se re-tessela el nuevo modelo para el viewport.
+- **Feature + Timeline + Design Tree**: `Transform <tipo>` en `FeatureHistory` /
+  `Document`, timeline y árbol de diseño actualizados.
+- **Validación**: cuerpo obligatorio, tipo válido, factor de escala > 0.
+- Validado con `test_edit_operations.py`.
+
+---
+
+## Mirror
+
+**IMPLEMENTADO**
+
+Simetría (espejo) de un sólido respecto a un plano, integrada de extremo a extremo:
+
+- **Comando**: `MirrorCommand` (`core/commands.py`) — punto del plano, normal,
+  `keep_original` y cuerpo objetivo.
+- **Menú superior**: `Operaciones → Simetría...` y botón de cinta **Simetría**.
+- **Panel Qt** (`desktop/ui/panels/mirror_panel.py`): cuerpo capturado desde el
+  viewport, punto y normal del plano, conservar original, Aceptar/Cancelar.
+- **Ejecución CAD** (`PipelineController::_execute_mirror` →
+  `CADService::mirror_bodies`): se refleja el cuerpo y se almacena como nuevo
+  modelo activo.
+- **Corrección**: el plano ahora se define por su **normal** y un **punto** sobre el
+  plano (antes el código pasaba el punto como dirección, produciendo un error de
+  normal cero).
+- **Invalidación** y **Feature/Timeline/DesignTree** igual que Transform.
+- **Validación**: cuerpo obligatorio, normal no nula.
+- Validado con `test_edit_operations.py`.
+
+---
+
+## Pattern
+
+**IMPLEMENTADO**
+
+Patrón lineal / rectangular / circular de un sólido, integrado de extremo a extremo:
+
+- **Comando**: `PatternCommand` (`core/commands.py`) — tipo, direcciones, cantidades,
+  separación, eje, centro y ángulo.
+- **Menú superior**: `Operaciones → Patrón...` y botón de cinta **Patrón**.
+- **Panel Qt** (`desktop/ui/panels/pattern_panel.py`): tipo de patrón, cuerpo
+  capturado desde el viewport y parámetros según tipo, Aceptar/Cancelar.
+- **Ejecución CAD** (`PipelineController::_execute_pattern` →
+  `CADService::pattern_bodies`): se generan los ejemplares y se almacena como nuevo
+  modelo activo.
+- **Centro del patrón circular corregido**: antes la geometría rotaba siempre
+  alrededor del origen `(0,0,0)`; ahora usa el parámetro **`center`** definido por el
+  usuario/comando (rotación alrededor del eje que pasa por ese punto).
+- **Invalidación** y **Feature/Timeline/DesignTree** igual que Transform.
+- **Validación**: cuerpo obligatorio, cantidad ≥ 2, segundo-direction ≥ 1.
+- Validado con `test_edit_operations.py` (incluye centro circular ≠ origen).
 
 ---
 
@@ -275,7 +346,7 @@ Flujo integrado y verificable (STEP → selección real → estudio → malla �
 - **Tests**: `test_study_pipeline.py` (53 tests) cubre selección → CadEntityRef →
   study.parts → validación → dominio determinista (sólido seleccionado ≠ primer
   sólido, recaptura de selección en el panel) → condiciones → solver → resultado → UI.
-- Verificación: suite completa **243 passed, 6 deselected, 1 warning**.
+- Verificación: suite completa **270 passed, 6 deselected, 1 warning**.
 
 ---
 
@@ -329,7 +400,7 @@ Flujo integrado y verificable (STEP → selección real → estudio → malla �
 
 **IMPLEMENTADO**
 
-`desktop/ui/main_window.py` (1149 líneas): menús (Archivo, Editar, Diseño, Herramientas,
+`desktop/ui/main_window.py` (≈1495 líneas): menús (Archivo, Editar, Diseño, Herramientas,
 Ayuda), selección de perfil de navegación, estados de licencia, pipeline de 5 pasos,
 barra de estado.
 
@@ -368,7 +439,7 @@ OFFLINE_GRACE_PERIOD), protocolo `LicenseServerProtocol`, `NoOpLicenseServer`.
   viewport, validación SOLID, model_id automático, malla automática en execute_study).
   Ver `RESUMEN_IMPLEMENTACION.md` (sección "INTERVENCIÓN - SISTEMA DE
   CONDICIONES REUTILIZABLES + PENDIENTES RESUELTOS...").
-- Verificación: suite completa **243 passed, 6 deselected, 1 warning**.
+- Verificación: suite completa **270 passed, 6 deselected, 1 warning**.
 - **Post-proceso de malla implementado**: `MeshSmoother` / `smooth_surface_mesh`
   (Laplaciano con bordes fijos) como etapa `SMOOTHED_MESH` del pipeline, aplicado antes
   del fitting B-Rep y usado de forma preferente (fallback a la malla cruda). Reduce el
@@ -388,9 +459,57 @@ OFFLINE_GRACE_PERIOD), protocolo `LicenseServerProtocol`, `NoOpLicenseServer`.
   - **Selector de colormap en la UI**: el botón "Visualizar" permite elegir entre
     `jet`, `viridis`, `coolwarm`, `inferno`; `Viewport3D.show_density(colormap=...)`
     lo propaga a la escena.
-- Pendientes reales restantes (documentados, no resueltos por decisión de alcance):
-  - (Ajeno) default `amgcl` del solver Kratos pendiente de aprobación explícita.
-  - Comandos de edición **transform/mirror/pattern** reales via CadQuery (solo el
-    `CommandType` enum existe; no hay clases Command concretas) — fuera de alcance.
-  - Estudios **`ThermalAnalysis`** y **`ModalAnalysis`** son placeholders que devuelven
-    `not_implemented` (`core/cae_studies.py`) — fuera de alcance.
+- Pendientes reales restantes (documentados):
+  - **`ThermalAnalysis`** / **`ModalAnalysis`**: *scaffolded* pero sin solver numérico
+    integrado todavía (`core/cae_studies.py`). La integración futura es ahora un cambio
+    localizado (ver abajo). No devuelven `not_implemented` ciego; reportan
+    `not_implemented` claro vía `StudyNotImplementedError` o `validation_failed` con
+    mensaje específico.
+- **Scaffolding de Thermal/Modal para futura integración (this cycle)**:
+  - **Materiales**: `core/materials.py` añade propiedades térmicas opcionales y
+    retrocompatibles (`thermal_conductivity`, `specific_heat`, `thermal_expansion`,
+    `has_thermal_properties`, `with_thermal_properties()`); los presets estándar no
+    cambian.
+  - **Modelo de datos térmico** (`core/cae_studies.py`): `ThermalBoundary`/
+    `ThermalBoundaryType` (TEMPERATURE / HEAT_FLUX / CONVECTION), `Study.thermal_boundaries`
+    y `add_thermal_boundary()`; validación con mensaje específico (modelo, conductividad
+    térmica, ≥1 condición).
+  - **Modelo de datos modal**: `ModalParameters` (`mode_count`, `frequency_min/max`),
+    `Study.modal`; validación (modelo, ≥1 constraint para quitar modos de cuerpo rígido,
+    parámetros válidos).
+  - **Contrato de integración documentado** en cada clase: qué ensamblar (K/M), qué
+    resolver (ecuación de calor estacionaria / eigen-problema generalizado) y qué
+    devolver (`temperatures`, `frequencies`, `mode_shapes`).
+  - **Pipeline** (`controller.execute_study`): dispatch explícito para `thermal`/`modal`;
+    estudio inválido -> `validation_failed` con mensaje específico; válido pero sin solver
+    -> `not_implemented` claro (sin romper el flujo). La validación genérica ahora respeta
+    `validate_with_message()` si el estudio la define.
+  - Validado con `test_cae_studies_scaffold.py` (20 casos).
+  - Verificación: suite completa **290 passed, 6 deselected, 1 warning**.
+- **Default del solver iterativo alineado con Kratos oficial**:
+  - El default `AMGCL` del adaptador (`core/kratos_adapter.py::_DEFAULT_AMGCL_SETTINGS`)
+    se ajustó a la referencia oficial de `AMGCLSolver::GetDefaultParameters`
+    (`krylov_type: gmres`, `coarsening_type: aggregation`, `smoother_type: ilu0`,
+    `max_iteration: 100`), dejando atrás `cg`+`smoothed_aggregation`.
+  - Verificado empíricamente en este build: `gmres`+`aggregation` construyen y
+    **convergen** (compliance idéntica a `skyline_lu`) sobre la malla de referencia;
+    `ruge_stuben` sigue sin soporte. Sin regresión: suite completa 270 passed.
+  - Mismos ajustes en `benchmarks/benchmark_fase0.py` (preset `amgcl`) y
+    `benchmarks/test_kratos_fallback.py` (`AMG_OK`). El fallback a `skyline_lu`
+    por no convergencia se mantiene operativo.
+- **Operaciones CAD de edición cerradas (this cycle, ver prompts.md)**:
+  - **Transform / Mirror / Pattern** ahora se ejecutan **realmente** a través del
+    pipeline (`PipelineController::_execute_transform/_execute_mirror/_execute_pattern`
+    → `CADService::transform_bodies/mirror_bodies/pattern_bodies`), en lugar de solo
+    registrarse como Feature.
+  - Miradas: flujo completo `Selección → UI → Command → Validación → Pipeline →
+    CADService → Geometría real → Modelo activo → Viewport → FeatureHistory/Document →
+    DesignTree → Tests`, con invalidación de malla/resultados al cambiar la geometría.
+  - **Centro del patrón circular corregido**: la rotación usa el `center` del comando
+    en lugar del origen.
+  - **Mirror corregido**: el plano se define por normal + punto (antes el punto se
+    trataba como dirección, dando normal cero).
+  - Nuevas UI: `desktop/ui/panels/{transform,mirror,pattern}_panel.py` + menú
+    "Operaciones" y cinta.
+  - Validado con `test_edit_operations.py` (27 casos).
+  - Verificación: suite completa **270 passed, 6 deselected, 1 warning**.

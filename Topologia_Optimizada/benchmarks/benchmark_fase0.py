@@ -65,17 +65,20 @@ MATERIAL_POISSON = 0.33
 #   - sparse_lu                -> SparseLUSolver (Eigen SSparseLU, via LinearSolversApplication)
 #   - amgcl                   -> AMGCLSolver (iterativo + AMG). OJO: el coarsening
 #                                "ruge_stuben" NO está soportado por el backend de este
-#                                build ("coarsening not supported by the backend"); usar
-#                                "smoothed_aggregation" (verificado). Pardiso/SuperLU no hay.
+#                                build ("coarsening not supported by the backend"); el
+#                                valor oficial "aggregation" (con krylov "gmres") SÍ está
+#                                verificado resolviendo de verdad. Pardiso/SuperLU no hay.
 SOLVER_PRESETS = {
     "skyline_lu": {"solver_type": "skyline_lu_factorization", "scaling": False, "tolerance": 1e-6},
     "sparse_lu": {"solver_type": "sparse_lu"},
     "amgcl": {
+        "preconditioner_type": "amg",
         "solver_type": "amgcl",
         "smoother_type": "ilu0",
-        "krylov_type": "cg",
-        "coarsening_type": "smoothed_aggregation",
-        "max_iteration": 500,
+        "krylov_type": "gmres",
+        "coarsening_type": "aggregation",
+        "max_iteration": 100,
+        "gmres_krylov_space_dimension": 100,
         "tolerance": 1e-6,
         "verbosity": 0,
     },

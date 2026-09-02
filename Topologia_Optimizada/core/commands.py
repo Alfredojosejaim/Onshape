@@ -492,7 +492,7 @@ class MirrorCommand(Command):
         return [
             CommandParameter(
                 name="plane_point", label="Punto del plano (x, y, z)", param_type="str",
-                default="0, 0, 0", tooltip="Un punto del plano de espejo",
+                default="0, 0, 0", required=False, tooltip="Un punto del plano de espejo",
             ),
             CommandParameter(
                 name="plane_normal", label="Normal del plano (x, y, z)", param_type="str",
@@ -500,7 +500,7 @@ class MirrorCommand(Command):
             ),
             CommandParameter(
                 name="keep_original", label="Conservar original", param_type="bool",
-                default=True, tooltip="Conservar el cuerpo original",
+                default=True, required=False, tooltip="Conservar el cuerpo original",
             ),
             CommandParameter(
                 name="target", label="Cuerpo", param_type="selection",
@@ -608,7 +608,7 @@ class PatternCommand(Command):
             ),
             CommandParameter(
                 name="direction", label="Dirección (x, y, z)", param_type="str",
-                default="1, 0, 0", tooltip="Dirección del patrón lineal/rectangular",
+                default="1, 0, 0", required=False, tooltip="Dirección del patrón lineal/rectangular",
             ),
             CommandParameter(
                 name="direction2", label="Segunda dirección (x, y, z)", param_type="str",
@@ -617,7 +617,7 @@ class PatternCommand(Command):
             ),
             CommandParameter(
                 name="count", label="Cantidad de ejemplares", param_type="int",
-                default=3, min_value=2, max_value=100,
+                default=3, min_value=2, max_value=100, required=False,
                 tooltip="Número total de instancias del patrón",
             ),
             CommandParameter(
@@ -627,7 +627,7 @@ class PatternCommand(Command):
             ),
             CommandParameter(
                 name="spacing", label="Separación", param_type="float",
-                default=10.0, min_value=0.0,
+                default=10.0, min_value=0.0, required=False,
                 tooltip="Separación entre instancias",
             ),
             CommandParameter(

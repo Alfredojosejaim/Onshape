@@ -207,6 +207,16 @@ class MainWindow(QMainWindow):
         act_bool_intersect.triggered.connect(lambda: self._on_boolean_op("intersection"))
         boolean_sub.addAction(act_bool_intersect)
 
+        act_transform = QAction("Transformar...", self)
+        act_transform.triggered.connect(self._on_transform_op)
+        ops_menu.addAction(act_transform)
+        act_mirror = QAction("Simetría...", self)
+        act_mirror.triggered.connect(self._on_mirror_op)
+        ops_menu.addAction(act_mirror)
+        act_pattern = QAction("Patrón...", self)
+        act_pattern.triggered.connect(self._on_pattern_op)
+        ops_menu.addAction(act_pattern)
+
         # Condiciones (reusable CAD/CAE conditions)
         cond_menu = menubar.addMenu("&Condiciones")
         act_cond_load = QAction("Carga", self)
@@ -398,13 +408,13 @@ class MainWindow(QMainWindow):
         self.rb_intersect = RibbonTool("⊗", "Intersección", "Intersección booleana de sólidos")
         self.rb_intersect.clicked.connect(lambda: self._on_boolean_op("intersection"))
         self.rb_transform = RibbonTool("↗", "Transformar", "Trasladar / rotar cuerpo")
-        self.rb_transform.clicked.connect(lambda: self.statusBar().showMessage(
-            "Transformar: seleccione cuerpo y arrastre para trasladar/rotar."))
+        self.rb_transform.clicked.connect(self._on_transform_op)
         self.rb_mirror = RibbonTool("◇", "Simetría", "Simetría respecto a plano")
-        self.rb_mirror.clicked.connect(lambda: self.statusBar().showMessage(
-            "Simetría: seleccione cuerpo y un plano para crear la simetría."))
+        self.rb_mirror.clicked.connect(self._on_mirror_op)
+        self.rb_pattern = RibbonTool("❖", "Patrón", "Patrón lineal / rectangular / circular")
+        self.rb_pattern.clicked.connect(self._on_pattern_op)
         lay.addWidget(group([self.rb_union, self.rb_difference, self.rb_intersect,
-                             self.rb_transform, self.rb_mirror], "Edición"))
+                             self.rb_transform, self.rb_mirror, self.rb_pattern], "Edición"))
 
         lay.addWidget(divider())
 
@@ -1256,6 +1266,96 @@ class MainWindow(QMainWindow):
         self.design_tree.set_bodies(self.controller.cad.list_solids(self.controller.model_id))
         self.timeline.set_features(self.controller.feature_history.features)
         self._sync_architecture_tree()
+
+    # ------------------------------------------------------------------ #
+    # Transform / Mirror / Pattern entry points
+    # ------------------------------------------------------------------ #
+    def _on_transform_op(self) -> None:
+        """Handle the Transform entry points (menu + ribbon).
+
+        Opens a functional TransformPanel that reuses the existing
+        SelectionManager for capturing the body from the viewport.  Only on
+        *Aceptar* is a TransformCommand built and executed through the
+        pipeline; *Cancelar* leaves the model untouched.
+        """
+        from desktop.ui.panels.transform_panel import TransformPanel
+        if not self.controller.model_id:
+            QMessageBox.warning(self, "Sin modelo", "Importe un modelo STEP primero.")
+            return
+        panel = TransformPanel(parent=self,
+                               get_solid_selections=self._current_solid_selections)
+        result = panel.exec()
+        if result != TransformPanel.Accepted or panel.command is None:
+            self.statusBar().showMessage("Transformación cancelada.")
+            return
+        cmd = panel.command
+        self._set_busy(True, f"Ejecutando transformación ({cmd.get_parameter('transform_type')})...")
+        self.statusBar().showMessage("Ejecutando transformación...")
+        self.controller.run_in_background(
+            lambda: self.controller.execute_command(cmd),
+            on_done=self._on_cad_edit_done,
+            on_error=lambda e: self._on_error("Transformación", e),
+        )
+
+    def _on_mirror_op(self) -> None:
+        from desktop.ui.panels.mirror_panel import MirrorPanel
+        if not self.controller.model_id:
+            QMessageBox.warning(self, "Sin modelo", "Importe un modelo STEP primero.")
+            return
+        panel = MirrorPanel(parent=self,
+                            get_solid_selections=self._current_solid_selections)
+        result = panel.exec()
+        if result != MirrorPanel.Accepted or panel.command is None:
+            self.statusBar().showMessage("Simetría cancelada.")
+            return
+        cmd = panel.command
+        self._set_busy(True, "Ejecutando simetría (espejo)...")
+        self.statusBar().showMessage("Ejecutando simetría...")
+        self.controller.run_in_background(
+            lambda: self.controller.execute_command(cmd),
+            on_done=self._on_cad_edit_done,
+            on_error=lambda e: self._on_error("Simetría", e),
+        )
+
+    def _on_pattern_op(self) -> None:
+        from desktop.ui.panels.pattern_panel import PatternPanel
+        if not self.controller.model_id:
+            QMessageBox.warning(self, "Sin modelo", "Importe un modelo STEP primero.")
+            return
+        panel = PatternPanel(parent=self,
+                             get_solid_selections=self._current_solid_selections)
+        result = panel.exec()
+        if result != PatternPanel.Accepted or panel.command is None:
+            self.statusBar().showMessage("Patrón cancelado.")
+            return
+        cmd = panel.command
+        self._set_busy(True, f"Ejecutando patrón ({cmd.get_parameter('pattern_type')})...")
+        self.statusBar().showMessage("Ejecutando patrón...")
+        self.controller.run_in_background(
+            lambda: self.controller.execute_command(cmd),
+            on_done=self._on_cad_edit_done,
+            on_error=lambda e: self._on_error("Patrón", e),
+        )
+
+    def _on_cad_edit_done(self, result) -> None:
+        """Common post-processing for transform/mirror/pattern results."""
+        if not result.success:
+            self.statusBar().showMessage(f"Error: {result.error_message}")
+            QMessageBox.warning(self, "Operación CAD",
+                                f"No se pudo completar la operación:\n{result.error_message}")
+            return
+        self._set_busy(False)
+        self.statusBar().showMessage(
+            f"Operación completada: {result.feature_id[:8]}...")
+        # Re-render the CAD result model in the viewport.
+        tess = self.controller.current_tessellation
+        if tess and tess.get("vertices"):
+            self._show_tessellation(tess)
+            self.placeholder.hide()
+        self.design_tree.set_bodies(self.controller.cad.list_solids(self.controller.model_id))
+        self.timeline.set_features(self.controller.feature_history.features)
+        self._sync_architecture_tree()
+
 
     # ------------------------------------------------------------------ #
     # Guided flow (timeline playback)

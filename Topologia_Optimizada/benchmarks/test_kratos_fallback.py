@@ -31,11 +31,13 @@ except Exception as _e:  # noqa: BLE001
 _MESHES = os.path.join(_ROOT, "benchmarks", "meshes")
 
 AMG_OK = {
+    "preconditioner_type": "amg",
     "solver_type": "amgcl",
     "smoother_type": "ilu0",
-    "krylov_type": "cg",
-    "coarsening_type": "smoothed_aggregation",
-    "max_iteration": 500,
+    "krylov_type": "gmres",
+    "coarsening_type": "aggregation",
+    "max_iteration": 100,
+    "gmres_krylov_space_dimension": 100,
     "tolerance": 1e-6,
 }
 # Config que NO puede converger a la tolerancia pedida (si el solve respetara

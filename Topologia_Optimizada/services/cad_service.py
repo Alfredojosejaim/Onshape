@@ -534,10 +534,10 @@ class CADService:
             if norm < 1e-9:
                 return {"success": False, "error": "Mirror plane normal cannot be zero."}
             n = [n / norm for n in normal]
-            # Reflect the body across the plane using an origin point on the plane.
+            # Reflect the body across the plane (normal + a point on the plane).
             reflected = body.mirror(
-                cq.Vector(*pt),
                 cq.Vector(*n),
+                cq.Vector(*pt),
             )
             new_shape = self._replace_body(shape, target_index, reflected,
                                            keep_original=keep_original)
@@ -608,14 +608,19 @@ class CADService:
                         instances.append(body.translate(offset))
             elif pattern_type == PatternType.CIRCULAR.value:
                 ax_v = cq.Vector(*self._parse_vector(axis, [0, 0, 1]))
+                center_v = cq.Vector(*self._parse_vector(center, [0, 0, 0]))
                 n = int(count or 3)
                 total_angle = float(angle or 360.0)
                 ang_step = total_angle / n if n > 1 else total_angle
                 for i in range(1, n):
                     theta = ang_step * i
-                    instances.append(body.rotate(cq.Vector(0, 0, 0),
-                                                 cq.Vector(ax_v.x, ax_v.y, ax_v.z),
-                                                 theta))
+                    # Rotate around the axis line passing through the
+                    # user-defined ``center`` point (not the origin).
+                    instances.append(body.rotate(
+                        center_v,
+                        cq.Vector(center_v.x + ax_v.x, center_v.y + ax_v.y,
+                                  center_v.z + ax_v.z),
+                        theta))
             else:
                 return {"success": False,
                         "error": f"Unsupported pattern type: {pattern_type}"}

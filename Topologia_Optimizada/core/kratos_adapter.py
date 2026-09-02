@@ -915,12 +915,17 @@ class KratosAdapter:
     # campo) y fallback a la factorización directa `skyline_lu`. Los directos
     # (skyline_lu, sparse_lu) o bien resuelven exacto o bien lanzan/fallan.
     _ITERATIVE_SOLVER_TYPES = {"amgcl"}
+    # Defaults alineados con la definición oficial de Kratos (`AMGCLSolver::GetDefaultParameters`).
+    # Verificados empíricamente en este build: `gmres` + `aggregation` construyen y
+    # convergen (compliance idéntica a skyline_lu) sobre la malla de referencia.
     _DEFAULT_AMGCL_SETTINGS = {
+        "preconditioner_type": "amg",
         "solver_type": "amgcl",
         "smoother_type": "ilu0",
-        "krylov_type": "cg",
-        "coarsening_type": "smoothed_aggregation",
-        "max_iteration": 500,
+        "krylov_type": "gmres",
+        "coarsening_type": "aggregation",
+        "max_iteration": 100,
+        "gmres_krylov_space_dimension": 100,
         "tolerance": 1e-6,
     }
     _DEFAULT_SKYLINE_SETTINGS = {

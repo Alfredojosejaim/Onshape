@@ -431,6 +431,15 @@ class PipelineController:
         if command.command_type == CommandType.BOOLEAN:
             return self._execute_boolean(command)
 
+        if command.command_type == CommandType.TRANSFORM:
+            return self._execute_transform(command)
+
+        if command.command_type == CommandType.MIRROR:
+            return self._execute_mirror(command)
+
+        if command.command_type == CommandType.PATTERN:
+            return self._execute_pattern(command)
+
         if command.command_type in (
             CommandType.CONDITION_LOAD,
             CommandType.CONDITION_ELASTICITY,
@@ -542,6 +551,194 @@ class PipelineController:
                   "keep_tools": keep_tools,
                   "result_model_id": new_model_id},
         )
+
+    # ------------------------------------------------------------------ #
+    # Transform / Mirror / Pattern execution
+    # ------------------------------------------------------------------ #
+    def _finalize_cad_result(self, cad_result: Dict[str, Any]) -> "CommandResult":
+        """Commit a CADService geometry result as the new active model.
+
+        On success it invalidates the FEM mesh, downstream results and the old
+        tessellation, re-tessellates the new model for the viewport, and returns
+        a success ``CommandResult``.  On failure the previous model is left
+        untouched.
+        """
+        from core.commands import CommandResult
+
+        if not cad_result.get("success"):
+            return CommandResult(
+                success=False,
+                error_message=cad_result.get("error", "Operación CAD fallida."),
+            )
+
+        new_model_id = cad_result["model_id"]
+        self.model_id = new_model_id
+        # Invalidate geometry-dependent state: the previous FE mesh, results and
+        # tessellation no longer correspond to the new geometry.
+        self.result = None
+        self.result_densities = None
+        self.mesh = None
+        self.mesh_nodes = self.mesh_elements = None
+        self._study_solid_index = None
+        self.current_tessellation = None
+
+        # Re-tessellate so the viewport can display the CAD result.
+        tess = self.cad.tessellate_model(new_model_id, face_mapping=True)
+        self.current_tessellation = tess
+
+        return CommandResult(
+            success=True,
+            result_model_id=new_model_id,
+            data={"status": "executed", "result_model_id": new_model_id,
+                  "model_name": cad_result.get("model_name")},
+        )
+
+    def _execute_transform(self, command) -> "CommandResult":
+        """Execute a transform (translate/rotate/scale) of a solid body.
+
+        The body selected on the command is transformed through the geometry
+        layer (``CADService.transform_bodies``), committed as the new active
+        model, and recorded as a ``Transform`` Feature.
+        """
+        from core.commands import CommandResult
+
+        target_id = self._body_index(command.target) if hasattr(command, "target") else None
+        if target_id is None:
+            return CommandResult(success=False,
+                                 error_message="No se encontró el cuerpo objetivo.")
+
+        if not self.model_id:
+            return CommandResult(success=False, error_message="No hay modelo importado.")
+
+        transform_type = command.get_parameter("transform_type", "translate")
+        cad_result = self.cad.transform_bodies(
+            self.model_id,
+            target_index=target_id,
+            transform_type=transform_type,
+            translation=command.get_parameter("translation"),
+            rotation_axis=command.get_parameter("rotation_axis"),
+            rotation_angle=command.get_parameter("rotation_angle", 0.0),
+            scale_factor=command.get_parameter("scale_factor", 1.0),
+            keep_original=bool(command.get_parameter("keep_original", False)),
+        )
+        res = self._finalize_cad_result(cad_result)
+        if not res.success:
+            return res
+
+        feature = Feature.transform(
+            matrix=self.cad._parse_vector(command.get_parameter("translation"), [0, 0, 0]),
+            target_body_id=str(target_id),
+            transform_type=transform_type,
+            rotation_axis=self.cad._parse_vector(command.get_parameter("rotation_axis"), [0, 0, 1]),
+            rotation_angle=command.get_parameter("rotation_angle", 0.0),
+            scale_factor=command.get_parameter("scale_factor", 1.0),
+        )
+        feature.name = f"Transform {transform_type}"
+        feature.status = "executed"
+        feature.result_model_id = res.result_model_id
+        self.feature_history.append(feature)
+        self.document.add_feature(feature)
+        res.feature_id = feature.id
+        res.data.update({"target_body_id": str(target_id),
+                         "transform_type": transform_type})
+        return res
+
+    def _execute_mirror(self, command) -> "CommandResult":
+        """Execute a mirror of a solid body across a plane.
+
+        The mirrored solid is produced by ``CADService.mirror_bodies`` and
+        committed as the new active model.
+        """
+        from core.commands import CommandResult
+
+        target_id = self._body_index(command.target) if hasattr(command, "target") else None
+        if target_id is None:
+            return CommandResult(success=False,
+                                 error_message="No se encontró el cuerpo objetivo.")
+
+        if not self.model_id:
+            return CommandResult(success=False, error_message="No hay modelo importado.")
+
+        plane_point = command.get_parameter("plane_point", "0, 0, 0")
+        plane_normal = command.get_parameter("plane_normal", "0, 1, 0")
+        keep_original = bool(command.get_parameter("keep_original", True))
+
+        cad_result = self.cad.mirror_bodies(
+            self.model_id,
+            target_index=target_id,
+            plane_point=plane_point,
+            plane_normal=plane_normal,
+            keep_original=keep_original,
+        )
+        res = self._finalize_cad_result(cad_result)
+        if not res.success:
+            return res
+
+        feature = Feature.mirror(
+            plane_point=list(self.cad._parse_vector(plane_point, [0, 0, 0])),
+            plane_normal=list(self.cad._parse_vector(plane_normal, [0, 1, 0])),
+            target_body_id=str(target_id),
+            keep_original=keep_original,
+        )
+        feature.status = "executed"
+        feature.result_model_id = res.result_model_id
+        self.feature_history.append(feature)
+        self.document.add_feature(feature)
+        res.feature_id = feature.id
+        res.data.update({"target_body_id": str(target_id),
+                         "keep_original": keep_original})
+        return res
+
+    def _execute_pattern(self, command) -> "CommandResult":
+        """Execute a linear/rectangular/circular pattern of a solid body.
+
+        The duplicated bodies are produced by ``CADService.pattern_bodies`` and
+        committed as the new active model.
+        """
+        from core.commands import CommandResult
+
+        target_id = self._body_index(command.target) if hasattr(command, "target") else None
+        if target_id is None:
+            return CommandResult(success=False,
+                                 error_message="No se encontró el cuerpo objetivo.")
+
+        if not self.model_id:
+            return CommandResult(success=False, error_message="No hay modelo importado.")
+
+        pattern_type = command.get_parameter("pattern_type", "linear")
+        cad_result = self.cad.pattern_bodies(
+            self.model_id,
+            target_index=target_id,
+            pattern_type=pattern_type,
+            direction=command.get_parameter("direction"),
+            direction2=command.get_parameter("direction2"),
+            count=int(command.get_parameter("count", 3)),
+            count2=int(command.get_parameter("count2", 2)),
+            spacing=float(command.get_parameter("spacing", 10.0)),
+            axis=command.get_parameter("axis"),
+            center=command.get_parameter("center"),
+            angle=float(command.get_parameter("angle", 360.0)),
+        )
+        res = self._finalize_cad_result(cad_result)
+        if not res.success:
+            return res
+
+        feature = Feature.pattern(
+            pattern_type=pattern_type,
+            target_body_id=str(target_id),
+            count=int(command.get_parameter("count", 3)),
+            spacing=float(command.get_parameter("spacing", 10.0)),
+            center=command.get_parameter("center"),
+            angle=float(command.get_parameter("angle", 360.0)),
+        )
+        feature.status = "executed"
+        feature.result_model_id = res.result_model_id
+        self.feature_history.append(feature)
+        self.document.add_feature(feature)
+        res.feature_id = feature.id
+        res.data.update({"target_body_id": str(target_id),
+                         "pattern_type": pattern_type})
+        return res
 
     # ------------------------------------------------------------------ #
     # Architecture layer: condition command coordinator
@@ -671,15 +868,16 @@ class PipelineController:
         of analysis.  If no mesh exists yet, one is generated automatically
         from the model referenced by the study.
         """
-        from core.cae_studies import StudyResult, StudyStatus
+        from core.cae_studies import StudyResult, StudyStatus, StudyNotImplementedError
         from core.optimization_studies import TopologyOptimizationStudy
 
         if not study.validate():
             study.status = StudyStatus.FAILED
+            specific = getattr(study, "validate_with_message", lambda: None)()
             return StudyResult(
                 success=False,
                 status="validation_failed",
-                error_message="Study validation failed.",
+                error_message=specific or "Study validation failed.",
             )
 
         study.status = StudyStatus.RUNNING
@@ -776,6 +974,33 @@ class PipelineController:
                 study.result = sr
                 self.document.add_result(study.id, result)
                 return sr
+            except Exception as exc:
+                study.status = StudyStatus.FAILED
+                return StudyResult(success=False, status="failed", error_message=str(exc))
+
+        # Thermal / Modal are scaffolded (data model + validation complete) but
+        # their real solvers are not integrated yet. Report a clear
+        # ``not_implemented`` result instead of a confusing generic failure.
+        if study.study_type.value in ("thermal", "modal"):
+            try:
+                study.validate()
+                validation_msg = getattr(study, "validate_with_message", lambda: None)()
+                if validation_msg:
+                    study.status = StudyStatus.FAILED
+                    return StudyResult(
+                        success=False, status="validation_failed", error_message=validation_msg,
+                    )
+                study.execute()
+                study.status = StudyStatus.COMPLETED
+                sr = study.result or StudyResult(success=True, status="completed")
+                if study.result and sr.data:
+                    self.document.add_result(study.id, sr.data)
+                return sr
+            except StudyNotImplementedError as exc:
+                study.status = StudyStatus.FAILED
+                return StudyResult(
+                    success=False, status="not_implemented", error_message=str(exc),
+                )
             except Exception as exc:
                 study.status = StudyStatus.FAILED
                 return StudyResult(success=False, status="failed", error_message=str(exc))

@@ -250,6 +250,144 @@ class MeshSmoother:
         )
 
 
+# ---------------------------------------------------------------------------
+# Hole-filling: close open boundary loops on triangle meshes
+# ---------------------------------------------------------------------------
+
+def _boundary_edges(triangles: np.ndarray) -> Dict[Tuple[int, int], int]:
+    """Count how many triangles share each edge.
+
+    Boundary edges appear exactly once; interior edges appear twice (or more
+    for non-manifold meshes, but those are rare in marching-tetrahedra output).
+    """
+    edges: Dict[Tuple[int, int], int] = {}
+    for tri in triangles:
+        a, b, c = int(tri[0]), int(tri[1]), int(tri[2])
+        for e1, e2 in ((a, b), (b, c), (c, a)):
+            key = (min(e1, e2), max(e1, e2))
+            edges[key] = edges.get(key, 0) + 1
+    return edges
+
+
+def _boundary_loops(triangles: np.ndarray) -> List[List[int]]:
+    """Extract ordered boundary loops from an open triangle mesh.
+
+    Each loop is a list of vertex indices forming a closed chain of boundary
+    edges.  The order is consistent (adjacent vertices share an edge).
+    """
+    edge_counts = _boundary_edges(triangles)
+    boundary_set = {k for k, v in edge_counts.items() if v == 1}
+    if not boundary_set:
+        return []
+
+    # Build adjacency from boundary edges only (undirected).
+    adj: Dict[int, set] = {}
+    for u, v in boundary_set:
+        adj.setdefault(u, set()).add(v)
+        adj.setdefault(v, set()).add(u)
+
+    visited_edges: set = set()
+    loops: List[List[int]] = []
+    for start_u, start_v in boundary_set:
+        if (start_u, start_v) in visited_edges:
+            continue
+        # Walk one loop starting from this edge.
+        loop: List[int] = [start_u, start_v]
+        visited_edges.add((start_u, start_v))
+        visited_edges.add((start_v, start_u))
+        while True:
+            current = loop[-1]
+            prev = loop[-2]
+            neighbours = adj.get(current, set())
+            next_v = None
+            for nb in neighbours:
+                edge_key = (min(current, nb), max(current, nb))
+                if edge_key not in visited_edges:
+                    next_v = nb
+                    break
+            if next_v is None or next_v == start_u:
+                # Loop closed (or dead-end).
+                break
+            loop.append(next_v)
+            visited_edges.add((current, next_v))
+            visited_edges.add((next_v, current))
+        if len(loop) >= 3:
+            loops.append(loop)
+    return loops
+
+
+def fill_holes(
+    vertices: np.ndarray,
+    triangles: np.ndarray,
+    max_hole_edges: Optional[int] = None,
+) -> Tuple[np.ndarray, np.ndarray, int]:
+    """Fill open boundary loops with fan triangulation.
+
+    For each boundary loop, a fan of triangles is created from the centroid
+    of the loop vertices.  This is robust for convex and mildly concave holes
+    which are the typical case in marching-tetrahedra output from topology
+    optimisation.
+
+    Parameters
+    ----------
+    vertices : (N, 3) array
+    triangles : (M, 3) int array
+    max_hole_edges : int or None
+        If set, skip loops with more edges than this limit (very large holes
+        are unlikely to be fillable with a simple fan).
+
+    Returns
+    -------
+    filled_vertices, filled_triangles, num_holes_filled
+    """
+    verts = np.asarray(vertices, dtype=float)
+    tris = np.asarray(triangles, dtype=int)
+    loops = _boundary_loops(tris)
+    if not loops:
+        return verts, tris, 0
+
+    # Work on a mutable copy of the triangle list (list of lists for appending).
+    result_tris = tris.tolist()
+    holes_filled = 0
+
+    for loop in loops:
+        if max_hole_edges is not None and len(loop) > max_hole_edges:
+            continue
+        centroid = np.mean(verts[loop], axis=0)
+        # Add centroid as a new vertex.
+        new_idx = verts.shape[0]
+        verts = np.vstack([verts, centroid.reshape(1, 3)])
+        # Fan triangulation from centroid to each consecutive edge in the loop.
+        for i in range(len(loop)):
+            v0 = loop[i]
+            v1 = loop[(i + 1) % len(loop)]
+            result_tris.append([new_idx, v0, v1])
+        holes_filled += 1
+
+    filled_tris = np.asarray(result_tris, dtype=int)
+    return verts, filled_tris, holes_filled
+
+
+class MeshHoleFiller:
+    """Fill open boundary loops on a triangle mesh before B-Rep fitting."""
+
+    def fill(
+        self,
+        vertices: np.ndarray,
+        triangles: np.ndarray,
+        max_hole_edges: Optional[int] = None,
+    ) -> ReconstructionResult:
+        verts, tris, n = fill_holes(vertices, triangles, max_hole_edges)
+        return ReconstructionResult(
+            stage=ReconstructionStage.SMOOTHED_MESH,
+            status=ReconstructionStatus.COMPLETED,
+            data={"vertices": verts, "triangles": tris},
+            metadata={"holes_filled": int(n),
+                      "triangles_after": int(tris.shape[0]),
+                      "vertices_after": int(verts.shape[0])},
+        )
+
+
 class MarchingTetrahedraExtractor(SurfaceExtractor):
     """Real isosurface extraction via marching tetrahedra on a Tet4 mesh.
 
@@ -493,10 +631,12 @@ class ReconstructionPipeline:
         surface_extractor: Optional[SurfaceExtractor] = None,
         brep_fitter: Optional[BRepFitter] = None,
         mesh_smoother: Optional["MeshSmoother"] = None,
+        hole_filler: Optional["MeshHoleFiller"] = None,
     ) -> None:
         self._surface_extractor = surface_extractor or MarchingTetrahedraExtractor()
         self._brep_fitter = brep_fitter or OCPBRepFitter()
         self._mesh_smoother = mesh_smoother
+        self._hole_filler = hole_filler
         self._stages: Dict[ReconstructionStage, ReconstructionResult] = {}
         self._status = ReconstructionStatus.NOT_STARTED
 
@@ -569,16 +709,46 @@ class ReconstructionPipeline:
                 status=ReconstructionStatus.NOT_STARTED,
             )
 
-        # Stage 4: B-Rep fitting (prefer the smoothed mesh, fall back to raw)
+        # Stage 3.5: hole-filling (close open boundary loops before B-Rep)
+        hole_fill_data = None
+        mesh_for_brep = smoothed_data if smoothed_data is not None else (
+            surface_result.data if surface_result.data else None
+        )
+        if (
+            mesh_for_brep is not None
+            and isinstance(mesh_for_brep, dict)
+            and mesh_for_brep.get("vertices") is not None
+        ):
+            try:
+                fv = np.asarray(mesh_for_brep["vertices"])
+                ft = np.asarray(mesh_for_brep["triangles"])
+                if self._hole_filler is None:
+                    self._hole_filler = MeshHoleFiller()
+                hf_result = self._hole_filler.fill(fv, ft)
+                holes_filled = hf_result.metadata.get("holes_filled", 0)
+                if holes_filled > 0:
+                    hole_fill_data = hf_result.data
+                    self._stages[ReconstructionStage.SMOOTHED_MESH] = ReconstructionResult(
+                        stage=ReconstructionStage.SMOOTHED_MESH,
+                        status=ReconstructionStatus.COMPLETED,
+                        data=hole_fill_data,
+                        metadata={**hf_result.metadata, "hole_filling": True},
+                    )
+            except Exception as exc:  # pragma: no cover - defensive
+                pass  # proceed without hole-fill; B-Rep may still succeed or fail gracefully
+
+        # Stage 4: B-Rep fitting (prefer filled mesh > smoothed > raw)
         brep_result = None
         if surface_result.status == ReconstructionStatus.COMPLETED and surface_result.data:
             mesh_data = surface_result.data
             candidates = []
-            if isinstance(mesh_data, dict):
-                if smoothed_data is not None and smoothed_data.get("vertices") is not None:
-                    candidates.append(smoothed_data)
-                if mesh_data.get("vertices") is not None:
-                    candidates.append(mesh_data)
+            # Prefer hole-filled mesh first, then smoothed, then raw.
+            if hole_fill_data is not None and hole_fill_data.get("vertices") is not None:
+                candidates.append(hole_fill_data)
+            if smoothed_data is not None and smoothed_data.get("vertices") is not None:
+                candidates.append(smoothed_data)
+            if mesh_data.get("vertices") is not None:
+                candidates.append(mesh_data)
             for cand in candidates:
                 if cand.get("vertices") is None or cand.get("triangles") is None:
                     continue

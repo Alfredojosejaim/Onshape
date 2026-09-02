@@ -617,7 +617,8 @@ arquitectura existente.
 - `test_cae_audit_fixes.py`: **7 passed**.
 - `test_cae_kratos_bridge.py`: **11 passed**.
 - `benchmarks/test_run_fea_kratos_e2e.py`: **3 passed** (solve nativo real de Kratos).
-- Suite completa: **313 passed, 6 deselected, 1 warning** (línea base 292 → +21 nuevos, sin regresiones).
+- Suite completa: **313 passed, 6 deselected, 1 warning** baseline FEA (→ +2 de diagnóstico RHS
+  en este ciclo = **315 passed** en total, sin regresiones).
 
 ### Verificación end-to-end real completada (this cycle)
 - **`benchmarks/test_run_fea_kratos_e2e.py`** ejecuta un **solve nativo real de Kratos**
@@ -718,11 +719,43 @@ pero refuerza y matiza cuatro puntos:
   elementos o M segundos de `spsolve`, evaluar Kratos (y antes, PML/pyamg)"* — para que la
   migración no sea una decisión subjetiva más adelante.
 
-### Siguiente paso técnico más lógico
-1. **RHS-force en Kratos (prioridad).** Diagnosticar por qué la carga por fuerza da `u=0` en este
-   build (`solver_settings`, `list_other_processes`/`loads_process_list`, o ensamblado del RHS
-   antes del solve). Si no se resuelve, no hay oráculo para el caso real del desktop.
-2. Si se resuelve, **baseline numérico común**: comparar local vs Kratos con `imposed_disp` y con
-   fuerza sobre la malla real, con tolerancia explícita, y convertirlo en suite de regresión
-   automatizada que corra ambos motores en cada cambio de malla/BC/ensamblado.
-3. Evaluar el **escalón iterativo/AMG** local antes de comprometer a Kratos por rendimiento.
+### Siguiente paso técnico más lógico (pendiente de implementar en otro momento)
+1. **Exponer `imposed_disp` (desplazamiento impuesto) como modo de carga en las condiciones
+   reutilizables.** Es el camino viable a corto plazo para obtener un **baseline numérico común**
+   verificable entre local y Kratos (la carga por fuerza no ensambla el RHS en este build Kratos:
+   ver causa raíz abajo). Con ese modo:
+   - comparar local vs Kratos sobre la malla real con tolerancia explícita, y
+   - convertirlo en suite de regresión automatizada que corra ambos motores en cada cambio de
+     malla/BC/ensamblado (el oráculo mutuo real depende de esto).
+2. Evaluar el **escalón iterativo/AMG** local antes de comprometer a Kratos por rendimiento.
+3. **A medio plazo:** desplegar un build/entorno de Kratos con la infraestructura de condiciones de
+   carga completa (no es decisión de código, es de distribución/reconstrucción del binario).
+
+#### RHS-force en Kratos: CAUSA RAÍZ confirmada (this cycle)
+La hipótesis era el ítem (3) del diagnóstico previo (ensamblado del RHS antes del solve) y
+**se ha confirmado empíricamente** en este build (10.4.3, Windows). Queda fijada en el test de
+regresión `test_cae_kratos_rhs_diagnosis.py` (marcado `kratos`).
+
+**Causa:** los loads se aplican ALMACENANDO variables solution-step `FORCE_*` en el nodo
+(`apply_point_load` → `external_loads`, aplicadas por `apply_external_loads_to_model_part`). Pero
+`ResidualBasedLinearStrategy` + `ResidualBasedBlockBuilderAndSolver` ensamblan el RHS **únicamente
+desde los contenedores `Elements` y `Conditions`**. Como no se crea ningún `Condition` para la
+carga (y este build **no registra clases de load-condition** ni `ApplyNodalLoadsProcess`), el RHS
+queda vacío → warning `RHS to zero` → `u=0`.
+
+**Verificaciones que lo aíslan (no es un fallo de malla/material/solver):**
+- El warning `ResidualBasedBlockBuilderAndSolver: ATTENTION! setting the RHS to zero!` aparece con
+  la ruta FORCE-solution-step, y el campo resultante es idénticamente cero pese a pedir 1000 N.
+- El mismo pipeline sin mecanismo de carga resuelve con `success` y produce un campo de la forma
+  esperada (todo cero por ausencia de carga) — malla/material/solver sanos.
+- `PointLoadCondition3D1N`, `SurfaceLoadCondition3D3N`, ``ApplyNodalLoadsProcess`` → **no
+  disponibles** en esta compilación (el comentario interno de `apply_external_loads_to_model_part`
+  ya advertía: *"simplified approach for testing. In production, use proper Kratos conditions"*).
+
+**Consecuencia práctica:** dentro de este build, una carga por **fuerza** no puede ensamblarse en
+el RHS por la API de carga estándar de Kratos (faltan las condiciones). La vía física fiable de
+este build es **desplazamiento impuesto** (`imposed_disp`, baseline del repo). Por tanto la
+"verificación cruzada" con fuerza sigue sin estar disponible HOY: el oráculo real para fuerza es el
+**motor local**. Cerrarlo pasa por el plan registrado en el "Siguiente paso técnico más lógico"
+(exponer ``imposed_disp`` → baseline numérico común; a medio plazo, un build de Kratos con la
+infraestructura de condiciones de carga completa).

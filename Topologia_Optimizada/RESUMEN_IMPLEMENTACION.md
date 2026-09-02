@@ -1494,3 +1494,98 @@ pendiente, no como implementado.
   `core/conditions.py`, `core/testing.py`, `core/__init__.py`,
   `desktop/pipeline/controller.py` (y, en la base de condiciones, `desktop/ui/`.
   panel/árbol/menú y `test_conditions.py`/`test_pruebas_base.py`).
+
+---
+
+# ETAPA SIGUIENTE — CIERRE DEL FLUJO CAD/CAE END-TO-END + POST-PROCESO DE MALLA
+
+## Información General
+
+**Fecha:** 2026-09-02
+**Objetivo:** cerrar el flujo integrado y verificable (STEP → condiciones reutilizables →
+estudio → malla → SIMP → resultado → UI), corregir el `validate()` del estudio sin perder
+la compatibilidad heredada `loads`/`constraints`, mapear obstrucciones por cuerpo a
+elementos con `model_shape`, marcar explícitamente las condiciones no soportadas, mantener
+la ejecución en background y añadir el post-proceso (pulido) de malla para isosuperficies
+ruidosas.
+
+## Implementación realizada
+
+### 1. Validación del estudio (compatibilidad heredada + condiciones)
+`core/optimization_studies.py` — `TopologyOptimizationStudy.validate()` ahora acepta
+**cualquiera** de estas fuentes:
+- condiciones reutilizables por id (`self.conditions`), **o**
+- la configuración heredada `loads`/`constraints`.
+
+No elimina la compatibilidad con flujos anteriores que aún usan `loads`/`constraints`.
+Test actualizado: `test_topology_study_validation_uses_conditions`.
+
+### 2. Mapeo de obstrucciones por cuerpo → elementos de malla
+`core/generative_engine.py` — `_void_elements` ahora:
+- con `model_shape`, resuelve cada sólido obstructivo (`solid_<n>` → índice en
+  `model_shape.Solids()`) y devuelve los elementos cuyo centroide cae **dentro** del
+  sólido (con `offset_mm` opcional que expande la caja). Usa `Solid.isInside` (OCP);
+- sin `model_shape`, devuelve conjunto vacío y `solve_simp` marca la condición como
+  **no soportada** en `result["_unsupported_conditions"]` (sección 6 del prompt: nunca un
+  resultado silenciosamente incorrecto).
+Test: `test_obstruction_body_maps_to_mesh_elements_via_cad_shape` y
+`test_obstruction_without_cad_shape_is_marked_unsupported`.
+
+### 3. Estudio end-to-end en la UI (sin rediseño)
+- `desktop/ui/panels/study_panel.py` (nuevo): `StudyPanel` — nombre, tipo
+  (Topology Optimization/SIMP), pieza objetivo, parámetros (fracción de volumen,
+  iteraciones, penalización, radio de filtro, tolerancia) y selección de condiciones
+  reutilizables (por id, sin duplicar).
+- `desktop/ui/main_window.py`: nuevo menú **"Estudio"** con
+  `Nuevo estudio de optimización...` y `Ejecutar estudio (topología)`; handlers
+  `_on_create_study` y `_on_run_study` que usan `PipelineController.register_study()` →
+  `execute_study()` en **background** (`run_in_background`), reutilizando
+  Results/DesignTree/Viewport ya existentes.
+- Resultados/estados: `StudyResult` → `document.add_result()`; el panel de resultados y
+  la visualización de densidad en el viewport; errores explícitos si el estudio no está
+  configurado o hay condiciones no soportadas.
+
+### 4. Rendimiento del marching tetrahedra
+`core/cad_reconstruction.py` — nueva `_deduplicate_vertices` vectorizada con
+structured-array `np.unique` (sustituye el dict por-vértice en Python). Test:
+`test_deduplicate_vertices_is_consistent`.
+
+### 5. Robustez del fitting B-Rep sobre isosuperficies ruidosas
+`core/cad_reconstruction.py` — `OCPBRepFitter.fit` rechaza explícitamente los triángulos
+degenerados (área ≈ 0) antes del sewing, y si no queda ninguna cara válida devuelve un
+error legible. Test: `test_oct_brep_fitter_skips_degenerate_triangles`.
+
+### 6. Post-proceso / pulido de malla (pendiente resuelto)
+`core/cad_reconstruction.py`:
+- `MeshSmoother` / `smooth_surface_mesh`: suavizado **Laplaciano con bordes fijos**
+  (helper `_triangle_adjacency` + `_boundary_vertices`) que reduce el ruido de alta
+  frecuencia sin cambiar la conectividad, preservando la forma.
+- `ReconstructionPipeline` añade la etapa `SMOOTHED_MESH` (antes `NOT_STARTED`): se aplica
+  el pulido a la malla extraída y el fitting B-Rep **prefiere el mesh suavizado**, con
+  fallback al crudo; si el B-Rep sigue inválido, la política "best effort" devuelve la
+  malla de superficie suavizada (nunca un resultado silencioso).
+- `__init__` acepta un `mesh_smoother` inyectable.
+Tests: `test_mesh_smoothing_reduces_noise_and_keeps_boundary` y
+`test_reconstruction_pipeline_runs_smoothing_stage`.
+
+## Validación
+
+Suite completa en `.venv` y `runtime/python`:
+**184 passed, 6 deselected, 1 warning pre-existente.**
+
+## Qué quedó pendiente (honesto)
+
+- **Cierre automático de huecos (hole-filling)** en shells abiertos no-manifold: hoy ese
+  caso se rechaza explícitamente como sólido inválido (nunca silencioso) y la
+  reconstrucción "best effort" devuelve la malla de superficie suavizada. Implementar un
+  algoritmo de rellenado de huecos robusto requiere validación adicional y no se incluyó
+  en esta intervención.
+- (Ajeno a esta intervención) default `amgcl` del solver Kratos pendiente de aprobación.
+
+## Archivos creados / modificados (esta intervención)
+
+- **Creados:** `desktop/ui/panels/study_panel.py`.
+- **Modificados:** `core/optimization_studies.py`, `core/generative_engine.py`,
+  `core/cad_reconstruction.py`, `desktop/ui/main_window.py`, `test_conditions.py`,
+  `test_resolved_pendientes.py`, `PROJECT_STATUS.md`.
+- Sin commit (trabajo en working copy).

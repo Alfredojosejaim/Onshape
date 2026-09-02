@@ -442,6 +442,7 @@ def run_generative_design(
     condition_manager: ConditionManager,
     engine: GenerativeDesignEngine,
     progress_cb: Optional[Callable[[dict], None]] = None,
+    step_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """High-level entry: run the generative design pipeline (A or B).
 
@@ -449,9 +450,22 @@ def run_generative_design(
     """
     conditions = consume_conditions(condition_manager, study.conditions)
 
+    # Pass the study's optimisation parameters into the SIMP solve so the
+    # user-configured settings (volume fraction, iterations, penalization,
+    # filter radius, tolerance) are honoured instead of fixed defaults.
+    p = study.optimization_params
+    solve_kwargs = dict(
+        volume_fraction=p.volume_fraction,
+        max_iterations=p.max_iterations,
+        penalization=p.penalization,
+        filter_radius=p.filter_radius,
+        tolerance=p.convergence_tolerance,
+        progress_cb=progress_cb,
+    )
+
     if study.scenario == "A":
         # Mesh is the imported model mesh (set on the engine).
-        result = engine.solve_simp(conditions, progress_cb=progress_cb)
+        result = engine.solve_simp(conditions, **solve_kwargs)
     elif study.scenario == "B":
         if engine.mesh_nodes is None:
             # Build the bridge mesh ourselves.
@@ -462,19 +476,26 @@ def run_generative_design(
             )
             engine.mesh_nodes = bridge.nodes
             engine.mesh_elements = bridge.elements
-        result = engine.solve_simp(conditions, progress_cb=progress_cb)
+        result = engine.solve_simp(conditions, **solve_kwargs)
     else:  # pragma: no cover
         raise ValueError(f"Unsupported scenario '{study.scenario}'")
 
-    reconstruction = _reconstruct(result, engine)
+    reconstruction = _reconstruct(result, engine, step_path=step_path)
     result["reconstruction"] = reconstruction
     return result
 
 
-def _reconstruct(result: Dict[str, Any], engine: GenerativeDesignEngine):
+def _reconstruct(
+    result: Dict[str, Any],
+    engine: GenerativeDesignEngine,
+    step_path: Optional[str] = None,
+):
     from core.cad_reconstruction import ReconstructionPipeline, MarchingTetrahedraExtractor
     densities = np.asarray(result.get("densities", []), dtype=float)
-    pipe = ReconstructionPipeline(surface_extractor=MarchingTetrahedraExtractor())
+    pipe = ReconstructionPipeline(
+        surface_extractor=MarchingTetrahedraExtractor(),
+        step_path=step_path,
+    )
     return pipe.run(
         engine.mesh_nodes,
         engine.mesh_elements,

@@ -14,7 +14,11 @@ from core.geometry import GeometryEngine
 from core.meshing import GmshTet4Mesher, ProvisionalTet4Mesher, MeshResult
 from core.boundary import BoundaryConditionMapper
 from core.models import CADModel, SourceType, SourceReference
-from core.commands import BooleanOperation
+from core.commands import (
+    BooleanOperation,
+    PatternType,
+    TransformType,
+)
 import cadquery as cq
 
 logger = logging.getLogger(__name__)
@@ -398,6 +402,237 @@ class CADService:
             return {"success": True, "model_id": new_model_id}
         except Exception as exc:
             logger.exception("boolean_bodies failed")
+            return {"success": False, "error": str(exc)}
+
+    def _parse_vector(self, value: Any, default: List[float]) -> List[float]:
+        """Parse ``"x, y, z"`` (or a list/three numbers) into a float vector."""
+        if value is None:
+            return list(default)
+        if isinstance(value, (list, tuple)):
+            vals = [float(v) for v in value[:3]]
+            while len(vals) < 3:
+                vals.append(float(default[len(vals)]))
+            return vals
+        text = str(value).replace(";", ",")
+        parts = [p.strip() for p in text.split(",")]
+        try:
+            vals = [float(p) for p in parts if p != ""][:3]
+        except Exception:
+            return list(default)
+        while len(vals) < 3:
+            vals.append(float(default[len(vals)]))
+        return vals
+
+    def _replace_body(self, model_shape: cq.Shape, index: int,
+                      new_body: cq.Solid, keep_original: bool = True) -> cq.Shape:
+        """Return a new compound shape where the solid at ``index`` is
+        replaced by ``new_body`` (keeping the original too if requested)."""
+        solids = list(model_shape.Solids())
+        out: List[cq.Shape] = []
+        for i, s in enumerate(solids):
+            if i == index:
+                out.append(new_body)
+                if keep_original:
+                    out.append(s)
+            else:
+                out.append(s)
+        return cq.Compound.makeCompound(out)
+
+    def transform_bodies(
+        self,
+        model_id: str,
+        target_index: int,
+        transform_type: str,
+        translation: Optional[Any] = None,
+        rotation_axis: Optional[Any] = None,
+        rotation_angle: float = 0.0,
+        scale_factor: float = 1.0,
+        keep_original: bool = False,
+    ) -> Dict[str, Any]:
+        """Apply a translate / rotate / scale transform to a solid body.
+
+        The result is stored as a new model in the cache.  On failure the
+        original model is left untouched.
+        """
+        shape = self.get_model_shape(model_id)
+        if shape is None:
+            return {"success": False, "error": "Model not found in cache."}
+        try:
+            solids = list(shape.Solids())
+        except Exception as exc:
+            return {"success": False, "error": f"Could not enumerate solids: {exc}"}
+        if not solids:
+            return {"success": False, "error": "The model contains no solid bodies."}
+        if not (0 <= target_index < len(solids)):
+            return {"success": False,
+                    "error": f"Target body index {target_index} out of range."}
+
+        try:
+            body = solids[target_index]
+            if transform_type == TransformType.TRANSLATE.value:
+                vec = cq.Vector(*self._parse_vector(translation, [0, 0, 0]))
+                new_body = body.translate(vec)
+            elif transform_type == TransformType.ROTATE.value:
+                axis = cq.Vector(*self._parse_vector(rotation_axis, [0, 0, 1]))
+                ax, ay, az = axis.x, axis.y, axis.z
+                try:
+                    norm = (ax ** 2 + ay ** 2 + az ** 2) ** 0.5
+                    if norm > 1e-9:
+                        ax, ay, az = ax / norm, ay / norm, az / norm
+                except Exception:
+                    pass
+                new_body = body.rotate(cq.Vector(0, 0, 0),
+                                       cq.Vector(ax, ay, az),
+                                       float(rotation_angle or 0.0))
+            elif transform_type == TransformType.SCALE.value:
+                factor = float(scale_factor or 1.0)
+                if factor <= 0:
+                    return {"success": False, "error": "Scale factor must be greater than 0."}
+                new_body = body.scale(factor)
+            else:
+                return {"success": False,
+                        "error": f"Unsupported transform type: {transform_type}"}
+
+            new_shape = self._replace_body(shape, target_index, new_body,
+                                           keep_original=keep_original)
+            new_model_id = self.store_computed_shape(
+                new_shape, model_name=f"Transform {transform_type}"
+            )
+            return {"success": True, "model_id": new_model_id}
+        except Exception as exc:
+            logger.exception("transform_bodies failed")
+            return {"success": False, "error": str(exc)}
+
+    def mirror_bodies(
+        self,
+        model_id: str,
+        target_index: int,
+        plane_point: Optional[Any] = None,
+        plane_normal: Optional[Any] = None,
+        keep_original: bool = True,
+    ) -> Dict[str, Any]:
+        """Mirror (reflect) a solid body across a plane defined by a point
+        and a normal.  The result is stored as a new model in the cache."""
+        shape = self.get_model_shape(model_id)
+        if shape is None:
+            return {"success": False, "error": "Model not found in cache."}
+        try:
+            solids = list(shape.Solids())
+        except Exception as exc:
+            return {"success": False, "error": f"Could not enumerate solids: {exc}"}
+        if not solids:
+            return {"success": False, "error": "The model contains no solid bodies."}
+        if not (0 <= target_index < len(solids)):
+            return {"success": False,
+                    "error": f"Target body index {target_index} out of range."}
+
+        try:
+            body = solids[target_index]
+            pt = self._parse_vector(plane_point, [0, 0, 0])
+            normal = self._parse_vector(plane_normal, [0, 1, 0])
+            norm = sum(n * n for n in normal) ** 0.5
+            if norm < 1e-9:
+                return {"success": False, "error": "Mirror plane normal cannot be zero."}
+            n = [n / norm for n in normal]
+            # Reflect the body across the plane using an origin point on the plane.
+            reflected = body.mirror(
+                cq.Vector(*pt),
+                cq.Vector(*n),
+            )
+            new_shape = self._replace_body(shape, target_index, reflected,
+                                           keep_original=keep_original)
+            new_model_id = self.store_computed_shape(
+                new_shape, model_name="Mirror"
+            )
+            return {"success": True, "model_id": new_model_id}
+        except Exception as exc:
+            logger.exception("mirror_bodies failed")
+            return {"success": False, "error": str(exc)}
+
+    def pattern_bodies(
+        self,
+        model_id: str,
+        target_index: int,
+        pattern_type: str,
+        direction: Optional[Any] = None,
+        direction2: Optional[Any] = None,
+        count: int = 3,
+        count2: int = 2,
+        spacing: float = 10.0,
+        axis: Optional[Any] = None,
+        center: Optional[Any] = None,
+        angle: float = 360.0,
+    ) -> Dict[str, Any]:
+        """Create a linear / rectangular / circular pattern of a solid body.
+
+        The original body is always kept and the duplicated instances are
+        added.  The result is stored as a new model in the cache.
+        """
+        shape = self.get_model_shape(model_id)
+        if shape is None:
+            return {"success": False, "error": "Model not found in cache."}
+        try:
+            solids = list(shape.Solids())
+        except Exception as exc:
+            return {"success": False, "error": f"Could not enumerate solids: {exc}"}
+        if not solids:
+            return {"success": False, "error": "The model contains no solid bodies."}
+        if not (0 <= target_index < len(solids)):
+            return {"success": False,
+                    "error": f"Target body index {target_index} out of range."}
+
+        try:
+            body = solids[target_index]
+            instances: List[cq.Shape] = [body]
+            if pattern_type == PatternType.LINEAR.value:
+                dirv = cq.Vector(*self._parse_vector(direction, [1, 0, 0]))
+                n = int(count or 3)
+                step = cq.Vector(dirv.x * float(spacing), dirv.y * float(spacing),
+                                 dirv.z * float(spacing))
+                for i in range(1, n):
+                    offset = cq.Vector(i * step.x, i * step.y, i * step.z)
+                    instances.append(body.translate(offset))
+            elif pattern_type == PatternType.RECTANGULAR.value:
+                d1 = cq.Vector(*self._parse_vector(direction, [1, 0, 0]))
+                d2 = cq.Vector(*self._parse_vector(direction2, [0, 1, 0]))
+                n1, n2 = int(count or 3), int(count2 or 2)
+                step1 = cq.Vector(d1.x * float(spacing), d1.y * float(spacing), d1.z * float(spacing))
+                step2 = cq.Vector(d2.x * float(spacing), d2.y * float(spacing), d2.z * float(spacing))
+                for a in range(n1):
+                    for b in range(n2):
+                        if a == 0 and b == 0:
+                            continue
+                        offset = cq.Vector(a * step1.x + b * step2.x,
+                                           a * step1.y + b * step2.y,
+                                           a * step1.z + b * step2.z)
+                        instances.append(body.translate(offset))
+            elif pattern_type == PatternType.CIRCULAR.value:
+                ax_v = cq.Vector(*self._parse_vector(axis, [0, 0, 1]))
+                n = int(count or 3)
+                total_angle = float(angle or 360.0)
+                ang_step = total_angle / n if n > 1 else total_angle
+                for i in range(1, n):
+                    theta = ang_step * i
+                    instances.append(body.rotate(cq.Vector(0, 0, 0),
+                                                 cq.Vector(ax_v.x, ax_v.y, ax_v.z),
+                                                 theta))
+            else:
+                return {"success": False,
+                        "error": f"Unsupported pattern type: {pattern_type}"}
+
+            out: List[cq.Shape] = []
+            for i, s in enumerate(solids):
+                if i == target_index:
+                    out.extend(instances)
+                else:
+                    out.append(s)
+            new_shape = cq.Compound.makeCompound(out)
+            new_model_id = self.store_computed_shape(
+                new_shape, model_name=f"Pattern {pattern_type}"
+            )
+            return {"success": True, "model_id": new_model_id}
+        except Exception as exc:
+            logger.exception("pattern_bodies failed")
             return {"success": False, "error": str(exc)}
 
     def resolve_solid_for_face(self, model_id: str, face_index: int) -> Optional[Dict[str, Any]]:

@@ -132,26 +132,31 @@ class CADService:
                 "error": str(exc),
             }
 
-    def generate_mesh(
+    def generate_mesh_for_shape(
         self,
-        model_id: str,
+        shape: Optional["cq.Shape"],
         target_element_size: float = 2.0,
         element_type: str = "tet4",
         physical_groups: Optional[Dict[str, List[int]]] = None,
+        domain_label: str = "model",
     ) -> Dict[str, Any]:
-        """Generate volumetric finite element mesh from CAD model.
+        """Generate a volumetric FE mesh from an arbitrary CadQuery shape.
+
+        This is the shared meshing core used both for a whole model and for a
+        single selected solid body (see ``generate_mesh`` /
+        ``generate_mesh_for_solid``).  It reuses the exact same gmsh/provisional
+        meshers -- no new meshing system is introduced.
 
         ``physical_groups`` (``{name: [face_indices]}``) is forwarded to the
         Gmsh mesher so the returned mesh exposes exact per-boundary node sets
         (Fase 2).
         """
-        shape = self.get_model_shape(model_id)
-        if not shape:
+        if shape is None:
             return {
                 "success": False,
                 "status": "failed",
-                "code": "MODEL_NOT_FOUND",
-                "error": f"Model {model_id} not found in cache",
+                "code": "SHAPE_NOT_FOUND",
+                "error": f"CAD shape for {domain_label} not found in cache",
             }
 
         try:
@@ -183,21 +188,81 @@ class CADService:
                         element_type=element_type,
                     )
             logger.info(
-                "Generated mesh for model %s: %d nodes, %d elements (mesher=%s)",
-                model_id,
+                "Generated mesh for %s: %d nodes, %d elements (mesher=%s)",
+                domain_label,
                 mesh_result.num_nodes,
                 mesh_result.num_elements,
                 mesh_result.metadata.get("mesher", "ProvisionalTet4Mesher"),
             )
             return mesh_result.to_dict()
         except Exception as exc:
-            logger.exception("Mesh generation failed for model %s", model_id)
+            logger.exception("Mesh generation failed for %s", domain_label)
             return {
                 "success": False,
                 "status": "failed",
                 "code": "MESHING_FAILED",
                 "error": str(exc),
             }
+
+    def generate_mesh(
+        self,
+        model_id: str,
+        target_element_size: float = 2.0,
+        element_type: str = "tet4",
+        physical_groups: Optional[Dict[str, List[int]]] = None,
+    ) -> Dict[str, Any]:
+        """Generate volumetric finite element mesh from CAD model.
+
+        ``physical_groups`` (``{name: [face_indices]}``) is forwarded to the
+        Gmsh mesher so the returned mesh exposes exact per-boundary node sets
+        (Fase 2).
+        """
+        shape = self.get_model_shape(model_id)
+        if not shape:
+            return {
+                "success": False,
+                "status": "failed",
+                "code": "MODEL_NOT_FOUND",
+                "error": f"Model {model_id} not found in cache",
+            }
+        return self.generate_mesh_for_shape(
+            shape,
+            target_element_size=target_element_size,
+            element_type=element_type,
+            physical_groups=physical_groups,
+            domain_label=f"model {model_id}",
+        )
+
+    def generate_mesh_for_solid(
+        self,
+        model_id: str,
+        solid_index: int,
+        target_element_size: float = 2.0,
+        element_type: str = "tet4",
+        physical_groups: Optional[Dict[str, List[int]]] = None,
+    ) -> Dict[str, Any]:
+        """Generate a volumetric FE mesh for a single solid body of a model.
+
+        This is the deterministic domain mesh used by structural-topology
+        studies: the solid selected on ``study.parts`` is meshed alone so the
+        analysis domain is exactly that body (never an implicit "first solid").
+        Reuses ``generate_mesh_for_shape`` -- no new meshing system.
+        """
+        solid_shape = self.get_solid_shape(model_id, solid_index)
+        if solid_shape is None:
+            return {
+                "success": False,
+                "status": "failed",
+                "code": "SOLID_NOT_FOUND",
+                "error": f"Solid index {solid_index} could not be resolved for model {model_id}",
+            }
+        return self.generate_mesh_for_shape(
+            solid_shape,
+            target_element_size=target_element_size,
+            element_type=element_type,
+            physical_groups=physical_groups,
+            domain_label=f"solid {solid_index} of model {model_id}",
+        )
 
     # ------------------------------------------------------------------ #
     # Fase 2: Boolean operations, solid queries, STEP export

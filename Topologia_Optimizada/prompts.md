@@ -1,206 +1,206 @@
-CORRECCIÓN E INTEGRACIÓN — SISTEMA DE CONDICIONES CAD/CAE
+ETAPA SIGUIENTE — CERRAR FLUJO END-TO-END CAD/CAE
 
-Trabaja directamente sobre el repositorio actual. No reconstruyas la arquitectura desde cero y no hagas investigación extensa. Audita únicamente lo necesario para identificar las inconsistencias descritas y corrígelas sobre la implementación existente.
+Trabaja directamente sobre el repositorio actual. El proyecto ya tiene implementados STEP, viewport VTK, selección, comandos, condiciones reutilizables, Boolean, mallado Gmsh, FEA, SIMP, diseño generativo y reconstrucción B-Rep. No reconstruyas esos sistemas.
 
-Objetivo
+El objetivo de esta etapa es convertir esa arquitectura en un flujo integrado y verificable de extremo a extremo.
 
-Consolidar el sistema actual de condiciones CAD/CAE y dejarlo correctamente integrado con el pipeline, UI, historial y estudios de optimización.
+1. Auditoría breve antes de modificar
 
-La arquitectura existente debe mantenerse:
+Inspecciona únicamente los puntos necesarios para detectar inconsistencias entre:
 
-SelectionManager
-      ↓
-Command
-      ↓
-Condition
-      ↓
-ConditionManager
-      ↓
-FeatureHistory / Document
-      ↓
-Optimization Study
+- "PROJECT_STATUS.md";
+- "core/optimization_studies.py";
+- "core/generative.py" / "core/generative_engine.py";
+- "desktop/pipeline/controller.py";
+- UI de condiciones, optimización, resultados, Design Tree y Timeline;
+- tests existentes.
 
-Las condiciones son objetos reutilizables y los estudios deben referenciarlas mediante sus IDs, sin duplicarlas.
+No tomes "PROJECT_STATUS.md" como verdad absoluta: contrástalo con el código actual.
 
-1. Corregir ProtectedRegion
+2. Corregir la validación de Optimización estructural
 
-Revisa la discrepancia actual entre:
-
-- "core/commands.py"
-- "desktop/ui/panels/condition_panel.py"
-- "test_conditions.py"
-
-Asegúrate de que "ProtectedRegionCommand" exista, esté correctamente registrado en "CommandType" y "FeatureType", pueda construir un "ProtectedRegion" y sea compatible con el "ConditionPanel".
-
-Debe permitir:
-
-- seleccionar una o varias caras;
-- almacenar referencias geométricas;
-- validar que exista al menos una selección;
-- crear la condición reutilizable;
-- registrarla mediante el pipeline existente.
-
-No crear otro sistema de selección.
-
-2. Consolidar la validación de comandos
-
-Revisa el flujo:
-
-PipelineController.execute_command()
-        ↓
-command.validate()
-        ↓
-_execute_condition()
-
-Evita realizar innecesariamente la misma validación dos veces.
-
-Mantén una única responsabilidad clara para la validación, sin romper los comandos existentes.
-
-3. Consolidar ConditionManager
-
-Verifica que:
-
-- "ConditionManager" sea la única fuente de objetos "Condition";
-- las condiciones tengan IDs estables;
-- los estudios almacenen únicamente IDs;
-- "consume_conditions()" resuelva las condiciones existentes;
-- una misma condición nunca sea copiada/duplicada al incorporarla a un estudio;
-- eliminar o modificar la referencia de un estudio no destruya la condición compartida.
-
-Mantener compatibilidad con serialización/deserialización existente.
-
-4. Integrar correctamente Optimización estructural
-
-Actualmente "TopologyOptimizationStudy" ya permite almacenar:
+"TopologyOptimizationStudy" ya utiliza:
 
 parts
 conditions
 
-pero su validación todavía depende del sistema antiguo de "loads" y "constraints".
+pero verifica que "validate()" no siga exigiendo obligatoriamente los antiguos "loads"/"constraints" cuando el estudio está configurado mediante condiciones reutilizables.
 
-Corrige esto para que el estudio pueda utilizar las condiciones reutilizables como fuente principal de configuración.
+Debe aceptar una configuración válida basada en:
 
-Debe poder representar conceptualmente:
+Pieza(s) + una o más condiciones compatibles + parámetros de optimización
 
-Optimización estructural
-├── Pieza(s)
-├── Carga
-├── Elasticidad
-├── Obstrucciones
-└── Regiones protegidas
+Las condiciones deben continuar siendo referencias por ID al "ConditionManager" compartido.
 
-Las condiciones deben ser seleccionadas desde las existentes, no recreadas dentro del estudio.
+No eliminar compatibilidad heredada si otros flujos todavía la necesitan.
 
-No reemplaces todavía el solver SIMP. Solo integra correctamente sus entradas con esta nueva arquitectura.
+3. Cerrar el flujo de estudio estructural
 
-5. Preparar Optimización generativa
+Garantiza que este flujo funcione realmente:
 
-Revisa "GenerativeDesignStudy" y conserva su arquitectura actual.
+Importar STEP
+     ↓
+Seleccionar/crear condiciones
+     ↓
+Crear TopologyOptimizationStudy
+     ↓
+Asignar pieza(s)
+     ↓
+Asignar condiciones por ID
+     ↓
+Validar
+     ↓
+Generar malla
+     ↓
+Ejecutar SIMP
+     ↓
+Obtener densidades/resultados
+     ↓
+Mostrar resultado en viewport
 
-Debe continuar soportando:
+Debe utilizar el "PipelineController" existente como orquestador.
 
-Escenario A
+No crear otro pipeline.
 
-Pieza existente
-      ↓
-Condiciones
-      ↓
-Generación/optimización
+4. Integración real con UI
 
-Escenario B
+Audita las acciones actuales de la interfaz y conecta únicamente las que estén incompletas.
 
-Pieza A + Pieza B
-      ↓
-Espacio disponible
-      ↓
-Generación de geometría
-      ↓
-Optimización
-      ↓
-CAD resultante
+La UI debe permitir, sin rediseñarla:
 
-No implementar todavía el algoritmo completo de generación de geometría.
+- importar STEP;
+- crear condiciones mediante el "ConditionPanel";
+- crear/iniciar un estudio de optimización estructural;
+- seleccionar la pieza objetivo;
+- seleccionar condiciones existentes;
+- configurar al menos los parámetros ya existentes del estudio;
+- ejecutar el estudio;
+- visualizar el resultado generado;
+- mostrar errores de validación de forma clara.
 
-Solo garantizar que el estudio pueda recibir correctamente piezas objetivo y condiciones reutilizables.
+Reutiliza "DesignTreePanel", "PropertiesPanel", "ResultsPanel", "TimelinePanel", "Viewport3D" y "PipelineController" existentes.
 
-6. Boolean
+No hagas una nueva interfaz paralela.
 
-No reconstruir Boolean.
+5. Resultados y estado del estudio
 
-Revisa únicamente que:
+Verifica que el resultado de optimización tenga un flujo coherente entre:
 
-- continúe utilizando el "SelectionManager" existente;
-- seleccione target + herramientas;
-- ejecute Union/Cut/Intersection;
-- respete "keep_tools";
-- registre el resultado mediante el FeatureHistory existente;
-- sea compatible con las condiciones y estudios.
+Solver
+ ↓
+StudyResult
+ ↓
+Document
+ ↓
+ResultsPanel / Viewport
 
-No crear otro historial ni otro sistema de Features.
+El usuario debe poder distinguir al menos:
 
-7. UI
+- listo para ejecutar;
+- ejecutando;
+- completado;
+- fallido.
 
-Corrige únicamente lo necesario para que las herramientas existentes funcionen con la arquitectura consolidada.
+Si ya existe infraestructura para esto, intégrala en lugar de crear otra.
 
-No realizar todavía un rediseño visual.
+6. Condiciones y malla
 
-El "ConditionPanel" debe poder crear correctamente:
+Comprueba que las condiciones creadas sobre caras del CAD puedan llegar al solver después del mallado.
 
-- Carga
-- Elasticidad
-- Obstrucción
-- Regiones protegidas
+En particular verifica:
 
-y entregar los comandos al pipeline existente.
+- cargas → nodos/DOF;
+- restricciones/elasticidad según el modelo actual;
+- regiones protegidas → elementos preservados;
+- obstrucciones → elementos vacíos cuando exista información geométrica suficiente.
 
-8. Pruebas
+No inventes un mapeo geométrico nuevo si ya existe uno.
 
-Ejecuta la suite existente y corrige los tests que estén desactualizados respecto a la arquitectura real.
+Si una condición no puede mapearse con la información disponible, debe producir un error explícito o un estado no soportado, nunca un resultado silenciosamente incorrecto.
 
-Añade únicamente las pruebas necesarias para verificar:
+7. Diseño generativo
 
-- ProtectedRegionCommand;
-- creación y validación de condiciones;
-- registro en ConditionManager;
-- registro en FeatureHistory;
-- serialización;
-- ausencia de duplicación;
-- consumo de condiciones por "TopologyOptimizationStudy";
-- consumo de condiciones por "GenerativeDesignStudy";
-- coexistencia con Boolean.
+Mantén el motor actual de "GenerativeDesignEngine".
 
-Restricciones
+Comprueba únicamente que pueda recibir desde el estudio:
 
-- No reescribir el proyecto.
-- No crear sistemas paralelos.
-- No crear otro SelectionManager.
-- No crear otro FeatureHistory.
-- No crear otro Timeline/DesignTree.
-- No eliminar funcionalidad existente.
-- No cambiar PySide6/VTK sin necesidad técnica real.
-- No implementar todavía los tipos concretos de "Pruebas".
-- No implementar todavía el algoritmo completo de Generative Design.
-- No hacer rediseño visual.
-- No detenerse para investigación innecesaria.
+- pieza existente para escenario A;
+- pieza A + pieza B para escenario B;
+- condiciones compartidas por ID;
+- parámetros existentes.
+
+No reemplazar el algoritmo actual ni añadir otro método de generación.
+
+No realizar todavía mejoras avanzadas de rendimiento ni robustez B-Rep.
+
+8. Ejecución en segundo plano
+
+Las operaciones pesadas deben ejecutarse mediante el mecanismo existente de "run_in_background()" cuando sean invocadas desde la UI.
+
+La interfaz no debe congelarse durante:
+
+- mallado;
+- FEA;
+- optimización;
+- diseño generativo;
+- reconstrucción.
+
+No crear un segundo sistema de threading.
+
+9. Tests
+
+Ejecuta la suite completa y añade únicamente pruebas necesarias para demostrar el flujo integrado.
+
+Como mínimo cubrir:
+
+1. estudio estructural válido con "parts + conditions";
+2. rechazo de estudio sin pieza/condiciones válidas;
+3. resolución de condiciones por ID;
+4. ejecución del estudio a través de "PipelineController";
+5. propagación del resultado al "Document";
+6. resultado visible/consumible por la capa de UI existente;
+7. escenario A de generative design;
+8. escenario B de generative design;
+9. que las condiciones no se dupliquen;
+10. que una condición geométrica no mapeable no genere resultados silenciosamente incorrectos;
+11. que las operaciones pesadas no se ejecuten directamente en el hilo de UI cuando corresponda.
+
+Restricciones estrictas
+
+- No reescribir sistemas funcionales.
+- No crear otro "SelectionManager".
+- No crear otro "FeatureHistory".
+- No crear otro "PipelineController".
+- No crear otro "ConditionManager".
+- No crear otro sistema de estudios.
+- No cambiar PySide6/VTK.
+- No migrar a C++.
+- No introducir dependencias innecesarias.
+- No rediseñar visualmente la aplicación en esta etapa.
+- No implementar nuevos tipos de pruebas.
+- No hacer investigación extensa.
+- No detenerse únicamente en documentación: corregir el código y probarlo.
 
 Validación final
 
 Antes de terminar:
 
 1. Ejecuta todos los tests.
-2. Corrige los errores encontrados.
-3. Comprueba que las condiciones se crean, almacenan y recuperan correctamente.
-4. Comprueba que Optimización estructural puede consumirlas por ID.
-5. Comprueba que Generative Design puede consumirlas por ID.
-6. Comprueba que Boolean y las condiciones utilizan el mismo historial.
-7. Comprueba que no existen implementaciones duplicadas de estos sistemas.
+2. Corrige los fallos provocados por la integración.
+3. Verifica el flujo STEP → condiciones → estudio → malla → optimización → resultado.
+4. Verifica que las condiciones continúen siendo compartidas por ID.
+5. Verifica que Boolean siga funcionando.
+6. Verifica que Generative Design siga funcionando.
+7. Verifica que la UI no se bloquee durante operaciones pesadas.
+8. Actualiza "PROJECT_STATUS.md" solo con el estado realmente comprobado.
 
-Al finalizar, informa solamente:
+Al finalizar informa solamente:
 
 - archivos modificados;
-- problemas corregidos;
-- funcionalidades integradas;
+- problemas reales encontrados;
+- correcciones realizadas;
+- flujo end-to-end conseguido;
 - tests ejecutados y resultado;
 - pendientes reales.
 
-Prioridad: corregir → integrar → probar → dejar listo para la siguiente etapa. No reconstruir lo que ya funciona.
+Prioridad: corregir → integrar → ejecutar → probar → avanzar.

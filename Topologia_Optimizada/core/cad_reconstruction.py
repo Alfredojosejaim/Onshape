@@ -632,11 +632,13 @@ class ReconstructionPipeline:
         brep_fitter: Optional[BRepFitter] = None,
         mesh_smoother: Optional["MeshSmoother"] = None,
         hole_filler: Optional["MeshHoleFiller"] = None,
+        step_path: Optional[str] = None,
     ) -> None:
         self._surface_extractor = surface_extractor or MarchingTetrahedraExtractor()
-        self._brep_fitter = brep_fitter or OCPBRepFitter()
+        self._brep_fitter = brep_fitter or OCPBRepFitter(step_path=step_path)
         self._mesh_smoother = mesh_smoother
         self._hole_filler = hole_filler
+        self._step_path = step_path
         self._stages: Dict[ReconstructionStage, ReconstructionResult] = {}
         self._status = ReconstructionStatus.NOT_STARTED
 
@@ -774,11 +776,30 @@ class ReconstructionPipeline:
             )
         self._stages[ReconstructionStage.BREP_SOLID] = brep_result
 
-        # Stage 5: STEP export (placeholder)
-        self._stages[ReconstructionStage.STEP_FILE] = ReconstructionResult(
-            stage=ReconstructionStage.STEP_FILE,
-            status=ReconstructionStatus.NOT_STARTED,
-        )
+        # Stage 5: STEP export status (actual export happens inside
+        # OCPBRepFitter.fit → _exchange_step when step_path is set)
+        step_metadata: Dict[str, Any] = {}
+        if brep_result is not None and brep_result.status == ReconstructionStatus.COMPLETED:
+            step_path_exported = (brep_result.metadata or {}).get("step_path")
+            if step_path_exported:
+                step_metadata["step_path"] = step_path_exported
+                step_metadata["step_status"] = brep_result.metadata.get("step_status")
+                step_file_result = ReconstructionResult(
+                    stage=ReconstructionStage.STEP_FILE,
+                    status=ReconstructionStatus.COMPLETED,
+                    metadata=step_metadata,
+                )
+            else:
+                step_file_result = ReconstructionResult(
+                    stage=ReconstructionStage.STEP_FILE,
+                    status=ReconstructionStatus.NOT_STARTED,
+                )
+        else:
+            step_file_result = ReconstructionResult(
+                stage=ReconstructionStage.STEP_FILE,
+                status=ReconstructionStatus.NOT_STARTED,
+            )
+        self._stages[ReconstructionStage.STEP_FILE] = step_file_result
 
         self._status = ReconstructionStatus.COMPLETED
         # Return the best available result

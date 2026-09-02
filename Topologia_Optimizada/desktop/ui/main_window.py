@@ -951,10 +951,13 @@ class MainWindow(QMainWindow):
         if not self.controller.model_id:
             QMessageBox.warning(self, "Sin modelo", "Importe un modelo STEP primero.")
             return
+        parts = self._current_solid_selections()
         panel = StudyPanel(
             parent=self,
             condition_manager=self.controller.conditions,
             default_name="Estudio de optimización",
+            parts=parts,
+            model_id=self.controller.model_id,
         )
         result = panel.exec()
         if result != StudyPanel.Accepted or panel.study is None:
@@ -964,7 +967,8 @@ class MainWindow(QMainWindow):
         sid = self.controller.register_study(study)
         self._sync_architecture_tree()
         self.statusBar().showMessage(
-            f"Estudio creado: {study.name} ({sid[:8]}...) con {len(study.conditions)} condición(es).")
+            f"Estudio creado: {study.name} ({sid[:8]}...) con {len(study.parts)} pieza(s), "
+            f"{len(study.conditions)} condición(es).")
 
     def _on_run_study(self) -> None:
         """Execute the selected / last topology study in the background."""
@@ -978,8 +982,10 @@ class MainWindow(QMainWindow):
             return
         study = studies[-1]
         if not study.validate():
+            parts_info = f", {len(study.parts)} pieza(s)" if study.parts else ""
+            conds_info = f", {len(study.conditions)} condición(es)" if study.conditions else ""
             QMessageBox.warning(self, "Estudio incompleto",
-                                "El estudio no está configurado (pieza o condiciones).")
+                                f"El estudio no está configurado correctamente.{parts_info}{conds_info}.")
             return
         self._configure_boundaries()
         self.results.clear_history()

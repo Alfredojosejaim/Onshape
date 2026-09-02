@@ -283,7 +283,7 @@ Flujo integrado y verificable (STEP → condiciones reutilizables → estudio �
 
 **IMPLEMENTADO**
 
-`core/cad_reconstruction.py` (498 líneas): conversión resultado volumétrico/malla → B-Rep.
+`core/cad_reconstruction.py` (≈750 líneas): conversión resultado volumétrico/malla → B-Rep.
 
 - `MarchingTetrahedraExtractor`: isosuperficie real (densidades por elemento → nodos,
   dedup de vértices vectorizado con structured-array `np.unique` — mejora de rendimiento).
@@ -292,9 +292,12 @@ Flujo integrado y verificable (STEP → condiciones reutilizables → estudio �
   isosuperficie ruidosa no corrompa el B-Rep (robustez).
 - `ReconstructionPipeline` con componentes reales por defecto; etapa `SMOOTHED_MESH`
   (pulido Laplaciano con bordes fijos) aplicada antes del fitting, preferida sobre la
-  malla cruda; política "best effort": devuelve el mejor resultado disponible (B-Rep o
+  malla cruda; **hole-filling** (`fill_holes` / `MeshHoleFiller`) cierra automáticamente
+  huecos en shells abiertos no-manifold antes del fitting B-Rep (fan triangulation por
+  boundary loop); política "best effort": devuelve el mejor resultado disponible (B-Rep o
   malla de superficie suavizada).
-- Validado con `test_resolved_pendientes.py` (tests de dedupe, pulido y robustez B-Rep).
+- Validado con `test_resolved_pendientes.py` (tests de dedupe, pulido, robustez B-Rep y
+  hole-filling).
 
 ---
 
@@ -336,14 +339,13 @@ OFFLINE_GRACE_PERIOD), protocolo `LicenseServerProtocol`, `NoOpLicenseServer`.
   heredada `loads`/`constraints`, y marcador explícito de condiciones no soportadas
   (`_unsupported_conditions`) — nunca un resultado silenciosamente incorrecto.
 - **Pendientes resueltos**: SIMP consumidor (subdominios preservado/vacío), motor de
-  diseño generativo real, reconstrucción B-Rep real (STEP). Ver `RESUMEN_IMPLEMENTACION.md`
-  (sección "INTERVENCIÓN - SISTEMA DE CONDICIONES REUTILIZABLES + PENDIENTES RESUELTOS...").
-- Verificación: suite completa **184 passed, 6 deselected, 1 warning** (`.venv` y
+  diseño generativo real, reconstrucción B-Rep real (STEP), hole-filling en shells abiertos
+  no-manifold. Ver `RESUMEN_IMPLEMENTACION.md` (sección "INTERVENCIÓN - SISTEMA DE
+  CONDICIONES REUTILIZABLES + PENDIENTES RESUELTOS...").
+- Verificación: suite completa **190 passed, 6 deselected, 1 warning** (`.venv` y
   `runtime/python`).
 - **Post-proceso de malla implementado**: `MeshSmoother` / `smooth_surface_mesh`
   (Laplaciano con bordes fijos) como etapa `SMOOTHED_MESH` del pipeline, aplicado antes
   del fitting B-Rep y usado de forma preferente (fallback a la malla cruda). Reduce el
   ruido de isosuperficies; la conectividad no cambia.
-- Pendiente real restante: cierre automático de huecos (hole-filling) en shells abiertos
-  no manifold — hoy se rechaza explícitamente como inválido (nunca silencioso) y la
-  reconstrucción "best effort" devuelve la malla de superficie suavizada.
+- Pendiente real restante: (Ajeno) default `amgcl` del solver Kratos pendiente de aprobación.

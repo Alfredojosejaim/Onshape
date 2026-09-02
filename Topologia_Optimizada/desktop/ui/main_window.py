@@ -20,7 +20,7 @@ from PySide6.QtCore import Qt, QSignalBlocker
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
-    QFrame, QPushButton, QFileDialog, QMessageBox, QComboBox,
+    QFrame, QPushButton, QFileDialog, QMessageBox, QComboBox, QInputDialog,
 )
 
 from desktop.viewport.viewport_3d import Viewport3D, StandardView
@@ -1016,6 +1016,14 @@ class MainWindow(QMainWindow):
             msg = f"Estudio '{study.name}' completado."
             if unsupported:
                 msg += f" Condiciones no soportadas: {', '.join(unsupported)}."
+                QMessageBox.warning(
+                    self, "Condiciones no soportadas",
+                    "El estudio se completó, pero algunas condiciones no pudieron "
+                    "mapearse a la geometría y se ignoraron:\n\n"
+                    + ", ".join(unsupported)
+                    + "\n\nRevise que las cargas/soportes/obstrucciones "
+                      "referencien caras o cuerpos válidos.",
+                )
             self.statusBar().showMessage(msg)
 
         self.controller.run_in_background(
@@ -1080,14 +1088,20 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Exportar STEP", "No se pudo exportar el modelo a STEP.")
 
     def _on_visualize_result(self) -> None:
-        if self.controller.result and self.controller.result_densities is not None:
-            self.viewport.show_density(
-                self.controller.mesh_nodes, self.controller.mesh_elements,
-                self.controller.result_densities,
-            )
-            self.statusBar().showMessage("Campo de densidad (SIMP) mostrado en el visor.")
-        else:
+        if not (self.controller.result and self.controller.result_densities is not None):
             self.statusBar().showMessage("Ejecute la optimización para visualizar el campo de densidad.")
+            return
+        colormaps = ["jet", "viridis", "coolwarm", "inferno"]
+        choice, ok = QInputDialog.getItem(
+            self, "Visualizar densidad", "Mapa de color:", colormaps, 0, False,
+        )
+        if not ok:
+            return
+        self.viewport.show_density(
+            self.controller.mesh_nodes, self.controller.mesh_elements,
+            self.controller.result_densities, colormap=choice,
+        )
+        self.statusBar().showMessage(f"Campo de densidad (SIMP) mostrado con colormap '{choice}'.")
 
     def _on_focus_filter(self) -> None:
         self.statusBar().showMessage("Configure el radio de filtro de densidad en el panel de propiedades.")

@@ -346,23 +346,38 @@ class GenerativeDesignEngine:
         except Exception:  # pragma: no cover - defensive OCP/geometry errors
             return False
 
-    def solve_simp(self, conditions: Dict[ConditionType, List[Condition]],
-                   **kwargs) -> Dict[str, Any]:
-        """Run the self-contained SIMP solver on the given mesh/conditions."""
-        if self.mesh_nodes is None or self.mesh_elements is None:
-            raise ValueError("No mesh; generate a bridge mesh or import a model first")
-        nodes, elements = self.mesh_nodes, self.mesh_elements
+    def _map_conditions_to_problem(self, conditions, raise_on_unmapped_face=True):
+        """Translate reusable conditions into a quasi-static FE problem.
+
+        Returns ``(force_vector, fixed_dofs, preserved, void, unsupported)``
+        where ``unsupported`` is a list of condition kinds that were selected on
+        real CAD faces but could not be mapped to mesh nodes.
+
+        A coordinate-based fallback (max/min axis nodes) is only applied when a
+        load/support has **no** selected face: that is a legitimate default.  If a
+        real face was selected but the mapping fails, the condition is reported as
+        unsupported instead of silently substituting arbitrary nodes.
+        """
+        nodes = self.mesh_nodes
+        elements = self.mesh_elements
 
         loads = conditions.get(ConditionType.LOAD, [])
         forces = np.zeros(nodes.shape[0] * 3)
+        unsupported = []
         for load in loads:
             if not isinstance(load, LoadCondition):
                 continue
             vec = direction_vector(load)
             mag = float(load.magnitude if load.magnitude is not None else 1000.0)
             idx = self._node_indices_for_load(load)
+            if not idx and load.faces.entities and raise_on_unmapped_face:
+                # a real face was selected but could not be mapped: never
+                # silently relocate the load to arbitrary nodes.
+                unsupported.append("load")
+                continue
             if not idx:
-                # if no faces, apply to max coord nodes
+                # no face selected (or permissive SIMP mode): default to the
+                # max-coordinate nodes along the load direction.
                 axis = int(np.argmax(np.abs(vec)))
                 coord = nodes[:, axis].max() if vec[axis] > 0 else nodes[:, axis].min()
                 tol = 1e-3 * float(np.ptp(nodes[:, axis]))
@@ -387,8 +402,12 @@ class GenerativeDesignEngine:
                 target_nodes = NodeSelectionEngine.select_nodes(
                     nodes, region.to_dict(), cad_shape=self.model_shape, default_tolerance=0.5,
                 )
+            if not target_nodes and face_indices and raise_on_unmapped_face:
+                unsupported.append("elasticity")
+                continue
             if not target_nodes:
-                # fallback: fix the min-axis nodes (base of the part)
+                # no face selected (or permissive SIMP mode): default to the
+                # min-axis nodes (base of the part).
                 axis = 2
                 coord = float(nodes[:, axis].min())
                 target_nodes = [
@@ -402,9 +421,38 @@ class GenerativeDesignEngine:
         obstructions = conditions.get(ConditionType.OBSTRUCTION, [])
         void = self._void_elements(obstructions)
 
-        unsupported = []
         if obstructions and void.size == 0:
             unsupported.append("obstruction")
+
+        return forces, fixed_dofs, preserved, void, sorted(set(unsupported))
+
+    def build_fea_problem(self, conditions):
+        """Build a quasi-static FE problem from reusable conditions.
+
+        Returns ``(force_vector, fixed_dofs_array)`` suitable for
+        ``core.fea.solve_fea``.  Raises if a selected CAD face cannot be mapped
+        to mesh nodes so a support/load is never silently relocated.
+        """
+        if self.mesh_nodes is None or self.mesh_elements is None:
+            raise ValueError("No mesh; generate a bridge mesh or import a model first")
+        forces, fixed_dofs, _preserved, _void, unsupported = \
+            self._map_conditions_to_problem(conditions, raise_on_unmapped_face=True)
+        if unsupported:
+            raise ValueError(
+                "No se pudieron mapear caras seleccionadas a nodos de la malla: "
+                + ", ".join(unsupported)
+            )
+        return forces, np.asarray(fixed_dofs, dtype=int)
+
+    def solve_simp(self, conditions: Dict[ConditionType, List[Condition]],
+                   **kwargs) -> Dict[str, Any]:
+        """Run the self-contained SIMP solver on the given mesh/conditions."""
+        if self.mesh_nodes is None or self.mesh_elements is None:
+            raise ValueError("No mesh; generate a bridge mesh or import a model first")
+        nodes, elements = self.mesh_nodes, self.mesh_elements
+
+        forces, fixed_dofs, preserved, void, unsupported = \
+            self._map_conditions_to_problem(conditions, raise_on_unmapped_face=False)
 
         solver = SIMPSolver(
             nodes=nodes,
@@ -429,10 +477,10 @@ class GenerativeDesignEngine:
             tolerance=kwargs.get("tolerance", 1e-3),
             callback=progress_cb,
         )
-        result["_consumed_load_conditions"] = len(loads)
+        result["_consumed_load_conditions"] = len(conditions.get(ConditionType.LOAD, []))
         result["_consumed_elasticity_conditions"] = len(conditions.get(ConditionType.ELASTICITY, []))
         result["_consumed_protected_conditions"] = len(conditions.get(ConditionType.PROTECTED_REGION, []))
-        result["_consumed_obstruction_conditions"] = len(obstructions)
+        result["_consumed_obstruction_conditions"] = len(conditions.get(ConditionType.OBSTRUCTION, []))
         result["_unsupported_conditions"] = sorted(unsupported)
         return result
 
@@ -490,15 +538,26 @@ def _reconstruct(
     engine: GenerativeDesignEngine,
     step_path: Optional[str] = None,
 ):
-    from core.cad_reconstruction import ReconstructionPipeline, MarchingTetrahedraExtractor
+    from core.cad_reconstruction import (
+        ReconstructionPipeline,
+        ReconstructionStage,
+        MarchingTetrahedraExtractor,
+    )
     densities = np.asarray(result.get("densities", []), dtype=float)
     pipe = ReconstructionPipeline(
         surface_extractor=MarchingTetrahedraExtractor(),
         step_path=step_path,
     )
-    return pipe.run(
+    final = pipe.run(
         engine.mesh_nodes,
         engine.mesh_elements,
         densities,
         threshold=0.5,
-    ).to_dict()
+    )
+    out = final.to_dict()
+    # Expose the reconstructed OCP solid so the layer above can register it as
+    # a real CADModel (Document / viewport / history / Design Tree).  It is only
+    # present when the B-Rep stage actually completed.
+    if final.data is not None and final.stage == ReconstructionStage.BREP_SOLID:
+        out["data"] = final.data
+    return out

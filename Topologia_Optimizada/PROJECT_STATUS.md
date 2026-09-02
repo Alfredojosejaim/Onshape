@@ -526,3 +526,170 @@ OFFLINE_GRACE_PERIOD), protocolo `LicenseServerProtocol`, `NoOpLicenseServer`.
   - Validado con `test_edit_operations.py` (nuevos tests de sincronización Document/
     `model_name` y de resolución determinista).
   - Verificación: suite completa **292 passed, 6 deselected, 1 warning**.
+
+---
+
+## Auditoría flujo CAE completo (this cycle)
+
+Auditoría end-to-end revisada según `prompts.md` (CAD → Condiciones → Mallado → FEA →
+Topología → Reconstrucción CAD → Resultado). No se rehízo arquitectura ni se reemplazaron
+sistemas funcionales; solo se conectaron las desconexiones CRITICAS/ALTAS dentro de la
+arquitectura existente.
+
+### Qué estaba REALMENTE implementado (verificado)
+- **CAD import/tessellation**: `CADService` + `StepAdapter` (STEP → `cq.Shape` → malla).
+- **Condiciones reutilizables**: `core/conditions.py` (`ConditionManager`, `resolve()`,
+  `consume_conditions()`) que el estudio y el generativo consumen **por id**.
+- **Mallado**: `core/meshing.py` + gmsh (provisional) con `physical_groups`.
+- **FEA local**: `core/fea.py` (`FEASolver` + `solve_fea`, Tet4 NumPy/SciPy) — resultados
+  **reales**, no simulados.
+- **Topología**: `core/topopt.py` (SIMP real) consumiendo condiciones vía
+  `GenerativeDesignEngine.solve_simp`.
+- **Reconstrucción CAD**: `core/cad_reconstruction.py` (`MarchingTetrahedraExtractor`,
+  `OCPBRepFitter`, hole-filling, STEP export).
+
+### Qué estaba desconectado o incompleto
+- **CRITICO — Reconstrucción al CAD**: el sólido B-Rep reconstruido (`TopoDS_Solid`) se
+  descartaba: `ReconstructionResult.to_dict()` soltaba `data` y ninguna ruta lo registraba
+  como `CADModel` activo ni lo devolvía a Document/historial/DesignTree.
+- **CRITICO — Condiciones → FEA**: la ruta "Análisis FEM" (`run_fea`/`build_problem`)
+  usaba SOLO los arrays planos `self.forces`/`self.constraints`; las condiciones reutilizables
+  del `ConditionManager` nunca llegaban al solver FEA local (el generativo/optimización sí).
+- **ALTO — BC incoherente**: cuando una **cara real seleccionada** no podía mapearse a nodos,
+  la ruta local caía silenciosamente a nodos por coordenada min/max, mientras la ruta Kratos
+  prohíbe ese fallback (comportamiento contradictorio).
+- Dato de arquitectura (no defecto): co-existen dos stacks **reales** — el local
+  (NumPy/SciPy Tet4 + SIMP + generative engine) es el que usa el desktop; el adaptador Kratos
+  (`core/kratos_adapter.py`, `create_kratos_fea_solver`) queda desconectado del flujo del
+  controlador (solo se instancia en tests/benchmarks). No se eliminó: es un sistema funcional.
+
+### Qué se corrigió (sin reemplazar sistemas)
+- **Reconstrucción → CADModel** (`desktop/pipeline/controller.py` +
+  `core/generative_engine.py`):
+  - `_reconstruct` expone ahora el sólido B-Rep en `reconstruction["data"]` cuando la etapa
+    `BREP_SOLID` completa.
+  - Nuevo `_register_reconstruction_model()`: envuelve el sólido como `cq.Shape`, lo registra
+    vía `store_computed_shape`, lo activa (controller + `Document.set_model`), lo re-tessela
+    para viewport/exportación, y registra un Feature de reconstrucción en `FeatureHistory`/
+    `Document` (DesignTree). Es **best-effort**: si no hay sólido o el layer CAD no puede
+    almacenarlo, nunca falla el estudio. El sólido crudo se consume del dict (no llega a UI).
+  - La rama `generative_design` de `execute_study` ahora además expone `self.result` /
+    `self.result_densities` para que el resultado SIMP quede visualizable.
+- **Condiciones → FEA** (`core/generative_engine.py` + `desktop/pipeline/controller.py`):
+  - Eliminada la duplicación de mapeo: extraído `_map_conditions_to_problem()`
+    (cargas/elasticidad → fuerzas/fijaciones + preservados/vacíos) y
+    `build_fea_problem()` (público, para FEA), reutilizado por `solve_simp`.
+  - `run_fea(conditions=...)` consume ahora las condiciones reutilizables del
+    `ConditionManager` y las traduce al solver local, igual que `run_optimization`.
+- **BC coherente**: en la ruta con condiciones, una carga/soporte con **cara seleccionada**
+  que no se puede mapear **falla con error claro** (`ValueError` listando el tipo), nunca
+  se reubica silenciosamente; el default por coordenadas solo aplica cuando **no** hay cara
+  seleccionada (legítimo). `solve_simp` conserva su comportamiento permisivo previo.
+
+### Puente Kratos/local cerrado en `run_fea` (this cycle)
+- **Nuevo `core/kratos_bridge.py`**: traduce las mismas condiciones reutilizables a
+  definiciones FEA de Kratos: `LoadCondition → LoadDefinition` (magnitud, dirección vía el
+  `direction_vector` compartido, `application_face_id`, `selection` = `FaceRegion`),
+  `ElasticityCondition → ConstraintDefinition` (FIXED, `location_face_id`, `selection`
+  `FaceRegion`). Las condiciones de obstrucción/región protegida (no-FEA) se saltan. La
+  dirección y la selección por cara son **idénticas** a las de `GenerativeDesignEngine`, de
+  modo que el solve local y el de Kratos seleccionan los mismos nodos.
+- **`run_fea(backend="local"|"kratos")`** (`desktop/pipeline/controller.py`): el **local sigue
+  siendo el default** (nada regresiona). Con `backend="kratos"` se construye el solver vía
+  `create_kratos_fea_solver`, propagando `self.mesh["physical_groups"]` → submodelparts Kratos
+  (con exactitud de nodos por cara de CAD) y las definiciones traducidas. Conserva el mismo
+  contrato estricto que la ruta FEA local: una cara seleccionada que no se puede mapear se
+  reporta, nunca se reubica. Si Kratos no está disponible o `physical_groups` faltan, se
+  degrada/reporta sin romper el flujo local.
+- La optimización **SIMP sigue siendo local** (sin reemplazar ni refactorizar su núcleo): el
+  gap se cerró en la etapa de análisis FEM, que es donde `create_kratos_fea_solver` está
+  diseñado para enchufarse.
+
+### Archivos modificados
+- `core/generative_engine.py` (refactor de mapeo + `build_fea_problem` + `_reconstruct` expone el sólido).
+- `desktop/pipeline/controller.py` (`_register_reconstruction_model`, `run_fea(conditions=...)`,
+  `backend="kratos"` + `_run_fea_kratos`, rama `generative_design` de `execute_study`).
+- `core/kratos_bridge.py` (nuevo: puente condiciones → definiciones FEA de Kratos).
+- `test_cae_audit_fixes.py` (existente) y `test_cae_kratos_bridge.py` (nuevo, 11 tests del puente
+  + cableado real de `run_fea(backend="kratos")`).
+
+### Tests ejecutados y resultado
+- `test_cae_audit_fixes.py`: **7 passed**.
+- `test_cae_kratos_bridge.py`: **11 passed**.
+- `benchmarks/test_run_fea_kratos_e2e.py`: **3 passed** (solve nativo real de Kratos).
+- Suite completa: **313 passed, 6 deselected, 1 warning** (línea base 292 → +21 nuevos, sin regresiones).
+
+### Verificación end-to-end real completada (this cycle)
+- **`benchmarks/test_run_fea_kratos_e2e.py`** ejecuta un **solve nativo real de Kratos**
+  vía `run_fea(conditions=..., backend="kratos")` sobre la malla de referencia
+  `small_500` (206 nodos / 643 tets) y confirma:
+  1. La malla se importa de verdad (mismos nodos/elementos que el mesh).
+  2. El pipeline completo corre: material, DOFs, BCs geométricos, solve y extracción.
+  3. El bridge traduce las condiciones reutilizables a definiciones FEA.
+  4. El solve **local** (NumPy) con las MISMAS condiciones produce compliance > 0 y
+     sigue siendo el default.
+- Limite documentado de este build de Kratos (10.4.3): la ruta **RHS-force queda en 0**
+  (`setting the RHS to zero`); la compliance por fuerza distribuida es ~0.0 en Kratos,
+  mientras la vía local da compliance no trivial. Es una restricción del build, no de la
+  integración; el baseline físico del repo usa `imposed_disp` (ver `benchmark_fase0.py`).
+
+### Qué queda (estado real)
+- El **default del desktop es el stack local** (NumPy/SciPy/SIMP); `backend="kratos"` es una
+  vía opcional real en `run_fea`, verificada end-to-end con solve nativo.
+- La **optimización SIMP usa el solver local** por diseño (no se refactorizó su núcleo); Kratos se
+  integra en el FEA. Thermal/Modal siguen **scaffolded** sin solver numérico (intencional,
+  arquitectura correcta).
+
+### Decisión sobre `run_optimization` con Kratos
+- **No exponer Kratos en SIMP por ahora.** El motor SIMP (`core/topopt.SIMPSolver`) está
+  acoplado a su `FEASolver` interno (``assemble_global_stiffness`` / ``apply_bc_and_solve`` /
+  ``element_stiffness``) y el callable de Kratos devuelve un dict, no esa interfaz; alinear
+  ambos requeriría refactorizar el núcleo que toda la optimización usa, contraviniendo
+  "no reemplaces sistemas funcionales". La etapa de análisis FEM (donde Kratos sí encaja) ya
+  es opcional vía `backend="kratos"`.
+
+### Decisión de arquitectura: dos motores FEA vs Kratos completo (this cycle)
+**Pregunta resuelta:** ¿vale la pena mantener los dos motores y, sobre todo,
+implementar Kratos **completo** como motor principal del desktop?
+
+**Ventaja de mantener los dos motores (local como default + Kratos opcional):**
+- **Verificación cruzada (oráculo mutuo):** dos implementaciones independientes de la misma
+  física lineal permiten comparar compliance/desplazamientos. Si coinciden, la confianza es
+  mayor que con un solo motor. Es el uso real de `benchmarks/test_run_fea_kratos_e2e.py`.
+- **Determinismo y velocidad al iterar:** el motor local (NumPy/SciPy) arranca en segundos y
+  no carga el binario nativo de Kratos (~1-2 min al importar), ideal para desarrollo de UI,
+  reconstrucción y SIMP.
+- **Independencia del runtime de Kratos:** Kratos es una dependencia nativa grande y
+  **opcional**; en este build la ruta **RHS-force queda en 0** (limitación propia de la
+  instalación). El motor local funciona siempre y no hereda tales bloqueos.
+- **Red de seguridad:** si mañana Kratos falla o no está desplegado, el desktop sigue
+  operando. No hay punto único de fallo.
+- **Camino de migración sin riesgo:** el local actúa como baseline de referencia para validar
+  cualquier mejora del lado Kratos.
+
+**Ventajas de Kratos COMPLETO como motor principal (las reales, para decidir a futuro):**
+- **Escalado a mallas grandes / problemas de producción:** Kratos es C++ paralelo (OpenMP) con
+  solvers robustos (skyline_lu / sparse_lu / amgcl + fallback de convergencia); el local es más
+  lento y con mayor huella de RAM por encima de decenas de miles de tets.
+- **Solvers lineales variados y robustos** frente a `scipy.sparse.linalg.spsolve`.
+- **Física avanzada futura** (contactos, no-linealidad, térmico/modal reales — hoy scaffolding),
+  que el motor self-contained no cubre.
+- **Estrategia comercial / IP (README §26):** donde importa know-how propietario y rendimiento,
+  Kratos/`C++` protege y escala.
+
+**Conclusión (decisión tomada):** se mantienen **los dos motores** con el **local como default**,
+que es la configuración correcta para el pipeline actual (análisis FEM lineal + SIMP sobre pieza
+importada). **No** se adoptará Kratos como motor exclusivo/principal *ahora* porque:
+1. Para el caso de uso actual, migrar no mejora el resultado (misma física lineal), solo el
+   rendimiento en mallas grandes.
+2. Este build de Kratos **no puede replicar** el FEM por fuerza del local (RHS-force bloqueado,
+   u=0); Kratos completo exigiría trabajo adicional antes de equivaler al motor actual.
+3. Se perdería la verificación cruzada y la red de seguridad del motor propio.
+La migración a Kratos principal queda **condicionada a** (a) exigencia de rendimiento en mallas
+grandes, (b) necesidades de física avanzada, o (c) decisión de estrategia comercial/IP.
+
+### Siguiente paso técnico más lógico
+Para un baseline numérico común (no la ruta RHS-force, bloqueada en este build), comparar
+local vs Kratos con **desplazamiento impuesto** (`imposed_disp`) sobre la malla real y, si se
+hardcodea el soporte en el backend FEA, confirmar la compliance físicamente válida frente al
+solve local — o exponer ese modo de carga en las condiciones reutilizables.

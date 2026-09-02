@@ -2,8 +2,9 @@
 
 ## Especificación maestra del proyecto
 
-> **Estado**: aplicación standalone funcional — FEA con Kratos verificado, mallado
-> Gmsh implementado, app de escritorio PySide6 + VTK, benchmark de rendimiento con
+> **Estado**: aplicación standalone funcional — FEA verificado (motor local
+> NumPy/SciPy como default en el desktop + motor Kratos opcional vía `backend="kratos"`),
+> mallado Gmsh implementado, app de escritorio PySide6 + VTK, benchmark de rendimiento con
 > resolución amgcl + fallback a skyline_lu. Condiciones CAD/CAE reutilizables
 > consumidas por id (SIMP, diseño generativo) y reconstrucción B-Rep real (STEP).
 > Documentación de referencia en `RESUMEN_IMPLEMENTACION.md`.
@@ -489,8 +490,17 @@ proporcionar conectividad y nodos al solver FEA.
 La aplicación tiene un módulo FEA 3D operativo. La arquitectura está orientada a
 elementos **Tet4** (tetraedro lineal de 4 nodos).
 
-En el diseño se implementó un motor FEA self-contained (`core/fea.py`) y el motor
-principal real es **Kratos Multiphysics** a través del adaptador `core/kratos_adapter.py`:
+La aplicación implementa **dos motores FEA reales y verificados**:
+
+- el motor **self-contained** (`core/fea.py`, Tet4 NumPy/SciPy), que es el **default
+  que usa el desktop de extremo a extremo**;
+- el adaptador **Kratos Multiphysics** (`core/kratos_adapter.py` + `core/solver_interface.py`),
+  integrado opcionalmente en el FEA vía `run_fea(backend="local"|"kratos")`.
+
+`core/kratos_bridge.py` traduce las condiciones CAD/CAE reutilizables a definiciones FEA de
+Kratos (LoadDefinition / ConstraintDefinition) con la misma semántica geométrica del motor
+local, y `run_fea(backend="kratos")` propaga las `physical_groups` de la malla a submodelparts
+de Kratos. El solve de SIMP permanece en el motor local.
 
 La arquitectura está orientada inicialmente a elementos:
 
@@ -927,6 +937,12 @@ No se migrará un componente a C++ únicamente porque técnicamente sea posible.
 ### 26.3 Kratos Multiphysics
 
 **Kratos Multiphysics permanece como el motor principal de cálculo FEA y optimización del proyecto.**
+
+> Nota de estado actual: en el runtime del desktop, el **motor local self-contained
+> (`core/fea.py`)** es el default; Kratos se integra opcionalmente en el FEA vía
+> `run_fea(backend="kratos")`. La declaración siguiente describe la **dirección
+> arquitectónica y estrategia de protección comercial a futuro**, no el motor
+> ejecutado por defecto hoy.
 
 La integración de alto nivel se realizará mediante su interfaz Python.
 

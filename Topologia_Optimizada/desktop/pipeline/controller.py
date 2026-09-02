@@ -27,7 +27,7 @@ import numpy as np
 from services.cad_service import CADService
 from core.materials import STANDARD_MATERIALS
 from core.document import Document
-from core.features import Feature, FeatureHistory, FeatureType
+from core.features import Feature, FeatureHistory, FeatureStatus, FeatureType
 from core.cad_entity import EntityType
 
 logger = logging.getLogger(__name__)
@@ -320,8 +320,46 @@ class PipelineController:
         force = self._apply_loads(nodes, num_dofs)
         return nodes, self.mesh_elements, force, fixed
 
-    def run_fea(self) -> Dict[str, Any]:
-        nodes, elements, force, fixed = self.build_problem()
+    def run_fea(self, conditions=None, backend: str = "local") -> Dict[str, Any]:
+        """Run the quasi-static FE solver.
+
+        ``backend`` selects the solver:
+
+        * ``"local"`` (default): the self-contained NumPy/SciPy FE solver in
+          :mod:`core.fea`.  Kept as default so nothing regresses.
+        * ``"kratos"``: the optional Kratos FEA solver created via
+          ``core.solver_interface.create_kratos_fea_solver``.  It consumes the
+          *same* reusable conditions and the mesh's ``physical_groups`` are
+          rebuilt as named Kratos submodelparts so boundary conditions select the
+          exact CAD-face nodes.  Requires Kratos to be installed, otherwise a
+          ``PipelineError`` is raised.
+
+        When ``conditions`` is provided (an iterable of reusable Condition
+        objects), the load/elasticity conditions are translated to the mesh
+        (local: through ``GenerativeDesignEngine``; kratos: through
+        ``core.kratos_bridge``) so the FEA step consumes the real conditions
+        instead of the bare ``self.forces`` / ``self.constraints`` arrays.  A
+        selected CAD face that cannot be mapped to mesh nodes is reported as an
+        error rather than being silently relocated.
+        """
+        if backend == "kratos":
+            return self._run_fea_kratos(conditions)
+
+        if conditions:
+            from core.generative_engine import GenerativeDesignEngine, consume_conditions
+            engine = GenerativeDesignEngine(
+                model_id=self.model_id,
+                mesh_nodes=self.mesh_nodes,
+                mesh_elements=self.mesh_elements,
+                material=self.material(),
+                condition_manager=self.conditions,
+                model_shape=self.cad.get_model_shape(self.model_id) if self.model_id else None,
+            )
+            by_type = consume_conditions(self.conditions, [c.id for c in conditions])
+            force, fixed = engine.build_fea_problem(by_type)
+            nodes, elements = self.mesh_nodes, self.mesh_elements
+        else:
+            nodes, elements, force, fixed = self.build_problem()
         mat = self.material()
         from core.fea import solve_fea
         result = solve_fea(
@@ -332,6 +370,66 @@ class PipelineController:
             forces_dofs=[(int(i), float(v)) for i, v in enumerate(force) if v != 0.0],
             fixed_dofs=fixed.tolist(),
         )
+        self.result = result
+        return result
+
+    def _run_fea_kratos(self, conditions) -> Dict[str, Any]:
+        """Run the optional Kratos FEA backend on the current mesh/conditions.
+
+        Translates reusable conditions into ``LoadDefinition`` /
+        ``ConstraintDefinition`` (via :mod:`core.kratos_bridge`), builds the
+        Kratos FE solver with ``create_kratos_fea_solver`` (forwarding the mesh's
+        ``physical_groups`` so named boundary groups become Kratos submodelparts)
+        and runs a single linear-static solve on a uniform density field.
+
+        Uses the same strict contract as the local conditions path: a selected
+        CAD face that cannot be mapped is reported rather than silently relocated.
+        """
+        if self.mesh is None:
+            raise PipelineError("No hay malla. Genera la malla primero.")
+        if conditions:
+            from core.generative_engine import consume_conditions
+            from core.kratos_bridge import conditions_to_kratos_definitions
+            by_type = consume_conditions(self.conditions, [c.id for c in conditions])
+            resolved = []
+            for group in by_type.values():
+                resolved.extend(group)
+            loads, constraints, _skipped = conditions_to_kratos_definitions(resolved)
+        else:
+            from core.kratos_bridge import conditions_to_kratos_definitions
+            loads, constraints, _skipped = conditions_to_kratos_definitions(
+                self.conditions.all
+            )
+
+        mat = self.material()
+        nodes = self.mesh_nodes
+        elements = self.mesh_elements
+        physical_groups = self.mesh.get("physical_groups") or None
+        model_shape = self.cad.get_model_shape(self.model_id) if self.model_id else None
+
+        try:
+            from core.solver_interface import create_kratos_fea_solver
+            solver = create_kratos_fea_solver(
+                nodes=nodes,
+                elements=elements,
+                material=mat,
+                constraints=constraints,
+                loads=loads,
+                cad_shape=model_shape,
+                physical_groups=physical_groups,
+            )
+        except RuntimeError as exc:  # Kratos not available
+            raise PipelineError(str(exc)) from exc
+        except Exception as exc:  # pragma: no cover - unexpected construction error
+            logger.exception("Fallo al crear el solver FEA de Kratos")
+            raise PipelineError(f"Fallo al crear el solver FEA de Kratos: {exc}") from exc
+
+        densities = np.ones(elements.shape[0], dtype=float)
+        result = solver(densities=densities)
+        if not result.get("success"):
+            raise PipelineError(
+                f"FEA (Kratos) fallo: {result.get('error', 'error desconocido')}"
+            )
         self.result = result
         return result
 
@@ -600,6 +698,77 @@ class PipelineController:
             data={"status": "executed", "result_model_id": new_model_id,
                   "model_name": self.model_name},
         )
+
+    def _register_reconstruction_model(self, reconstruction: Dict[str, Any]) -> Dict[str, Any]:
+        """Best-effort: register a reconstructed OCP solid back as the active CADModel.
+
+        The reconstruction dict produced by ``core.generative_engine._reconstruct``
+        carries the B-Rep solid under ``data`` (only when the BREP stage completed).
+        When available we wrap it as a CadQuery Shape, store it as a new model in
+        the CAD service, make it the active model (controller + Document), record a
+        reconstruction Feature and re-tessellate for the viewport.
+
+        Returns a description dict with ``model_id``/``model_name``, or ``{}`` if
+        the reconstruction produced no usable solid or the CAD layer cannot store
+        it (e.g. in tests using a minimal fake CAD service).  Never raises: the
+        reconstruction result is a bonus on top of the SIMP/density result.
+        """
+        solid = reconstruction.get("data")
+        if solid is None:
+            return {}
+        store = getattr(self.cad, "store_computed_shape", None)
+        if store is None:
+            return {}
+        try:
+            import cadquery as cq
+            # Accept either a raw OCP TopoDS shape or an already-wrapped
+            # CadQuery Shape; cq.Shape only re-wraps a raw TopoDS object.
+            wrapped = getattr(solid, "wrapped", solid)
+            shape = cq.Shape(wrapped)
+            model_name = reconstruction.get("metadata", {}).get("step_path") \
+                or "Reconstrucción Topológica"
+            model_id = store(shape, model_name=model_name)
+
+            # Activate the new model across layers.
+            self.model_id = model_id
+            self.model_name = model_name
+            if hasattr(self.document, "set_model"):
+                cad_model = self.cad.get_model(model_id) \
+                    if hasattr(self.cad, "get_model") else None
+                if cad_model is not None:
+                    self.document.set_model(cad_model)
+
+            # Re-tessellate the reconstructed model for the viewport/export.
+            # (The density field stays available so the study result remains
+            # visualisable as before; the new model is registered and active.)
+            self.current_tessellation = None
+            if hasattr(self.cad, "tessellate_model"):
+                tess = self.cad.tessellate_model(model_id, face_mapping=True)
+                if tess and tess.get("success"):
+                    self.current_tessellation = tess
+
+            # Record a reconstruction feature in history + Document so the
+            # result appears in the Design Tree.
+            feature = Feature(
+                name="Reconstrucción Topológica",
+                feature_type=FeatureType.CUSTOM,
+                parameters={"kind": "reconstruction",
+                            "result_model_id": model_id},
+                status=FeatureStatus.EXECUTED,
+                result_model_id=model_id,
+            )
+            self.feature_history.append(feature)
+            if hasattr(self.document, "add_feature"):
+                self.document.add_feature(feature)
+            # Drop the raw OCP object from the returned dict before it reaches
+            # consumers (kept only as a serialisable description).
+            reconstruction.pop("data", None)
+            reconstruction["model_id"] = model_id
+            reconstruction["model_name"] = model_name
+            return {"model_id": model_id, "model_name": model_name}
+        except Exception as exc:
+            logger.warning("No se pudo registrar la reconstrucción como CADModel: %s", exc)
+            return {}
 
     def _execute_transform(self, command) -> "CommandResult":
         """Execute a transform (translate/rotate/scale) of a solid body.
@@ -977,6 +1146,16 @@ class PipelineController:
                 )
                 result = run_generative_design(study, self.conditions, engine,
                                                progress_cb=progress_cb)
+                # Surface the SIMP/density output so the UI can visualise it.
+                self.result = result
+                densities = result.get("densities")
+                if densities is not None and len(densities):
+                    self.result_densities = np.asarray(densities, dtype=float)
+                # Register the reconstructed B-Rep back as the active CADModel
+                # (Document / viewport / history / Design Tree).  Best-effort:
+                # never fails the study if no solid was produced.
+                reconstruction = result.get("reconstruction") or {}
+                self._register_reconstruction_model(reconstruction)
                 study.status = StudyStatus.COMPLETED
                 sr = StudyResult(success=True, status="completed", data=result)
                 study.result = sr

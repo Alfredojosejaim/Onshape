@@ -1,296 +1,126 @@
-ETAPA FINAL — CIERRE DE OPERACIONES CAD Y CABOS SUELTOS
+AUDITORÍA Y AVANCE — FLUJO CAE COMPLETO
 
-Objetivo
+Audita directamente el repositorio "Alfredojosejaim/Onshape", carpeta "Topologia_Optimizada", sobre el estado ACTUAL de "master".
 
-Audita y completa exclusivamente los faltantes detectados en la última auditoría del repositorio.
+OBJETIVO
 
-Repositorio: "Alfredojosejaim/Onshape"
-Proyecto: "Topologia_Optimizada"
+Determinar qué tan funcional y conectado está realmente el flujo:
 
-No rehagas arquitectura existente, no migres de lenguaje y no reemplaces sistemas funcionales. El objetivo es cerrar las operaciones CAD que quedaron parcialmente implementadas y dejar el flujo listo para avanzar a la siguiente etapa.
+CAD → Condiciones → Mallado → FEA → Topología → Reconstrucción CAD → Resultado
 
----
+No rehagas arquitectura ni investigues tecnologías alternativas. El objetivo es detectar únicamente funcionalidades declaradas como implementadas que todavía estén incompletas, desconectadas o simuladas.
 
-1. HALLAZGOS DE LA AUDITORÍA — VERIFICAR PRIMERO
+1. AUDITORÍA
 
-A. "core/commands.py"
+Revisa especialmente:
 
-Existen comandos para:
+- "core/conditions.py"
+- "core/meshing.py"
+- "core/fea*"
+- "core/topology*"
+- "core/generative*"
+- "core/cad_reconstruction.py"
+- "services/"
+- "desktop/pipeline/"
+- "desktop/ui/"
+- tests relacionados.
 
-- "TransformCommand"
-- "MirrorCommand"
-- "PatternCommand"
+Verifica:
 
-pero deben verificarse contra su ejecución real.
+Condiciones
 
-B. "desktop/pipeline/controller.py"
+- Las condiciones creadas desde la UI llegan realmente al estudio.
+- Las caras/entidades seleccionadas mantienen referencias CAD válidas.
+- Cargas, restricciones, elasticidad, obstrucciones y regiones protegidas conservan sus parámetros.
+- No existen datos ficticios o hardcodeados sustituyendo selecciones reales.
 
-"execute_command()" actualmente tiene ejecución específica para Boolean y Conditions, pero Transform/Mirror/Pattern pueden terminar únicamente registrándose como "Feature".
+Mallado
 
-Debe corregirse: esas operaciones deben ejecutarse realmente a través del pipeline cuando corresponda.
+- El mallado recibe realmente la geometría CAD actual.
+- Las entidades CAD seleccionadas pueden convertirse en grupos/regiones utilizables por FEA.
+- Los grupos físicos o equivalentes conservan la correspondencia con las caras/zonas CAD.
+- El mallado no utiliza geometría artificial cuando debería utilizar la pieza real.
 
-Flujo esperado:
+FEA
 
-"Command → PipelineController → CADService → nuevo resultado CAD → FeatureHistory/Document"
+- El estudio recibe geometría, malla, material y condiciones reales.
+- Las condiciones se traducen correctamente a las entidades de la malla.
+- El solver utilizado está realmente conectado al flujo.
+- Los resultados son reales y no valores simulados para completar la interfaz.
+- Los resultados pueden volver a asociarse con la geometría/malla visualizada.
 
-C. "services/cad_service.py"
+Topología
 
-Ya existen operaciones geométricas para:
+- La optimización consume realmente los resultados/condiciones del estudio FEA.
+- El porcentaje de optimización y demás parámetros afectan el cálculo.
+- El resultado de la optimización representa una geometría/densidad derivada del problema real.
+- No aceptar como “implementado” un algoritmo que solamente genere datos de demostración.
 
-- transformación;
-- espejo;
-- patrón lineal;
-- patrón rectangular;
-- patrón circular.
+Reconstrucción CAD
 
-No reemplazarlas.
+- Existe una ruta real desde el resultado optimizado hasta geometría CAD.
+- La geometría reconstruida puede convertirse en un "CADModel".
+- El resultado puede volver al "Document", viewport, historial y Design Tree.
+- Se invalidan correctamente malla, resultados y estudios cuando corresponde.
 
-Hallazgo específico: el patrón circular dispone de un parámetro "center" en la arquitectura del comando, pero la implementación CAD aparentemente rota alrededor del origen.
+2. INTEGRACIÓN
 
-Verifica esto directamente en el código y corrígelo si se confirma.
+Comprueba especialmente los puntos donde un módulo entrega datos al siguiente.
 
-D. "desktop/ui/main_window.py"
+Para cada etapa indica:
 
-No se encontraron handlers equivalentes a las operaciones Boolean/Study para:
+Entrada → procesamiento real → salida → consumidor
 
-- Transform;
-- Mirror;
-- Pattern.
+Si existe una desconexión, identifícala con archivo, clase/método y causa.
 
-Verifica si existen otras interfaces o rutas alternativas antes de crear nuevas.
+3. CLASIFICACIÓN
 
-Si realmente faltan, intégralas reutilizando los Commands y CADService existentes.
+Clasifica cada hallazgo:
 
-E. Historial / árbol / viewport
+- CRÍTICO: impide ejecutar el flujo.
+- ALTO: el flujo aparenta funcionar pero una etapa importante está simulada, desconectada o produce resultados incorrectos.
+- MEDIO: funcionalidad incompleta que no bloquea el flujo principal.
+- BAJO: deuda técnica o mejora futura.
 
-Debe comprobarse que una operación CAD ejecutada realmente:
+No conviertas scaffolds intencionales en errores. Thermal/Modal y otras funciones explícitamente planificadas como futuras deben permanecer como tales si su arquitectura es correcta.
 
-1. modifica o genera el modelo correcto;
-2. actualiza "model_id"/estado CAD;
-3. refresca el viewport;
-4. invalida correctamente malla/resultados si la geometría cambió;
-5. registra la operación en "FeatureHistory";
-6. aparece en "DesignTree";
-7. mantiene coherencia con "Document" y Timeline.
+4. REGLA IMPORTANTE
 
-No crear managers paralelos.
+NO vuelvas a auditar como problemas abiertos:
 
----
+- Transform
+- Mirror
+- Pattern
+- centro de Circular Pattern
+- sincronización básica "Document" después de operaciones CAD
+- resolución Face → Solid sin fallback arbitrario
 
-2. IMPLEMENTACIÓN REQUERIDA
+Solo revísalos si detectas una regresión real en el código actual.
 
-Transform
+5. IMPLEMENTACIÓN
 
-Cerrar el flujo completo de Transform:
-
-- UI para configurar los parámetros que el comando ya soporte;
-- selección de cuerpos mediante el "SelectionManager" existente;
-- creación del "TransformCommand";
-- validación;
-- ejecución real mediante "PipelineController";
-- llamada al "CADService";
-- actualización del modelo;
-- actualización del viewport;
-- registro en FeatureHistory/Document/DesignTree;
-- invalidación de malla y resultados dependientes de la geometría.
-
-No inventar parámetros que el modelo actual no necesite.
-
-Mirror
-
-Cerrar el mismo flujo para Mirror:
-
-- selección de cuerpo;
-- selección/configuración del plano o eje según la arquitectura existente;
-- "MirrorCommand";
-- ejecución real;
-- actualización CAD/UI/historial;
-- tests.
-
-Pattern
-
-Cerrar el flujo para Pattern:
-
-- selección de cuerpo;
-- configuración del tipo existente;
-- cantidad;
-- dirección/eje según corresponda;
-- separación/ángulo según el tipo;
-- ejecución real;
-- actualización completa del modelo.
-
-Debe soportar únicamente los tipos que ya estén definidos por la arquitectura actual. No crear funcionalidades ficticias solamente para aparentar soporte.
-
-Patrón circular
-
-Verificar específicamente el parámetro "center".
-
-Si actualmente la geometría rota siempre alrededor de "(0,0,0)", corregirla para utilizar el centro definido por el usuario/comando.
-
-Agregar una prueba que demuestre que un patrón circular con centro distinto del origen produce la geometría esperada.
-
----
-
-3. INTEGRACIÓN CON EL MODELO
-
-Cuando una operación CAD modifica la geometría:
-
-- el nuevo resultado debe convertirse en el modelo activo;
-- actualizar "model_id" y cualquier estado/cache relacionado;
-- limpiar o invalidar malla FEM existente si ya no corresponde;
-- limpiar/invalidate resultados FEA/TopOpt dependientes;
-- actualizar tessellation;
-- refrescar viewport;
-- sincronizar DesignTree;
-- conservar la operación como Feature.
-
-No eliminar silenciosamente la historia anterior.
-
-Si la arquitectura existente utiliza un mecanismo concreto para reemplazar el modelo activo, reutilizarlo.
-
----
-
-4. SELECCIÓN
-
-Reutilizar exclusivamente el "SelectionManager" existente.
-
-No crear otro sistema de selección para Transform/Mirror/Pattern.
-
-Las selecciones deben utilizar "CadEntityRef" cuando corresponda y respetar las validaciones existentes.
-
-Validar al menos:
-
-- ninguna pieza seleccionada;
-- selección inválida;
-- referencia inexistente;
-- parámetros geométricos inválidos;
-- operación que no pueda ejecutarse sobre la geometría seleccionada.
-
-Los errores deben regresar como "CommandResult"/mecanismo existente y mostrarse correctamente en UI.
-
----
-
-5. TESTS
-
-No te limites a tests de construcción del Command.
-
-Agregar pruebas que cubran el flujo real hasta donde permita la arquitectura actual:
-
-Transform
-
-- validación;
-- ejecución CAD;
-- resultado geométrico;
-- actualización de modelo;
-- FeatureHistory.
-
-Mirror
-
-- validación;
-- ejecución CAD;
-- resultado geométrico;
-- historial.
-
-Pattern
-
-- lineal;
-- rectangular si está definido;
-- circular;
-- especialmente centro circular distinto del origen.
-
-Integración
-
-Comprobar que después de una operación CAD:
-
-- el modelo activo cambia correctamente;
-- la malla anterior no se conserva incorrectamente;
-- los resultados anteriores no se presentan como pertenecientes a la nueva geometría;
-- el DesignTree refleja la operación.
-
-Ejecutar también la suite completa existente.
-
----
-
-6. AUDITORÍA DE CABOS ADICIONALES
-
-Mientras implementas lo anterior, realiza una revisión focalizada, no una auditoría completa, buscando errores del mismo tipo:
-
-- código que aparenta ejecutar una operación pero solamente registra una Feature;
-- métodos implementados en "CADService" pero nunca conectados al pipeline;
-- comandos existentes sin ruta de ejecución;
-- UI existente sin backend;
-- backend existente sin UI;
-- estados/cache que no se invalidan después de modificar CAD;
-- documentación que declare una funcionalidad como implementada cuando realmente no lo está.
-
-Si encuentras alguno relacionado directamente con las operaciones CAD que estás cerrando, corrígelo.
-
-No amplíes el alcance a funcionalidades nuevas no relacionadas.
-
----
-
-7. FUNCIONALIDADES QUE NO DEBES ROMPER
-
-Antes de modificar código, verifica dependencias.
-
-No modificar innecesariamente:
-
-- SelectionManager;
-- flujo STEP;
-- CADService existente;
-- Boolean;
-- FeatureHistory;
-- Document;
-- Timeline;
-- DesignTree;
-- FEA;
-- Kratos;
-- Topología;
-- Generative Design;
-- sistema de estudios;
-- navegación/cámara;
-- sistema de GPU.
-
-Si necesitas modificar alguno para integrar correctamente una operación CAD, realiza únicamente el cambio mínimo necesario y verifica regresiones.
-
----
-
-8. DOCUMENTACIÓN
-
-Después de implementar y probar:
-
-Actualizar "PROJECT_STATUS.md" para reflejar el estado real.
-
-No declarar una funcionalidad como "IMPLEMENTADA" si únicamente existe su UI, Command o método aislado.
-
-Documentar brevemente:
-
-- Transform;
-- Mirror;
-- Pattern;
-- corrección del centro del patrón circular;
-- integración con historial/modelo/viewport;
-- tests realizados.
-
----
-
-9. CRITERIO DE FINALIZACIÓN
-
-La etapa solamente se considera cerrada cuando:
-
-"Selección → UI → Command → Validación → Pipeline → CADService → Geometría real → Modelo activo → Viewport → FeatureHistory/Document → DesignTree → Tests"
-
-funcione de extremo a extremo para Transform, Mirror y Pattern.
-
-Al finalizar:
-
-1. ejecuta tests específicos;
-2. ejecuta la suite completa;
-3. corrige regresiones;
-4. revisa "PROJECT_STATUS.md";
-5. informa exactamente qué quedó implementado;
-6. informa cualquier limitación real que permanezca.
-
-No dejes implementaciones "placeholder", "pending" o simplemente registradas como Feature si la operación está declarada como soportada.
-
-El objetivo es cerrar los cabos existentes, no comenzar una nueva arquitectura.
+Después de la auditoría:
+
+1. Corrige únicamente los problemas CRÍTICOS y ALTOS que puedan resolverse con la arquitectura existente.
+2. No reemplaces sistemas funcionales.
+3. No migres Python a C++ salvo que exista una imposibilidad técnica demostrada.
+4. No rediseñes visualmente la aplicación.
+5. Mantén PySide6 + VTK y la arquitectura actual.
+6. Añade o corrige tests para cada problema solucionado.
+7. Ejecuta la suite completa de tests.
+8. Corrige cualquier regresión encontrada.
+9. Actualiza "PROJECT_STATUS.md" únicamente con el estado realmente comprobado.
+
+6. RESULTADO OBLIGATORIO
+
+Al finalizar informa:
+
+- qué estaba realmente implementado;
+- qué estaba desconectado o incompleto;
+- qué corregiste;
+- archivos modificados;
+- tests ejecutados y resultado;
+- qué bloquea todavía el flujo CAE completo;
+- cuál es el siguiente paso técnico más lógico.
+
+No declares una etapa como IMPLEMENTADA solamente porque existan clases, interfaces o UI para ella. Debe existir integración funcional verificable de extremo a extremo.

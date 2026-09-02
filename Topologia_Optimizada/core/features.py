@@ -135,6 +135,14 @@ class Feature:
         )
 
     @classmethod
+    def pattern(cls, pattern_type: str, target_body_id: str, **kw: Any) -> "Feature":
+        return cls(
+            name=f"Pattern ({pattern_type})",
+            feature_type=FeatureType.PATTERN,
+            parameters={"pattern_type": pattern_type, "target_body_id": target_body_id, **kw},
+        )
+
+    @classmethod
     def condition(cls, condition_type: str, name: str,
                   condition: Dict[str, Any], **kw: Any) -> "Feature":
         """Record a reusable condition as a Feature in the history.

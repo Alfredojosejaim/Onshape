@@ -805,10 +805,9 @@ class KratosAdapter:
             model_part: Kratos ModelPart with mesh, material, constraints, and loads
             linear_solver_settings: optional dict de ``solver_type`` (+ opciones)
                 para Kratos ``python_linear_solver_factory.ConstructSolver``.
-                Por defecto (None) se usa el comportamiento original:
-                ``skyline_lu_factorization``. Añadido en la Fase 1 de rendimiento
-                para poder comparar solvers sin cambiar el default ni a los
-                callers existentes.
+                Por defecto (None) se usa ``amgcl`` (iterativo) con verificación de
+                convergencia activa y fallback automático a la factorización directa
+                ``skyline_lu`` en ``run_analysis`` si no converge o falla.
             
         Returns:
             Dictionary with solver and strategy information

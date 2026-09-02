@@ -617,6 +617,10 @@ class PipelineController:
         For TopologyOptimizationStudy the existing SIMP engine is used.
         For StructuralAnalysis the existing FEA engine is used.
         Other study types are marked as ready_for_pipeline.
+
+        The study's ``parts`` list determines which solid(s) are the domain
+        of analysis.  If no mesh exists yet, one is generated automatically
+        from the model referenced by the study.
         """
         from core.cae_studies import StudyResult, StudyStatus
         from core.optimization_studies import TopologyOptimizationStudy
@@ -631,8 +635,17 @@ class PipelineController:
 
         study.status = StudyStatus.RUNNING
 
+        # Ensure the controller's active model matches the study's model.
+        effective_model_id = getattr(study, "model_id", None) or self.model_id
+        if effective_model_id and effective_model_id != self.model_id:
+            self.model_id = effective_model_id
+
         if isinstance(study, TopologyOptimizationStudy):
             try:
+                # Auto-generate mesh if none exists yet.
+                if self.mesh is None and effective_model_id:
+                    self.generate_mesh()
+
                 p = study.optimization_params
                 conditions = study.consume_conditions(self.conditions) \
                     if study.conditions else None
@@ -658,12 +671,12 @@ class PipelineController:
             try:
                 from core.generative_engine import GenerativeDesignEngine, run_generative_design
                 engine = GenerativeDesignEngine(
-                    model_id=getattr(study, "model_id", self.model_id),
+                    model_id=effective_model_id,
                     mesh_nodes=self.mesh_nodes,
                     mesh_elements=self.mesh_elements,
                     material=self.material(),
                     condition_manager=self.conditions,
-                    model_shape=self.cad.get_model_shape(self.model_id) if self.model_id else None,
+                    model_shape=self.cad.get_model_shape(effective_model_id) if effective_model_id else None,
                 )
                 result = run_generative_design(study, self.conditions, engine,
                                                progress_cb=progress_cb)

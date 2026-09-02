@@ -958,6 +958,7 @@ class MainWindow(QMainWindow):
             default_name="Estudio de optimización",
             parts=parts,
             model_id=self.controller.model_id,
+            get_solid_selections=self._current_solid_selections,
         )
         result = panel.exec()
         if result != StudyPanel.Accepted or panel.study is None:

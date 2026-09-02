@@ -20,7 +20,7 @@ from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
 from core.cae_studies import Study, StudyType, StudyStatus, StudyResult, LoadCase, ConstraintCase
-from core.cad_entity import CadEntityRef
+from core.cad_entity import CadEntityRef, EntityType
 from core.conditions import Condition, ConditionManager
 from core.materials import Material, STANDARD_MATERIALS
 
@@ -144,10 +144,18 @@ class TopologyOptimizationStudy(Study):
         return list(self._iteration_history)
 
     def validate(self) -> bool:
-        if self.model_id is None and not self.parts:
+        # Must have at least one part (solid) selected.
+        if not self.parts:
             return False
-        # The reusable conditions system is the primary source, but the legacy
-        # loads/constraints config remains accepted for existing flows.
+        # All parts must be SOLID type.
+        for ref in self.parts:
+            if ref.entity_type != EntityType.SOLID:
+                return False
+        # All parts must reference the same model.
+        model_ids = {p.model_id for p in self.parts if p.model_id}
+        if len(model_ids) > 1:
+            return False
+        # Must have at least one condition or legacy load/constraint.
         if not self.conditions and not self.loads and not self.constraints:
             return False
         p = self.optimization_params

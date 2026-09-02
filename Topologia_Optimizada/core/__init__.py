@@ -83,12 +83,14 @@ from core.cad_reconstruction import (
     BRepFitter,
     DummyBRepFitter,
     MarchingTetrahedraExtractor,
+    MeshHoleFiller,
     OCPBRepFitter,
     ReconstructionPipeline,
     ReconstructionResult,
     ReconstructionStage,
     ReconstructionStatus,
     SurfaceExtractor,
+    fill_holes,
 )
 from core.generative_engine import (
     GenerativeDesignEngine,
@@ -171,6 +173,8 @@ __all__ = [
     "ReconstructionStage",
     "ReconstructionStatus",
     "DummyBRepFitter",
+    "MeshHoleFiller",
+    "fill_holes",
     "GenerativeDesignEngine",
     "BridgeMesh",
     "consume_conditions",

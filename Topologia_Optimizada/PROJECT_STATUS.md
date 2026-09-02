@@ -686,10 +686,43 @@ importada). **No** se adoptará Kratos como motor exclusivo/principal *ahora* po
    u=0); Kratos completo exigiría trabajo adicional antes de equivaler al motor actual.
 3. Se perdería la verificación cruzada y la red de seguridad del motor propio.
 La migración a Kratos principal queda **condicionada a** (a) exigencia de rendimiento en mallas
-grandes, (b) necesidades de física avanzada, o (c) decisión de estrategia comercial/IP.
+grandes atribuible a *guias/pesos*, (b) necesidades de física avanzada, o (c) decisión de
+estrategia comercial/IP.
+
+**Aportaciones de una revisión externa (a incorporar):** el razonamiento dual-motor es sólido,
+pero refuerza y matiza cuatro puntos:
+
+- **El oráculo mutuo no verifica HOY el caso que importa (crítico).** Si Kratos da `u=0` para el
+  tipo de carga que usa el desktop (fuerza puntual/distribuida → ruta RHS-force bloqueada), en la
+  práctica no hay oráculo sino un motor que no ejecuta el caso real. La "verificación cruzada"
+  es por ahora **aspiracional**. Diagnóstico pendiente para atribuir la causa:
+  1. el process de Neumann/point-load no está registrado en ese `solver_settings` particular,
+  2. falta un process en `list_other_processes` / `loads_process_list`, o
+  3. el DOF de fuerza no se suma al RHS antes del solve (bug de orden de ensamblado).
+  **Prioridad:** cerrar este gap del RHS antes de seguir invirtiendo en la capa Kratos.
+  Si se resuelve, la comparación cross-engine debe convertirse en **suite de regresión
+  automatizada** (no un e2e aislado): con cada cambio de malla / BC / ensamblado, correr ambos
+  motores y comparar compliance/desplazamientos con tolerancia explícita — para detectar roturas
+  silenciosas del bridge en CI, no en producción.
+- **Costo de portabilidad/distribución (no estaba documentado).** Para una app de escritorio, el
+  motor NumPy/SciPy es trivialmente empaquetable (pip, sin binarios nativos pesados,
+  multiplataforma sin compilar). Kratos como dependencia dura complica instaladores (tamaño,
+  compatibilidad de wheels por plataforma, tiempos de arranque ya mencionados). Refuerza mantener
+  **local como default**, no solo por iteración sino por fricción de distribución al usuario final.
+- **Escalón intermedio antes de saltar a Kratos.** Antes de "migrar por rendimiento en mallas
+  grandes", hay un paso más barato dentro del stack local: reemplazar `spsolve` (LU directo, con
+  fill-in que escala mal en 3D) por **solvers iterativos de SciPy** (`cg`/`minres` +
+  precondicionador) o **AMG** (pyamg). Esto retrasa el punto en que Kratos se vuelve necesario.
+- **Umbral de decisión concreto (falta definir).** En lugar de "mallas grandes/rendimiento
+  exigente" (subjetivo), definir explícitamente un umbral numérico — p. ej. *"por encima de N
+  elementos o M segundos de `spsolve`, evaluar Kratos (y antes, PML/pyamg)"* — para que la
+  migración no sea una decisión subjetiva más adelante.
 
 ### Siguiente paso técnico más lógico
-Para un baseline numérico común (no la ruta RHS-force, bloqueada en este build), comparar
-local vs Kratos con **desplazamiento impuesto** (`imposed_disp`) sobre la malla real y, si se
-hardcodea el soporte en el backend FEA, confirmar la compliance físicamente válida frente al
-solve local — o exponer ese modo de carga en las condiciones reutilizables.
+1. **RHS-force en Kratos (prioridad).** Diagnosticar por qué la carga por fuerza da `u=0` en este
+   build (`solver_settings`, `list_other_processes`/`loads_process_list`, o ensamblado del RHS
+   antes del solve). Si no se resuelve, no hay oráculo para el caso real del desktop.
+2. Si se resuelve, **baseline numérico común**: comparar local vs Kratos con `imposed_disp` y con
+   fuerza sobre la malla real, con tolerancia explícita, y convertirlo en suite de regresión
+   automatizada que corra ambos motores en cada cambio de malla/BC/ensamblado.
+3. Evaluar el **escalón iterativo/AMG** local antes de comprometer a Kratos por rendimiento.

@@ -22,6 +22,7 @@ from tests, without Kratos.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -41,6 +42,8 @@ from core.conditions import (
 from core.generative import GenerativeDesignStudy
 from core.materials import Material, STANDARD_MATERIALS
 from core.topopt import SIMPSolver
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -259,28 +262,89 @@ class GenerativeDesignEngine:
     def _void_elements(self, conditions: List[ObstructionCondition]) -> np.ndarray:
         """Element indices that must stay empty (obstructions).
 
-        Body-based obstructions require CAD geometry to be mapped to mesh
-        elements; without a ``model_shape`` no reliable mapping exists, so an
-        empty set is returned (conservative).
+        Body-based obstructions are mapped to mesh elements through the CAD
+        shape: for each obstructing solid body we collect the elements whose
+        centroid lies inside the solid (optionally expanded by ``offset_mm``).
+        Without a CAD shape no reliable mapping can be computed, so an empty
+        set is returned and the condition is explicitly flagged as
+        *unsupported* by the caller (never a silent wrong result).
         """
-        if self.mesh_elements is None or not conditions:
+        if self.mesh_elements is None or self.mesh_nodes is None or not conditions:
             return np.array([], dtype=int)
         if self.model_shape is None:
+            logger.warning(
+                "Obstruction mapping requires the CAD shape; marking as unsupported.")
             return np.array([], dtype=int)
-        # Map obstruction bodies through the model shape: reject elements whose
-        # centre falls inside any obstructing body (with the optional offset).
-        from core.selection import BoxRegion, NodeSelectionEngine
-        node_set: set = set()
+
+        centroids = self._element_centroids()
+        n_elems = self.mesh_elements.shape[0]
+        inside = np.zeros(n_elems, dtype=bool)
+        solids = list(self.model_shape.Solids())
+
         for cond in conditions:
+            offset = float(cond.offset_mm) if cond.offset_mm is not None else 0.0
             for body in cond.bodies.entities:
                 if body.entity_type != EntityType.SOLID:
                     continue
-                # fallback: volume around the body's solid index (EPS-geometry
-                # free): use the model bbox octants as obstruction zones.
-                # When no solid_index is available we cannot place it reliably.
-                pass
-        # Without explicit geometry mapping, be conservative and obstruct none.
-        return np.array([], dtype=int)
+                solid = self._solid_for_ref(solids, body)
+                if solid is None:
+                    logger.warning(
+                        "Obstruction body %r not found in CAD shape; marking condition "
+                        "as unsupported.", getattr(body, "solid_id", None))
+                    continue
+                bb = self._offset_bbox(solid, offset)
+                for i in range(n_elems):
+                    if inside[i]:
+                        continue
+                    c = centroids[i]
+                    if not (bb[0][0] <= c[0] <= bb[1][0] and
+                            bb[0][1] <= c[1] <= bb[1][1] and
+                            bb[0][2] <= c[2] <= bb[1][2]):
+                        continue
+                    if offset > 0.0:
+                        # With an offset the expanded box is the buffered region;
+                        # keep the element when its centroid lies inside it.
+                        inside[i] = True
+                    else:
+                        inside[i] = self._point_in_solid(solid, c)
+        return np.asarray(np.nonzero(inside)[0], dtype=int)
+
+    def _element_centroids(self) -> np.ndarray:
+        nodes = self.mesh_nodes
+        els = self.mesh_elements
+        return np.asarray(
+            [np.mean(nodes[el], axis=0) for el in els], dtype=float
+        )
+
+    @staticmethod
+    def _solid_for_ref(solids: list, body: Any):
+        """Resolve a solid body reference to the matching CAD solid object."""
+        import re
+        mid = None
+        index = getattr(body, "index", None)
+        solid_id = getattr(body, "solid_id", None)
+        if solid_id:
+            m = re.match(r"solid_(\d+)", str(solid_id))
+            if m:
+                index = int(m.group(1))
+        if index is not None and 0 <= int(index) < len(solids):
+            return solids[int(index)]
+        return None
+
+    @staticmethod
+    def _offset_bbox(solid: Any, offset: float):
+        bb = solid.BoundingBox()
+        return (
+            (bb.xmin - offset, bb.ymin - offset, bb.zmin - offset),
+            (bb.xmax + offset, bb.ymax + offset, bb.zmax + offset),
+        )
+
+    @staticmethod
+    def _point_in_solid(solid: Any, point: Any) -> bool:
+        try:
+            return bool(solid.isInside((float(point[0]), float(point[1]), float(point[2]))))
+        except Exception:  # pragma: no cover - defensive OCP/geometry errors
+            return False
 
     def solve_simp(self, conditions: Dict[ConditionType, List[Condition]],
                    **kwargs) -> Dict[str, Any]:
@@ -335,7 +399,12 @@ class GenerativeDesignEngine:
                 fixed_dofs.extend([ni * 3, ni * 3 + 1, ni * 3 + 2])
 
         preserved = self._protected_elements(conditions.get(ConditionType.PROTECTED_REGION, []))
-        void = self._void_elements(conditions.get(ConditionType.OBSTRUCTION, []))
+        obstructions = conditions.get(ConditionType.OBSTRUCTION, [])
+        void = self._void_elements(obstructions)
+
+        unsupported = []
+        if obstructions and void.size == 0:
+            unsupported.append("obstruction")
 
         solver = SIMPSolver(
             nodes=nodes,
@@ -363,7 +432,8 @@ class GenerativeDesignEngine:
         result["_consumed_load_conditions"] = len(loads)
         result["_consumed_elasticity_conditions"] = len(conditions.get(ConditionType.ELASTICITY, []))
         result["_consumed_protected_conditions"] = len(conditions.get(ConditionType.PROTECTED_REGION, []))
-        result["_consumed_obstruction_conditions"] = len(conditions.get(ConditionType.OBSTRUCTION, []))
+        result["_consumed_obstruction_conditions"] = len(obstructions)
+        result["_unsupported_conditions"] = sorted(unsupported)
         return result
 
 

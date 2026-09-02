@@ -669,8 +669,15 @@ class CADService:
                             continue
             except Exception:
                 logger.debug("face->solid containment failed for face %d", face_index)
-            # Fall back to the first solid.
-            return {"solid_id": "solid_0", "index": 0}
+            # Deterministic selection: if the real owning solid cannot be
+            # resolved unequivocally, DO NOT arbitrarily pick the first body
+            # (would silently target the wrong solid in multi-body STEP models).
+            logger.warning(
+                "resolve_solid_for_face: no se pudo determinar el sólido dueño de la "
+                "cara %d en el modelo %s (%d solidos); devolviendo None.",
+                face_index, model_id, len(solids),
+            )
+            return None
         except Exception as exc:
             logger.exception("resolve_solid_for_face failed for model %s", model_id)
             return None

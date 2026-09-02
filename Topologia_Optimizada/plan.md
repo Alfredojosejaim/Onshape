@@ -479,8 +479,8 @@ El .py tiene un ribbon con **18+ tools** agrupados en 5 secciones:
 | **Edición** | Unión | ⊕ | `_on_boolean_op("union")` | Deseable |
 | Edición | Corte | ⊖ | `_on_boolean_op("difference")` | Deseable |
 | Edición | Intersección | ⊗ | `_on_boolean_op("intersection")` | Deseable |
-| Edición | Transformar | 🔄 | placeholder | Nuevo |
-| Edición | Espejo | ⇔ | placeholder | Nuevo |
+| Edición | Transformar | 🔄 | `_on_transform_op` | Nuevo |
+| Edición | Espejo | ⇔ | `_on_mirror_op` | Nuevo |
 | **Optimización** | Sensibilidad | 📊 | placeholder | Deseable |
 | Optimización | Filtros | 🔍 | `_on_focus_filter` | Deseable |
 | Optimización | Optimizar SIMP | ▶ | `_on_run_optimization_default` | Crítico |
@@ -494,8 +494,9 @@ El .py tiene un ribbon con **18+ tools** agrupados en 5 secciones:
 > **El .ui ya cubre:** Malla FEM, Análisis FEM, Sensibilidad, Filtros,
 > Optimizar MMA, Suavizado, Exportar (7 de 8 acciones del toolbar Kratos).
 >
-> **Falta en el .ui:** Importar, Malla adaptativa, Boolean (3), Transformar,
-> Espejo, Design Space, Generativo, Visualizar, Validar, Exportar STEP.
+> **Falta en el .ui:** Importar, Malla adaptativa, Boolean (3), Design Space,
+> Generativo, Visualizar, Validar, Exportar STEP.
+> (Transformar/Espejo/Patrón ya están cableados en la cinta + menú "Operaciones".)
 
 ---
 

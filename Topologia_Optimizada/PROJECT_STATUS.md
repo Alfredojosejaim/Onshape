@@ -513,3 +513,16 @@ OFFLINE_GRACE_PERIOD), protocolo `LicenseServerProtocol`, `NoOpLicenseServer`.
     "Operaciones" y cinta.
   - Validado con `test_edit_operations.py` (27 casos).
   - Verificación: suite completa **270 passed, 6 deselected, 1 warning**.
+- **Sincronización de estado CAD + resolución determinista de sólidos (this cycle)**:
+  - **`_finalize_cad_result`** ahora sincroniza también **`Document`** (registra el nuevo
+    modelo vía `document.set_model(cad_model)` → `active_model_id`) y **`model_name`**
+    (toma el nombre del nuevo modelo, e.g. "Transform translate"). Antes `model_id` cambiaba
+    pero Document/`model_name` quedaban en el modelo STEP anterior.
+  - **Boolean consolidado**: `_execute_boolean` ahora usa el mismo `_finalize_cad_result`
+    (antes duplicaba la invalidación y no sincronizaba Document/`model_name`).
+  - **`resolve_solid_for_face`**: eliminado el fallback peligroso que asignaba `solid_0`
+    arbitrariamente cuando no se podía determinar el sólido; ahora devuelve `None`
+    (fallo controlado) en casos ambiguos de modelos multi-cuerpo.
+  - Validado con `test_edit_operations.py` (nuevos tests de sincronización Document/
+    `model_name` y de resolución determinista).
+  - Verificación: suite completa **292 passed, 6 deselected, 1 warning**.

@@ -1709,12 +1709,20 @@ condiciones se ignoraron y por qué. El feed-back ya no depende de fijarse en el
 - **Smoothing/hole-filling en `_reconstruct`**: el `ReconstructionPipeline` los auto-instanccia
   cuando no se inyectan, así que la ruta generativa ya los aplica (verificado).
 
-## 3. Pendientes documentados (decisión de alcance, NO resueltos)
+## 3. Pendientes (estado actualizado tras ciclos posteriores)
 
-- (Ajeno) default `amgcl` del solver Kratos pendiente de aprobación explícita.
-- Comandos `transform`/`mirror`/`pattern` reales via CadQuery (solo el `CommandType` enum
-  existe, sin clases Command concretas).
-- Estudios `ThermalAnalysis` y `ModalAnalysis` placeholders (`not_implemented`).
+> Nota: la mayoría de los pendientes enumerados originalmente aquí ya se cerraron en
+> ciclos posteriores (ver `PROJECT_STATUS.md`). Se listan solo los que siguen vigentes:
+
+- Estudios `ThermalAnalysis` y `ModalAnalysis`: **scaffolded** (modelo de datos, validación y
+  contrato de integración definidos) pero sin solver numérico integrado. No devuelven
+  `not_implemented` ciego; reportan `not_implemented` claro vía `StudyNotImplementedError` o
+  `validation_failed` con mensaje específico. (Fuera del alcance actual.)
+- ~~Default `amgcl` del solver Kratos pendiente~~: **resuelto** — el default se alineó a la
+  referencia oficial de Kratos (`gmres` + `aggregation` + `ilu0`) y quedó verificado.
+- ~~Comandos `transform`/`mirror`/`pattern` solo enum~~: **implementados end-to-end**
+  (Command → PipelineController → CADService → geometría real → Feature/Document/DesignTree,
+  con UI y tests).
 
 ## 4. Validación
 

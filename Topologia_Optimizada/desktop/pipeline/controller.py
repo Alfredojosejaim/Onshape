@@ -518,16 +518,14 @@ class PipelineController:
         if not result.get("success"):
             return CommandResult(success=False, error_message=result.get("error", "Operación booleana fallida."))
 
-        new_model_id = result["model_id"]
-        self.model_id = new_model_id
-        self.result = None
-        self.mesh = None
-        self.mesh_nodes = self.mesh_elements = None
-        self.current_tessellation = None
-
-        # Re-tessellate so the viewport can display the boolean result.
-        tess = self.cad.tessellate_model(new_model_id, face_mapping=True)
-        self.current_tessellation = tess
+        # Commit through the single finalize mechanism: activates the new model
+        # in PipelineController + Document, updates model_name, invalidates
+        # mesh/results/tessellation and re-tessellates (avoiding the previous
+        # duplicated invalidation which also missed the Document sync).
+        res = self._finalize_cad_result(result)
+        if not res.success:
+            return res
+        new_model_id = res.result_model_id
 
         # Record as feature (uses the existing Feature.boolean_op).
         feature = Feature.boolean_op(
@@ -538,8 +536,10 @@ class PipelineController:
         )
         feature.name = f"Boolean {operation}"
         feature.status = "executed"
+        feature.result_model_id = new_model_id
         self.feature_history.append(feature)
         self.document.add_feature(feature)
+        res.feature_id = feature.id
 
         return CommandResult(
             success=True,
@@ -573,6 +573,14 @@ class PipelineController:
 
         new_model_id = cad_result["model_id"]
         self.model_id = new_model_id
+        # Keep the architecture layers in sync: PipelineController, CADService
+        # (already), Viewport (below) and Document must all point at the same
+        # active model / name, otherwise the DesignTree / properties / UI would
+        # describe a stale model.
+        cad_model = self.cad.get_model(new_model_id)
+        if cad_model is not None:
+            self.model_name = cad_model.name
+            self.document.set_model(cad_model)
         # Invalidate geometry-dependent state: the previous FE mesh, results and
         # tessellation no longer correspond to the new geometry.
         self.result = None
@@ -590,7 +598,7 @@ class PipelineController:
             success=True,
             result_model_id=new_model_id,
             data={"status": "executed", "result_model_id": new_model_id,
-                  "model_name": cad_result.get("model_name")},
+                  "model_name": self.model_name},
         )
 
     def _execute_transform(self, command) -> "CommandResult":

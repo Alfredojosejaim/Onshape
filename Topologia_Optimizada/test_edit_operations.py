@@ -369,6 +369,53 @@ def test_design_tree_reflects_operation(ctrl):
     assert "Mirror" in names
 
 
+def test_operation_syncs_document_and_model_name(ctrl):
+    """PipelineController, CADService and Document must stay in sync after an
+    edit: the active model in Document equals the controller's, and the
+    controller's model_name reflects the operation result, not the stale
+    source name (audit finding #1/#2)."""
+    scenarios = [
+        (TransformCommand, {"transform_type": "translate", "translation": "20, 0, 0"},
+         "Transform translate"),
+        (MirrorCommand, {"plane_normal": "0, 1, 0"}, "Mirror"),
+        (PatternCommand, {"pattern_type": "linear", "direction": "1, 0, 0",
+                          "count": 3, "spacing": 20.0}, "Pattern linear"),
+    ]
+    for cls, params, expected_name in scenarios:
+        cmd = cls()
+        cmd.set_target(_ref(ctrl.model_id, "solid_0"))
+        for k, v in params.items():
+            cmd.set_parameter(k, v)
+        res = ctrl.execute_command(cmd)
+        assert res.success, (cls.__name__, res.error_message)
+
+        # Document active model must equal the controller's new model.
+        assert ctrl.document.active_model_id == ctrl.model_id
+        assert ctrl.document.active_model is not None
+        # Controller model_name reflects the operation result.
+        assert ctrl.model_name == expected_name
+        assert ctrl.document.active_model.name == ctrl.model_name
+        # The new (operation) model is a distinct registered model in Document.
+        assert ctrl.document.active_model.id == res.result_model_id
+
+
+def test_resolve_solid_for_face_no_arbitrary_fallback(ctrl):
+    """On a multi-body model, an unresolvable face must NOT silently map to the
+    first solid (audit finding #3): it returns None (controlled failure)."""
+    from services.cad_service import CADService  # noqa: F401  (service fixture)
+
+    # All valid faces of a disjoint two-box compound resolve to their owner.
+    shape = ctrl.cad.get_model_shape(ctrl.model_id)
+    n_faces = len(list(shape.Faces()))
+    for fi in range(n_faces):
+        owner = ctrl.cad.resolve_solid_for_face(ctrl.model_id, fi)
+        assert owner is not None
+        assert owner["index"] in (0, 1)
+        assert owner["solid_id"] in ("solid_0", "solid_1")
+    # An out-of-range face index is a controlled None, never an arbitrary solid.
+    assert ctrl.cad.resolve_solid_for_face(ctrl.model_id, 99999) is None
+
+
 # --------------------------------------------------------------------- #
 # Panels (Qt) — cancel / accept logic
 # --------------------------------------------------------------------- #

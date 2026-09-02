@@ -453,6 +453,42 @@ class TestStudyPanelIntegration:
         assert panel.study is None
         assert "sólidos" in panel._error.text().lower()
 
+    def test_study_panel_captures_from_selection(self):
+        """Verify the panel captures solids from the viewport via callback."""
+        from PySide6.QtWidgets import QApplication
+        import sys
+        app = QApplication.instance() or QApplication(sys.argv)
+        from desktop.ui.panels.study_panel import StudyPanel
+        captured = [_solid_ref(solid_id="solid_3", model_id="m1")]
+        panel = StudyPanel(
+            parts=[],
+            model_id="m1",
+            condition_manager=_make_conditions(),
+            get_solid_selections=lambda: captured,
+        )
+        assert not panel._parts
+        panel._capture_parts()
+        assert len(panel._parts) == 1
+        assert panel._parts[0].solid_id == "solid_3"
+        assert panel._parts_list.count() == 1
+        assert panel._btn_ok.isEnabled()
+
+    def test_study_panel_capture_rejects_unselected(self):
+        """Verify capture flags an error when nothing is selected."""
+        from PySide6.QtWidgets import QApplication
+        import sys
+        app = QApplication.instance() or QApplication(sys.argv)
+        from desktop.ui.panels.study_panel import StudyPanel
+        panel = StudyPanel(
+            parts=[],
+            model_id="m1",
+            condition_manager=_make_conditions(),
+            get_solid_selections=lambda: [],
+        )
+        panel._capture_parts()
+        assert not panel._parts
+        assert "seleccionados" in panel._error.text().lower()
+
 
 # --------------------------------------------------------------------- #
 # Validation edge cases
@@ -507,3 +543,141 @@ class TestValidationEdgeCases:
         assert "conditions" in d
         assert len(d["parts"]) == 1
         assert d["parts"][0]["entity_type"] == "solid"
+
+
+# --------------------------------------------------------------------- #
+# Deterministic domain: study.parts governs the selected solid (no implicit
+# "first solid").  See prompts.md ETAPA sección 5 y 6.
+# --------------------------------------------------------------------- #
+class TestSelectedSolidIsDomain:
+    def test_resolve_study_solid_index_uses_selected_solid(self):
+        from desktop.pipeline.controller import PipelineController
+        study = TopologyOptimizationStudy()
+        study.model_id = "m1"
+        # User explicitly selects solid_2 (not solid_0).
+        study.add_part(_solid_ref(solid_id="solid_2", model_id="m1"))
+        idx = PipelineController._resolve_study_solid_index(study, "m1")
+        assert idx == 2
+
+    def test_resolve_uses_first_part_only_when_selected(self):
+        from desktop.pipeline.controller import PipelineController
+        study = TopologyOptimizationStudy()
+        study.model_id = "m1"
+        study.add_part(_solid_ref(solid_id="solid_0", model_id="m1"))
+        idx = PipelineController._resolve_study_solid_index(study, "m1")
+        assert idx == 0
+
+    def test_resolve_returns_none_without_parts(self):
+        from desktop.pipeline.controller import PipelineController
+        study = TopologyOptimizationStudy()
+        study.model_id = "m1"
+        assert PipelineController._resolve_study_solid_index(study, "m1") is None
+
+    def test_resolve_rejects_incompatible_model_id(self):
+        from desktop.pipeline.controller import PipelineController
+        study = TopologyOptimizationStudy()
+        study.model_id = "m1"
+        study.add_part(_solid_ref(solid_id="solid_0", model_id="m2"))
+        assert PipelineController._resolve_study_solid_index(study, "m1") is None
+
+    def test_generate_mesh_for_solid_updates_global_mesh(self, monkeypatch):
+        """generate_mesh_for_solid meshes the selected solid and stores it."""
+        from desktop.pipeline.controller import PipelineController
+        ctrl = PipelineController()
+        ctrl.model_id = "m1"
+        mesh = {
+            "success": True, "nodes": [[0, 0, 0], [1, 0, 0], [0, 1, 0]],
+            "elements": [[0, 1, 2, 2]], "num_nodes": 3, "num_elements": 1,
+        }
+        monkeypatch.setattr(ctrl.cad, "generate_mesh_for_solid",
+                            lambda mid, idx, target_element_size=None: mesh)
+        out = ctrl.generate_mesh_for_solid(2)
+        assert out["success"] is True
+        assert ctrl.mesh_nodes.shape == (3, 3)
+        assert ctrl.mesh_elements.shape == (1, 4)
+        assert ctrl.mesh is mesh
+
+    def test_generate_mesh_for_solid_called_with_selected_index(self, monkeypatch):
+        """execute_study must mesh the *selected* solid, not an implicit first."""
+        from desktop.pipeline.controller import PipelineController
+        from core.cad_entity import EntityType
+        ctrl = PipelineController()
+        ctrl.model_id = "m1"
+
+        # 3 solids in the model
+        monkeypatch.setattr(ctrl.cad, "list_solids",
+                            lambda mid: [{"solid_id": "solid_0", "index": 0},
+                                         {"solid_id": "solid_1", "index": 1},
+                                         {"solid_id": "solid_2", "index": 2}])
+        mesh = {
+            "success": True, "nodes": [[0, 0, 0], [1, 0, 0], [0, 1, 0]],
+            "elements": [[0, 1, 2, 2]], "num_nodes": 3, "num_elements": 1,
+        }
+        meshed_indices = []
+        def fake_mesh_for_solid(mid, idx, target_element_size=None):
+            meshed_indices.append(idx)
+            return mesh
+        monkeypatch.setattr(ctrl.cad, "generate_mesh_for_solid", fake_mesh_for_solid)
+        # Replacement for the real SIMP solve (avoid heavy geometry).
+        monkeypatch.setattr(ctrl, "run_optimization",
+                            lambda **kw: {"success": True, "densities": [0.5] * 1})
+
+        study = TopologyOptimizationStudy(name="S")
+        study.model_id = "m1"
+        study.add_part(CadEntityRef(entity_type=EntityType.SOLID,
+                                    model_id="m1", solid_id="solid_2"))
+        mgr = _make_conditions()
+        for c in mgr.all:
+            study.add_condition(c.id)
+        ctrl.conditions = mgr
+
+        sr = ctrl.execute_study(study)
+        assert sr.success is True
+        # The mesh must correspond to the selected solid (index 2), not solid_0.
+        assert meshed_indices == [2]
+        assert getattr(ctrl, "_study_solid_index", None) == 2
+
+    def test_execute_study_rejects_unresolvable_solid(self, monkeypatch):
+        """execute_study must fail clearly when the selected solid is out of range."""
+        from desktop.pipeline.controller import PipelineController
+        from core.cae_studies import StudyStatus
+        ctrl = PipelineController()
+        ctrl.model_id = "m1"
+        monkeypatch.setattr(ctrl.cad, "list_solids",
+                            lambda mid: [{"solid_id": "solid_0", "index": 0},
+                                         {"solid_id": "solid_1", "index": 1}])
+        ctrl.run_optimization = lambda **kw: {"success": True, "densities": [0.5]}
+
+        study = TopologyOptimizationStudy(name="S")
+        study.model_id = "m1"
+        # Select solid_5 which does not exist (only 2 solids).
+        study.add_part(_solid_ref(solid_id="solid_5", model_id="m1"))
+        mgr = _make_conditions()
+        for c in mgr.all:
+            study.add_condition(c.id)
+        ctrl.conditions = mgr
+
+        sr = ctrl.execute_study(study)
+        assert sr.success is False
+        assert sr.status == "unresolvable_part"
+        assert study.status == StudyStatus.FAILED
+
+    def test_execute_study_rejects_missing_solids(self, monkeypatch):
+        """execute_study fails when the model has no resolvable solids."""
+        from desktop.pipeline.controller import PipelineController
+        ctrl = PipelineController()
+        ctrl.model_id = "m1"
+        monkeypatch.setattr(ctrl.cad, "list_solids", lambda mid: [])
+        ctrl.run_optimization = lambda **kw: {"success": True, "densities": [0.5]}
+
+        study = TopologyOptimizationStudy(name="S")
+        study.model_id = "m1"
+        study.add_part(_solid_ref(solid_id="solid_0", model_id="m1"))
+        mgr = _make_conditions()
+        for c in mgr.all:
+            study.add_condition(c.id)
+        ctrl.conditions = mgr
+
+        sr = ctrl.execute_study(study)
+        assert sr.success is False
+        assert sr.status == "no_solids"

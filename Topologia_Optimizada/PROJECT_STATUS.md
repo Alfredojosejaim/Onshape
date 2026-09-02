@@ -228,8 +228,9 @@ Kratos Multiphysics autocontenido instalado vía pip en `.venv` (no conda):
     `preserved_elements` / `void_elements`.
   - Consume las condiciones compartidas (ver Conditions).
 - `core/optimization_studies.py`: parámetros de optimización (`TopOptParameters`).
-  - `TopologyOptimizationStudy.validate()` acepta **condiciones reutilizables por id**
-    **o** la config heredada `loads`/`constraints` (no rompe flujos anteriores).
+  - `TopologyOptimizationStudy.validate()` requiere **al menos un sólido** en `parts`,
+    todos de tipo SOLID, del mismo `model_id`. Acepta condiciones reutilizables por id
+    **o** la config heredada `loads`/`constraints`.
 
 ---
 
@@ -237,21 +238,31 @@ Kratos Multiphysics autocontenido instalado vía pip en `.venv` (no conda):
 
 **IMPLEMENTADO**
 
-Flujo integrado y verificable (STEP → condiciones reutilizables → estudio → malla → SIMP
+Flujo integrado y verificable (STEP → selección real → estudio → malla → SIMP
 → resultado → UI), sin rediseñar la UI existente:
 
-- **Crear estudio**: `desktop/ui/panels/study_panel.py` (`StudyPanel`) — nombre, tipo
-  (Topology Optimization/SIMP), pieza objetivo, fracción de volumen / iteraciones /
-  penalización / radio / tolerancia, y selección de condiciones reutilizables.
+- **Selección real de pieza**: el usuario selecciona sólido(s) desde el viewport
+  (`_current_solid_selections()` en `main_window.py` → `SelectionManager` → `CadEntityRef`).
+  Las selecciones se pasan a `StudyPanel` como `parts` y se almacenan en
+  `TopologyOptimizationStudy.parts`.
+- **Crear estudio**: `desktop/ui/panels/study_panel.py` (`StudyPanel`) — muestra las
+  piezas seleccionadas, nombre, tipo (Topology Optimization/SIMP), parámetros de
+  optimización, y selección de condiciones reutilizables. Rechaza explícitamente
+  cero piezas, entidades no-SOLID, y model_id incompatible.
 - **Menú superior "Estudio"**: `Nuevo estudio de optimización...` y
   `Ejecutar estudio (topología)` (`desktop/ui/main_window.py`).
 - **Registro y ejecución**: `PipelineController.register_study()` →
   `execute_study()` (valida, DRAFT→RUNNING→COMPLETED/FAILED) en **background**
   (`run_in_background`), reutilizando Properties / Results / DesignTree / Timeline /
   Viewport.
+  - `execute_study()` usa `study.model_id` y genera malla automáticamente si no existe.
+  - Las condiciones se consumen por id vía `study.consume_conditions(manager)` →
+    se pasan al solver SIMP via `run_optimization(conditions=...)`.
 - **Resultado/estado**: `StudyResult` → `document.add_result()`, panel de resultados y
   visualización de densidad en el viewport; errores explícitos cuando el estudio no
   está configurado o la condición no está soportada.
+- **Tests**: `test_study_pipeline.py` (43 tests) cubre selección → CadEntityRef →
+  study.parts → validación → condiciones → solver → resultado → UI.
 
 ---
 
@@ -340,10 +351,11 @@ OFFLINE_GRACE_PERIOD), protocolo `LicenseServerProtocol`, `NoOpLicenseServer`.
   (`_unsupported_conditions`) — nunca un resultado silenciosamente incorrecto.
 - **Pendientes resueltos**: SIMP consumidor (subdominios preservado/vacío), motor de
   diseño generativo real, reconstrucción B-Rep real (STEP), hole-filling en shells abiertos
-  no-manifold. Ver `RESUMEN_IMPLEMENTACION.md` (sección "INTERVENCIÓN - SISTEMA DE
+  no-manifold, **selección real de sólido → estudio** (StudyPanel recibe partes del
+  viewport, validación SOLID, model_id automático, malla automática en execute_study).
+  Ver `RESUMEN_IMPLEMENTACION.md` (sección "INTERVENCIÓN - SISTEMA DE
   CONDICIONES REUTILIZABLES + PENDIENTES RESUELTOS...").
-- Verificación: suite completa **190 passed, 6 deselected, 1 warning** (`.venv` y
-  `runtime/python`).
+- Verificación: suite completa **224 passed, 6 deselected, 1 warning** (`.venv`).
 - **Post-proceso de malla implementado**: `MeshSmoother` / `smooth_surface_mesh`
   (Laplaciano con bordes fijos) como etapa `SMOOTHED_MESH` del pipeline, aplicado antes
   del fitting B-Rep y usado de forma preferente (fallback a la malla cruda). Reduce el

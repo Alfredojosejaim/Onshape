@@ -247,22 +247,35 @@ Flujo integrado y verificable (STEP → selección real → estudio → malla �
   `TopologyOptimizationStudy.parts`.
 - **Crear estudio**: `desktop/ui/panels/study_panel.py` (`StudyPanel`) — muestra las
   piezas seleccionadas, nombre, tipo (Topology Optimization/SIMP), parámetros de
-  optimización, y selección de condiciones reutilizables. Rechaza explícitamente
-  cero piezas, entidades no-SOLID, y model_id incompatible.
+  optimización, botón **"Capturar desde selección"** (recaptura los sólidos del
+  viewport reutilizando el `SelectionManager` vía `get_solid_selections`, sin crear
+  una interfaz paralela), y selección de condiciones reutilizables. Rechaza
+  explícitamente cero piezas, entidades no-SOLID, y model_id incompatible.
 - **Menú superior "Estudio"**: `Nuevo estudio de optimización...` y
   `Ejecutar estudio (topología)` (`desktop/ui/main_window.py`).
 - **Registro y ejecución**: `PipelineController.register_study()` →
   `execute_study()` (valida, DRAFT→RUNNING→COMPLETED/FAILED) en **background**
   (`run_in_background`), reutilizando Properties / Results / DesignTree / Timeline /
   Viewport.
-  - `execute_study()` usa `study.model_id` y genera malla automáticamente si no existe.
+  - `execute_study()` usa `study.parts` para **resolver el sólido seleccionado como
+    dominio determinista** (`_resolve_study_solid_index` → `generate_mesh_for_solid`),
+    nunca el primer sólido implícito ni el compuesto completo. Valida que el sólido
+    seleccionado sea resolvable en el modelo (índice en rango) y rechaza con error
+    claro (`invalid_part` / `unresolvable_part` / `no_solids`) un sólido imposible de
+    resolver.
+  - Malla automática: si no existe malla (o cambia el sólido seleccionado) se genera
+    la malla del sólido específico (`CADService.generate_mesh_for_solid` vía
+    `generate_mesh_for_shape`, reutilizando los meshers gmsh/provisional existentes —
+    sin nuevo sistema de mallado).
   - Las condiciones se consumen por id vía `study.consume_conditions(manager)` →
     se pasan al solver SIMP via `run_optimization(conditions=...)`.
 - **Resultado/estado**: `StudyResult` → `document.add_result()`, panel de resultados y
   visualización de densidad en el viewport; errores explícitos cuando el estudio no
   está configurado o la condición no está soportada.
-- **Tests**: `test_study_pipeline.py` (43 tests) cubre selección → CadEntityRef →
-  study.parts → validación → condiciones → solver → resultado → UI.
+- **Tests**: `test_study_pipeline.py` (53 tests) cubre selección → CadEntityRef →
+  study.parts → validación → dominio determinista (sólido seleccionado ≠ primer
+  sólido, recaptura de selección en el panel) → condiciones → solver → resultado → UI.
+- Verificación: suite completa **243 passed, 6 deselected, 1 warning**.
 
 ---
 
@@ -355,7 +368,7 @@ OFFLINE_GRACE_PERIOD), protocolo `LicenseServerProtocol`, `NoOpLicenseServer`.
   viewport, validación SOLID, model_id automático, malla automática en execute_study).
   Ver `RESUMEN_IMPLEMENTACION.md` (sección "INTERVENCIÓN - SISTEMA DE
   CONDICIONES REUTILIZABLES + PENDIENTES RESUELTOS...").
-- Verificación: suite completa **224 passed, 6 deselected, 1 warning** (`.venv`).
+- Verificación: suite completa **243 passed, 6 deselected, 1 warning**.
 - **Post-proceso de malla implementado**: `MeshSmoother` / `smooth_surface_mesh`
   (Laplaciano con bordes fijos) como etapa `SMOOTHED_MESH` del pipeline, aplicado antes
   del fitting B-Rep y usado de forma preferente (fallback a la malla cruda). Reduce el

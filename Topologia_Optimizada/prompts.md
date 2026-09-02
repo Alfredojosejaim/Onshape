@@ -1,171 +1,206 @@
-IMPLEMENTACIÓN — SISTEMA DE HERRAMIENTAS Y CONDICIONES CAD
+CORRECCIÓN E INTEGRACIÓN — SISTEMA DE CONDICIONES CAD/CAE
 
-Trabaja directamente sobre el repositorio actual. No hagas una investigación extensa ni rediseñes el proyecto desde cero. Primero inspecciona brevemente la arquitectura existente y reutiliza sus sistemas actuales de selección, comandos, Features, FeatureHistory, Timeline, DesignTree, CAD y viewport.
+Trabaja directamente sobre el repositorio actual. No reconstruyas la arquitectura desde cero y no hagas investigación extensa. Audita únicamente lo necesario para identificar las inconsistencias descritas y corrígelas sobre la implementación existente.
 
 Objetivo
 
-Comenzar la implementación del sistema funcional de herramientas CAD/CAE que servirá de base para Optimización y Pruebas.
+Consolidar el sistema actual de condiciones CAD/CAE y dejarlo correctamente integrado con el pipeline, UI, historial y estudios de optimización.
 
-La arquitectura debe separar:
+La arquitectura existente debe mantenerse:
 
-1. Herramientas principales
-   
-   - Optimización
-   - Pruebas
+SelectionManager
+      ↓
+Command
+      ↓
+Condition
+      ↓
+ConditionManager
+      ↓
+FeatureHistory / Document
+      ↓
+Optimization Study
 
-2. Condiciones/subherramientas reutilizables
-   
-   - Carga
-   - Elasticidad
-   - Unión (Boolean)
-   - Obstrucciones
-   - Regiones protegidas
+Las condiciones son objetos reutilizables y los estudios deben referenciarlas mediante sus IDs, sin duplicarlas.
 
-3. Historial de operaciones
-   
-   - Cada operación aplicada debe integrarse con el sistema existente de "Command → Feature → FeatureHistory → Timeline/DesignTree".
-   - No crear sistemas paralelos de historial, selección o árbol.
+1. Corregir ProtectedRegion
 
-Modelo conceptual
+Revisa la discrepancia actual entre:
 
-Las condiciones deben poder existir como objetos/features independientes y posteriormente ser seleccionadas por un estudio de optimización.
+- "core/commands.py"
+- "desktop/ui/panels/condition_panel.py"
+- "test_conditions.py"
 
-Ejemplo:
-
-Estudio
- └── Optimización estructural
-      ├── Pieza(s)
-      ├── Carga 1
-      ├── Elasticidad 1
-      ├── Obstrucción 1
-      └── Región protegida 1
-
-El objetivo es que Optimización no tenga que recrear internamente estas condiciones, sino consumir las condiciones previamente creadas.
-
-Implementación inicial
-
-Implementa primero las bases necesarias para:
-
-1. Carga
+Asegúrate de que "ProtectedRegionCommand" exista, esté correctamente registrado en "CommandType" y "FeatureType", pueda construir un "ProtectedRegion" y sea compatible con el "ConditionPanel".
 
 Debe permitir:
 
 - seleccionar una o varias caras;
-- definir orientación respecto a un plano:
-  - paralelo;
-  - perpendicular;
-  - ángulo;
-- definir el sentido de la dirección;
-- introducir una magnitud numérica;
-- permitir también el estado "indeterminado" como valor válido del modelo.
+- almacenar referencias geométricas;
+- validar que exista al menos una selección;
+- crear la condición reutilizable;
+- registrarla mediante el pipeline existente.
 
-La herramienta debe guardar toda esta configuración como una condición reutilizable.
+No crear otro sistema de selección.
 
-2. Elasticidad
+2. Consolidar la validación de comandos
 
-Debe permitir:
+Revisa el flujo:
 
-- seleccionar una o varias caras;
-- definir el rango/magnitud de flexión en mm;
-- guardar la configuración como condición reutilizable.
+PipelineController.execute_command()
+        ↓
+command.validate()
+        ↓
+_execute_condition()
 
-3. Obstrucciones
+Evita realizar innecesariamente la misma validación dos veces.
 
-Debe permitir:
+Mantén una única responsabilidad clara para la validación, sin romper los comandos existentes.
 
-- seleccionar una o varias piezas;
-- definir opcionalmente un offset en mm;
-- guardar la configuración como condición reutilizable.
+3. Consolidar ConditionManager
 
-4. Regiones protegidas
+Verifica que:
 
-Utilizar el concepto Regiones protegidas en lugar de "Caras a conservar".
+- "ConditionManager" sea la única fuente de objetos "Condition";
+- las condiciones tengan IDs estables;
+- los estudios almacenen únicamente IDs;
+- "consume_conditions()" resuelva las condiciones existentes;
+- una misma condición nunca sea copiada/duplicada al incorporarla a un estudio;
+- eliminar o modificar la referencia de un estudio no destruya la condición compartida.
 
-Debe permitir:
+Mantener compatibilidad con serialización/deserialización existente.
 
-- seleccionar una o varias caras;
-- almacenar esas referencias como geometría que la optimización no debe modificar.
+4. Integrar correctamente Optimización estructural
 
-Diseñar el modelo de forma que posteriormente pueda ampliarse para proteger regiones geométricas más complejas.
+Actualmente "TopologyOptimizationStudy" ya permite almacenar:
 
-5. Unión / Boolean
+parts
+conditions
 
-Integrar la herramienta booleana existente o crearla únicamente si todavía no existe una implementación funcional.
+pero su validación todavía depende del sistema antiguo de "loads" y "constraints".
 
-Debe permitir:
+Corrige esto para que el estudio pueda utilizar las condiciones reutilizables como fuente principal de configuración.
 
-- seleccionar dos o más piezas diferentes;
-- seleccionar operación:
-  - Unión;
-  - Corte;
-  - Intersección;
-- opción "Conservar herramientas";
-- ejecutar o cancelar;
-- registrar el resultado mediante el sistema existente de Features/Commands/Timeline.
+Debe poder representar conceptualmente:
 
-No crear un segundo sistema de selección ni de historial.
+Optimización estructural
+├── Pieza(s)
+├── Carga
+├── Elasticidad
+├── Obstrucciones
+└── Regiones protegidas
 
+Las condiciones deben ser seleccionadas desde las existentes, no recreadas dentro del estudio.
+
+No reemplaces todavía el solver SIMP. Solo integra correctamente sus entradas con esta nueva arquitectura.
+
+5. Preparar Optimización generativa
+
+Revisa "GenerativeDesignStudy" y conserva su arquitectura actual.
+
+Debe continuar soportando:
+
+Escenario A
+
+Pieza existente
+      ↓
+Condiciones
+      ↓
+Generación/optimización
+
+Escenario B
+
+Pieza A + Pieza B
+      ↓
+Espacio disponible
+      ↓
+Generación de geometría
+      ↓
 Optimización
+      ↓
+CAD resultante
 
-Preparar únicamente la arquitectura necesaria para que posteriormente pueda recibir:
+No implementar todavía el algoritmo completo de generación de geometría.
 
-- Optimización estructural;
-- Optimización generativa.
+Solo garantizar que el estudio pueda recibir correctamente piezas objetivo y condiciones reutilizables.
 
-La optimización estructural deberá poder recibir:
+6. Boolean
 
-- una o varias piezas;
-- condiciones previamente creadas;
-- porcentaje/parámetros propios de optimización.
+No reconstruir Boolean.
 
-La optimización generativa debe quedar preparada arquitectónicamente para dos escenarios:
+Revisa únicamente que:
 
-1. optimizar una pieza ya existente;
-2. recibir Pieza A + Pieza B y generar la geometría CAD que conecta físicamente ambas piezas mientras dicha geometría es optimizada.
+- continúe utilizando el "SelectionManager" existente;
+- seleccione target + herramientas;
+- ejecute Union/Cut/Intersection;
+- respete "keep_tools";
+- registre el resultado mediante el FeatureHistory existente;
+- sea compatible con las condiciones y estudios.
 
-No implementes todavía el algoritmo completo de diseño generativo. Solo deja correctamente separada la arquitectura para incorporarlo posteriormente.
+No crear otro historial ni otro sistema de Features.
 
-Pruebas
+7. UI
 
-Crear solamente la categoría/base extensible de "Pruebas".
+Corrige únicamente lo necesario para que las herramientas existentes funcionen con la arquitectura consolidada.
 
-No inventar ni implementar todavía los tipos concretos de pruebas, ya que serán definidos posteriormente.
+No realizar todavía un rediseño visual.
 
-Reglas importantes
+El "ConditionPanel" debe poder crear correctamente:
 
-- Reutiliza la arquitectura existente.
-- No reemplaces sistemas funcionales sin necesidad.
-- No dupliques "SelectionManager", "FeatureHistory", "Timeline", "DesignTree" ni servicios equivalentes.
-- Mantén separación entre modelo, lógica de comandos y UI.
-- Las herramientas deben poder funcionar independientemente de la interfaz visual definitiva.
-- No hagas un rediseño visual completo.
-- No conviertas el proyecto a C++ ni cambies de framework salvo que exista una necesidad técnica real y justificada.
-- Mantén Python/PySide6/VTK donde ya sean adecuados.
-- No elimines funcionalidades existentes.
-- Si una función existente está incompleta, intégrala y corrígela en lugar de crear otra paralela.
-- Mantén compatibilidad con el flujo CAD/STEP existente.
+- Carga
+- Elasticidad
+- Obstrucción
+- Regiones protegidas
 
-Validación
+y entregar los comandos al pipeline existente.
 
-Después de implementar:
+8. Pruebas
 
-1. Ejecuta las pruebas existentes.
-2. Añade pruebas unitarias para los nuevos modelos/condiciones cuando sea necesario.
-3. Comprueba que las herramientas pueden:
-   - crear una condición;
-   - almacenar su configuración;
-   - recuperarla posteriormente;
-   - integrarse en el historial;
-   - coexistir con las operaciones CAD existentes.
-4. Comprueba que una optimización pueda consultar las condiciones creadas sin duplicarlas.
-5. Verifica que no existan sistemas paralelos de selección/historial.
+Ejecuta la suite existente y corrige los tests que estén desactualizados respecto a la arquitectura real.
 
-Al finalizar, informa brevemente:
+Añade únicamente las pruebas necesarias para verificar:
 
-- qué archivos modificaste;
-- qué arquitectura reutilizaste;
-- qué funciones quedaron implementadas;
-- qué quedó preparado pero pendiente;
-- resultado de las pruebas.
+- ProtectedRegionCommand;
+- creación y validación de condiciones;
+- registro en ConditionManager;
+- registro en FeatureHistory;
+- serialización;
+- ausencia de duplicación;
+- consumo de condiciones por "TopologyOptimizationStudy";
+- consumo de condiciones por "GenerativeDesignStudy";
+- coexistencia con Boolean.
 
-Prioridad: implementación funcional y arquitectura limpia. No detener el trabajo para realizar investigaciones innecesarias.
+Restricciones
+
+- No reescribir el proyecto.
+- No crear sistemas paralelos.
+- No crear otro SelectionManager.
+- No crear otro FeatureHistory.
+- No crear otro Timeline/DesignTree.
+- No eliminar funcionalidad existente.
+- No cambiar PySide6/VTK sin necesidad técnica real.
+- No implementar todavía los tipos concretos de "Pruebas".
+- No implementar todavía el algoritmo completo de Generative Design.
+- No hacer rediseño visual.
+- No detenerse para investigación innecesaria.
+
+Validación final
+
+Antes de terminar:
+
+1. Ejecuta todos los tests.
+2. Corrige los errores encontrados.
+3. Comprueba que las condiciones se crean, almacenan y recuperan correctamente.
+4. Comprueba que Optimización estructural puede consumirlas por ID.
+5. Comprueba que Generative Design puede consumirlas por ID.
+6. Comprueba que Boolean y las condiciones utilizan el mismo historial.
+7. Comprueba que no existen implementaciones duplicadas de estos sistemas.
+
+Al finalizar, informa solamente:
+
+- archivos modificados;
+- problemas corregidos;
+- funcionalidades integradas;
+- tests ejecutados y resultado;
+- pendientes reales.
+
+Prioridad: corregir → integrar → probar → dejar listo para la siguiente etapa. No reconstruir lo que ya funciona.

@@ -289,8 +289,14 @@ class Viewport3D(QWidget):
             self.scene.fit_camera()
         self.renderer.render()
 
-    def show_density(self, nodes: np.ndarray, elements: np.ndarray, densities: np.ndarray) -> None:
-        self.scene.set_density_field(nodes, elements, densities)
+    def show_density(
+        self,
+        nodes: np.ndarray,
+        elements: np.ndarray,
+        densities: np.ndarray,
+        colormap: str = "jet",
+    ) -> None:
+        self.scene.set_density_field(nodes, elements, densities, colormap=colormap)
         self.renderer.render()
 
     def finalize(self) -> None:

@@ -1,273 +1,296 @@
-ETAPA — CERRAR SELECCIÓN DE PIEZA Y EJECUCIÓN ESTRUCTURAL REAL
+ETAPA FINAL — CIERRE DE OPERACIONES CAD Y CABOS SUELTOS
 
-Trabaja directamente sobre el repositorio actual.
+Objetivo
 
-La arquitectura CAD/CAE base ya existe. No reconstruyas sistemas funcionales. Esta etapa se concentra exclusivamente en cerrar:
+Audita y completa exclusivamente los faltantes detectados en la última auditoría del repositorio.
 
-SELECCIÓN CAD
-↓
-"TopologyOptimizationStudy.parts"
-↓
-"PipelineController"
-↓
-MALLA
-↓
-CONDICIONES
-↓
-SIMP
-↓
-RESULTADO
+Repositorio: "Alfredojosejaim/Onshape"
+Proyecto: "Topologia_Optimizada"
 
-1. Auditoría focalizada
+No rehagas arquitectura existente, no migres de lenguaje y no reemplaces sistemas funcionales. El objetivo es cerrar las operaciones CAD que quedaron parcialmente implementadas y dejar el flujo listo para avanzar a la siguiente etapa.
 
-Revisa únicamente:
+---
 
-- "desktop/ui/panels/study_panel.py"
-- "desktop/ui/main_window.py"
-- "desktop/pipeline/controller.py"
-- "core/optimization_studies.py"
-- "core/cad_entity.py"
-- "desktop/viewport/selection.py"
-- "core/conditions.py"
-- tests relacionados.
+1. HALLAZGOS DE LA AUDITORÍA — VERIFICAR PRIMERO
 
-No hagas una auditoría general.
+A. "core/commands.py"
 
-2. Selección real de la pieza
+Existen comandos para:
 
-Actualmente "StudyPanel" representa la pieza objetivo mediante texto y permite implícitamente utilizar el primer sólido.
+- "TransformCommand"
+- "MirrorCommand"
+- "PatternCommand"
 
-Esto debe corregirse.
+pero deben verificarse contra su ejecución real.
 
-El usuario debe poder seleccionar uno o más sólidos reales desde el viewport y esas selecciones deben convertirse en "CadEntityRef".
+B. "desktop/pipeline/controller.py"
 
-Cada referencia debe conservar como mínimo:
+"execute_command()" actualmente tiene ejecución específica para Boolean y Conditions, pero Transform/Mirror/Pattern pueden terminar únicamente registrándose como "Feature".
 
-- "entity_type = SOLID";
-- "model_id";
-- "solid_id" o identificador estable equivalente.
+Debe corregirse: esas operaciones deben ejecutarse realmente a través del pipeline cuando corresponda.
 
-Después deben almacenarse mediante:
+Flujo esperado:
 
-"study.add_part(ref)"
+"Command → PipelineController → CADService → nuevo resultado CAD → FeatureHistory/Document"
 
-No utilizar el primer sólido automáticamente cuando existe una selección explícita.
+C. "services/cad_service.py"
 
-No crear otro "SelectionManager".
+Ya existen operaciones geométricas para:
 
-3. Integración UI → selección → estudio
+- transformación;
+- espejo;
+- patrón lineal;
+- patrón rectangular;
+- patrón circular.
 
-Modifica únicamente lo necesario para que el flujo sea:
+No reemplazarlas.
 
-1. importar STEP;
-2. iniciar creación de estudio;
-3. activar selección de pieza;
-4. seleccionar sólido(s) en viewport;
-5. mostrar las piezas seleccionadas;
-6. confirmar;
-7. crear "TopologyOptimizationStudy.parts" con esas referencias.
+Hallazgo específico: el patrón circular dispone de un parámetro "center" en la arquitectura del comando, pero la implementación CAD aparentemente rota alrededor del origen.
 
-Reutiliza el sistema de selección existente y sus callbacks/mecanismos actuales.
+Verifica esto directamente en el código y corrígelo si se confirma.
 
-No crear una interfaz paralela ni rediseñar la aplicación.
+D. "desktop/ui/main_window.py"
 
-4. Validación de piezas
+No se encontraron handlers equivalentes a las operaciones Boolean/Study para:
 
-El estudio debe rechazar:
+- Transform;
+- Mirror;
+- Pattern.
 
-- cero piezas;
-- entidades que no sean "SOLID";
-- referencias incompatibles con el "model_id" actual;
-- sólidos imposibles de resolver.
+Verifica si existen otras interfaces o rutas alternativas antes de crear nuevas.
 
-Los errores deben llegar claramente a la UI.
+Si realmente faltan, intégralas reutilizando los Commands y CADService existentes.
 
-No basta con comprobar que "parts" tenga elementos: validar la coherencia de las referencias cuando la información disponible lo permita.
+E. Historial / árbol / viewport
 
-5. Hacer que "study.parts" gobierne la ejecución
+Debe comprobarse que una operación CAD ejecutada realmente:
 
-Existe actualmente una discrepancia:
+1. modifica o genera el modelo correcto;
+2. actualiza "model_id"/estado CAD;
+3. refresca el viewport;
+4. invalida correctamente malla/resultados si la geometría cambió;
+5. registra la operación en "FeatureHistory";
+6. aparece en "DesignTree";
+7. mantiene coherencia con "Document" y Timeline.
 
-"TopologyOptimizationStudy" posee "parts", pero "PipelineController.execute_study()" continúa utilizando el estado global:
+No crear managers paralelos.
 
-- "self.model_id"
-- "self.mesh_nodes"
-- "self.mesh_elements"
+---
 
-Corrige esto.
+2. IMPLEMENTACIÓN REQUERIDA
 
-Para Optimización estructural, el sólido seleccionado en "study.parts" debe determinar inequívocamente la geometría utilizada por el estudio.
+Transform
 
-Si el modelo contiene varios sólidos:
+Cerrar el flujo completo de Transform:
 
-- no asumir el primero;
-- resolver el sólido seleccionado;
-- utilizarlo como dominio de análisis.
+- UI para configurar los parámetros que el comando ya soporte;
+- selección de cuerpos mediante el "SelectionManager" existente;
+- creación del "TransformCommand";
+- validación;
+- ejecución real mediante "PipelineController";
+- llamada al "CADService";
+- actualización del modelo;
+- actualización del viewport;
+- registro en FeatureHistory/Document/DesignTree;
+- invalidación de malla y resultados dependientes de la geometría.
 
-No implementar todavía análisis multi-body avanzado. El objetivo es que el sólido seleccionado sea el dominio correcto y determinista.
+No inventar parámetros que el modelo actual no necesite.
 
-6. Malla automática
+Mirror
 
-"execute_study()" debe garantizar que exista una malla válida antes de ejecutar SIMP.
+Cerrar el mismo flujo para Mirror:
 
-Si no existe:
+- selección de cuerpo;
+- selección/configuración del plano o eje según la arquitectura existente;
+- "MirrorCommand";
+- ejecución real;
+- actualización CAD/UI/historial;
+- tests.
 
-- utilizar el generador de malla existente;
-- generar la malla;
-- actualizar "self.mesh", "self.mesh_nodes" y "self.mesh_elements";
-- continuar automáticamente con el estudio.
+Pattern
 
-No crear otro sistema de mallado.
+Cerrar el flujo para Pattern:
 
-La ejecución desde UI debe continuar utilizando "run_in_background()".
+- selección de cuerpo;
+- configuración del tipo existente;
+- cantidad;
+- dirección/eje según corresponda;
+- separación/ángulo según el tipo;
+- ejecución real;
+- actualización completa del modelo.
 
-7. Condiciones reutilizables
+Debe soportar únicamente los tipos que ya estén definidos por la arquitectura actual. No crear funcionalidades ficticias solamente para aparentar soporte.
 
-Mantener:
+Patrón circular
 
-"study.conditions" → IDs
-"ConditionManager" → objetos reales
+Verificar específicamente el parámetro "center".
 
-Al ejecutar:
+Si actualmente la geometría rota siempre alrededor de "(0,0,0)", corregirla para utilizar el centro definido por el usuario/comando.
 
-"study.consume_conditions(self.conditions)"
+Agregar una prueba que demuestre que un patrón circular con centro distinto del origen produce la geometría esperada.
 
-debe obtenerse el conjunto real de condiciones y pasarse al camino de optimización.
+---
 
-Verifica específicamente:
+3. INTEGRACIÓN CON EL MODELO
 
-- carga → fuerzas/nodos/DOF;
-- soporte/restricción → DOF fijos;
-- regiones protegidas → elementos preservados;
-- obstrucciones → elementos vacíos cuando puedan mapearse.
+Cuando una operación CAD modifica la geometría:
 
-Una condición no mapeable debe generar un estado/error explícito.
+- el nuevo resultado debe convertirse en el modelo activo;
+- actualizar "model_id" y cualquier estado/cache relacionado;
+- limpiar o invalidar malla FEM existente si ya no corresponde;
+- limpiar/invalidate resultados FEA/TopOpt dependientes;
+- actualizar tessellation;
+- refrescar viewport;
+- sincronizar DesignTree;
+- conservar la operación como Feature.
 
-Nunca producir silenciosamente un resultado físicamente incorrecto.
+No eliminar silenciosamente la historia anterior.
 
-No crear otro sistema de condiciones ni otro mapper si ya existe infraestructura reutilizable.
+Si la arquitectura existente utiliza un mecanismo concreto para reemplazar el modelo activo, reutilizarlo.
 
-8. Resultado
+---
 
-Mantener exactamente el sistema existente:
+4. SELECCIÓN
 
-SIMP
-↓
-"StudyResult"
-↓
-"Document.add_result()"
-↓
-"ResultsPanel"
-↓
-"Viewport3D.show_density()"
+Reutilizar exclusivamente el "SelectionManager" existente.
 
-El resultado debe corresponder al sólido seleccionado.
+No crear otro sistema de selección para Transform/Mirror/Pattern.
 
-No crear otro sistema de resultados.
+Las selecciones deben utilizar "CadEntityRef" cuando corresponda y respetar las validaciones existentes.
 
-9. Tests
+Validar al menos:
 
-Añade o adapta únicamente los tests necesarios para demostrar:
+- ninguna pieza seleccionada;
+- selección inválida;
+- referencia inexistente;
+- parámetros geométricos inválidos;
+- operación que no pueda ejecutarse sobre la geometría seleccionada.
 
-1. selección de un sólido → "CadEntityRef";
-2. "study.parts" recibe la referencia seleccionada;
-3. no se acepta una entidad que no sea "SOLID";
-4. no se acepta un sólido incompatible;
-5. selección de múltiples sólidos no duplica referencias;
-6. las condiciones continúan referenciándose por ID;
-7. las condiciones llegan realmente a "run_optimization(..., conditions=...)";
-8. una condición de carga llega al solver;
-9. una restricción llega a los DOF fijos;
-10. preservados/obstrucciones se transmiten correctamente cuando son mapeables;
-11. una condición no soportada no produce un resultado silencioso;
-12. un estudio sin malla genera automáticamente la malla;
-13. el estudio utiliza la pieza seleccionada y no el primer sólido;
-14. "StudyResult" llega al "Document";
-15. las densidades quedan disponibles para "Viewport3D";
-16. la ejecución pesada desde UI continúa en background.
+Los errores deben regresar como "CommandResult"/mecanismo existente y mostrarse correctamente en UI.
 
-Utiliza mocks/stubs cuando sea apropiado para evitar geometrías pesadas innecesarias.
+---
 
-10. Compatibilidad
+5. TESTS
 
-No romper:
+No te limites a tests de construcción del Command.
 
+Agregar pruebas que cubran el flujo real hasta donde permita la arquitectura actual:
+
+Transform
+
+- validación;
+- ejecución CAD;
+- resultado geométrico;
+- actualización de modelo;
+- FeatureHistory.
+
+Mirror
+
+- validación;
+- ejecución CAD;
+- resultado geométrico;
+- historial.
+
+Pattern
+
+- lineal;
+- rectangular si está definido;
+- circular;
+- especialmente centro circular distinto del origen.
+
+Integración
+
+Comprobar que después de una operación CAD:
+
+- el modelo activo cambia correctamente;
+- la malla anterior no se conserva incorrectamente;
+- los resultados anteriores no se presentan como pertenecientes a la nueva geometría;
+- el DesignTree refleja la operación.
+
+Ejecutar también la suite completa existente.
+
+---
+
+6. AUDITORÍA DE CABOS ADICIONALES
+
+Mientras implementas lo anterior, realiza una revisión focalizada, no una auditoría completa, buscando errores del mismo tipo:
+
+- código que aparenta ejecutar una operación pero solamente registra una Feature;
+- métodos implementados en "CADService" pero nunca conectados al pipeline;
+- comandos existentes sin ruta de ejecución;
+- UI existente sin backend;
+- backend existente sin UI;
+- estados/cache que no se invalidan después de modificar CAD;
+- documentación que declare una funcionalidad como implementada cuando realmente no lo está.
+
+Si encuentras alguno relacionado directamente con las operaciones CAD que estás cerrando, corrígelo.
+
+No amplíes el alcance a funcionalidades nuevas no relacionadas.
+
+---
+
+7. FUNCIONALIDADES QUE NO DEBES ROMPER
+
+Antes de modificar código, verifica dependencias.
+
+No modificar innecesariamente:
+
+- SelectionManager;
+- flujo STEP;
+- CADService existente;
 - Boolean;
-- Conditions;
-- "ConditionManager";
-- "SelectionManager";
-- "FeatureHistory";
-- Timeline;
+- FeatureHistory;
 - Document;
+- Timeline;
+- DesignTree;
+- FEA;
+- Kratos;
+- Topología;
 - Generative Design;
-- PySide6;
-- VTK;
-- flujos heredados basados en "forces"/"constraints".
+- sistema de estudios;
+- navegación/cámara;
+- sistema de GPU.
 
-No modificar algoritmos de optimización salvo que sea imprescindible para conectar correctamente los datos.
+Si necesitas modificar alguno para integrar correctamente una operación CAD, realiza únicamente el cambio mínimo necesario y verifica regresiones.
 
-Restricciones estrictas
+---
 
-- No crear otro "SelectionManager".
-- No crear otro "ConditionManager".
-- No crear otro "PipelineController".
-- No crear otro sistema de malla.
-- No crear otro sistema de resultados.
-- No migrar a C++.
-- No introducir dependencias innecesarias.
-- No rediseñar visualmente la aplicación.
-- No hacer investigación extensa.
-- No reconstruir sistemas existentes.
-- No considerar la tarea terminada solo porque los tests unitarios pasan.
+8. DOCUMENTACIÓN
 
-Validación final
+Después de implementar y probar:
 
-Ejecuta la suite existente y los nuevos tests.
+Actualizar "PROJECT_STATUS.md" para reflejar el estado real.
 
-Después verifica el encadenamiento:
+No declarar una funcionalidad como "IMPLEMENTADA" si únicamente existe su UI, Command o método aislado.
 
-STEP
-↓
-selección real de sólido
-↓
-"CadEntityRef"
-↓
-"study.parts"
-↓
-condiciones por ID
-↓
-validación
-↓
-malla automática si hace falta
-↓
-condiciones → solver
-↓
-SIMP
-↓
-"StudyResult"
-↓
-Document
-↓
-ResultsPanel / Viewport
+Documentar brevemente:
 
-Comprueba específicamente que:
+- Transform;
+- Mirror;
+- Pattern;
+- corrección del centro del patrón circular;
+- integración con historial/modelo/viewport;
+- tests realizados.
 
-- no se utilice implícitamente el primer sólido;
-- la malla corresponda al dominio seleccionado;
-- las condiciones no se dupliquen;
-- Boolean siga funcionando;
-- Generative Design siga funcionando;
-- la UI no se bloquee.
+---
 
-Actualiza "PROJECT_STATUS.md" únicamente con funcionalidades realmente verificadas.
+9. CRITERIO DE FINALIZACIÓN
 
-Al finalizar informa solamente:
+La etapa solamente se considera cerrada cuando:
 
-- archivos modificados;
-- problemas reales encontrados;
-- correcciones realizadas;
-- flujo de selección → estudio → solver conseguido;
-- tests ejecutados y resultado;
-- pendientes reales.
+"Selección → UI → Command → Validación → Pipeline → CADService → Geometría real → Modelo activo → Viewport → FeatureHistory/Document → DesignTree → Tests"
 
-Prioridad: selección real → dominio correcto → malla → condiciones → solver → resultado → pruebas.
+funcione de extremo a extremo para Transform, Mirror y Pattern.
+
+Al finalizar:
+
+1. ejecuta tests específicos;
+2. ejecuta la suite completa;
+3. corrige regresiones;
+4. revisa "PROJECT_STATUS.md";
+5. informa exactamente qué quedó implementado;
+6. informa cualquier limitación real que permanezca.
+
+No dejes implementaciones "placeholder", "pending" o simplemente registradas como Feature si la operación está declarada como soportada.
+
+El objetivo es cerrar los cabos existentes, no comenzar una nueva arquitectura.

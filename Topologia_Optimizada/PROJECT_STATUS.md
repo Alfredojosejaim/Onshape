@@ -228,6 +228,30 @@ Kratos Multiphysics autocontenido instalado vía pip en `.venv` (no conda):
     `preserved_elements` / `void_elements`.
   - Consume las condiciones compartidas (ver Conditions).
 - `core/optimization_studies.py`: parámetros de optimización (`TopOptParameters`).
+  - `TopologyOptimizationStudy.validate()` acepta **condiciones reutilizables por id**
+    **o** la config heredada `loads`/`constraints` (no rompe flujos anteriores).
+
+---
+
+## Studios end-to-end (CAD/CAE)
+
+**IMPLEMENTADO**
+
+Flujo integrado y verificable (STEP → condiciones reutilizables → estudio → malla → SIMP
+→ resultado → UI), sin rediseñar la UI existente:
+
+- **Crear estudio**: `desktop/ui/panels/study_panel.py` (`StudyPanel`) — nombre, tipo
+  (Topology Optimization/SIMP), pieza objetivo, fracción de volumen / iteraciones /
+  penalización / radio / tolerancia, y selección de condiciones reutilizables.
+- **Menú superior "Estudio"**: `Nuevo estudio de optimización...` y
+  `Ejecutar estudio (topología)` (`desktop/ui/main_window.py`).
+- **Registro y ejecución**: `PipelineController.register_study()` →
+  `execute_study()` (valida, DRAFT→RUNNING→COMPLETED/FAILED) en **background**
+  (`run_in_background`), reutilizando Properties / Results / DesignTree / Timeline /
+  Viewport.
+- **Resultado/estado**: `StudyResult` → `document.add_result()`, panel de resultados y
+  visualización de densidad en el viewport; errores explícitos cuando el estudio no
+  está configurado o la condición no está soportada.
 
 ---
 
@@ -238,15 +262,20 @@ Kratos Multiphysics autocontenido instalado vía pip en `.venv` (no conda):
 - `core/generative.py` (170 líneas): backbone del estudio (`GenerativeDesignStudy`,
   escenarios A y B, `DesignSpace`, configs). `validate()` acepta **o** `loads` **o**
   `conditions` **o** `constraints`.
-- `core/generative_engine.py` (368 líneas, nuevo): motor real puro Python —
+- `core/generative_engine.py` (nuevo): motor real puro Python —
   `generate_bridge_mesh` (hex → 6 tets), `consume_conditions`, `direction_vector`
   (perpendicular / paralela / ángulo + sentido), `GenerativeDesignEngine.solve_simp`
   (traduce condiciones → fuerzas/fijaciones/preservados/vacíos) y
   `run_generative_design` (escenarios A y B + reconstrucción). Sin skimage/OCSMeshing.
+  - **Obstrucciones por cuerpo → elementos**: con `model_shape`, `_void_elements` mapea
+    los sólidos obstructivos a elementos de malla por centroide (con `offset_mm`); solo
+    cuando **no** hay forma CAD se devuelve el marcador
+    `result["_unsupported_conditions"]` (sección 6 — nunca un resultado silenciosamente
+    incorrecto).
 - Los métodos de generación `VOXEL_FILL` / `LEVEL_SET` / `GROWTH` / `AI_GUIDED` quedan
   como configuración (`GenerationMethod`); el algoritmo real implementado es SIMP sobre
   malla puente (escenario B) y sobre la geometría existente (escenario A).
-- Validado con `test_resolved_pendientes.py` (8 tests).
+- Validado con `test_resolved_pendientes.py` (9+ tests).
 
 ---
 
@@ -254,14 +283,18 @@ Kratos Multiphysics autocontenido instalado vía pip en `.venv` (no conda):
 
 **IMPLEMENTADO**
 
-`core/cad_reconstruction.py` (435 líneas): conversión resultado volumétrico/malla → B-Rep.
+`core/cad_reconstruction.py` (498 líneas): conversión resultado volumétrico/malla → B-Rep.
 
 - `MarchingTetrahedraExtractor`: isosuperficie real (densidades por elemento → nodos,
-  dedup de vértices por posición).
-- `OCPBRepFitter`: sewing → wiring → solid → exportación **STEP** (vía OCP).
-- `ReconstructionPipeline` con componentes reales por defecto; política "best effort":
-  devuelve el mejor resultado disponible (SURFACE_MESH completed como mínimo).
-- Pendiente: robustez B-Rep sobre isosuperficies ruidosas (post-proceso de malla).
+  dedup de vértices vectorizado con structured-array `np.unique` — mejora de rendimiento).
+- `OCPBRepFitter`: sewing → wiring → solid → exportación **STEP** (vía OCP). Rechaza
+  explícitamente triángulos degenerados (área cero) antes del sewing para que una
+  isosuperficie ruidosa no corrompa el B-Rep (robustez).
+- `ReconstructionPipeline` con componentes reales por defecto; etapa `SMOOTHED_MESH`
+  (pulido Laplaciano con bordes fijos) aplicada antes del fitting, preferida sobre la
+  malla cruda; política "best effort": devuelve el mejor resultado disponible (B-Rep o
+  malla de superficie suavizada).
+- Validado con `test_resolved_pendientes.py` (tests de dedupe, pulido y robustez B-Rep).
 
 ---
 
@@ -298,9 +331,19 @@ OFFLINE_GRACE_PERIOD), protocolo `LicenseServerProtocol`, `NoOpLicenseServer`.
 - `prompt.md` → `prompts.md` (solo el prompt vigente); `prompt_investigacion.md` eliminado
   (prompt anterior).
 - **Condiciones CAD/CAE reutilizables** implementadas y consumidas por id (ver Conditions).
+- **Flujo CAD/CAE end-to-end cerrado**: creación/ejecución de estudios de optimización
+  (menú "Estudio", `StudyPanel`), validación que acepta condiciones **o** la config
+  heredada `loads`/`constraints`, y marcador explícito de condiciones no soportadas
+  (`_unsupported_conditions`) — nunca un resultado silenciosamente incorrecto.
 - **Pendientes resueltos**: SIMP consumidor (subdominios preservado/vacío), motor de
   diseño generativo real, reconstrucción B-Rep real (STEP). Ver `RESUMEN_IMPLEMENTACION.md`
   (sección "INTERVENCIÓN - SISTEMA DE CONDICIONES REUTILIZABLES + PENDIENTES RESUELTOS...").
-- Verificación: suite completa **176 passed, 6 deselected, 1 warning**.
-- Pendientes reales: mapeo obstrucciones→elementos sin `model_shape`; rendimiento del
-  marching tetrahedra; robustez del B-Rep sobre isosuperficies ruidosas.
+- Verificación: suite completa **184 passed, 6 deselected, 1 warning** (`.venv` y
+  `runtime/python`).
+- **Post-proceso de malla implementado**: `MeshSmoother` / `smooth_surface_mesh`
+  (Laplaciano con bordes fijos) como etapa `SMOOTHED_MESH` del pipeline, aplicado antes
+  del fitting B-Rep y usado de forma preferente (fallback a la malla cruda). Reduce el
+  ruido de isosuperficies; la conectividad no cambia.
+- Pendiente real restante: cierre automático de huecos (hole-filling) en shells abiertos
+  no manifold — hoy se rechaza explícitamente como inválido (nunca silencioso) y la
+  reconstrucción "best effort" devuelve la malla de superficie suavizada.

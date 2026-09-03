@@ -142,10 +142,10 @@ class CameraController:
         # drag vector in the view plane.
         # VTK's QVTKRenderWindowInteractor flips Qt's Y (y_vtk = h - y_qt - 1),
         # so dy > 0 means drag UP on screen.  The -dx sign makes the model
-        # follow the pointer horizontally: dragging right rotates the camera
-        # rightward around the model.  The +dy sign makes dragging up rotate
-        # the camera upward (model follows the pointer vertically).
-        drag = right * (-dx) + up * dy
+        # follow the pointer horizontally (drag right -> the camera orbits
+        # right, the model appears to rotate right).  The -dy sign makes the
+        # camera drop when dragging up, so the model moves up on screen.
+        drag = right * (-dx) + up * (-dy)
         dmg = float(np.linalg.norm(drag))
         if dmg < 1e-12:
             return

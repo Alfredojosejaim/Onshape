@@ -104,17 +104,16 @@ def test_orbit_from_arbitrary(controller):
 # --------------------------------------------------------------------------- #
 
 def test_orbit_vertical_sense_follows_pointer(controller):
-    """Dragging UP on screen (dy<0) must make the view move up: the camera
-    drops (its world-space normal-to-view offset decreases) so the model goes
-    up on screen. This pins the fix for the reported inverted vertical orbit.
-    Horizontal and vertical use independent senses; we only assert vertical.
-    """
+    """Dragging UP on screen must make the model move up: the camera drops (its
+    world-space normal-to-view offset decreases) so the model's top becomes
+    visible / it moves up on screen.  In VTK dy > 0 is a drag UP (the
+    QVTKRenderWindowInteractor flips Qt's Y).  Pins the vertical orbit sense."""
     controller.set_view(StandardView.FRONT)
     cam_z0 = controller.position[2]
-    controller.orbit(0.0, -5.0, sensitivity=0.01)   # drag up on screen
+    controller.orbit(0.0, 5.0, sensitivity=0.01)   # drag up on screen (VTK dy>0)
     cam_z1 = controller.position[2]
     assert cam_z1 < cam_z0, (
-        "dragging up should lower the camera in the view-normal direction"
+        "dragging up should lower the camera so the model moves up on screen"
     )
 
 

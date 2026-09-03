@@ -71,15 +71,14 @@ resultado.
 ### 3.1 CameraController (VTK) — `desktop/viewport/camera.py`
 
 - `orbit(dx, dy)` (línea 114): trackball libre "follow-the-pointer".
-  `drag = right*(-dx) + up*dy`, `axis = cross(drag, forward)`. El `-dx`
+  `drag = right*(-dx) + up*(-dy)`, `axis = cross(drag, forward)`. El `-dx`
   hace que la pieza siga al cursor horizontalmente (arrastrar derecha →
-  la cámara orbita a la derecha alrededor de la pieza); el `+dy` hace lo
-  mismo verticalmente (arrastrar arriba → la cámara se eleva).
+  la cámara orbita a la derecha alrededor de la pieza); el `-dy` hace que
+  arrastrar arriba baje la cámara y la pieza suba en pantalla.
   **Importante**: VTK (`QVTKRenderWindowInteractor`) invierte la Y de Qt
   (`y_vtk = height - y_qt - 1`), por lo que en VTK `dy > 0` es arrastrar
-  **arriba**; esto fue el origen del bug de inversión (se creía que era la
-  horizontal la invertida, pero era la vertical la que necesitaba el
-  ajuste de Y).
+  **arriba**; esto fue el origen de los bugs de inversión (órbita vertical
+  y pan).
 - `pan(dx, dy)` (línea 181): `delta = right*(-dx*scale) + up*(-dy*scale)`.
   Horizontal con signo `-dx` (arrastrar derecha mueve el modelo a la
   derecha), vertical `-dy` (compensa el flip de Y de VTK: arrastrar abajo
@@ -176,9 +175,9 @@ base (rot_x=0,rot_z=0):      right(+0.0100,+0.0000)  top(+0.0000,-0.0100)
 - **Zoom**: `Viewport3D._resolve_and_execute` ahora cablea
   `ZOOM_IN → dolly(+0.8)` (acercar) y `ZOOM_OUT → dolly(-0.8)` (alejar).
   Antes estaba al revés (`dolly(+)` acerca, así que "zoom in" alejaba).
-- **Órbita** (`CameraController.orbit`): se negó `dx`
-  (`drag = right*(-dx) + up*dy`) para que la pieza siga al cursor
-  horizontalmente.
+- **Órbita** (`CameraController.orbit`): se negaron `dx` y `dy`
+  (`drag = right*(-dx) + up*(-dy)`) para que la pieza siga al cursor en
+  horizontal y vertical.
 - **Pan** (`CameraController.pan`): se negó `dy`
   (`delta = right*(-dx) + up*(-dy)`) para compensar el flip de Y de VTK y
   que el pan siga al cursor verticalmente.

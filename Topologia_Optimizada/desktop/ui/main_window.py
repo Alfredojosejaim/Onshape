@@ -466,8 +466,7 @@ class MainWindow(QMainWindow):
 
         # Herramientas
         self.rb_validate = RibbonTool("✓", "Validar", "Validar geometría y restricciones")
-        self.rb_validate.clicked.connect(lambda: self.statusBar().showMessage(
-            "Validar: verificando geometría y restricciones..."))
+        self.rb_validate.clicked.connect(self._on_validate)
         self.rb_export_step = RibbonTool("💾", "Exportar STEP", "Exportar resultado como archivo STEP")
         self.rb_export_step.clicked.connect(self._on_export_step)
         lay.addWidget(group([self.rb_validate, self.rb_export_step], "Herramientas"))
@@ -1453,6 +1452,56 @@ class MainWindow(QMainWindow):
             constraint["selection"] = csel
         self.controller.constraints = [constraint]
         self.statusBar().showMessage(f"Restricción registrada: {constraint_type}")
+
+    def _on_validate(self) -> None:
+        """Validate the current model state and report the real pipeline status.
+
+        This replaces the former decorative button: it reflects the actual
+        controller state (model, solids, mesh, boundary conditions, result)
+        instead of printing a static message.
+        """
+        c = self.controller
+        lines = []
+
+        if not c.model_id:
+            lines.append("• Modelo: ninguno (importe un STEP).")
+            model_state = "SIN MODELO"
+        else:
+            lines.append(f"• Modelo: {c.model_name or c.model_id}")
+            try:
+                solids = c.cad.list_solids(c.model_id)
+                lines.append(f"• Sólidos: {len(solids)}")
+            except Exception:
+                lines.append("• Sólidos: (no disponible)")
+            model_state = "OK"
+
+        if c.mesh_nodes is not None:
+            lines.append(f"• Malla: {len(c.mesh_nodes)} nodos, {len(c.mesh_elements)} elementos.")
+            mesh_state = "OK"
+        else:
+            lines.append("• Malla: no generada.")
+            mesh_state = "SIN MALLA"
+
+        lines.append(f"• Fuerzas: {len(c.forces)} · Restricciones: {len(c.constraints)}")
+        conds = list(c.conditions.all) if hasattr(c.conditions, "all") else []
+        lines.append(f"• Condiciones CAE: {len(conds)}")
+        studies = list(c.document.studies) if c.document else []
+        lines.append(f"• Estudios: {len(studies)}")
+
+        if getattr(c, "result_densities", None) is not None:
+            lines.append("• Resultado de optimización: disponible.")
+            opt_state = "OK"
+        else:
+            lines.append("• Resultado de optimización: pendiente.")
+            opt_state = "PENDIENTE"
+
+        summary = " | ".join(
+            s for s in (model_state, mesh_state, opt_state)
+            if s not in ("OK",)
+        ) or "TODO OK"
+        lines.insert(0, f"[Validación] {summary}")
+        self.statusBar().showMessage(f"Validación: {summary}")
+        QMessageBox.information(self, "Validación del modelo", "\n".join(lines))
 
     def _on_clear_selection(self) -> None:
         self.viewport.clear_selection()

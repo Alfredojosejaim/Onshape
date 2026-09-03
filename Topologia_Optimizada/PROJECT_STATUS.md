@@ -789,3 +789,46 @@ superficiales/distribuidas (`DISTRIBUTED`) y error explícito para `PRESSURE` qu
 cubiertos por cross-engine. Los tres items de la sección "Siguiente paso" (escalón AMG local,
 umbral de migración, peso de profundidad) son **mejoras/decisiones futuras de rendimiento**, no
 pendientes funcionales del motor dual.
+
+---
+
+## Auditoría y trazabilidad de la interfaz CAD/CAE (this cycle)
+
+Auditoría de trazabilidad **UI → Controller → Core** según `prompts.md`. Regla aplicada: *no se
+declara una funcionalidad como implementada solo porque exista una clase, botón o método*; se
+verificó la conexión real Botón → Señal → Método → Backend. Resultado consolidado en
+**`docs/UI_IMPLEMENTATION_MAP.md`** (documento nuevo con el mapa por acción).
+
+### Clasificación resultante
+
+- **✅ Funcional (end-to-end real)**: Importar STEP, Malla, Malla Adaptativa, FEA, Optimizar SIMP,
+  Boolean (Unión/Corte/Intersección), Transformar, Simetría, Patrón, Condiciones
+  (Carga/Elasticidad/Obstrucción/Región protegida), Estudios (Nuevo/Ejecutar), Visualizar,
+  Exportar resultado, Exportar STEP, Vistas/Fit/Centrar/Wireframe/Ejes, Limpiar selección,
+  Reiniciar flujo, guía play/next, y **Validar (ver corrección abajo)**.
+- **🔀 Redirige / hint (intencional)**: `rb_filtros` (⚙ Filtros) redirige al panel de propiedades.
+- **🚫 Solo visual / NO CONECTADO (documentado, no implementado)**: `rb_sens` (Sensibilidad),
+  `rb_design_space` (Espacio de Diseño), `rb_generative` (Generativo) — muestran mensaje fijo.
+  No se construyó UI nueva (regla de no inventar funcionalidad futura). El motor generativo de
+  `core/generative.py` existe pero no tiene flujo de escenarios conectado en la UI.
+- **Código muerto detectado**: `DesignTreePanel.entitiesChanged` está declarada pero **nunca se
+  emite** (ningún slot la usa). No afecta funcionalidad.
+
+### Corrección aplicada
+
+- **`rb_validate` (✓ Validar)**: conectado a un handler real `_on_validate` en vez de un lambda
+  `showMessage` estático. Ahora refleja el estado real del `controller` (modelo, sólidos vía
+  `cad.list_solids`, malla, fuerzas/restricciones, condiciones, estudios, resultado) y abre un
+  diálogo de validación. Cobertura nueva: `tests/test_ui_validate_connection.py` (3 tests).
+
+### Archivos tocados
+- `desktop/ui/main_window.py` (nuevo `_on_validate` + conexión del ribbon).
+- `docs/UI_IMPLEMENTATION_MAP.md` (nuevo, mapa de trazabilidad).
+- `tests/test_ui_validate_connection.py` (nuevo).
+
+### Verificación
+- Arranque de `MainWindow` confirmado en entorno headless (`QT_QPA_PLATFORM=offscreen` con
+  `SoftwareViewport`; el viewport VTK real requiere GPU y degrada automáticamente vía
+  `is_gl_available()`).
+- Suite completa: **324 passed, 6 deselected** (243+ tests previos + nuevos de validación y de
+  ciclos intermedios; sin fallos ni regresiones).

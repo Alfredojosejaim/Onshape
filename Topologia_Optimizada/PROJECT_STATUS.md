@@ -68,6 +68,12 @@ Capacidades (validadas con tests):
 
 Separación de responsabilidades respetada: eventos → NavigationManager → CameraController → VTK Camera.
 
+> **Convención de navegación (corregida, 2026):** órbita, pan y zoom siguen la
+> convención CAD "el modelo sigue al cursor" (arriba → la pieza sube; derecha →
+> la pieza gira a la derecha; rueda arriba → acercar). Detalle de signos y
+> causa raíz (el `QVTKRenderWindowInteractor` invierte la Y de Qt) en
+> [`docs/NAVIGATION_CONVENTION.md`](docs/NAVIGATION_CONVENTION.md).
+
 ---
 
 ## Navigation

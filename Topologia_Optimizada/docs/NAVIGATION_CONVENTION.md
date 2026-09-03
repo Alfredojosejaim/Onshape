@@ -60,9 +60,11 @@ subproceso (evita que un crash de VTK tumbé el proceso principal) y cachea el
 resultado.
 
 > ⚠️ Importante: en sistemas con GPU se usa `Viewport3D`; sin GPU,
-> `SoftwareViewport`. En los tests siempre se valida `CameraController` (que es
-> agnóstico de GUI). **El `SoftwareViewport` NO está cubierto por tests de
-> convención**, lo que permite que sus signos divergan del `CameraController`.
+> `SoftwareViewport`. Ambos viewports tienen tests de convención:
+> `CameraController` en `tests/test_camera_controller.py` (agnóstico de GUI) y
+> `SoftwareViewport` en `tests/test_software_viewport_navigation.py` (modo
+> `QT_QPA_PLATFORM=offscreen`). **Si se añade un viewport nuevo, hay que cubrir
+> su convención con tests**, o sus signos pueden divergir del `CameraController`.
 
 ---
 
@@ -87,8 +89,9 @@ resultado.
   `steps > 0` acerca (distancia disminuye), `steps < 0` aleja.
 
 **Validación existente** (`tests/test_camera_controller.py`):
-- `test_orbit_vertical_sense_follows_pointer` (línea 106): fija que
-  arrastrar arriba (dy<0 en VTK) baja la cámara (el modelo sube).
+- `test_orbit_vertical_sense_follows_pointer` (línea 106): fija que arrastrar
+  arriba (VTK `dy>0`, porque QVTK invierte la Y de Qt) baja la cámara → la
+  pieza sube en pantalla. Pins el sentido vertical corregido.
 - `test_orbit_horizontal_sense_unaffected` (línea 121): fija que arrastrar
   a la derecha (dx>0) mueve la cámara a `+X` en vista FRONT (órbita
   derecha = pieza gira a la derecha).
@@ -97,6 +100,11 @@ resultado.
 - `test_zoom_wiring_zoomin_brings_closer`: fija el cableado
   `ZOOM_IN → dolly(+)` (acercar).
 - `test_zoom_inclined_camera` (línea 181): `dolly(+)` acerca.
+
+**Validación SoftwareViewport** (`tests/test_software_viewport_navigation.py`):
+- `test_pan_horizontal_follows_pointer` / `test_pan_vertical_follows_pointer`:
+  el pan sigue al cursor.
+- `test_wheel_up_zooms_in`: rueda arriba acerca.
 
 ### 3.2 SoftwareViewport (QPainter) — `desktop/viewport/software_viewport.py`
 
@@ -118,16 +126,17 @@ Rotación (líneas 37-54): `rot = Rz(rot_z) @ Rx(rot_x)`, Y global arriba.
 
 | Operación | Código actual | Resultado observado | ¿Correcto CAD? |
 |-----------|---------------|---------------------|----------------|
-| Órbita horizontal | `_rot_z += dx` | Al arrastrar derecha el borde derecho **baja** (rotación horaria en pantalla) | PENDIENTE de confirmar |
-| Órbita vertical | `_rot_x += dy` | Al arrastrar arriba (dy<0) reduce `rot_x` | PENDIENTE |
+| Órbita horizontal | `_rot_z += dx` | Al arrastrar derecha el borde derecho **baja** (rotación horaria en pantalla) | PENDIENTE de alinear |
+| Órbita vertical | `_rot_x += dy` | Al arrastrar arriba (dy<0) reduce `rot_x` | PENDIENTE de alinear |
 | Pan horizontal | `_cam_x += dx` | El modelo sigue al cursor (derecha→derecha) | ✅ |
-| Pan vertical | `_cam_y += dy` | Al arrastrar abajo el modelo **sube** (invertido) | ❌ |
+| Pan vertical | `_cam_y -= dy` (corregido) | Al arrastrar abajo el modelo **baja** | ✅ |
 | Zoom | `factor=1-delta*0.15` | Rueda arriba (delta>0) reduce zoom → acerca | ✅ |
 
-**Conclusión del diagnóstico:** el `SoftwareViewport` tiene al menos el **pan
-vertical invertido** y requiere alinear su órbita y signos con el
-`CameraController` (la referencia validada). El `CameraController` ya fue
-corregido en su vertical en un ciclo previo.
+**Conclusión del diagnóstico:** el `CameraController` (la referencia) ya quedó
+con su convención corregida (órbita horizontal + vertical, pan y zoom). El
+`SoftwareViewport` mantiene el pan vertical y el zoom correctos; su **órbita**
+(rotaciones de Euler `_rot_x`/`_rot_z`) sigue pendiente de alineación
+comparativa contra el `CameraController` (ver sección 6).
 
 ---
 
@@ -152,46 +161,43 @@ base (rot_x=0,rot_z=0):      right(+0.0100,+0.0000)  top(+0.0000,-0.0100)
 
 ---
 
-## 5. Plan de corrección (por confirmar)
+## 5. Plan de corrección (ejecutado)
 
-1. **Confirmar el viewport real en uso** (GPU → `Viewport3D`/`CameraController`;
-   sin GPU → `SoftwareViewport`). En este sistema la sonda da `GL_AVAILABLE=True`.
-2. **Alinear `SoftwareViewport` a la convención del `CameraController`**:
-   - Órbita horizontal: ajustar signo de `rot_z` para "girar a la derecha".
-   - Órbita vertical: ajustar signo de `rot_x` para "arrastrar arriba → sube".
-   - Pan vertical: negar `_cam_y` (arrastrar abajo → modelo abajo). ✅ *(hecho)*
-   - Zoom: mantener "rueda arriba → acercar" (ya coincide). ✅ *(verificado)*
-3. **Añadir tests de convención** para `SoftwareViewport` en modo `offscreen`
-   (análogos a `test_camera_controller.py`) para fijar los signos y evitar
-   regresiones en configuraciones personalizadas.
-4. **Validar** con `python -m py_compile` y la suite (`pytest`).
-5. Actualizar `PROJECT_STATUS.md` y, si el usuario lo pide, realizar commit.
+1. **Confirmar el viewport real en uso** → en este sistema la sonda da
+   `GL_AVAILABLE=True` → se usa `Viewport3D`/`CameraController`.
+2. **Corregir `Viewport3D`/`CameraController`** (el que usa GPU): zoom, órbita
+   y pan → ✅ (sección 6).
+3. **Añadir tests de convención** para `CameraController` y para
+   `SoftwareViewport` en modo `offscreen` → ✅.
+4. **Validar** con `python -m py_compile` y la suite (`pytest`):
+   330 passed, 6 deselected.
+5. Actualizar `PROJECT_STATUS.md` y realizar commit → pendiente de este ciclo.
 
 ## 6. Estado de la corrección aplicada
 
 > Última actualización: ciclo de inversión de cámara (zoom + órbita + pan).
 
-### Aplicado (Viewport3D / CameraController — el que usa GPU)
+### Hecho (Viewport3D / CameraController — el que usa GPU)
 - **Zoom**: `Viewport3D._resolve_and_execute` ahora cablea
   `ZOOM_IN → dolly(+0.8)` (acercar) y `ZOOM_OUT → dolly(-0.8)` (alejar).
   Antes estaba al revés (`dolly(+)` acerca, así que "zoom in" alejaba).
-- **Órbita** (`CameraController.orbit`): se negaron `dx` y `dy`
-  (`drag = right*(-dx) + up*(-dy)`) para que la pieza siga al cursor en
-  horizontal y vertical.
-- **Pan** (`CameraController.pan`): se negó `dy`
-  (`delta = right*(-dx) + up*(-dy)`) para compensar el flip de Y de VTK y
-  que el pan siga al cursor verticalmente.
-- Causa raíz de las inversiones "solo órbita" / "solo pan": el
-  `QVTKRenderWindowInteractor` invierte la coordenada Y de Qt
-  (`y_vtk = height - y_qt - 1`), por lo que la semántica de `dy` es opuesta
-  a la de pantalla. El pan horizontal ya era correcto; el vertical necesitaba
-  el `-dy`.
+- **Órbita** (`CameraController.orbit`): `drag = right*(-dx) + up*(-dy)`.
+  La pieza sigue al cursor en horizontal y vertical.
+- **Pan** (`CameraController.pan`): `delta = right*(-dx) + up*(-dy)` para que
+  el pan siga al cursor en ambos ejes.
+- Causa raíz de las inversiones: `QVTKRenderWindowInteractor` invierte la
+  coordenada Y de Qt (`y_vtk = height - y_qt - 1`), por lo que la semántica de
+  `dy` es opuesta a la de pantalla (en VTK `dy>0` = arrastrar arriba).
+
+### Hecho (SoftwareViewport — fallback sin GPU)
+- **Pan vertical**: `_cam_y -= dy` (arrastrar abajo → el modelo baja).
+- **Zoom**: ya coincidía (rueda arriba → acercar).
 
 ### Pendiente (SoftwareViewport — fallback sin GPU)
-- La órbita del `SoftwareViewport` (Euler `_rot_x`/`_rot_z`) no se ha
-  modificado: requiere validación comparativa dedicada contra el
-  `CameraController` para fijar sus signos sin riesgo. El pan vertical ya se
-  corrigió en el código.
+- La **órbita** del `SoftwareViewport` (rotaciones de Euler `_rot_x`/`_rot_z`)
+  no se ha modificado: requiere una validación comparativa dedicada contra el
+  `CameraController` para fijar sus signos sin riesgo. No afecta al flujo
+  actual del usuario (que usa GPU → `Viewport3D`).
 
 ## 7. Reglas de oro para futuras configuraciones
 

@@ -288,6 +288,43 @@ Kratos Multiphysics autocontenido instalado vía pip en `.venv` (no conda):
 
 ---
 
+## Motor Dual FEA (local ↔ Kratos)
+
+**IMPLEMENTADO Y VERIFICADO**
+
+Ruta verificable cerrada (prompt "Cierre del motor dual FEA"): mismo problema → dos motores →
+resultados físicos → comparación automatizada.
+
+- **Motor local** (`core/fea.py`): Tet4 lineal estático NumPy/SciPy, `success` con convergencia
+  real (no artificial), default del desktop. Sin cambios.
+- **Motor Kratos** (`core/kratos_adapter.py` + `core/solver_interface.py`): consume las mismas
+  condiciones vía `core/kratos_bridge.py` y resuelve el mismo problema físico.
+- **Carga real ensamblada (fix del RHS en cero):** `KratosAdapter.apply_loads_to_model_part()`
+  crea `PointLoadCondition3D1N` reales por nodo de carga con `POINT_LOAD`. El
+  `ResidualBasedBlockBuilderAndSolver` ensambla la carga en el RHS (`K·u=f`), eliminando el
+  warning `setting the RHS to zero` y el `u=0` anterior.
+- **Restricciones con error claro:** una condición explícita (cara/selection) que no se puede
+  mapear a nodos produce un error (`create_kratos_fea_solver` lanza), NO una región alternativa
+  silenciosa ni una restricción en todos los nodos.
+- **Convergencia real:** la verificación/re-resolución de `run_analysis` (amgcl iterativo →
+  verificación de estabilidad → fallback skyline_lu) se conserva; con RHS no vacío, `success`
+  ya representa convergencia física.
+- **Cross-engine automatizado** (`test_cae_cross_engine.py`): mismo caso en ambos motores,
+  `‖u_l − u_k‖/‖u_l‖ ≤ 1e-8`, compliance relativo ≤ 1e-6. Detecta regresiones del bridge/cargas/
+  restricciones/ensamblado.
+- **Cargas superficiales/distribuidas (`LoadType.DISTRIBUTED`):** el cross-engine cubre
+  explícitamente el caso de carga superficial: la magnitud TOTAL se reparte por nodo
+  (`mag / len(nodos)`) — la misma semántica del motor local — y cada nodo se materializa como
+  una `PointLoadCondition3D1N` real (`test_cross_engine_distributed_surface_load_agrees`).
+  `apply_loads_to_model_part` es idempotente (no duplica condiciones si se reinvoca).
+- **`LoadType.PRESSURE` sin modelo de área → error claro:** el sistema no integra área de
+  superficie, por lo que Pa→N (Pa × área) no se puede resolver; en vez de tratar Pa como N
+  (error físico silencioso) se lanza `ValueError` (`test_pressure_load_without_area_fails_clearly`).
+- **Verificación:** suite completa **320 passed, 6 deselected, 1 warning** (`.venv` y
+  `runtime/python`).
+
+---
+
 ## Structural Optimization
 
 **IMPLEMENTADO**
@@ -512,7 +549,7 @@ OFFLINE_GRACE_PERIOD), protocolo `LicenseServerProtocol`, `NoOpLicenseServer`.
   - Nuevas UI: `desktop/ui/panels/{transform,mirror,pattern}_panel.py` + menú
     "Operaciones" y cinta.
   - Validado con `test_edit_operations.py` (27 casos).
-  - Verificación: suite completa **270 passed, 6 deselected, 1 warning**.
+- Verificación: suite completa **320 passed, 6 deselected, 1 warning**.
 - **Sincronización de estado CAD + resolución determinista de sólidos (this cycle)**:
   - **`_finalize_cad_result`** ahora sincroniza también **`Document`** (registra el nuevo
     modelo vía `document.set_model(cad_model)` → `active_model_id`) y **`model_name`**
@@ -629,10 +666,10 @@ arquitectura existente.
   3. El bridge traduce las condiciones reutilizables a definiciones FEA.
   4. El solve **local** (NumPy) con las MISMAS condiciones produce compliance > 0 y
      sigue siendo el default.
-- Limite documentado de este build de Kratos (10.4.3): la ruta **RHS-force queda en 0**
-  (`setting the RHS to zero`); la compliance por fuerza distribuida es ~0.0 en Kratos,
-  mientras la vía local da compliance no trivial. Es una restricción del build, no de la
-  integración; el baseline físico del repo usa `imposed_disp` (ver `benchmark_fase0.py`).
+- **Cross-engine verificado** (`test_cae_cross_engine.py`): mismo caso físico resuelto en
+  ambos motores con `‖u_l − u_k‖/‖u_l‖ ≤ 1e-8` y compliance relativo ≤ 1e-6.
+- La ruta **RHS-force está corregida**: se crean `PointLoadCondition3D1N` reales que el
+  `BuilderAndSolver` ensambla, eliminando el warning `setting the RHS to zero`.
 
 ### Qué queda (estado real)
 - El **default del desktop es el stack local** (NumPy/SciPy/SIMP); `backend="kratos"` es una
@@ -641,13 +678,13 @@ arquitectura existente.
   integra en el FEA. Thermal/Modal siguen **scaffolded** sin solver numérico (intencional,
   arquitectura correcta).
 
-### Decisión sobre `run_optimization` con Kratos
+**Decisión sobre `run_optimization` con Kratos**
 - **No exponer Kratos en SIMP por ahora.** El motor SIMP (`core/topopt.SIMPSolver`) está
   acoplado a su `FEASolver` interno (``assemble_global_stiffness`` / ``apply_bc_and_solve`` /
   ``element_stiffness``) y el callable de Kratos devuelve un dict, no esa interfaz; alinear
   ambos requeriría refactorizar el núcleo que toda la optimización usa, contraviniendo
-  "no reemplaces sistemas funcionales". La etapa de análisis FEM (donde Kratos sí encaja) ya
-  es opcional vía `backend="kratos"`.
+  "no reemplaces sistemas funcionales". La etapa de análisis FEM (donde Kratos sí encaja y
+  ahora funciona con carga real) ya es opcional vía `backend="kratos"`.
 
 ### Decisión de arquitectura: dos motores FEA vs Kratos completo (this cycle)
 **Pregunta resuelta:** ¿vale la pena mantener los dos motores y, sobre todo,
@@ -661,8 +698,7 @@ implementar Kratos **completo** como motor principal del desktop?
   no carga el binario nativo de Kratos (~1-2 min al importar), ideal para desarrollo de UI,
   reconstrucción y SIMP.
 - **Independencia del runtime de Kratos:** Kratos es una dependencia nativa grande y
-  **opcional**; en este build la ruta **RHS-force queda en 0** (limitación propia de la
-  instalación). El motor local funciona siempre y no hereda tales bloqueos.
+  **opcional**. El motor local funciona siempre y no hereda bloqueos del binario.
 - **Red de seguridad:** si mañana Kratos falla o no está desplegado, el desktop sigue
   operando. No hay punto único de fallo.
 - **Camino de migración sin riesgo:** el local actúa como baseline de referencia para validar
@@ -683,9 +719,7 @@ que es la configuración correcta para el pipeline actual (análisis FEM lineal 
 importada). **No** se adoptará Kratos como motor exclusivo/principal *ahora* porque:
 1. Para el caso de uso actual, migrar no mejora el resultado (misma física lineal), solo el
    rendimiento en mallas grandes.
-2. Este build de Kratos **no puede replicar** el FEM por fuerza del local (RHS-force bloqueado,
-   u=0); Kratos completo exigiría trabajo adicional antes de equivaler al motor actual.
-3. Se perdería la verificación cruzada y la red de seguridad del motor propio.
+2. Se perdería la verificación cruzada y la red de seguridad del motor propio.
 La migración a Kratos principal queda **condicionada a** (a) exigencia de rendimiento en mallas
 grandes atribuible a *guias/pesos*, (b) necesidades de física avanzada, o (c) decisión de
 estrategia comercial/IP.
@@ -693,18 +727,11 @@ estrategia comercial/IP.
 **Aportaciones de una revisión externa (a incorporar):** el razonamiento dual-motor es sólido,
 pero refuerza y matiza cuatro puntos:
 
-- **El oráculo mutuo no verifica HOY el caso que importa (crítico).** Si Kratos da `u=0` para el
-  tipo de carga que usa el desktop (fuerza puntual/distribuida → ruta RHS-force bloqueada), en la
-  práctica no hay oráculo sino un motor que no ejecuta el caso real. La "verificación cruzada"
-  es por ahora **aspiracional**. Diagnóstico pendiente para atribuir la causa:
-  1. el process de Neumann/point-load no está registrado en ese `solver_settings` particular,
-  2. falta un process en `list_other_processes` / `loads_process_list`, o
-  3. el DOF de fuerza no se suma al RHS antes del solve (bug de orden de ensamblado).
-  **Prioridad:** cerrar este gap del RHS antes de seguir invirtiendo en la capa Kratos.
-  Si se resuelve, la comparación cross-engine debe convertirse en **suite de regresión
-  automatizada** (no un e2e aislado): con cada cambio de malla / BC / ensamblado, correr ambos
-  motores y comparar compliance/desplazamientos con tolerancia explícita — para detectar roturas
-  silenciosas del bridge en CI, no en producción.
+- **El oráculo mutuo HOY es real (cerrado en este ciclo).** Con la carga materializada como
+  `PointLoadCondition3D1N`, Kratos ya no da `u=0` para la carga por fuerza que usa el desktop;
+  el cross-engine es una **suite de regresión automatizada** (`test_cae_cross_engine.py`) que
+  corre ambos motores y compara compliance/desplazamientos con tolerancia explícita en cada
+  cambio de malla/BC/ensamblado, detectando roturas silenciosas del bridge en CI.
 - **Costo de portabilidad/distribución (no estaba documentado).** Para una app de escritorio, el
   motor NumPy/SciPy es trivialmente empaquetable (pip, sin binarios nativos pesados,
   multiplataforma sin compilar). Kratos como dependencia dura complica instaladores (tamaño,
@@ -719,43 +746,41 @@ pero refuerza y matiza cuatro puntos:
   elementos o M segundos de `spsolve`, evaluar Kratos (y antes, PML/pyamg)"* — para que la
   migración no sea una decisión subjetiva más adelante.
 
-### Siguiente paso técnico más lógico (pendiente de implementar en otro momento)
-1. **Exponer `imposed_disp` (desplazamiento impuesto) como modo de carga en las condiciones
-   reutilizables.** Es el camino viable a corto plazo para obtener un **baseline numérico común**
-   verificable entre local y Kratos (la carga por fuerza no ensambla el RHS en este build Kratos:
-   ver causa raíz abajo). Con ese modo:
-   - comparar local vs Kratos sobre la malla real con tolerancia explícita, y
-   - convertirlo en suite de regresión automatizada que corra ambos motores en cada cambio de
-     malla/BC/ensamblado (el oráculo mutuo real depende de esto).
+### Siguiente paso técnico más lógico (post-fix)
+1. ~~Exponer `imposed_disp`~~ → ya resuelto con `PointLoadCondition3D1N` real (carga por fuerza
+   ensambla el RHS).
 2. Evaluar el **escalón iterativo/AMG** local antes de comprometer a Kratos por rendimiento.
-3. **A medio plazo:** desplegar un build/entorno de Kratos con la infraestructura de condiciones de
-   carga completa (no es decisión de código, es de distribución/reconstrucción del binario).
+3. ~~Extender el cross-engine a cargas superficiales (`SurfaceLoadCondition3D3N` / pressure)~~ →
+   **RESUELTO** (this cycle): la carga superficial/distribuida (`LoadType.DISTRIBUTED`) queda
+   cubierta por el cross-engine con semántica `mag / len(nodos)` idéntica al motor local, y
+   `LoadType.PRESSURE` (que requiere área de superficie) falla con `ValueError` claro en vez de
+   producir una fuerza incorrecta (el sistema no modela área; documentado como limitación honesta).
 
-#### RHS-force en Kratos: CAUSA RAÍZ confirmada (this cycle)
-La hipótesis era el ítem (3) del diagnóstico previo (ensamblado del RHS antes del solve) y
-**se ha confirmado empíricamente** en este build (10.4.3, Windows). Queda fijada en el test de
-regresión `test_cae_kratos_rhs_diagnosis.py` (marcado `kratos`).
+#### RHS-force en Kratos: CORREGIDO (this cycle)
+La causa raíz (ensamblado del RHS antes del solve) se confirmó y **fue corregida**.
 
-**Causa:** los loads se aplican ALMACENANDO variables solution-step `FORCE_*` en el nodo
+**Causa raíz:** los loads se aplicaban ALMACENANDO variables solution-step `FORCE_*` en el nodo
 (`apply_point_load` → `external_loads`, aplicadas por `apply_external_loads_to_model_part`). Pero
 `ResidualBasedLinearStrategy` + `ResidualBasedBlockBuilderAndSolver` ensamblan el RHS **únicamente
-desde los contenedores `Elements` y `Conditions`**. Como no se crea ningún `Condition` para la
-carga (y este build **no registra clases de load-condition** ni `ApplyNodalLoadsProcess`), el RHS
-queda vacío → warning `RHS to zero` → `u=0`.
+desde los contenedores `Elements` y `Conditions`**. Como no se creaba ningún `Condition` para la
+carga, el RHS quedaba vacío → warning `RHS to zero` → `u=0` con `success=True` (trivial).
 
-**Verificaciones que lo aíslan (no es un fallo de malla/material/solver):**
-- El warning `ResidualBasedBlockBuilderAndSolver: ATTENTION! setting the RHS to zero!` aparece con
-  la ruta FORCE-solution-step, y el campo resultante es idénticamente cero pese a pedir 1000 N.
-- El mismo pipeline sin mecanismo de carga resuelve con `success` y produce un campo de la forma
-  esperada (todo cero por ausencia de carga) — malla/material/solver sanos.
-- `PointLoadCondition3D1N`, `SurfaceLoadCondition3D3N`, ``ApplyNodalLoadsProcess`` → **no
-  disponibles** en esta compilación (el comentario interno de `apply_external_loads_to_model_part`
-  ya advertía: *"simplified approach for testing. In production, use proper Kratos conditions"*).
+**Corrección:** `KratosAdapter.apply_loads_to_model_part()` crea **condiciones Kratos reales**
+(`PointLoadCondition3D1N`, disponible y verificado en Kratos 10.4.3) sobre cada nodo de carga,
+con `POINT_LOAD` por nodo (magnitud ya distribuida por `apply_point_load`/`apply_distributed_load`).
+El `ResidualBasedBlockBuilderAndSolver` ahora ensambla la carga como parte del sistema físico
+(`K·u = f`) y el RHS deja de ser cero.
 
-**Consecuencia práctica:** dentro de este build, una carga por **fuerza** no puede ensamblarse en
-el RHS por la API de carga estándar de Kratos (faltan las condiciones). La vía física fiable de
-este build es **desplazamiento impuesto** (`imposed_disp`, baseline del repo). Por tanto la
-"verificación cruzada" con fuerza sigue sin estar disponible HOY: el oráculo real para fuerza es el
-**motor local**. Cerrarlo pasa por el plan registrado en el "Siguiente paso técnico más lógico"
-(exponer ``imposed_disp`` → baseline numérico común; a medio plazo, un build de Kratos con la
-infraestructura de condiciones de carga completa).
+**Verificación del fix:**
+- Cross-engine (`test_cae_cross_engine.py`): mismo caso físico resuelto en local y Kratos con
+  `‖u_l − u_k‖/‖u_l‖ ≤ 1e-8` y compliance relativo ≤ 1e-6.
+- `PointLoadCondition3D1N` con `POINT_LOAD` (VectorVariable) → contribute al RHS via el builder.
+- El fix es mínimo: se conservan `apply_external_loads_to_model_part` (compatibilidad legacy) y
+  `self.external_loads` para compliance; la carga real pasa por `apply_loads_to_model_part`.
+- **Suite completa: 320 passed, 6 deselected, 1 warning** (sin regresiones).
+
+**Estado del motor dual (this cycle): sin pendientes funcionales.** Fix del RHS, cargas
+superficiales/distribuidas (`DISTRIBUTED`) y error explícito para `PRESSURE` quedan resueltos y
+cubiertos por cross-engine. Los tres items de la sección "Siguiente paso" (escalón AMG local,
+umbral de migración, peso de profundidad) son **mejoras/decisiones futuras de rendimiento**, no
+pendientes funcionales del motor dual.

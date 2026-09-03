@@ -742,27 +742,54 @@ class KratosAdapter:
     
     def apply_load_from_core(self, model_part: Any, load: Any, node_indices: List[int]) -> None:
         """Apply load from Core's LoadDefinition to Kratos.
-        
+
+        Dispatch explícito por ``LoadType`` alineado con el motor local
+        (``core.generative_engine._map_conditions_to_problem``, que reparte una
+        magnitud TOTAL por nodo):
+
+        * ``POINT`` (1 nodo) → ``apply_point_load``: la magnitud total en el nodo.
+        * ``DISTRIBUTED`` / superficial (N nodos) → ``apply_distributed_load``:
+          reparte la magnitud total uniformemente entre los nodos
+          (``mag / len(node_indices)``), igual que el motor local. Cada nodo se
+          materializa después como una ``PointLoadCondition3D1N`` real.
+        * ``PRESSURE`` → **error claro**: el sistema no modela área de superficie,
+          por lo que Pa→N requeriría integrar área (no disponible). Tratar Pa como
+          N sería un error físico silencioso; se rechaza con ``ValueError`` en vez
+          de producir una fuerza incorrecta (REGLA FUNDAMENTAL).
+
         Args:
-            model_part: Kratos ModelPart with nodes and DOFs
+            model_part: Kratos ModelPart con nodos y DOFs
             load: LoadDefinition object from core.study
             node_indices: List of node indices to apply load to
+
+        Raises:
+            ValueError: para ``LoadType.PRESSURE`` (carga de presión requiere área,
+                no modelada en el sistema).
         """
         try:
             from core.study import LoadType
-            
+
             logger.info(f"Applying load {load.id} (type: {load.load_type}) to {len(node_indices)} nodes")
-            
+
+            if load.load_type == LoadType.PRESSURE:
+                raise ValueError(
+                    f"Load {load.id}: LoadType.PRESSURE requiere un modelo de área de "
+                    f"superficie (presión en Pa * área) que el sistema no implementa; "
+                    f"no se puede convertir Pa a fuerza sin esa área. Use POINT o "
+                    f"DISTRIBUTED (fuerza total en N)."
+                )
+
             force_vector = [load.magnitude * load.direction[i] for i in range(3)]
-            
+
             if load.load_type == LoadType.POINT and len(node_indices) == 1:
                 self.apply_point_load(model_part, node_indices[0], force_vector)
             else:
-                # For distributed loads or multiple nodes, distribute evenly
+                # DISTRIBUTED (superficial) o varios nodos: reparte la magnitud
+                # TOTAL uniformemente (misma semántica que el motor local).
                 self.apply_distributed_load(model_part, node_indices, force_vector, distribute=True)
-            
+
             logger.info(f"Load {load.id} applied successfully")
-            
+
         except Exception as e:
             logger.error(f"Failed to apply load from Core: {e}")
             raise
@@ -907,7 +934,96 @@ class KratosAdapter:
         except Exception as e:
             logger.error(f"Failed to apply external loads: {e}")
             raise
-    
+
+    def apply_loads_to_model_part(self, model_part: Any, properties: Any = None) -> int:
+        """Create real Kratos load ``Condition`` objects on the loaded nodes.
+
+        **Fix del RHS en cero (motor dual).** ``ResidualBasedLinearStrategy`` /
+        ``ResidualBasedBlockBuilderAndSolver`` ensamblan el RHS **únicamente** a
+        partir de las contribuciones de ``Elements`` y ``Conditions``; las
+        variables de solution step ``FORCE_*`` que dejaba
+        ``apply_external_loads_to_model_part`` NO se leen, por lo que el RHS
+        quedaba vacío (Kratos emite "setting the RHS to zero") y el solve devolvía
+        ``u=0`` con ``success``. Crear una ``Condition`` real
+        (``PointLoadCondition3D1N``) por nodo con su ``POINT_LOAD`` hace que la
+        carga forme parte del sistema físico que se ensambla (``K·u = f``).
+
+        La magnitud por nodo ya fue distribuida en ``self.external_loads`` por
+        ``apply_point_load`` / ``apply_distributed_load``; aquí se replica como
+        condición Kratos. Es el mecanismo correcto en Kratos 10.4.3 sin
+        dependencia externa adicional.
+
+        Args:
+            model_part: ModelPart Kratos con nodos, malla y material ya aplicados.
+            properties: ``Kratos.Properties`` para la condición; si es ``None`` se
+                reutiliza el de los elementos (que ya incluye la ley constitutiva).
+
+        Returns:
+            Número de condiciones de carga creadas.
+
+        Raises:
+            RuntimeError: si Kratos no registra ``PointLoadCondition3D1N`` o la
+                creación de una condición falla (no debe silenciar una carga que no
+                se puede materializar en el sistema).
+        """
+        import KratosMultiphysics as _Kratos
+        from KratosMultiphysics import StructuralMechanicsApplication as _SMA
+
+        model_part_name = str(model_part.Name)
+        loads = self.external_loads.get(model_part_name)
+        if not loads:
+            return 0
+
+        if properties is None:
+            properties = next(iter(model_part.Elements), None)
+            properties = properties.Properties if properties is not None else None
+        if properties is None:
+            properties = _Kratos.Properties(1)
+
+        created = 0
+        for node_id, force_vector in loads.items():
+            kratos_node_id = int(node_id)
+            if kratos_node_id > model_part.NumberOfNodes():
+                logger.warning(
+                    f"Load condition skipped: node {kratos_node_id} out of range"
+                )
+                continue
+            # Idempotencia: si la condición ya se creó (p. ej. por una segunda
+            # invocación de run_analysis sobre el mismo ModelPart), no duplicarla.
+            if model_part.HasCondition(kratos_node_id):
+                continue
+            try:
+                condition = model_part.CreateNewCondition(
+                    "PointLoadCondition3D1N",
+                    kratos_node_id,
+                    [kratos_node_id],
+                    properties,
+                )
+                condition.SetValue(
+                    _SMA.POINT_LOAD,
+                    [
+                        float(force_vector[0]),
+                        float(force_vector[1]),
+                        float(force_vector[2]),
+                    ],
+                )
+                created += 1
+                logger.info(
+                    f"Load condition #{kratos_node_id} created: "
+                    f"N=({force_vector[0]:.6g}, {force_vector[1]:.6g}, "
+                    f"{force_vector[2]:.6g}) METHOD=KRATOS_LOAD_CONDITION"
+                )
+            except Exception as e:  # pragma: no cover - defensivo
+                logger.exception(
+                    f"Failed to create load condition on node {kratos_node_id}: {e}"
+                )
+                raise RuntimeError(
+                    f"Could not materialize load as a Kratos Condition on node "
+                    f"{kratos_node_id}: {e}"
+                ) from e
+        logger.info(f"Created {created} real Kratos load conditions on ModelPart")
+        return created
+
     # Solvers lineales considerados ITERATIVOS (el Kratos build no expone su
     # convergencia real: `GetIterationsNumber`=0, `IsConverged`=True siempre y
     # `GetResidualNorm` no es el residual del sistema). Para estos solvers se
@@ -1028,8 +1144,12 @@ class KratosAdapter:
         try:
             logger.info("Starting structural analysis")
 
-            # Apply external loads
+            # Apply external loads as REAL Kratos Conditions so the
+            # BuilderAndSolver assembles the RHS (fix del "setting the RHS to zero").
+            # apply_external_loads_to_model_part (FORCE_* solution-step) se conserva
+            # para compatibilidad, pero la carga física se materializa con Conditions.
             self.apply_external_loads_to_model_part(model_part)
+            self.apply_loads_to_model_part(model_part)
 
             _linear_settings = None
             verify = True

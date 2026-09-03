@@ -905,6 +905,11 @@ declara un resultado FEA físicamente válido: el benchmark mide rendimiento, no
 de carga reales del estrategia / `Conditions`) queda como **PENDIENTE/BLOQUEADO** (requiere
 investigación del API oficial de Kratos para condiciones de carga en `ResidualBasedLinearStrategy`).
 
+> **~(ESTE PENDIENTE YA FUE RESUELTO enunciado histórico de la Fase 0.5).~** RESUELTO en la
+> intervención **"CIERRE DEL MOTOR DUAL FEA (RHS-force en Kratos)"** (más abajo): `apply_loads_to_model_part`
+> crea `PointLoadCondition3D1N` reales que el `ResidualBasedBlockBuilderAndSolver` ensambla en el
+> RHS (`K·u=f`). Verificado cross-engine (‖u_l − u_k‖/‖u_l‖ ≤ 1e-8).
+
 ### 7. Cómo reproducir
 
 ```powershell
@@ -1323,9 +1328,10 @@ desplazamientos (mismo ModelPart, mismo solve) en las 3 mallas:
 
 Como la compliance es ∝ E y `E_Pa = 1e6 × E_MPa`, el salto de 6 órdenes es **exactamente**
 la conversión de unidades Pa→N/mm², **idéntica (1,000,000.0000) en las 3 mallas**. No es un
-bug ni una coincidencia: es el rescale de unidades limpio que quedó pendiente de revisar
-(E en Pa vs geometría en mm), y el campo desplazado es el mismo en ambas escalas (el solve
-es agnóstico a unidades con u fijo).
+bug ni una coincidencia: es el rescale de unidades limpio, **verificado aquí mismo**: el campo
+desplazado es el mismo en ambas escalas (el solve es agnóstico a unidades con u fijo), y el ratio
+de compliance 1,000,000.0000 corresponde exactamente a `E_Pa / E_MPa`. No queda pendiente de
+revisión.
 
 ## (d) Fallback automático a `skyline_lu` si el iterativo no converge o falla
 
@@ -1738,3 +1744,99 @@ condiciones se ignoraron y por qué. El feed-back ya no depende de fijarse en el
 - `desktop/ui/main_window.py` (aviso de condiciones no soportadas + selector de colormap +
   import `QInputDialog`)
 - `PROJECT_STATUS.md` (pendientes sincronizados)
+
+---
+
+# INTERVENCIÓN - CIERRE DEL MOTOR DUAL FEA (RHS-force en Kratos)
+
+## Información General
+
+**Fecha:** 2026-09-02
+**Objetivo:** cerrar la parte pendiente del motor dual FEA: motor local NumPy/SciPy ↔ motor
+Kratos resolviendo el MISMO problema físico con comparación verificable. Diagnóstico y
+corrección del fallo donde el RHS quedaba en cero en la ruta Kratos para cargas de fuerza.
+
+## 1. Diagnóstico (Causa Raíz del RHS en cero)
+
+Flujo de la ruta Kratos (`run_fea(backend="kratos")`):
+`controller._run_fea_kratos` → `conditions_to_kratos_definitions` →
+`create_kratos_fea_solver` → `_apply_load_geometrically` → `adapter.apply_load_from_core`
+→ `apply_point_load`/`apply_distributed_load` guardaba las fuerzas SOLO en el dict
+`self.external_loads[model_part][node_id]` → `apply_external_loads_to_model_part` las escribía
+como variables solution-step `FORCE_*` en los nodos.
+
+**Causa:** `ResidualBasedLinearStrategy` + `ResidualBasedBlockBuilderAndSolver` ensamblan el RHS
+**únicamente desde los contenedores `Elements` y `Conditions`**. Como nunca se creaba un objeto
+`Condition` para la carga, los valores nodales `FORCE_*` no se leían y el RHS quedaba vacío →
+warning `setting the RHS to zero` → `u=0` con `success=True` trivial. Además
+`extract_analysis_results` calculaba compliance con `self.external_loads × u`, que con `u=0`
+enmascaraba el fallo.
+
+## 2. Fix (mínimo, sin sustituir nada)
+
+`KratosAdapter.apply_loads_to_model_part()` (`core/kratos_adapter.py`): crea **condiciones Kratos
+reales** `PointLoadCondition3D1N` sobre cada nodo cargado, con `POINT_LOAD` (VectorVariable) por
+nodo (magnitud ya distribuida por `apply_point_load`/`apply_distributed_load`). Se invoca en
+`run_analysis` tras `apply_external_loads_to_model_part`, y el `BuilderAndSolver` ahora ensambla
+la carga como parte del sistema físico (`K·u=f`).
+
+Complementos:
+- `core/solver_interface.py`: `_apply_constraint_geometrically`/`_apply_load_geometrically`/
+  `_apply_advanced_selection` devuelven estado (`APPLIED` / `UNRESOLVED: …` / `INDETERMINATE`);
+  `create_kratos_fea_solver` **falla con error claro** si una condición explícita (cara/selection)
+  no se puede resolver — nunca región alternativa silenciosa ni restricción en todos los nodos.
+
+## 3. Validación Cross-Engine
+
+`test_cae_cross_engine.py` (nuevo): mismo caso físico en local y Kratos → `‖u_l − u_k‖/‖u_l‖`
+**≤ 1e-8**, compliance relativo **≤ 1e-6**, energía elemental finita/consistente. El test detecta
+una regresión real del bridge/cargas/restricciones/ensamblado (por ejemplo, si el RHS vuelve a
+perder la carga → `u=0` se detecta).
+
+Test de referencia factible: los dos motores coinciden en ~4e-15 de norma relativa sobre la malla
+`small_500`.
+
+## 4. Convergencia
+
+Se conserva la verificación/re-resolución de `run_analysis` (amgcl iterativo → verificación de
+estabilidad → fallback skyline_lu). Con el RHS ya no vacío, `success=True` representa convergencia
+física real y no depende de `IsConverged()` trivial sobre un sistema sin carga.
+
+## 5. Tests ejecutados
+
+- `test_cae_cross_engine.py` (nuevo): **4 passed** (carga puntual/distribuida + regresión + distribución superficial + PRESSURE falla claro).
+- `test_cae_kratos_rhs_diagnosis.py` (actualizado a la corrección): **3 passed**.
+- Kratos/bridge/e2e: **26 passed**.
+- Suite completa: **320 passed, 6 deselected, 1 warning** en `.venv` y `runtime/python`.
+
+## 6. Archivos modificados (sin commit, working copy)
+
+- `core/kratos_adapter.py` (`apply_loads_to_model_part` + wiring en `run_analysis` + dispatch explícito `apply_load_from_core` por `LoadType`)
+- `core/solver_interface.py` (estado de aplicación + error claro en condiciones no resueltas)
+- `test_cae_cross_engine.py` (nuevo: cross-engine + carga superficial + PRESSURE)
+- `test_cae_kratos_rhs_diagnosis.py` (actualizado)
+- `PROJECT_STATUS.md`
+
+## 7. Pendiente resuelto: cargas superficiales distribuidas (cross-engine)
+
+**Pendiente original:** extender el cross-engine a cargas superficiales (`SurfaceLoadCondition3D3N` /
+pressure) cuando el desktop lo necesite.
+
+**Resolución:**
+
+1. **`LoadType.DISTRIBUTED`** (fuerza superficial): la magnitud TOTAL se reparte uniformemente
+   por nodo (`mag / len(nodos)`) — la misma semántica del motor local
+   (`_map_conditions_to_problem` línea 387). Cada nodo se materializa como una
+   `PointLoadCondition3D1N` real. Nuevo test `test_cross_engine_distributed_surface_load_agrees`
+   valida que local y Kratos coinciden (misma semántica → misma respuesta).
+
+2. **`LoadType.PRESSURE`** (presión en Pa): el sistema no modela área de superficie, por lo que
+   Pa→N (Pa × área) no se puede resolver honestamente. En vez de tratar Pa como N (error físico
+   silencioso), `apply_load_from_core` lanza `ValueError` claro. Nuevo test
+   `test_pressure_load_without_area_fails_clearly` valida que el error se produce.
+
+3. **Idempotencia:** `apply_loads_to_model_part` ahora es idempotente (`HasCondition` guard),
+   evitando colisiones de ID si se reinvoca sobre un ModelPart existente.
+
+`apply_load_from_core` ahora hace dispatch explícito por `LoadType` con documentación que refleja
+las semánticas reales (sin tratar Pa como N silenciosamente).

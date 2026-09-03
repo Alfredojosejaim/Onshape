@@ -228,14 +228,28 @@ def create_kratos_fea_solver(
             # CRITICAL FIX: No longer applies to ALL nodes
             # Instead, use geometric information to select boundary nodes
             # (1) named submodelpart, (2) CAD face mapping, (3) coordinate fallback.
+            unresolved_conditions: List[str] = []
             for constraint in constraints:
-                _apply_constraint_geometrically(adapter, model_part, constraint, nodes_list, cad_shape)
+                status = _apply_constraint_geometrically(adapter, model_part, constraint, nodes_list, cad_shape)
+                if isinstance(status, str) and status.startswith("UNRESOLVED"):
+                    unresolved_conditions.append(status)
             
             # Apply loads using geometric selection
             # CRITICAL FIX: No longer applies to ALL nodes
             # Instead, use geometric information to select load surface nodes
             for load in loads:
-                _apply_load_geometrically(adapter, model_part, load, nodes_list, cad_shape)
+                status = _apply_load_geometrically(adapter, model_part, load, nodes_list, cad_shape)
+                if isinstance(status, str) and status.startswith("UNRESOLVED"):
+                    unresolved_conditions.append(status)
+
+            # REGLA FINAL: an explicit boundary condition that cannot be resolved
+            # must fail loudly instead of silently running an over/under-constrained
+            # or unloaded system (which Kratos would otherwise solve trivially).
+            if unresolved_conditions:
+                raise ValueError(
+                    "Kratos FEA: condiciones explicitas no resueltas: "
+                    + "; ".join(unresolved_conditions)
+                )
             
             # Run analysis
             result = adapter.run_analysis(model_part)
@@ -398,25 +412,26 @@ def _advanced_selection_failure_log(kind: str, cond_id: str, matched_nodes: int,
 
 def _apply_advanced_selection(adapter: Any, model_part: Any, condition: Any,
                               nodes_list: List[List[float]], cad_shape: Any,
-                              is_load: bool) -> bool:
+                              is_load: bool) -> Optional[str]:
     """Apply a constraint/load using the advanced geometric selection engine.
 
     Strategy 0 (highest priority): when ``condition.selection`` is set, resolve
     the region/composition descriptor with :class:`NodeSelectionEngine` and
     apply the condition exclusively to the matched nodes. If the user supplied
     an explicit selection that matches no nodes, report ``ADVANCED SELECTION
-    FAILED`` and return True WITHOUT falling back to face/coordinate strategies
-    (consistent with the REGLA FINAL).
+    FAILED`` and return ``UNRESOLVED`` WITHOUT falling back to face/coordinate
+    strategies (consistent with the REGLA FINAL).
 
-    Returns True when the selection was consumed (applied or failed loudly),
-    False when no advanced selection was specified and the caller should
-    continue with the other strategies.
+    Returns:
+        ``"APPLIED"`` when the selection was applied, ``"UNRESOLVED: <reason>``
+        when an explicit selection could not be consumed, or ``None`` when no
+        advanced selection was specified (caller continues with next strategies).
     """
     from core.selection import NodeSelectionEngine
 
     selection = getattr(condition, "selection", None)
     if selection is None:
-        return False
+        return None
 
     apply = adapter.apply_load_from_core if is_load else adapter.apply_constraint_from_core
     kind = "load" if is_load else "constraint"
@@ -428,25 +443,25 @@ def _apply_advanced_selection(adapter: Any, model_part: Any, condition: Any,
         )
     except Exception as e:
         _advanced_selection_failure_log(kind, condition.id, 0, f"exception during selection: {e}")
-        return True
+        return f"UNRESOLVED: advanced selection for {kind} {condition.id} raised: {e}"
 
     if not node_indices:
         _advanced_selection_failure_log(
             kind, condition.id, 0,
             "advanced selection resolved to zero mesh nodes",
         )
-        return True
+        return f"UNRESOLVED: advanced selection for {kind} {condition.id} matched zero nodes"
 
     apply(model_part, condition, node_indices)
     logger.info(
         f"{kind.title()} {condition.id} applied to {len(node_indices)} nodes "
         f"via advanced geometric selection METHOD=ADVANCED_SELECTION"
     )
-    return True
+    return "APPLIED"
 
 
 def _apply_constraint_geometrically(adapter: Any, model_part: Any, constraint: Any,
-                                    nodes_list: List[List[float]], cad_shape: Any = None) -> None:
+                                    nodes_list: List[List[float]], cad_shape: Any = None) -> str:
     """Apply constraint using geometric node selection.
 
     ARCHITECTURE NOTE:
@@ -463,6 +478,14 @@ def _apply_constraint_geometrically(adapter: Any, model_part: Any, constraint: A
     3. Coordinate-based (fallback): filter nodes by coordinate (e.g., Z=0 for the
        fixed end). Kept only as a technical fallback.
 
+    Returns:
+        Status string: ``"APPLIED"`` when the constraint was applied through any
+        of the strategies, or ``"UNRESOLVED: <reason>`` when an explicit
+        constraint (face / selection) could not be materialized. The caller must
+        treat any ``UNRESOLVED`` as an error: an explicit condition that cannot
+        be resolved must fail loudly and must NOT proceed under-constrained via
+        a silent alternative region (REGLA FINAL).
+
     Args:
         adapter: KratosAdapter instance
         model_part: Kratos ModelPart
@@ -474,9 +497,10 @@ def _apply_constraint_geometrically(adapter: Any, model_part: Any, constraint: A
         from core.study import ConstraintType
         
         # Strategy 0: Advanced geometric selection (explicit, highest priority)
-        if _apply_advanced_selection(adapter, model_part, constraint, nodes_list,
-                                     cad_shape, is_load=False):
-            return
+        advanced = _apply_advanced_selection(adapter, model_part, constraint, nodes_list,
+                                             cad_shape, is_load=False)
+        if advanced is not None:
+            return advanced
         
         # Strategy 1: Try to use named submodelpart (e.g., from gmsh physical groups)
         submodelpart_name = getattr(constraint, 'submodelpart_name', None) or \
@@ -488,27 +512,23 @@ def _apply_constraint_geometrically(adapter: Any, model_part: Any, constraint: A
                 adapter.apply_constraint_from_core(model_part, constraint, node_indices)
                 logger.info(f"Constraint {constraint.id} applied to {len(node_indices)} nodes "
                             f"via submodelpart '{submodelpart_name}'")
-                return
+                return "APPLIED"
             logger.warning(f"Submodelpart '{submodelpart_name}' has no nodes for constraint "
                            f"{constraint.id}; falling through to face mapping")
         
         # Strategy 2: CAD face mapping (primary geometric mechanism, physically anchored)
         status = _apply_constraint_by_face_mapping(adapter, model_part, constraint, nodes_list, cad_shape)
         if status == "APPLIED":
-            return
+            return "APPLIED"
         if status != "NO_FACE_ID":
             # Cases B (INVALID_FACE_ID), C (OUT_OF_RANGE) and D (NO_NODES_MATCHED)
             # all carry a face identifier. Per the REGLA FINAL, the coordinate
             # fallback must NOT run automatically when the user specified a CAD
             # face: doing so would silently mask the mapping failure and apply a
             # condition to the wrong region. The failure was already reported as
-            # ``CAD FACE MAPPING FAILED``; stop here instead of papering over it.
-            logger.warning(
-                f"Constraint {constraint.id} specifies a CAD face that could not be "
-                f"mapped (status={status}). Coordinate fallback NOT applied to avoid "
-                f"silently selecting an unintended region."
-            )
-            return
+            # ``CAD FACE MAPPING FAILED``; propagate it so the solve fails loudly.
+            return f"UNRESOLVED: constraint {constraint.id} specifies CAD face " \
+                   f"(status={status}) that could not be mapped"
 
         # Strategy 3: Fallback - use coordinate-based filtering
         # Only reached when NO face identifier was given (Case A: no cad_shape or
@@ -526,7 +546,7 @@ def _apply_constraint_geometrically(adapter: Any, model_part: Any, constraint: A
         
         if fixed_coord is None:
             logger.warning(f"Constraint {constraint.id} has no coordinate or face information, cannot apply")
-            return
+            return "INDETERMINATE"
         
         node_indices = adapter.get_nodes_by_coordinate_filter(
             model_part, 
@@ -538,8 +558,13 @@ def _apply_constraint_geometrically(adapter: Any, model_part: Any, constraint: A
         if node_indices:
             adapter.apply_constraint_from_core(model_part, constraint, node_indices)
             logger.info(f"Constraint applied to {len(node_indices)} nodes by coordinate filter")
+            return "APPLIED"
         else:
             logger.warning(f"No nodes found matching constraint criteria for {constraint.id}")
+            # No explicit face/selection was specified here; a missing coordinate
+            # match is not a silent alternative region, so it stays non-fatal the
+            # same way as before (the condition is simply not applied).
+            return "INDETERMINATE"
             
     except Exception as e:
         logger.error(f"Failed to apply constraint geometrically: {e}")
@@ -610,7 +635,7 @@ def _apply_load_by_face_mapping(adapter: Any, model_part: Any, load: Any,
 
 
 def _apply_load_geometrically(adapter: Any, model_part: Any, load: Any,
-                              nodes_list: List[List[float]], cad_shape: Any = None) -> None:
+                              nodes_list: List[List[float]], cad_shape: Any = None) -> str:
     """Apply load using geometric node selection.
     
     ARCHITECTURE NOTE:
@@ -627,6 +652,13 @@ def _apply_load_geometrically(adapter: Any, model_part: Any, load: Any,
     3. Coordinate-based (fallback): filter nodes by coordinate (e.g., Z=L for the
        free end of a cantilever). Kept only as a technical fallback.
 
+    Returns:
+        Status string: ``"APPLIED"`` on success, or ``"UNRESOLVED: <reason>``
+        when an explicit load (face / selection) could not be materialized. The
+        caller must treat any ``UNRESOLVED`` as an error (REGLA FINAL): a load
+        that cannot be resolved must fail loudly rather than silently becoming a
+        (zero) force on the wrong region.
+
     Args:
         adapter: KratosAdapter instance
         model_part: Kratos ModelPart
@@ -638,9 +670,10 @@ def _apply_load_geometrically(adapter: Any, model_part: Any, load: Any,
         from core.study import LoadType
         
         # Strategy 0: Advanced geometric selection (explicit, highest priority)
-        if _apply_advanced_selection(adapter, model_part, load, nodes_list,
-                                     cad_shape, is_load=True):
-            return
+        advanced = _apply_advanced_selection(adapter, model_part, load, nodes_list,
+                                             cad_shape, is_load=True)
+        if advanced is not None:
+            return advanced
         
         # Strategy 1: Try to use named submodelpart (e.g., from gmsh physical groups)
         submodelpart_name = getattr(load, 'submodelpart_name', None) or \
@@ -652,25 +685,21 @@ def _apply_load_geometrically(adapter: Any, model_part: Any, load: Any,
                 adapter.apply_load_from_core(model_part, load, node_indices)
                 logger.info(f"Load {load.id} applied to {len(node_indices)} nodes "
                             f"via submodelpart '{submodelpart_name}'")
-                return
+                return "APPLIED"
             logger.warning(f"Submodelpart '{submodelpart_name}' has no nodes for load "
                            f"{load.id}; falling through to face mapping")
         
         # Strategy 2: CAD face mapping (primary geometric mechanism, physically anchored)
         status = _apply_load_by_face_mapping(adapter, model_part, load, nodes_list, cad_shape)
         if status == "APPLIED":
-            return
+            return "APPLIED"
         if status != "NO_FACE_ID":
             # Cases B/C/D carry a face identifier. Coordinate fallback must NOT run
             # automatically: it would silently mask the mapping failure and select
             # an unintended region. The failure was already reported via
-            # ``CAD FACE MAPPING FAILED``.
-            logger.warning(
-                f"Load {load.id} specifies a CAD face that could not be mapped "
-                f"(status={status}). Coordinate fallback NOT applied to avoid "
-                f"silently selecting an unintended region."
-            )
-            return
+            # ``CAD FACE MAPPING FAILED``; propagate it so the solve fails loudly.
+            return f"UNRESOLVED: load {load.id} specifies CAD face " \
+                   f"(status={status}) that could not be mapped"
 
         # Strategy 3: Fallback - use coordinate-based filtering
         # Only reached when NO application face was given (Case A).
@@ -694,10 +723,15 @@ def _apply_load_geometrically(adapter: Any, model_part: Any, load: Any,
             if node_indices:
                 adapter.apply_load_from_core(model_part, load, node_indices)
                 logger.info(f"Load applied to {len(node_indices)} nodes by coordinate filter")
+                return "APPLIED"
             else:
                 logger.warning(f"No nodes found matching load criteria for {load.id}")
+                return "INDETERMINATE"
         else:
             logger.warning(f"Load {load.id} has no coordinate or face information, cannot apply")
+            # No explicit face/selection; non-fatal, matches previous behavior
+            # (the load is simply not materialized).
+            return "INDETERMINATE"
             
     except Exception as e:
         logger.error(f"Failed to apply load geometrically: {e}")

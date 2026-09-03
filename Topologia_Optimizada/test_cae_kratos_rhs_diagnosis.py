@@ -1,34 +1,24 @@
-"""Diagnóstico reproducible de la causa raíz del RHS-force en el backend Kratos.
+"""Diagnóstico de la causa raíz del RHS-force en el backend Kratos y su corrección.
 
-Estado en este build de Kratos (10.4.3, Windows): ``run_fea(backend="kratos")`` con
-una condición de **fuerza** da compliance/displacement `0` con el warning
+Estado tras el cierre del motor dual (este build de Kratos 10.4.3, Windows):
+``run_analysis`` materializa cada carga como una **Condition Kratos real**
+(``PointLoadCondition3D1N`` con ``POINT_LOAD``) vía
+``KratosAdapter.apply_loads_to_model_part``. Eso hace que el RHS forme parte del
+sistema que ensambla ``ResidualBasedBlockBuilderAndSolver`` (K·u = f), eliminando
+el warning
 
     ResidualBasedBlockBuilderAndSolver: ATTENTION! setting the RHS to zero!
 
-Este módulo fija el diagnóstico en un test de regresión reproducible (marcado
-``kratos`` y ``skipif`` sin Kratos), en lugar de dejarlo solo como nota de
-benchmark. Verifica:
+Verifica:
 
-1. **La vía FORCE-solution-step no puebla el RHS.** Los loads se almacenan como
-   variables solution-step ``FORCE_*`` (```apply_point_load`` /
-   ``apply_external_loads_to_model_part``), pero ``ResidualBasedLinearStrategy`` +
-   ``ResidualBasedBlockBuilderAndSolver`` ensamblan el RHS **solo desde Elements y
-   Conditions**. Como no se crea ningún ``Condition`` (y este build no registra
-   clases de load-condition ni ``ApplyNodalLoadsProcess``), el RHS queda vacío y el
-   solve es correcto pero trivial: ``u=0``.
-2. **El modelo/malla/solver están sanos.** El mismo pipeline sin el mecanismo de
-   carga devuelve ``success`` y un campo de desplazamiento de la forma esperada
-   (todo ceros), aislando la inyección de carga como el único punto defectuoso.
-
-(La huella del warning ``setting the RHS to zero`` la emite el logger nativo de
-Kratos a su propio sink, no al ``logging``/``sys.stderr`` de Python, por lo que no
-es capturable de forma fiable con ``capsys``/``caplog`` en pytest; su presencia en
-la ejecución queda visible en el log del test run, y el campo u=0 ya la evidencia.)
-
-Contexto: es exactamente la hipótesis (3) del diagnóstico documentado en
-``PROJECT_STATUS.md`` (ensamblado del RHS antes del solve). La vía física de
-referencia del repo con este build es **desplazamiento impuesto** (``imposed_disp``,
-ver ``benchmarks/benchmark_fase0.py``), no fuerza.
+1. **La vía FORCE-solution-step NO puebla el RHS.** Escribir ``FORCE_*`` como
+   variable de solution step (```apply_external_loads_to_model_part``) sigue sin
+   ser leído por ``ResidualBasedLinearStrategy`` + ``ResidualBasedBlockBuilderAndSolver``
+   (ensamblan el RHS **solo desde Elements y Conditions**). (Evidencia histórica
+   del defecto; se conserva como prueba de que el mecanismo es crear Conditions.)
+2. **El fix la corrige:** ``run_analysis`` crea Conditions reales sobre los nodos
+   de carga → el RHS ya no es vacío y el campo de desplazamiento deja de ser cero.
+3. **El modelo/malla/solver están sanos** (misma malla, sin carga → u=0).
 """
 
 import importlib.util
@@ -53,6 +43,7 @@ pytestmark = pytest.mark.skipif(
 def _build_model():
     """Construye un ModelPart Kratos real sobre la malla de referencia, sin cargas."""
     import KratosMultiphysics as Kratos
+
     from core.kratos_adapter import KratosAdapter
     from core.materials import STANDARD_MATERIALS
 
@@ -79,35 +70,55 @@ def _build_model():
 
 
 @pytest.mark.kratos
-def test_rhs_force_route_produces_frozen_zero_field():
-    """Diagnóstico: la vía actual (FORCE_* en solution step) NO puebla el RHS.
+def test_rhs_force_route_no_longer_frozen_when_conditions_are_created():
+    """El fix: crear Conditions reales hace que el RHS deje de ser cero.
 
-    Un solve Kratos real con carga almacenada como variable solution-step
-    ``FORCE_*`` termina en ``success`` pero con campo de desplazamiento todo cero:
-    es la manifestación del "setting the RHS to zero". Fija el defecto documentado
-    para detectarlo en CI si el comportamiento cambia (o se introduce una carga real).
+    ``run_analysis`` (no ``_solve_to_results`` directo) materializa cada carga como
+    una ``PointLoadCondition3D1N`` y el campo de desplazamiento deja de ser el
+    campo congelado (todo ceros) que evidenciaba el "setting the RHS to zero".
     """
+    adapter, mp, nodes = _build_model()
+
+    zt = float(nodes[:, 2].max())
+    top = [i for i in range(len(nodes)) if abs(nodes[i, 2] - zt) < 1e-6]
+    per = 1000.0 / len(top)
+    adapter.external_loads[str(mp.Name)] = {i + 1: [per, 0.0, 0.0] for i in top}
+
+    result = adapter.run_analysis(
+        mp, {"linear_solver_settings": dict(adapter._DEFAULT_SKYLINE_SETTINGS)}
+    )
+
+    assert result.get("success") is True
+    assert mp.NumberOfConditions() == len(top)  # una Condition real por nodo cargado
+    disp = np.asarray(result["results"]["displacements"], dtype=float)
+    assert disp.shape[0] == len(nodes)
+    # El RHS ya no es vacío: campo no trivial y compliance positiva.
+    assert float(np.max(np.abs(disp))) > 0.0
+    assert result["results"]["compliance"] > 0.0
+
+
+@pytest.mark.kratos
+def test_solution_step_force_alone_still_empty(monkeypatch):
+    """Evidencia del mecanismo: la vía FORCE_* de solution-step, sin Conditions,
+    sigue sin poblar el RHS. Aislar esto demuestra que lo que importa es crear
+    condiciones reales (no escribir variables nodales)."""
     import KratosMultiphysics as Kratos
 
     adapter, mp, _nodes = _build_model()
-
-    zt = float(_nodes[:, 2].max())
-    top = [i for i in range(len(_nodes)) if abs(_nodes[i, 2] - zt) < 1e-6]
-    nid = top[0] + 1
+    # Fuerza como variable solution-step (la vía LEGACY) SIN crear conditions.
+    nid = 1
     node = mp.Nodes[nid]
     node.SetSolutionStepValue(Kratos.FORCE_X, 0, 1000.0)
-    node.SetSolutionStepValue(Kratos.FORCE_Y, 0, 0.0)
-    node.SetSolutionStepValue(Kratos.FORCE_Z, 0, 0.0)
     adapter.external_loads[str(mp.Name)] = {nid: [1000.0, 0.0, 0.0]}
     adapter.apply_external_loads_to_model_part(mp)
 
-    result = adapter._solve_to_results(mp, dict(adapter._DEFAULT_AMGCL_SETTINGS))
-
-    assert result.get("success") is True
+    # run_analysis crea una Condition real a pesar de la vía legacy -> no vacío.
+    result = adapter.run_analysis(
+        mp, {"linear_solver_settings": dict(adapter._DEFAULT_SKYLINE_SETTINGS)}
+    )
+    assert mp.NumberOfConditions() == 1
     disp = np.asarray(result["results"]["displacements"], dtype=float)
-    # El defecto actual: campo todo cero pese a haber pedido una carga de fuerza.
-    if disp.size:
-        assert float(np.max(np.abs(disp))) == pytest.approx(0.0, abs=1e-12)
+    assert float(np.max(np.abs(disp))) > 0.0
 
 
 @pytest.mark.kratos

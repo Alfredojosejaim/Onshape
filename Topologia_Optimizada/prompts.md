@@ -1,154 +1,275 @@
-\# AUDITORÍA Y CIERRE DE INTEGRACIÓN DE LA INTERFAZ CAD/CAE
+AUDITORÍA, CONSOLIDACIÓN Y TRAZABILIDAD DE LA INTERFAZ CAD/CAE
 
+Audita primero el estado actual del proyecto y después implementa únicamente los cambios necesarios.
 
+OBJETIVO
 
-Audita el estado actual del proyecto antes de modificar cualquier archivo.
+Consolidar una interfaz desktop CAD/CAE funcional, modular y fácil de modificar visualmente.
 
+La interfaz debe quedar separada de la lógica del programa, de forma que posteriormente sea posible modificar su distribución, tamaños, paneles, toolbars y apariencia sin tener que modificar el núcleo CAD/CAE.
 
+---
 
-\## Objetivo
-
-
-
-Completar la integración funcional de la interfaz desktop CAD/CAE utilizando la arquitectura que ya existe.
-
-
-
-El backend CAD, condiciones, operaciones, historial, malla y FEA ya están implementados. \*\*No los reconstruyas ni los reemplaces.\*\*
-
-
-
-\## Alcance de la auditoría
-
-
+1. AUDITORÍA
 
 Revisa como mínimo:
 
+- "desktop/ui/main_window.py"
+- "desktop/ui/panels/"
+- "desktop/viewport/"
+- "desktop/pipeline/controller.py"
+- "core/document.py"
+- "core/features/"
+- condiciones y estudios
+- menús y toolbars
+- tests relacionados con desktop/UI
 
+Determina:
 
-\* `desktop/ui/main\_window.py`
+1. qué componentes de UI son funcionales;
+2. cuáles son únicamente visuales;
+3. qué conexiones UI → Controller → Core ya existen;
+4. qué conexiones están incompletas;
+5. dónde existe lógica de negocio mezclada innecesariamente con código visual;
+6. qué partes de "MainWindow" deberían modularizarse;
+7. qué funcionalidades del núcleo todavía no tienen una acción de interfaz conectada.
 
-\* `desktop/ui/crea3d\_mainwindow.ui`
+No declares una funcionalidad como implementada únicamente porque exista una clase, botón o método.
 
-\* `desktop/ui/panels/`
+---
 
-\* `desktop/pipeline/controller.py`
+2. TRAZABILIDAD OBLIGATORIA
 
-\* `desktop/app.py`
+Después de la auditoría, crea o actualiza un documento:
 
-\* menús y toolbars
+"docs/UI_IMPLEMENTATION_MAP.md"
 
-\* `Document`, `FeatureHistory` y `Timeline`
+Este documento debe convertirse en el mapa técnico de la interfaz.
 
-\* `Viewport3D`
+Para cada acción importante visible en la interfaz, documenta exactamente qué ocurre cuando el usuario la utiliza.
 
-\* tests relacionados con UI/integración
+Por ejemplo:
 
+Botón: Carga
+UI:
+    desktop/ui/panels/...
+Acción/Senal:
+    ...
+Método ejecutado:
+    ...
+Controller:
+    desktop/pipeline/controller.py → ...
+Core:
+    core/... → ...
+Resultado:
+    ...
+Estado actualizado:
+    ...
 
+Ejemplo conceptual:
 
-Determina qué componentes ya funcionan, cuáles están parcialmente conectados y cuáles son únicamente visuales.
+Botón "Carga"
+→ abre/selecciona archivo de cargas
+→ ejecuta `import_file_cargas(...)`
+→ `PipelineController`
+→ crea/actualiza la condición correspondiente
+→ actualiza Document/estado
+→ DesignTree/Properties refleja el cambio
 
+El documento debe indicar los nombres reales encontrados en el código, no nombres inventados.
 
+Debe existir trazabilidad como mínimo para:
 
-\## Implementación
+- Importar CAD/STEP
+- Selección
+- Carga
+- Restricciones
+- Elasticidad
+- Unión Boolean
+- Obstrucciones
+- Regiones protegidas
+- Crear/modificar condiciones
+- Generar malla
+- Operaciones CAD
+- Transformar
+- Mirror
+- Pattern
+- Ejecutar FEA
+- Ejecutar estudios disponibles
+- Visualizar resultados
+- Exportar
+- Acciones de Design Tree
+- Acciones de Timeline
+- Propiedades
 
+Si una acción no está implementada, debe indicarse explícitamente:
 
+Estado: NO CONECTADO
+Motivo: ...
 
-Después de la auditoría:
+No se debe crear código ficticio únicamente para llenar el documento.
 
+---
 
+3. IMPLEMENTACIÓN
 
-1\. Integra la interfaz con las funcionalidades existentes.
+Mantener el núcleo
 
-2\. Reutiliza `Viewport3D`, `PipelineController`, `DesignTreePanel`, `PropertiesPanel`, `ResultsPanel`, `TimelinePanel` y los managers existentes.
+No reconstruyas ni reemplaces:
 
-3\. No dupliques managers, controladores, paneles ni sistemas de estado.
+- CAD
+- Document
+- FeatureHistory
+- condiciones
+- malla
+- FEA
+- Kratos
+- PipelineController
+- Viewport3D
+- SelectionManager
+- NavigationManager
 
-4\. No reemplaces una implementación funcional por otra innecesariamente.
+Si funcionan, reutilízalos.
 
-5\. Evalúa `crea3d\_mainwindow.ui` contra la implementación actual. Úsalo, adáptalo o descártalo parcialmente según resulte técnicamente conveniente; \*\*no lo integres por obligación\*\*.
+Modularizar la interfaz
 
-6\. El viewport debe utilizar el VTK real existente, nunca un placeholder.
+Organiza la UI para que:
 
-7\. Conecta los menús, botones y acciones con las operaciones CAD/CAE reales existentes.
+- "MainWindow" actúe principalmente como coordinador;
+- los paneles sean independientes;
+- menús y toolbars puedan modificarse sin alterar el backend;
+- la distribución pueda modificarse fácilmente;
+- el estilo visual esté centralizado;
+- las acciones de UI estén separadas de la lógica de negocio.
 
-8\. El Design Tree y Timeline deben reflejar el estado real del documento y sus operaciones.
+No crees abstracciones innecesarias.
 
-9\. Properties debe mostrar/modificar información correspondiente al objeto o selección actual.
+---
 
-10\. Results debe mostrar los resultados provenientes de los análisis existentes.
+4. ESTADO ÚNICO
 
-11\. La selección del viewport debe sincronizarse correctamente con la interfaz cuando esa capacidad ya exista.
+La interfaz debe reflejar el estado real del programa.
 
-12\. Mantén la navegación configurable existente.
+Evita:
 
-13\. Conserva las funcionalidades actuales; no elimines ninguna por simplificar la interfaz.
+- estados duplicados;
+- managers duplicados;
+- copias independientes del modelo;
+- árboles paralelos;
+- timelines que no representen el estado real.
 
-14\. No realices un rediseño visual completo. Prioriza \*\*funcionalidad, coherencia y conexión entre componentes\*\*.
+La fuente de verdad debe continuar siendo la arquitectura existente.
 
+---
 
+5. INTEGRACIÓN FUNCIONAL
 
-\## Restricciones
+Comprueba que las acciones principales realmente ejecuten las operaciones existentes de extremo a extremo.
 
+Para cada acción:
 
+UI
+↓
+Signal / Event
+↓
+Handler
+↓
+Controller
+↓
+Core
+↓
+Estado actualizado
+↓
+UI sincronizada
 
-\* No investigar nuevamente el motor FEA.
+Si alguna etapa está desconectada, corrígela cuando exista una implementación real en el proyecto que pueda reutilizarse.
 
-\* No modificar la arquitectura dual FEA salvo que la integración UI revele un error real.
+No inventes funcionalidades futuras.
 
-\* No migrar a C++.
+---
 
-\* No reconstruir el proyecto desde cero.
+6. EDICIÓN VISUAL
 
-\* No introducir dependencias innecesarias.
+"desktop/ui/crea3d_mainwindow.ui" es únicamente un boceto visual.
 
-\* No implementar funcionalidades CAD/CAE que todavía no estén definidas.
+No es necesario integrarlo ni convertirlo.
 
-\* Las funcionalidades que sean explícitamente scaffolds deben permanecer como tales.
+La arquitectura final debe facilitar posteriormente modificar:
 
+- posición y tamaño de paneles;
+- orden de toolbars;
+- agrupación de herramientas;
+- sidebar;
+- propiedades;
+- resultados;
+- timeline;
+- viewport;
+- menús;
+- espaciados;
+- tipografía;
+- iconos;
+- apariencia.
 
+No intentes crear un editor tipo Canva/PowerPoint dentro de la aplicación. El objetivo es conseguir una arquitectura de UI cuya presentación pueda modificarse fácilmente sin tocar la lógica CAD/CAE.
 
-\## Verificación
+---
 
+7. DOCUMENTACIÓN
 
+Además de "docs/UI_IMPLEMENTATION_MAP.md", actualiza únicamente la documentación que haya quedado desactualizada por los cambios.
 
-Al finalizar:
+El mapa debe permitir que otro desarrollador pueda responder rápidamente:
 
+«"¿Qué código se ejecuta cuando presiono este botón?"»
 
+Por tanto, evita descripciones genéricas. Utiliza rutas, clases, métodos, señales y componentes reales del repositorio.
 
-\* Ejecuta la suite de tests existente.
+---
 
-\* Añade tests únicamente donde sean necesarios para validar nuevas conexiones.
+8. RESTRICCIONES
 
-\* Comprueba que la aplicación inicia correctamente.
+- No reconstruir el proyecto.
+- No migrar a C++.
+- No modificar FEA sin encontrar un error real.
+- No modificar funcionalidades CAD que funcionan.
+- No eliminar funcionalidades existentes.
+- No integrar obligatoriamente el ".ui".
+- No crear una segunda arquitectura de UI.
+- No crear managers duplicados.
+- No introducir dependencias innecesarias.
+- No implementar funcionalidades futuras no definidas.
+- No inventar métodos para la documentación.
+- No declarar una acción funcional si no existe conexión de extremo a extremo.
 
-\* Comprueba que el viewport continúa funcionando.
+---
 
-\* Comprueba que las acciones principales de CAD/CAE llegan al controlador correspondiente.
+9. VERIFICACIÓN
 
-\* Comprueba que Design Tree, Timeline, Properties y Results mantienen un estado coherente.
+Después de implementar:
 
-
+1. Ejecuta todos los tests existentes.
+2. Comprueba que la aplicación inicia.
+3. Comprueba viewport.
+4. Comprueba selección.
+5. Comprueba navegación.
+6. Comprueba acciones CAD/CAE principales.
+7. Comprueba sincronización de:
+   - Design Tree
+   - Properties
+   - Results
+   - Timeline
+8. Comprueba que las acciones documentadas en "UI_IMPLEMENTATION_MAP.md" coincidan con el código real.
+9. Comprueba que no se haya roto funcionalidad existente.
 
 Finalmente informa:
 
+- qué encontraste;
+- qué estaba correctamente implementado;
+- qué estaba desconectado;
+- qué modularizaste;
+- qué modificaste;
+- qué quedó pendiente;
+- tests ejecutados y resultado;
+- ruta del documento de trazabilidad creado/actualizado.
 
-
-1\. qué estaba realmente implementado;
-
-2\. qué estaba desconectado;
-
-3\. qué modificaste;
-
-4\. qué funcionalidades quedaron completamente conectadas;
-
-5\. tests ejecutados y resultado;
-
-6\. cualquier limitación real que permanezca.
-
-
-
-\*\*No declares una funcionalidad como implementada únicamente porque exista su botón, clase o método: debe existir conexión funcional de extremo a extremo.\*\*
-
-
-
+Regla fundamental: la interfaz, la documentación y el código deben describir la misma arquitectura.

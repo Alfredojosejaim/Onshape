@@ -469,7 +469,7 @@ class SoftwareViewport(QWidget):
             self._rot_x = max(-89.0, min(89.0, self._rot_x + dy * 0.5))
         elif self._mode == "pan":
             self._cam_x += dx * self._zoom * 0.002
-            self._cam_y += dy * self._zoom * 0.002
+            self._cam_y -= dy * self._zoom * 0.002
         self.update()
 
     def mouseReleaseEvent(self, ev: QMouseEvent) -> None:

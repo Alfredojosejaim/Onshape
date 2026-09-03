@@ -139,11 +139,13 @@ class CameraController:
         right = right / nr
         up = np.cross(right, forward)
 
-        # drag vector in the view plane (mouse y grows downward on screen).
-        # The +up*dy sign makes the model follow the pointer vertically (drag
-        # up -> view moves up); only the vertical sense is inverted relative to
-        # the horizontal by design choice, keeping horizontal (right*dx) as-is.
-        drag = right * dx + up * dy
+        # drag vector in the view plane.
+        # VTK's QVTKRenderWindowInteractor flips Qt's Y (y_vtk = h - y_qt - 1),
+        # so dy > 0 means drag UP on screen.  The -dx sign makes the model
+        # follow the pointer horizontally: dragging right rotates the camera
+        # rightward around the model.  The +dy sign makes dragging up rotate
+        # the camera upward (model follows the pointer vertically).
+        drag = right * (-dx) + up * dy
         dmg = float(np.linalg.norm(drag))
         if dmg < 1e-12:
             return
@@ -184,7 +186,13 @@ class CameraController:
         self._fit_plane(dist)
 
     def pan(self, dx: float, dy: float, sensitivity: float = 0.002) -> None:
-        """Translate the focal point (and camera) in the image plane."""
+        """Translate the focal point (and camera) in the image plane.
+
+        ``dx``/``dy`` come from the VTK interactor whose Y axis is bottom-up
+        (QVTKRenderWindowInteractor flips Qt's top-down Y).  The ``-dy``
+        correction compensates so dragging DOWN on screen moves the model DOWN
+        (the model follows the pointer).
+        """
         distance = self.distance
         forward = self.focal_point - self.position
         forward = forward / np.linalg.norm(forward)
@@ -194,7 +202,7 @@ class CameraController:
         up = np.cross(right, forward)
 
         scale = distance * sensitivity
-        delta = right * (-dx * scale) + up * (dy * scale)
+        delta = right * (-dx * scale) + up * (-dy * scale)
         focal = self.focal_point + delta
         self._focal = focal
         self._cam.SetFocalPoint(*focal)

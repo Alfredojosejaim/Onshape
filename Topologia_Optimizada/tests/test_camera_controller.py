@@ -119,13 +119,11 @@ def test_orbit_vertical_sense_follows_pointer(controller):
 
 
 def test_orbit_horizontal_sense_unaffected(controller):
-    """Flipping the vertical sense must NOT change the horizontal one.
-
-    The horizontal drag sign is left as the original (user-reported correct)
-    behaviour: dragging right on screen moves the camera toward -X in FRONT view.
-    """
+    """Flipping the horizontal sense so the model follows the pointer:
+    dragging right on screen must move the camera toward +X in FRONT view
+    (camera orbits rightward so the model appears to rotate right)."""
     right_pos = _orbit_drag(controller, dx=6.0, dy=0.0)
-    assert right_pos[0] < 0, "drag right must keep its original -X motion"
+    assert right_pos[0] > 0, "drag right must move camera toward +X (orbit rightward)"
 
 
 def _orbit_drag(controller, dx, dy, sensitivity=0.01):
@@ -172,6 +170,30 @@ def test_pan_inclined_camera(controller):
     assert np.allclose(controller.distance, before_dist), (
         "pan must keep the lens distance constant"
     )
+
+
+def test_pan_follows_pointer_horizontal(controller):
+    """The model follows the pointer (CAD grab): dragging right on screen must
+    move the model toward the right of the screen.  In FRONT view the screen
+    right is -X, and the focal should shift in +X (camera moves left on screen)
+    so the model appears to the right.  Pins the pan horizontal sign."""
+    controller.set_view(StandardView.FRONT)
+    x0 = controller.focal_point[0]
+    controller.pan(30, 0)
+    x1 = controller.focal_point[0]
+    assert x1 > x0, "dragging right must shift focal +X so the model appears right on screen"
+
+
+def test_pan_follows_pointer_vertical(controller):
+    """The model follows the pointer vertically: in VTK the interactor flips Y
+    (QVTKRenderWindowInteractor: y_vtk = height - y_qt - 1), so dy < 0 means
+    dragging DOWN on screen.  After correcting the sign, dragging down must
+    move the model down (focal shifts toward +up so the model appears below)."""
+    controller.set_view(StandardView.FRONT)
+    z0 = controller.focal_point[2]
+    controller.pan(0, -30)  # VTK: dy < 0 = drag DOWN on screen
+    z1 = controller.focal_point[2]
+    assert z1 > z0, "dragging down must shift focal +Z so the model appears below on screen"
 
 
 # --------------------------------------------------------------------------- #
@@ -306,3 +328,22 @@ def test_switching_profile_keeps_camera(controller):
 def test_all_profiles_available():
     names = {p["name"] for p in NavigationManager.available_profiles()}
     assert {"autocad", "onshape", "fusion360", "blender"} <= names
+
+
+# --------------------------------------------------------------------------- #
+# Wiring contract: ZOOM_IN must call dolly with a positive step (bring closer)
+# --------------------------------------------------------------------------- #
+
+def test_zoom_wiring_zoomin_brings_closer():
+    """The Viewport3D currently wires ZOOM_IN -> camera.dolly(steps) and
+    ZOOM_OUT -> camera.dolly(-steps), and dolly(+) brings the camera closer
+    (checked by test_zoom_inclined_camera). This guards the actual wiring so a
+    regression that flips the sign (making 'zoom in' zoom out) is caught."""
+    src = open("desktop/viewport/viewport_3d.py", encoding="utf-8").read()
+    # ZOOM_IN must reach dolly with a positive literal step (brings closer).
+    zi = src.index("ViewportAction.ZOOM_IN")
+    zo = src.index("ViewportAction.ZOOM_OUT")
+    block_in = src[zi:zo]
+    assert ".dolly(0.8)" in block_in, "ZOOM_IN must call camera.dolly(positive) to zoom in"
+    block_out = src[zo:src.index("pass", zo)]
+    assert "dolly(-0.8)" in block_out, "ZOOM_OUT must call camera.dolly(negative) to zoom out"

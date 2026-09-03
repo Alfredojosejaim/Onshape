@@ -246,11 +246,11 @@ class Viewport3D(QWidget):
         elif act == ViewportAction.PAN:
             self._mode = "pan"
         elif act == ViewportAction.ZOOM_IN:
-            self.camera.dolly(-0.8)
+            self.camera.dolly(0.8)
             self.renderer.render()
             self._mode = "idle"
         elif act == ViewportAction.ZOOM_OUT:
-            self.camera.dolly(0.8)
+            self.camera.dolly(-0.8)
             self.renderer.render()
             self._mode = "idle"
         elif act == ViewportAction.SELECT:

@@ -48,3 +48,48 @@ def test_ui_uses_only_available_contract():
     # SelectionManager (covered by test_selection_manager_ui_contract too).
     assert "sel.multi_selection" in src
     assert "sel.last_payload" in src
+
+
+def test_highlight_overlay_is_offset_off_the_surface():
+    """The face-selection overlay must not z-fight the opaque mesh.
+
+    ``highlight_faces`` builds a gold overlay on the *same* triangles as the
+    model, which is exactly coplanar and would fail the depth test (the reason
+    planar faces were invisible and curved faces only partially highlighted).
+    ``_offset_overlay`` must lift the overlay vertices off the surface.
+    """
+    import numpy as np
+    from desktop.viewport.scene import Scene
+
+    # Planar quad on z=0 (2 triangles). Outward normal +z.
+    verts = np.array(
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]],
+        dtype=float,
+    )
+    tris = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int64)
+
+    overlay_verts, overlay_tris = Scene._offset_overlay(verts, tris)
+
+    # Triangle indices are preserved (same layout/order).
+    assert np.array_equal(overlay_tris, tris)
+    # The overlay must be lifted in +z (moved toward the viewer / off the face).
+    assert np.all(overlay_verts[:, 2] > 0.0), "overlay must lift off the planar face"
+    # Only the involved vertices move; the offset is tiny (proportional to bbox).
+    assert np.allclose(overlay_verts[:, 2], 0.001, atol=1e-6)
+
+
+def test_highlight_overlay_offset_preserves_remaining_vertices():
+    """Vertices not referenced by the selected triangles must stay untouched."""
+    import numpy as np
+    from desktop.viewport.scene import Scene
+
+    verts = np.array(
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0],
+         [0.0, 1.0, 0.0], [5.0, 5.0, 5.0]],  # unreferenced far vertex
+        dtype=float,
+    )
+    tris = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int64)
+
+    overlay_verts, _ = Scene._offset_overlay(verts, tris)
+    # Vertex 4 (index 4) is not in any triangle, so it must be unchanged.
+    assert np.array_equal(overlay_verts[4], verts[4])

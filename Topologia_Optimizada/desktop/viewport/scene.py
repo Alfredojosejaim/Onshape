@@ -250,7 +250,14 @@ class Scene:
         return self._faces_meta.get(int(face_index))
 
     def highlight_faces(self, face_indices: list) -> None:
-        """Draw a translucent gold overlay on the given B-Rep face triangles."""
+        """Draw a translucent gold overlay on the given B-Rep face triangles.
+
+        The overlay reuses the model triangles, so it is exactly coplanar with
+        the shaded mesh. Without a small offset it z-fights the opaque mesh,
+        which is why planar (front-facing) faces failed the depth test and
+        curved faces showed only partial coverage. We therefore nudge the
+        overlay vertices slightly outward (+normal) to lift it off the surface.
+        """
         self.clear_highlight()
         if not face_indices or self._tri_face_index is None:
             return
@@ -260,9 +267,11 @@ class Scene:
         if tris.shape[0] == 0:
             self._renderer.render()
             return
+        verts = self._model_vertices
+        overlay_verts, overlay_tris = self._offset_overlay(verts, tris)
         actor = self._renderer.make_triangle_actor(
-            self._model_vertices,
-            tris,
+            overlay_verts,
+            overlay_tris,
             color=(0.95, 0.72, 0.08),
             opacity=0.55,
             edge_color=(0.98, 0.9, 0.4),
@@ -272,6 +281,46 @@ class Scene:
         self.add_object(obj, actor)
         self._highlight_actor_key = obj.actor_key
         self._renderer.render()
+
+    @staticmethod
+    def _offset_overlay(verts: np.ndarray, tris: np.ndarray) -> tuple:
+        """Return a copy of the overlay geometry lifted off the surface.
+
+        Displaces the vertices used by ``tris`` along their (area-weighted
+        average) face normal by a small epsilon proportional to the bounding
+        box diagonal. The returned vertex array shares layout with ``verts`` so
+        the tri indices remain valid. Degenerate triangles are skipped.
+        """
+        verts = np.asarray(verts, dtype=float)
+        tris = np.asarray(tris, dtype=np.int64)
+        overlay_verts = verts.copy()
+        if tris.shape[0] == 0:
+            return overlay_verts, tris
+
+        extent = float(np.ptp(verts, axis=0).max())
+        eps = (extent * 0.001) if extent > 0 else 1e-4
+
+        v0 = verts[tris[:, 0]]
+        v1 = verts[tris[:, 1]]
+        v2 = verts[tris[:, 2]]
+        n = np.cross(v1 - v0, v2 - v0)
+        norm = np.linalg.norm(n, axis=1, keepdims=True)
+        norm[norm < 1e-12] = 1.0
+        n = n / norm
+
+        counts = np.zeros(verts.shape[0], dtype=np.int64)
+        sums = np.zeros((verts.shape[0], 3), dtype=float)
+        for k in range(3):
+            idx = tris[:, k]
+            np.add.at(sums, idx, n)
+            np.add.at(counts, idx, 1)
+        ok = counts > 0
+        vnorm = np.zeros_like(verts)
+        vnorm[ok] = sums[ok] / counts[ok][:, None]
+        vnorm[ok] /= np.linalg.norm(vnorm[ok], axis=1, keepdims=True)
+
+        overlay_verts[ok] += vnorm[ok] * eps
+        return overlay_verts, tris
 
     def clear_highlight(self) -> None:
         if self._highlight_actor_key is not None:

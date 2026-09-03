@@ -54,25 +54,6 @@ def _apply_rotation(rot: np.ndarray, pts: np.ndarray) -> np.ndarray:
     return (rot @ pts.T).T
 
 
-def _project_ortho(pts_3d: np.ndarray, cx: float, cy: float,
-                   scale: float, w: float, h: float) -> np.ndarray:
-    """Proyección ortográfica: z se usa para ordenamiento, x/y → pantalla."""
-    out = np.empty((pts_3d.shape[0], 2))
-    out[:, 0] = cx + pts_3d[:, 0] * scale
-    out[:, 1] = cy - pts_3d[:, 1] * scale  # eje Y invertido en pantalla
-    return out
-
-
-def _project_ortho_with_z(pts_3d: np.ndarray, cx: float, cy: float,
-                          scale: float, w: float, h: float) -> np.ndarray:
-    """Proyección ortográfica retornando (N, 3): x屏幕, y屏幕, z_profundidad."""
-    out = np.empty((pts_3d.shape[0], 3))
-    out[:, 0] = cx + pts_3d[:, 0] * scale
-    out[:, 1] = cy - pts_3d[:, 1] * scale
-    out[:, 2] = pts_3d[:, 2]  # profundidad para z-sort
-    return out
-
-
 def _point_in_triangle_2d(px: float, py: float,
                            ax: float, ay: float,
                            bx: float, by: float,
@@ -235,7 +216,25 @@ class _SoftwareScene:
 
     # -- BBox --
     def set_bounds(self, bbox) -> None:
-        self._bbox = np.asarray(bbox, dtype=float)
+        """Set scene extents (BoundingBox3D-like, ``_BBox`` or array) and refit."""
+        if bbox is None:
+            return
+        if isinstance(bbox, dict):
+            self._bbox = np.array(
+                [
+                    [bbox.get("xmin", -1), bbox.get("ymin", -1), bbox.get("zmin", -1)],
+                    [bbox.get("xmax", 1), bbox.get("ymax", 1), bbox.get("zmax", 1)],
+                ],
+                dtype=float,
+            )
+        elif hasattr(bbox, "xmin"):
+            self._bbox = np.array(
+                [[bbox.xmin, bbox.ymin, bbox.zmin],
+                 [bbox.xmax, bbox.ymax, bbox.zmax]],
+                dtype=float,
+            )
+        else:
+            self._bbox = np.asarray(bbox, dtype=float)
 
     # -- Modo de display --
     def set_display_mode(self, mode: str) -> None:
@@ -594,9 +593,9 @@ class SoftwareViewport(QWidget):
                                ((v, -half, 0), (v, half, 0))]:
                 p0 = _apply_rotation(rot, np.array([start]))[0]
                 p1 = _apply_rotation(rot, np.array([end]))[0]
-                x0 = cx + (p0[0] + self._cam_x) / self._zoom * -1
+                x0 = cx + (p0[0] + self._cam_x) / self._zoom
                 y0 = cy - (p0[1] + self._cam_y) / self._zoom
-                x1 = cx + (p1[0] + self._cam_x) / self._zoom * -1
+                x1 = cx + (p1[0] + self._cam_x) / self._zoom
                 y1 = cy - (p1[1] + self._cam_y) / self._zoom
                 painter.drawLine(QPointF(x0, y0), QPointF(x1, y1))
 
@@ -632,8 +631,12 @@ class SoftwareViewport(QWidget):
         transformed = _apply_rotation(rot, verts)
         self._scene._transformed_verts = transformed
 
-        # Proyectar con z
-        projected = _project_ortho_with_z(transformed, cx, cy, self._zoom, w, h)
+        # Proyectar con z usando la misma convencion que malla/densidad/rejilla:
+        # X = cx + (rx + cam_x) / zoom, Y = cy - (ry + cam_y) / zoom.
+        projected = np.empty((transformed.shape[0], 3))
+        projected[:, 0] = cx + (transformed[:, 0] + self._cam_x) / self._zoom
+        projected[:, 1] = cy - (transformed[:, 1] + self._cam_y) / self._zoom
+        projected[:, 2] = transformed[:, 2]  # profundidad para z-sort
         self._scene._projected_pts = projected
 
         # Ordenar caras por profundidad (back-to-front, mayor z = más lejos)
@@ -706,10 +709,10 @@ class SoftwareViewport(QWidget):
                 n0, n1 = elem[j], elem[(j + 1) % len(elem)]
                 p0 = transformed[n0]
                 p1 = transformed[n1]
-                x0 = cx + p0[0] / self._zoom
-                y0 = cy - p0[1] / self._zoom
-                x1 = cx + p1[0] / self._zoom
-                y1 = cy - p1[1] / self._zoom
+                x0 = cx + (p0[0] + self._cam_x) / self._zoom
+                y0 = cy - (p0[1] + self._cam_y) / self._zoom
+                x1 = cx + (p1[0] + self._cam_x) / self._zoom
+                y1 = cy - (p1[1] + self._cam_y) / self._zoom
                 painter.drawLine(QPointF(x0, y0), QPointF(x1, y1))
 
     def _draw_density(self, painter: QPainter, rot: np.ndarray,
@@ -733,5 +736,6 @@ class SoftwareViewport(QWidget):
             poly = QPolygonF()
             for n_idx in elem:
                 p = transformed[n_idx]
-                poly.append(QPointF(cx + p[0] / self._zoom, cy - p[1] / self._zoom))
+                poly.append(QPointF(cx + (p[0] + self._cam_x) / self._zoom,
+                                    cy - (p[1] + self._cam_y) / self._zoom))
             painter.drawPolygon(poly)

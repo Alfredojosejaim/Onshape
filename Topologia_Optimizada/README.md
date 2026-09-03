@@ -870,7 +870,7 @@ Antes de implementar una funcionalidad debe comprobar:
 5. ¿Existe ya una implementación equivalente?
 
 
-6. ¿Está contemplada en prompt.md y metodologia.md?
+6. ¿Está contemplada en prompts.md y metodologia.md?
 
 
 
@@ -1069,8 +1069,9 @@ Topologia_Optimizada/
 │  ├─ meshing.py              Mallado volumétrico Gmsh (GmshTet4Mesher)
 │  ├─ boundary.py             Mapeo de condiciones de frontera
 │  ├─ selection.py            Engine de selección geométrica de nodos
-│  ├─ fea.py                  Motor FEA self-contained (Tet4, NumPy/SciPy)
-│  ├─ kratos_adapter.py       Adaptador Kratos (motor FEA principal + fallback)
+│  ├─ fea.py                  Motor FEA local (default, Tet4, NumPy/SciPy)
+│  ├─ kratos_adapter.py       Adaptador Kratos (motor FEA opcional)
+│  ├─ kratos_bridge.py        Traducción de condiciones CAD/CAE → definiciones Kratos
 │  ├─ solver_interface.py     Interfaz TopOpt (TopOptSolver, create_kratos_fea_solver)
 │  ├─ topopt.py               Motor SIMP self-contained (subdominios preservado/vacío)
 │  ├─ materials.py            Materiales
@@ -1084,7 +1085,9 @@ Topologia_Optimizada/
 │  ├─ generative.py           Estudio de diseño generativo (escenarios A/B, configs)
 │  ├─ generative_engine.py    Motor de diseño generativo (bridge mesh, SIMP, B-Rep)
 │  ├─ cad_reconstruction.py   Reconstrucción B-Rep (marching tetrahedra + OCP/STEP)
-│  └─ cad_entity.py           Referencias de entidades CAD (CadEntityRef, SelectionSet)
+│  ├─ cad_entity.py           Referencias de entidades CAD (CadEntityRef, SelectionSet)
+│  ├─ navigation.py           Perfiles de navegación (AutoCAD, Onshape, etc.)
+│  └─ user_preferences.py     Preferencias locales de usuario (JSON)
 │
 ├─ adapters/cad/
 │  ├─ step_adapter.py         Importación STEP → CADModel
@@ -1098,19 +1101,30 @@ Topologia_Optimizada/
 │  ├─ app.py
 │  ├─ pipeline/controller.py  Orquestación del pipeline
 │  ├─ ui/                     main_window, panels, style
+│  │  ├─ main_window.py       Ventana principal (UI construida en código)
+│  │  ├─ style.py             Tema visual (QSS) + PALETTE
+│  │  ├─ theme.json           Tokens de color del tema
+│  │  └─ panels/              panels (design tree, properties, results, timeline,
+│  │                          boolean, condition, transform, mirror, pattern, study)
 │  └─ viewport/               viewport 3D (camera, scene, renderer, selection)
+│     ├─ viewport_3d.py       Viewport con GPU (VTK)
+│     └─ software_viewport.py Fallback por software sin GPU (QPainter)
 │
-├─ benchmarks/                Rendimiento: solvers, memoria, compliance
+├─ tests/                     Suite de tests (pytest)
+│  ├─ benchmarks/             Tests de benchmarks (compliance, kratos fallback, FEA e2e)
+│  └─ test_*.py               Tests funcionales y de integración
+│
+├─ tests_obsoletos/           Tests de diagnóstico histórico, retirados de la suite
+│
+├─ benchmarks/                Rendimiento: solvers, memoria, compliance (scripts CLI)
 │  ├─ meshes/                 Mallas de referencia (small/medium/large)
 │  ├─ results/                Baselines JSON + perfiles
-│  ├─ test_kratos_fallback.py Tests del fallback de solver (amgcl→skyline_lu)
-│  └─ test_compliance.py
+│  └─ *.py                    Scripts y módulos de medición
 │
 ├─ requirements.txt           Dependencias de la app
 ├─ pyproject.toml             Metadatos del paquete, pytest, herramientas
 ├─ INICIAR_APP_DESKTOP.bat    Lanzador Windows de la app de escritorio
 ├─ cono.step                  Fixture CAD de prueba
-├─ .env.example               Plantilla de variables de entorno
 │
 ├─ runtime/                   Runtime Python embebido (no versionado; .gitignore)
 └─ .venv/                     Entorno virtual local (no versionado; .gitignore)

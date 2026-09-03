@@ -41,10 +41,12 @@ norecursedirs = [
     "node_modules",
     ".venv",
     "runtime",
+    "tests_obsoletos",
 ]
-testpaths = ["."]
+testpaths = ["tests"]
+addopts = "-m 'not slow'"
+pythonpath = ["."]
 markers = [
     "kratos: requires KratosMultiphysics (bundled; skipped only when unavailable)",
     "slow: long-running validation tests that are skipped by default",
 ]
-addopts = "-m 'not slow'"

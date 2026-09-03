@@ -4,6 +4,11 @@
 **Tarea:** Corregir problema crítico de sobreconstricción en FEA  
 **Estado:** ✅ **COMPLETADO (Fase 1)**
 
+> **Nota histórica:** Este documento es un registro puntual de la corrección de Fase 1.
+> La Fase 2 (gmsh physical groups) y sus pasos posteriores ya están **implementados y
+> verificados** (ver `core/meshing.py`, `ARQUITECTURA_SELECCION_NODOS.md` y
+> `PROJECT_STATUS.md`). Las secciones "PRÓXIMOS PASOS" de abajo listan tareas ya resueltas.
+
 ---
 
 ## EL PROBLEMA (Analizado hace 20 minutos)
@@ -203,17 +208,17 @@ def test_cantilever_geometric_selection():
 
 ### Corto plazo (2-4 horas)
 ```
-4. Implementar Fase 2 (gmsh physical groups)
-   └─ Actualizar geometry_processor.py con addPhysicalGroup()
-5. Integrar exportación a .mdpa con nombres submodelparts
-6. Re-validar con Fase 2 (más robusto)
+4. ✅ Implementar Fase 2 (gmsh physical groups)
+   └─ En core/meshing.py (GmshTet4Mesher), no geometry_processor.py
+5. ✅ Integrar exportación a .mdpa con nombres submodelparts
+6. ✅ Re-validar con Fase 2 (más robusto)
 ```
 
 ### Mediano plazo (si tiempo lo permite)
 ```
-7. Ejecutar TopOpt con geometría correcta
-8. Validar convergencia de compliance
-9. Comparar contra topología esperada (si existe referencia)
+7. ✅ Ejecutar TopOpt con geometría correcta
+8. ✅ Validar convergencia de compliance
+9. ✅ Comparar contra topología esperada (si existe referencia)
 ```
 
 ---

@@ -44,7 +44,7 @@ Se implementaron **dos niveles de selección geométrica**:
 1. **Nivel 1 (Robusto - Recomendado)**: Usar **submodelparts nombrados** 
    - Origen: gmsh physical groups → .mdpa submodelparts
    - Ventaja: Selección exacta, vinculada a geometría CAD
-   - Estado: Implementado pero requiere integración gmsh
+   - Estado: Implementado (gmsh physical groups → submodelparts, Fase 2)
 
 2. **Nivel 2 (Fallback - Implementado Ahora)**: Usar **filtrado por coordenadas**
    - Método: Seleccionar nodos por proximidad a un plano o coordenada
@@ -389,8 +389,8 @@ def test_submodelpart_selection():
 | `core/kratos_adapter.py` | +4 métodos nuevos (submodelpart, coord filter) | ✅ Implementado |
 | `core/solver_interface.py` | Refactor: reemplaza "all_node_indices" con selección geométrica | ✅ Implementado |
 | Documentación | Este archivo + inline comments en código | ✅ Hecho |
-| `core/meshing.py` | Necesita integración gmsh physical groups (TODO: Fase 2) | ⏳ Pendiente |
-| Tests | Validar viga cantilever con resultados analíticos | ⏳ Pendiente |
+| `core/meshing.py` | Integración gmsh physical groups (GmshTet4Mesher) | ✅ Implementado |
+| Tests | Validar viga cantilever con resultados analíticos | ✅ Implementado (tests/ y tests_obsoletos/) |
 
 ---
 
@@ -398,15 +398,15 @@ def test_submodelpart_selection():
 
 ### Corto Plazo (Validar Fase 1)
 1. ✅ Implementar fallback coordinate-based (HECHO)
-2. ⏳ Crear test: viga cantilever simple con fixed_coordinate + load_coordinate
-3. ⏳ Validar que max_displacement ≈ solución analítica
-4. ⏳ Verificar que solo nodos de frontera están constrictos
+2. ✅ Test viga cantilever simple con fixed_coordinate + load_coordinate
+3. ✅ Validar que max_displacement ≈ solución analítica
+4. ✅ Verificar que solo nodos de frontera están constrictos
 
 ### Mediano Plazo (Implementar Fase 2)
-1. Integrar gmsh.model.addPhysicalGroup() en core/meshing.py (GmshTet4Mesher)
-2. Actualizar import_mesh_from_mdpa() en kratos_adapter.py para preservar submodelparts
-3. Agregar campos `submodelpart_name` a ConstraintDefinition y LoadDefinition
-4. Reemplazar coordinate-based con submodelpart-based en tests
+1. ✅ Integrar gmsh.model.addPhysicalGroup() en core/meshing.py (GmshTet4Mesher)
+2. ✅ Actualizar import_mesh_from_mdpa() en kratos_adapter.py para preservar submodelparts
+3. ✅ Agregar campos `submodelpart_name` a ConstraintDefinition y LoadDefinition
+4. ✅ Reemplazar coordinate-based con submodelpart-based en tests
 
 ### Largo Plazo (Validación SIMP)
 1. Ejecutar TopOpt con geometría correcta

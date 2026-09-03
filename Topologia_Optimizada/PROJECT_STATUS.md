@@ -321,7 +321,8 @@ resultados físicos → comparación automatizada.
   superficie, por lo que Pa→N (Pa × área) no se puede resolver; en vez de tratar Pa como N
   (error físico silencioso) se lanza `ValueError` (`test_pressure_load_without_area_fails_clearly`).
 - **Verificación:** suite completa **320 passed, 6 deselected, 1 warning** (`.venv` y
-  `runtime/python`).
+  `runtime/python`). Tras la reorganización de tests en `tests/` (y retiro de 2 de diagnóstico a
+  `tests_obsoletos/`): **321 passed, 6 deselected**.
 
 ---
 
@@ -383,7 +384,8 @@ Flujo integrado y verificable (STEP → selección real → estudio → malla �
 - **Tests**: `test_study_pipeline.py` (53 tests) cubre selección → CadEntityRef →
   study.parts → validación → dominio determinista (sólido seleccionado ≠ primer
   sólido, recaptura de selección en el panel) → condiciones → solver → resultado → UI.
-- Verificación: suite completa **270 passed, 6 deselected, 1 warning**.
+- Verificación: suite completa **321 passed, 6 deselected** (estado actual tras la
+  reorganización de tests en `tests/`).
 
 ---
 
@@ -653,7 +655,8 @@ arquitectura existente.
 ### Tests ejecutados y resultado
 - `test_cae_audit_fixes.py`: **7 passed**.
 - `test_cae_kratos_bridge.py`: **11 passed**.
-- `benchmarks/test_run_fea_kratos_e2e.py`: **3 passed** (solve nativo real de Kratos).
+- `benchmarks/test_run_fea_kratos_e2e.py` (ahora `tests/benchmarks/test_run_fea_kratos_e2e.py`):
+  **3 passed** (solve nativo real de Kratos).
 - Suite completa: **313 passed, 6 deselected, 1 warning** baseline FEA (→ +2 de diagnóstico RHS
   en este ciclo = **315 passed** en total, sin regresiones).
 
@@ -777,7 +780,9 @@ El `ResidualBasedBlockBuilderAndSolver` ahora ensambla la carga como parte del s
 - `PointLoadCondition3D1N` con `POINT_LOAD` (VectorVariable) → contribute al RHS via el builder.
 - El fix es mínimo: se conservan `apply_external_loads_to_model_part` (compatibilidad legacy) y
   `self.external_loads` para compliance; la carga real pasa por `apply_loads_to_model_part`.
-- **Suite completa: 320 passed, 6 deselected, 1 warning** (sin regresiones).
+- **Suite completa: 320 passed, 6 deselected, 1 warning** (sin regresiones). Tras la
+  reorganización de tests en `tests/` (y retiro a `tests_obsoletos/` de 2 tests de diagnóstico):
+  **321 passed, 6 deselected**.
 
 **Estado del motor dual (this cycle): sin pendientes funcionales.** Fix del RHS, cargas
 superficiales/distribuidas (`DISTRIBUTED`) y error explícito para `PRESSURE` quedan resueltos y

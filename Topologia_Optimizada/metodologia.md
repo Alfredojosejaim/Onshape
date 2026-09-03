@@ -133,7 +133,7 @@ Sin embargo:
 
 
 
-No desarrollar estas integraciones durante las etapas standalone salvo que prompt.md lo indique explícitamente.
+No desarrollar estas integraciones durante las etapas standalone salvo que prompts.md lo indique explícitamente.
 
 Una futura integración debe conectarse a la aplicación, nunca convertirse en requisito de funcionamiento del Core.
 
@@ -168,7 +168,7 @@ Es la referencia arquitectónica general del proyecto.
 
 ---
 
-prompt.md
+prompts.md
 
 Define:
 
@@ -214,7 +214,7 @@ Es el reglamento obligatorio de desarrollo.
 
 ---
 
-resumen_implementacion.md
+RESUMEN_IMPLEMENTACION.md
 
 Registra:
 
@@ -245,13 +245,13 @@ Cuando exista una contradicción entre documentos:
 1. README.md define la arquitectura y visión general.
 
 
-2. prompt.md define los requisitos concretos de la etapa actual.
+2. prompts.md define los requisitos concretos de la etapa actual.
 
 
 3. metodologia.md define las reglas obligatorias de ejecución y validación.
 
 
-4. resumen_implementacion.md informa el estado real, pero no modifica los requisitos.
+4. RESUMEN_IMPLEMENTACION.md informa el estado real, pero no modifica los requisitos.
 
 
 
@@ -273,13 +273,13 @@ Antes de modificar cualquier código, la IA debe:
 1. Leer README.md.
 
 
-2. Leer prompt.md.
+2. Leer prompts.md.
 
 
 3. Leer metodologia.md.
 
 
-4. Leer resumen_implementacion.md.
+4. Leer RESUMEN_IMPLEMENTACION.md.
 
 
 5. Revisar la estructura actual del repositorio.
@@ -929,7 +929,7 @@ BLOQUEADO — REQUIERE INVESTIGACIÓN
 
 21.4 Tracker obligatorio del bloqueo
 
-El bloqueo debe documentarse DENTRO de resumen_implementacion.md.
+El bloqueo debe documentarse DENTRO de RESUMEN_IMPLEMENTACION.md.
 
 NO crear un archivo independiente para cada error.
 
@@ -1305,7 +1305,7 @@ En caso de conflicto entre una suposición de la IA ejecutora y evidencia obteni
 
 
 
-Toda corrección importante derivada de una investigación externa debe quedar registrada en resumen_implementacion.md.
+Toda corrección importante derivada de una investigación externa debe quedar registrada en RESUMEN_IMPLEMENTACION.md.
 
 
 ---

@@ -31,10 +31,9 @@ register_kratos_dll_directory()
 # ---------------------------------------------------------------------------
 # Legacy Kratos experiments
 # ---------------------------------------------------------------------------
-# The self-contained application no longer depends on KratosMultiphysics. Tests
-# that require the native Kratos libraries are marked ``@pytest.mark.kratos`` and
-# skipped by default. The globs below are kept as a safety net in case any stray
-# Kratos test file reappears at the root.
+# La suite de tests vive en `tests/` (y los de diagnóstico histórico retirados en
+# `tests_obsoletos/`). Los globs de abajo se mantienen como safety net en caso de
+# que reaparezca algún test legacy de Kratos en la raíz.
 collect_ignore_glob = [
     "test_kratos_*.py",
     "test_linear_solver_repro.py",

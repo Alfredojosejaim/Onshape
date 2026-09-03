@@ -471,12 +471,12 @@ Se creó test comprehensivo en `test_geometric_selection_validation.py`:
 **Ventajas:** Funciona inmediatamente sin cambios en gmsh  
 **Desventajas:** Requiere conocer coordenadas, menos preciso
 
-#### Fase 2 (Próxima) - gmsh Physical Groups
+#### Fase 2 (Implementada) - gmsh Physical Groups
 ```
-┌─ geometry_processor.py
-│  └─ gmsh.model.addPhysicalGroup() → nombres grupos físicos
+┌─ core/meshing.py (GmshTet4Mesher)
+│  └─ gmsh.model.addPhysicalGroup() → nombres grupos físicos (physical groups)
 │
-├─ Exportar a .mdpa (gmsh → Kratos)
+├─ Exportar a .mdpa (gmsh → Kratos) / importar mesh
 │  └─ Grupos se convierten en submodelparts
 │
 ├─ kratos_adapter.py
@@ -490,7 +490,8 @@ Se creó test comprehensivo en `test_geometric_selection_validation.py`:
 ```
 
 **Ventajas:** Selección exacta, vinculada a geometría CAD, robusto  
-**Desventajas:** Requiere modificar pipeline gmsh (en progreso)
+**Desventajas:** Requiere modificar pipeline gmsh (completado; note: implementado en
+`core/meshing.py` como `GmshTet4Mesher`, no en `geometry_processor.py`)
 
 ### Archivos Modificados/Creados
 
@@ -1238,7 +1239,12 @@ large. Este es el footprint real que `tracemalloc` nunca capturaba.
 
 # INTERVENCIÓN — FASE 4: DESTINO DE `core/fea.py` Y `core/topopt.py`
 
-## Resultado: sin acción (los módulos no existen y nada los referencia)
+> **Nota de actualización:** El párrafo de abajo es un registro histórico de una decisión tomada
+> en ese momento. **Ya no refleja el estado actual del repo**: `core/fea.py` y `core/topopt.py`
+> hoy SÍ existen y son el motor FEA local (default) y el SIMP self-contained, respectivamente
+> (importados por `desktop/pipeline/controller.py`, `core/generative_engine.py` y varios tests).
+
+## Resultado (histórico): sin acción (en su momento se creyó que los módulos no existían)
 
 El plan de rendimiento mencionaba `core/fea.py` y `core/topopt.py`, pero **ninguno de los dos
 existe** en el repo. Verificado:

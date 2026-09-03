@@ -1,275 +1,158 @@
-AUDITORÍA, CONSOLIDACIÓN Y TRAZABILIDAD DE LA INTERFAZ CAD/CAE
-
-Audita primero el estado actual del proyecto y después implementa únicamente los cambios necesarios.
-
-OBJETIVO
-
-Consolidar una interfaz desktop CAD/CAE funcional, modular y fácil de modificar visualmente.
-
-La interfaz debe quedar separada de la lógica del programa, de forma que posteriormente sea posible modificar su distribución, tamaños, paneles, toolbars y apariencia sin tener que modificar el núcleo CAD/CAE.
-
----
+AUDITORÍA Y MODULARIZACIÓN DE LA COMPOSICIÓN VISUAL DE LA UI
 
-1. AUDITORÍA
+Audita el estado REAL actual del repositorio y trabaja sobre la implementación existente. No reconstruyas la interfaz desde cero ni reemplaces sistemas funcionales sin necesidad.
 
-Revisa como mínimo:
+Objetivo
 
-- "desktop/ui/main_window.py"
-- "desktop/ui/panels/"
-- "desktop/viewport/"
-- "desktop/pipeline/controller.py"
-- "core/document.py"
-- "core/features/"
-- condiciones y estudios
-- menús y toolbars
-- tests relacionados con desktop/UI
+Hacer que la interfaz CAD/CAE sea más modular y fácil de modificar visualmente, manteniendo intacta la lógica existente.
 
-Determina:
+Usa "docs/UI_IMPLEMENTATION_MAP.md" como referencia de trazabilidad. No lo recrees desde cero; actualízalo únicamente si los cambios realizados modifican rutas, clases, señales, controladores o conexiones documentadas.
 
-1. qué componentes de UI son funcionales;
-2. cuáles son únicamente visuales;
-3. qué conexiones UI → Controller → Core ya existen;
-4. qué conexiones están incompletas;
-5. dónde existe lógica de negocio mezclada innecesariamente con código visual;
-6. qué partes de "MainWindow" deberían modularizarse;
-7. qué funcionalidades del núcleo todavía no tienen una acción de interfaz conectada.
+1. Auditar antes de modificar
 
-No declares una funcionalidad como implementada únicamente porque exista una clase, botón o método.
+Identifica cómo está compuesta actualmente la UI, especialmente:
 
----
+- "MainWindow"
+- barra superior / menús
+- toolbars
+- panel lateral
+- Design Tree
+- Properties
+- Results
+- Timeline
+- viewport
+- barra inferior / estado
+- diálogos y paneles secundarios
+- señales y slots
+- conexión UI → Controller → Core → State → UI
 
-2. TRAZABILIDAD OBLIGATORIA
+Determina qué responsabilidades visuales están excesivamente concentradas en "MainWindow" y cuáles conviene extraer.
 
-Después de la auditoría, crea o actualiza un documento:
+No extraigas código simplemente por dividir archivos. Cada extracción debe aportar modularidad real.
 
-"docs/UI_IMPLEMENTATION_MAP.md"
+2. Modularizar la composición visual
 
-Este documento debe convertirse en el mapa técnico de la interfaz.
+Cuando sea conveniente, separa la composición de la interfaz en componentes reutilizables, por ejemplo:
 
-Para cada acción importante visible en la interfaz, documenta exactamente qué ocurre cuando el usuario la utiliza.
+- construcción/configuración del menú
+- toolbar
+- barra superior
+- composición del workspace
+- paneles
+- barra de estado
+- configuración visual/tema
+- acciones de UI
 
-Por ejemplo:
+Los nombres y estructura finales deben adaptarse al código existente.
 
-Botón: Carga
-UI:
-    desktop/ui/panels/...
-Acción/Senal:
-    ...
-Método ejecutado:
-    ...
-Controller:
-    desktop/pipeline/controller.py → ...
-Core:
-    core/... → ...
-Resultado:
-    ...
-Estado actualizado:
-    ...
+"MainWindow" debe quedar principalmente como coordinador de la ventana, no como contenedor de toda la construcción visual y lógica de cada componente.
 
-Ejemplo conceptual:
+La modificación de la distribución visual debería poder hacerse modificando los componentes/layouts correspondientes, sin tener que alterar la lógica CAD/CAE.
 
-Botón "Carga"
-→ abre/selecciona archivo de cargas
-→ ejecuta `import_file_cargas(...)`
-→ `PipelineController`
-→ crea/actualiza la condición correspondiente
-→ actualiza Document/estado
-→ DesignTree/Properties refleja el cambio
+3. Preservar funcionalidad
 
-El documento debe indicar los nombres reales encontrados en el código, no nombres inventados.
+Antes de mover cualquier código identifica sus dependencias.
 
-Debe existir trazabilidad como mínimo para:
+Para cada extracción/refactorización registra:
 
-- Importar CAD/STEP
-- Selección
-- Carga
-- Restricciones
-- Elasticidad
-- Unión Boolean
-- Obstrucciones
-- Regiones protegidas
-- Crear/modificar condiciones
-- Generar malla
-- Operaciones CAD
-- Transformar
-- Mirror
-- Pattern
-- Ejecutar FEA
-- Ejecutar estudios disponibles
-- Visualizar resultados
-- Exportar
-- Acciones de Design Tree
-- Acciones de Timeline
-- Propiedades
+"ubicación anterior → nueva ubicación → conexiones conservadas"
 
-Si una acción no está implementada, debe indicarse explícitamente:
+No rompas ni dupliques:
 
-Estado: NO CONECTADO
-Motivo: ...
+- señales/slots
+- controllers
+- estado del documento
+- Design Tree
+- Timeline
+- selección
+- propiedades
+- resultados
+- comandos
+- historial
+- viewport
+- pipeline CAD/CAE
 
-No se debe crear código ficticio únicamente para llenar el documento.
+Debe mantenerse una única fuente de verdad.
 
----
+No crear nuevos managers, estados o modelos paralelos si ya existe uno funcional.
 
-3. IMPLEMENTACIÓN
+4. Estilo visual
 
-Mantener el núcleo
+Centraliza, donde sea técnicamente conveniente, colores, tamaños, márgenes, fuentes, iconos y estilos para facilitar futuras modificaciones visuales.
 
-No reconstruyas ni reemplaces:
+Mantén la dirección visual actual:
 
-- CAD
-- Document
-- FeatureHistory
-- condiciones
-- malla
-- FEA
-- Kratos
-- PipelineController
-- Viewport3D
-- SelectionManager
-- NavigationManager
+- CAD profesional
+- oscuro
+- gris técnico
+- organización inspirada en Onshape/AutoCAD
+- viewport como área principal
+- árbol/historial y propiedades claramente diferenciados
 
-Si funcionan, reutilízalos.
+No hagas todavía un rediseño visual completo ni una búsqueda de “pixel perfect”.
 
-Modularizar la interfaz
+5. Restricciones importantes
 
-Organiza la UI para que:
-
-- "MainWindow" actúe principalmente como coordinador;
-- los paneles sean independientes;
-- menús y toolbars puedan modificarse sin alterar el backend;
-- la distribución pueda modificarse fácilmente;
-- el estilo visual esté centralizado;
-- las acciones de UI estén separadas de la lógica de negocio.
-
-No crees abstracciones innecesarias.
-
----
-
-4. ESTADO ÚNICO
-
-La interfaz debe reflejar el estado real del programa.
-
-Evita:
-
-- estados duplicados;
-- managers duplicados;
-- copias independientes del modelo;
-- árboles paralelos;
-- timelines que no representen el estado real.
-
-La fuente de verdad debe continuar siendo la arquitectura existente.
-
----
-
-5. INTEGRACIÓN FUNCIONAL
-
-Comprueba que las acciones principales realmente ejecuten las operaciones existentes de extremo a extremo.
-
-Para cada acción:
-
-UI
-↓
-Signal / Event
-↓
-Handler
-↓
-Controller
-↓
-Core
-↓
-Estado actualizado
-↓
-UI sincronizada
-
-Si alguna etapa está desconectada, corrígela cuando exista una implementación real en el proyecto que pueda reutilizarse.
-
-No inventes funcionalidades futuras.
-
----
-
-6. EDICIÓN VISUAL
-
-"desktop/ui/crea3d_mainwindow.ui" es únicamente un boceto visual.
-
-No es necesario integrarlo ni convertirlo.
-
-La arquitectura final debe facilitar posteriormente modificar:
-
-- posición y tamaño de paneles;
-- orden de toolbars;
-- agrupación de herramientas;
-- sidebar;
-- propiedades;
-- resultados;
-- timeline;
-- viewport;
-- menús;
-- espaciados;
-- tipografía;
-- iconos;
-- apariencia.
-
-No intentes crear un editor tipo Canva/PowerPoint dentro de la aplicación. El objetivo es conseguir una arquitectura de UI cuya presentación pueda modificarse fácilmente sin tocar la lógica CAD/CAE.
-
----
-
-7. DOCUMENTACIÓN
-
-Además de "docs/UI_IMPLEMENTATION_MAP.md", actualiza únicamente la documentación que haya quedado desactualizada por los cambios.
-
-El mapa debe permitir que otro desarrollador pueda responder rápidamente:
-
-«"¿Qué código se ejecuta cuando presiono este botón?"»
-
-Por tanto, evita descripciones genéricas. Utiliza rutas, clases, métodos, señales y componentes reales del repositorio.
-
----
-
-8. RESTRICCIONES
-
-- No reconstruir el proyecto.
-- No migrar a C++.
-- No modificar FEA sin encontrar un error real.
-- No modificar funcionalidades CAD que funcionan.
-- No eliminar funcionalidades existentes.
-- No integrar obligatoriamente el ".ui".
+- No reemplazar PySide6.
+- No reemplazar el viewport funcional.
+- No eliminar funcionalidad existente.
+- No reescribir el backend.
+- No modificar la arquitectura CAD/CAE salvo que sea estrictamente necesario para conservar una conexión.
+- No convertir obligatoriamente la interfaz a ".ui".
+- "desktop/ui/crea3d_mainwindow.ui" es solamente una referencia visual.
+- No crear un editor visual tipo Canva/PowerPoint.
 - No crear una segunda arquitectura de UI.
-- No crear managers duplicados.
-- No introducir dependencias innecesarias.
-- No implementar funcionalidades futuras no definidas.
-- No inventar métodos para la documentación.
-- No declarar una acción funcional si no existe conexión de extremo a extremo.
+- No realizar cambios cosméticos que dificulten la trazabilidad.
 
----
+6. Verificación
 
-9. VERIFICACIÓN
+Después de los cambios verifica:
 
-Después de implementar:
+1. La aplicación inicia correctamente.
+2. El viewport continúa funcionando.
+3. La selección continúa funcionando.
+4. La navegación de cámara no se rompe.
+5. Importación CAD/STEP continúa conectada.
+6. Operaciones CAD continúan conectadas.
+7. Boolean continúa funcionando.
+8. Condiciones y cargas continúan conectadas.
+9. Mesh y FEA continúan conectados.
+10. Design Tree, Properties, Results y Timeline continúan sincronizados.
+11. Los tests existentes continúan pasando.
 
-1. Ejecuta todos los tests existentes.
-2. Comprueba que la aplicación inicia.
-3. Comprueba viewport.
-4. Comprueba selección.
-5. Comprueba navegación.
-6. Comprueba acciones CAD/CAE principales.
-7. Comprueba sincronización de:
-   - Design Tree
-   - Properties
-   - Results
-   - Timeline
-8. Comprueba que las acciones documentadas en "UI_IMPLEMENTATION_MAP.md" coincidan con el código real.
-9. Comprueba que no se haya roto funcionalidad existente.
+Si alguna conexión ya estaba incompleta antes de la refactorización, no la inventes ni la “soluciones” arbitrariamente. Documenta su estado.
 
-Finalmente informa:
+7. Documentación final
 
-- qué encontraste;
-- qué estaba correctamente implementado;
-- qué estaba desconectado;
-- qué modularizaste;
-- qué modificaste;
-- qué quedó pendiente;
-- tests ejecutados y resultado;
-- ruta del documento de trazabilidad creado/actualizado.
+Actualiza "docs/UI_IMPLEMENTATION_MAP.md" solamente cuando una ruta o conexión haya cambiado realmente.
 
-Regla fundamental: la interfaz, la documentación y el código deben describir la misma arquitectura.
+Al finalizar informa:
+
+Hallazgos
+
+- principales problemas encontrados en la composición actual.
+
+Modularización realizada
+
+- archivos creados/modificados;
+- qué responsabilidad fue extraída;
+- qué quedó en "MainWindow".
+
+Trazabilidad
+
+Para cada refactor importante:
+
+"ANTES → DESPUÉS → CONEXIÓN PRESERVADA"
+
+Pendientes
+
+- elementos visuales aún no conectados;
+- problemas encontrados que no correspondan a esta etapa.
+
+Verificación
+
+- tests ejecutados;
+- resultado;
+- smoke test de la aplicación si es posible.
+
+Regla principal: primero comprende y conserva la arquitectura funcional existente; después modulariza la presentación. La interfaz debe quedar más fácil de modificar visualmente sin sacrificar ninguna capacidad CAD/CAE ya implementada.

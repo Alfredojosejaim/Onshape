@@ -1,185 +1,154 @@
-IMPLEMENTACIÓN — CIERRE DEL MOTOR DUAL FEA
+\# AUDITORÍA Y CIERRE DE INTEGRACIÓN DE LA INTERFAZ CAD/CAE
 
-Audita y continúa el desarrollo directamente sobre el estado ACTUAL de "Alfredojosejaim/Onshape", carpeta "Topologia_Optimizada".
 
-OBJETIVO
 
-Cerrar la parte pendiente del motor dual FEA:
+Audita el estado actual del proyecto antes de modificar cualquier archivo.
 
-Motor local NumPy/SciPy ↔ Motor Kratos
 
-La arquitectura dual ya existe. NO la reemplaces.
 
-El objetivo es que ambos motores puedan recibir el mismo problema físico y que la aplicación pueda utilizarlos de forma verificable, diferenciando claramente:
+\## Objetivo
 
-- cálculo local;
-- cálculo Kratos;
-- comparación entre ambos;
-- disponibilidad/limitaciones reales del backend.
 
-1. AUDITORÍA FOCALIZADA
 
-Revisa únicamente el flujo relacionado con:
+Completar la integración funcional de la interfaz desktop CAD/CAE utilizando la arquitectura que ya existe.
 
-- "core/fea.py"
-- "core/solver_interface.py"
-- "core/kratos_adapter.py"
-- "core/kratos_bridge.py"
-- "core/boundary.py"
-- "core/conditions.py"
-- "core/meshing.py"
-- "desktop/pipeline/controller.py"
-- tests FEA/Kratos/bridge/benchmarks.
 
-Determina exactamente:
 
-1. cómo el motor local construye y resuelve "K·u=f";
-2. cómo se construye el mismo problema para Kratos;
-3. cómo las restricciones llegan a ambos motores;
-4. cómo las cargas llegan a ambos motores;
-5. dónde se pierde actualmente la carga en la ruta Kratos;
-6. si el problema está en el tipo de condición Kratos, el ensamblado, el "ModelPart", el "BuilderAndSolver", el orden de aplicación o el mecanismo de carga;
-7. si existe una solución compatible con Kratos 10.4.3 sin introducir una dependencia externa innecesaria.
+El backend CAD, condiciones, operaciones, historial, malla y FEA ya están implementados. \*\*No los reconstruyas ni los reemplaces.\*\*
 
-2. REGLA FUNDAMENTAL
 
-No aceptes como solución:
 
-- falsificar resultados;
-- copiar el resultado local dentro de Kratos;
-- introducir desplazamientos/compliance artificiales;
-- declarar "success=True" cuando el RHS real no contiene la carga;
-- ocultar el warning "setting the RHS to zero";
-- modificar los tests para aceptar un resultado físicamente incorrecto.
+\## Alcance de la auditoría
 
-Si Kratos 10.4.3 realmente impone una limitación concreta, demuestra técnicamente dónde ocurre y busca la forma correcta de construir/aplicar la carga utilizando las capacidades disponibles en esa versión.
 
-3. CARGAS
 
-La ruta Kratos debe soportar correctamente las cargas que el sistema ya modela.
+Revisa como mínimo:
 
-Verifica especialmente:
 
-- cargas puntuales;
-- cargas distribuidas/superficiales;
-- dirección;
-- magnitud;
-- selección geométrica de la cara;
-- mapeo CAD → nodos/entidades Kratos;
-- correspondencia con "physical_groups".
 
-La carga debe terminar formando parte del sistema físico que Kratos ensambla.
+\* `desktop/ui/main\_window.py`
 
-No basta con almacenar "FORCE_X/Y/Z" en nodos si el mecanismo de solución utilizado no las consume.
+\* `desktop/ui/crea3d\_mainwindow.ui`
 
-4. RESTRICCIONES
+\* `desktop/ui/panels/`
 
-Mantén el mecanismo existente de:
+\* `desktop/pipeline/controller.py`
 
-condición CAD → selección → nodos → condición Kratos
+\* `desktop/app.py`
 
-y verifica que no se esté aplicando accidentalmente a todos los nodos.
+\* menús y toolbars
 
-Una condición explícita que no pueda resolverse debe producir un error claro, no una región alternativa silenciosa.
+\* `Document`, `FeatureHistory` y `Timeline`
 
-5. MOTOR DUAL
+\* `Viewport3D`
 
-Mantén una interfaz común para ambos motores.
+\* tests relacionados con UI/integración
 
-El mismo problema de entrada debe poder expresarse como:
 
-Mesh
-Material
-Boundary Conditions
-Loads
 
-y enviarse a:
+Determina qué componentes ya funcionan, cuáles están parcialmente conectados y cuáles son únicamente visuales.
 
-Local FEA
-Kratos FEA
 
-El resultado debe conservar una estructura compatible para poder comparar:
 
-- success/status;
-- desplazamientos;
-- compliance;
-- energía elemental;
-- número de nodos;
-- número de elementos;
-- información de convergencia.
+\## Implementación
 
-6. VALIDACIÓN CROSS-ENGINE
 
-Una vez que ambos motores puedan resolver un caso físicamente válido:
 
-crear una prueba de regresión que ejecute el MISMO caso en ambos motores.
+Después de la auditoría:
 
-Comparar con tolerancias explícitas:
 
-- desplazamientos;
-- compliance;
-- magnitudes relevantes de energía.
 
-No exigir igualdad exacta: los métodos numéricos pueden producir pequeñas diferencias.
+1\. Integra la interfaz con las funcionalidades existentes.
 
-La prueba debe detectar una regresión real del bridge, de las cargas, las restricciones o el ensamblado.
+2\. Reutiliza `Viewport3D`, `PipelineController`, `DesignTreePanel`, `PropertiesPanel`, `ResultsPanel`, `TimelinePanel` y los managers existentes.
 
-7. CONVERGENCIA
+3\. No dupliques managers, controladores, paneles ni sistemas de estado.
 
-Audita además que "success=True" represente convergencia real.
+4\. No reemplaces una implementación funcional por otra innecesariamente.
 
-Especialmente en Kratos:
+5\. Evalúa `crea3d\_mainwindow.ui` contra la implementación actual. Úsalo, adáptalo o descártalo parcialmente según resulte técnicamente conveniente; \*\*no lo integres por obligación\*\*.
 
-- no confiar ciegamente en "IsConverged()";
-- no utilizar un residual que no represente realmente el residual del sistema;
-- comprobar que un solve deliberadamente insuficiente no sea reportado como correctamente convergido.
+6\. El viewport debe utilizar el VTK real existente, nunca un placeholder.
 
-Si el código actual ya tiene una estrategia de verificación/re-resolución, consérvala y corrígela únicamente si la auditoría demuestra un problema.
+7\. Conecta los menús, botones y acciones con las operaciones CAD/CAE reales existentes.
 
-8. IMPLEMENTACIÓN
+8\. El Design Tree y Timeline deben reflejar el estado real del documento y sus operaciones.
 
-Después de identificar la causa:
+9\. Properties debe mostrar/modificar información correspondiente al objeto o selección actual.
 
-1. Implementa la corrección mínima necesaria.
-2. Mantén "local" como motor autocontenido.
-3. Mantén Kratos como segundo motor.
-4. No reemplaces el FEA local.
-5. No migres el proyecto a C++.
-6. No rediseñes la UI.
-7. No modifiques CAD, viewport o navegación salvo que exista una dependencia directa demostrada.
-8. No elimines funcionalidades existentes.
-9. Añade tests específicos para la corrección.
-10. Ejecuta los tests FEA/Kratos relacionados.
-11. Ejecuta posteriormente la suite completa.
+10\. Results debe mostrar los resultados provenientes de los análisis existentes.
 
-9. RESULTADO FINAL
+11\. La selección del viewport debe sincronizarse correctamente con la interfaz cuando esa capacidad ya exista.
 
-Al terminar informa claramente:
+12\. Mantén la navegación configurable existente.
 
-Estado del motor local
+13\. Conserva las funcionalidades actuales; no elimines ninguna por simplificar la interfaz.
 
-Qué está realmente funcionando.
+14\. No realices un rediseño visual completo. Prioriza \*\*funcionalidad, coherencia y conexión entre componentes\*\*.
 
-Estado del motor Kratos
 
-Qué está realmente funcionando y qué fue corregido.
 
-Causa raíz
+\## Restricciones
 
-Por qué el RHS estaba quedando en cero, si continúa ocurriendo o cómo fue solucionado.
 
-Cross-engine
 
-Si ambos motores ya pueden resolver el mismo caso físico y compararse automáticamente.
+\* No investigar nuevamente el motor FEA.
 
-Tests
+\* No modificar la arquitectura dual FEA salvo que la integración UI revele un error real.
 
-Cantidad ejecutada y resultado.
+\* No migrar a C++.
 
-Pendientes
+\* No reconstruir el proyecto desde cero.
 
-Solo problemas reales restantes del motor dual.
+\* No introducir dependencias innecesarias.
 
-No declares el motor dual como COMPLETADO solamente porque existan dos backends. Debe existir una ruta verificable:
+\* No implementar funcionalidades CAD/CAE que todavía no estén definidas.
 
-mismo problema → dos motores → resultados físicos → comparación automatizada.
+\* Las funcionalidades que sean explícitamente scaffolds deben permanecer como tales.
+
+
+
+\## Verificación
+
+
+
+Al finalizar:
+
+
+
+\* Ejecuta la suite de tests existente.
+
+\* Añade tests únicamente donde sean necesarios para validar nuevas conexiones.
+
+\* Comprueba que la aplicación inicia correctamente.
+
+\* Comprueba que el viewport continúa funcionando.
+
+\* Comprueba que las acciones principales de CAD/CAE llegan al controlador correspondiente.
+
+\* Comprueba que Design Tree, Timeline, Properties y Results mantienen un estado coherente.
+
+
+
+Finalmente informa:
+
+
+
+1\. qué estaba realmente implementado;
+
+2\. qué estaba desconectado;
+
+3\. qué modificaste;
+
+4\. qué funcionalidades quedaron completamente conectadas;
+
+5\. tests ejecutados y resultado;
+
+6\. cualquier limitación real que permanezca.
+
+
+
+\*\*No declares una funcionalidad como implementada únicamente porque exista su botón, clase o método: debe existir conexión funcional de extremo a extremo.\*\*
+
+
+

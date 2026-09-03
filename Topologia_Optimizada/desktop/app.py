@@ -30,24 +30,28 @@ def run() -> int:
 
     try:
         window = MainWindow()
-    except Exception as exc:  # any error during window/viewport construction
+    except Exception as exc:
         detail = f"{type(exc).__name__}: {exc}"
-        # A common real-world cause is lack of GPU/OpenGL support (VM, RDP,
-        # integrated graphics without a GL driver), but we never guess: the
-        # actual error is always shown so code bugs are not masked as a
-        # hardware problem.
         QMessageBox.critical(
             None,
-            "No se pudo iniciar la interfaz 3D",
+            "No se pudo iniciar la interfaz",
             "Ocurrió un error al crear la ventana principal.\n\n"
             f"{detail}\n\n"
-            "Si el error menciona OpenGL / pixel format / GPU, ejecute la "
-            "aplicación en una máquina con renderizado 3D disponible o "
-            "habilite el renderizado por software. En otro caso, revise el "
-            "error indicado (puede tratarse de un problema interno del "
-            "programa, no de la tarjeta gráfica).",
+            "Si el error menciona OpenGL / pixel format / GPU, la aplicación "
+            "intentará usar el renderizador por software. Si el error persiste, "
+            "revise el mensaje indicado (puede tratarse de un problema interno "
+            "del programa, no de la tarjeta gráfica).",
         )
         return 1
 
     window.show()
+
+    # Informar al usuario si se está usando el renderizador por software
+    host = getattr(window, "host", None)
+    if host and not getattr(host, "_use_vtk", True):
+        logging.getLogger("desktop.app").info(
+            "Renderizador por software activo (sin aceleración GPU). "
+            "El rendimiento puede ser menor que con GPU dedicada."
+        )
+
     return app.exec()

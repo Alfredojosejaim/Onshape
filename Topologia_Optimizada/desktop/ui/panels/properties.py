@@ -41,6 +41,8 @@ class PropertiesPanel(QWidget):
     runOptimization = Signal(dict)   # {volume_fraction, max_iterations, penalization, filter_radius,...}
     runFEA = Signal()
     generateMesh = Signal(float)
+    forceAdded = Signal(float, float, float, float)   # (magnitude, dx, dy, dz)
+    constraintAdded = Signal(str)                      # constraint_type ("fixed"/"pinned"/"roller")
 
     _OBJECTIVES = [
         "Compliance mínima (SIMP)",
@@ -276,14 +278,24 @@ class PropertiesPanel(QWidget):
         self.runOptimization.emit(params)
 
     def _on_add_force(self) -> None:
-        self.set_status(
-            f"Fuerza registrada: {self._force_mag.value():g} N "
-            f"en ({self._force_dx.value():g}, {self._force_dy.value():g}, {self._force_dz.value():g})"
+        # Persist the configured force into the shared boundary state used by
+        # FEA / SIMP: emit the values so MainWindow stores them in the
+        # controller (force magnitude + direction). This is not a visual-only
+        # no-op: the force genuinely registers for the next analysis run.
+        self.forceAdded.emit(
+            self._force_mag.value(),
+            self._force_dx.value(),
+            self._force_dy.value(),
+            self._force_dz.value(),
         )
 
     def _on_add_constraint(self) -> None:
-        kind = self._CONSTRAINT_TYPES[self._constraint.currentIndex()][0]
-        self.set_status(f"Restricción registrada: {kind}")
+        kind = self.constraint_type()
+        # Persist the configured constraint type into the controller so the
+        # next FEA / SIMP run applies it (not just a statusbar message).
+        self.constraintAdded.emit(kind)
+        label = self._CONSTRAINT_TYPES[self._constraint.currentIndex()][0]
+        self.set_status(f"Restricción registrada: {label}")
 
     def _toggle_vis(self, which: str, checked: bool) -> None:
         self.set_status(f"Visibilidad {'Activada' if checked else 'Desactivada'}: {which}")

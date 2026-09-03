@@ -24,26 +24,84 @@ Architecture integration:
     the resulting action on the CameraController; the NavigationManager is
     available for the UI to query and swap profiles without touching the
     viewport or the camera.
+
+IMPORTANT: Los imports de VTK se hacen de forma lazy (dentro de __init__) para
+que importar este módulo no cargue VTK. Esto permite que la aplicación use
+SoftwareViewport sin importar VTK cuando no hay GPU disponible.
 """
 
 from __future__ import annotations
+
+from typing import Optional
 
 import numpy as np
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 from PySide6.QtCore import Qt, Signal
 
-from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
-from vtkmodules.vtkCommonCore import vtkCommand
-from vtkmodules.vtkInteractionStyle import vtkInteractorStyleUser
+# StandardView NO depende de VTK — se puede importar a nivel de módulo.
+from desktop.viewport.camera import StandardView
 
-from desktop.viewport.renderer import Renderer
-from desktop.viewport.camera import CameraController, StandardView
-from desktop.viewport.scene import Scene
-from desktop.viewport.selection import SelectionManager
 from core.navigation import NavigationManager, InputEvent, MouseButton, ViewportAction
 
 
+# ──────────────────────────────────────────────────────────────────────
+# Detección de soporte GL (se ejecuta una sola vez, cacheada)
+# ──────────────────────────────────────────────────────────────────────
+_GL_AVAILABLE: bool | None = None
+
+
+def _probe_gl_subprocess() -> bool:
+    """Lanza un subprocess que intenta crear ventana VTK y renderizar.
+
+    Retorna True solo si el renderizado funciona realmente.
+    SupportsOpenGL() solo verifica la presencia del driver, no si funciona.
+    El subprocess puede crashear si GL no funciona, pero el proceso principal
+    sobrevive porque no importa VTK.
+    """
+    import subprocess
+    import sys
+    probe_code = (
+        "import vtkmodules.vtkRenderingOpenGL2 as g; "
+        "rw = g.vtkOpenGLRenderWindow(); "
+        "rw.SetOffScreenRendering(1); rw.SetSize(4,4); "
+        "rw.MakeCurrent(); "
+        "print('OK' if rw.SupportsOpenGL() else 'FAIL')"
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", probe_code],
+            capture_output=True, text=True, timeout=8,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return "OK" in result.stdout and result.returncode == 0
+    except Exception:
+        return False
+
+
+def is_gl_available() -> bool:
+    """Prueba si el sistema tiene soporte OpenGL funcional para VTK.
+
+    Usa un subprocess para evitar que un crash de VTK destruya el proceso
+    principal. Cachea el resultado para no repetir la prueba.
+
+    Returns:
+        True si OpenGL funciona, False si no (usar SoftwareViewport).
+    """
+    global _GL_AVAILABLE
+    if _GL_AVAILABLE is not None:
+        return _GL_AVAILABLE
+    _GL_AVAILABLE = _probe_gl_subprocess()
+    return _GL_AVAILABLE
+
+
 class Viewport3D(QWidget):
+    """Viewport 3D acelerado por GPU via VTK.
+
+    Los imports de VTK se hacen de forma lazy dentro de __init__ para que
+    importar esta clase no cargue VTK en el proceso. Si VTK no está
+    disponible o GL falla, se debe usar SoftwareViewport en su lugar.
+    """
+
     selectionChanged = Signal(object)
 
     def __init__(self, parent=None) -> None:
@@ -52,6 +110,16 @@ class Viewport3D(QWidget):
         self._last_y = 0.0
         self._mode = "idle"  # idle | orbit | pan | zoom
         self._click_start = True
+
+        # ── Imports de VTK (lazy — solo se cargan si se construye Viewport3D) ──
+        from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
+        from vtkmodules.vtkInteractionStyle import vtkInteractorStyleUser
+        from desktop.viewport.renderer import Renderer
+        from desktop.viewport.camera import CameraController
+        from desktop.viewport.scene import Scene
+        from desktop.viewport.selection import SelectionManager
+
+        self._vtkCommand = __import__("vtkmodules.vtkCommonCore", fromlist=["vtkCommand"]).vtkCommand
 
         self._interactor = QVTKRenderWindowInteractor(self)
         self._interactor.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -83,8 +151,12 @@ class Viewport3D(QWidget):
         self._interactor.SetInteractorStyle(vtkInteractorStyleUser())
         self._install_observers()
 
-        # Background matches the native viewport palette (#46474b -> #3c3d41)
-        self.renderer.set_background((0.278, 0.282, 0.302), (0.239, 0.243, 0.256))
+        # Background matches the native viewport palette (theme-driven)
+        from desktop.ui.style import PALETTE, hex_to_rgb_float
+        self.renderer.set_background(
+            hex_to_rgb_float(PALETTE["bg_viewport_top"]),
+            hex_to_rgb_float(PALETTE["bg_viewport_bottom"]),
+        )
         self.scene.set_grid_visible(True)
         self.scene.set_axes_visible(True)
         self.scene.fit_camera()
@@ -106,6 +178,7 @@ class Viewport3D(QWidget):
     # VTK interactor observers (drive navigation + picking)
     # ------------------------------------------------------------------ #
     def _install_observers(self) -> None:
+        vtkCommand = self._vtkCommand
         style = self._interactor.GetInteractorStyle()
         if style is None:
             return

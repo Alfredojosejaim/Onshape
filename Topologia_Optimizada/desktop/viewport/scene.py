@@ -208,10 +208,12 @@ class Scene:
                 self._tri_face_index = face_index_map
                 cell_data = {"face_index": face_index_map}
 
+        from desktop.ui.style import PALETTE, hex_to_rgb_float
+
         actor = self._renderer.make_triangle_actor(
             vertices,
             triangles,
-            color=(0.231, 0.51, 0.964),  # #3b82f6 (HTML CAD solid color)
+            color=hex_to_rgb_float(PALETTE["solid_cad"]),
             cell_data=cell_data,
         )
         obj = SceneObject("Modelo CAD", "model")

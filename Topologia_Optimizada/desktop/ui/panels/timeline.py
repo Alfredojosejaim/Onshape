@@ -99,6 +99,7 @@ class TimelinePanel(QWidget):
         self._btn_play.setFixedSize(34, 34)
         self._btn_play.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_play.setToolTip("Continuar con el siguiente paso del flujo")
+        self._btn_play.clicked.connect(self.playRequested.emit)
 
         self._btn_next = QPushButton("Ejecutar ▶")
         self._btn_next.setCursor(Qt.CursorShape.PointingHandCursor)

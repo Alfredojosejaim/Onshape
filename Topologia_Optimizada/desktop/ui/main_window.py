@@ -23,7 +23,8 @@ from PySide6.QtWidgets import (
     QFrame, QPushButton, QFileDialog, QMessageBox, QComboBox, QInputDialog,
 )
 
-from desktop.viewport.viewport_3d import Viewport3D, StandardView
+from desktop.viewport.viewport_3d import Viewport3D, StandardView, is_gl_available
+from desktop.viewport.software_viewport import SoftwareViewport
 from desktop.pipeline.controller import PipelineController, launch_qt
 from desktop.ui.panels.design_tree import DesignTreePanel
 from desktop.ui.panels.properties import PropertiesPanel
@@ -55,7 +56,7 @@ def _glyph_label(text: str, size: int = 15) -> QLabel:
 def _mini_label(text: str) -> QLabel:
     lbl = QLabel(text)
     lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    lbl.setStyleSheet("background: transparent; font-size: 9px; color: #9a9ba0;")
+    lbl.setStyleSheet(f"background: transparent; font-size: 9px; color: {TEXT_DIM};")
     return lbl
 
 
@@ -83,8 +84,12 @@ class RibbonTool(QPushButton):
 
 
 class _ViewportHost(QFrame):
-    """Frames a Viewport3D with an inset margin and positions overlay widgets
-    (badge / view controls / status bar / placeholder) on top of the 3D area."""
+    """Frames a Viewport3D (VTK) or SoftwareViewport (QPainter) with an inset
+    margin and positions overlay widgets on top of the 3D area.
+
+    Auto-selects the backend at construction time: tries VTK first, falls back
+    to the software renderer if GL is unavailable or VTK fails to initialize.
+    """
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -92,7 +97,20 @@ class _ViewportHost(QFrame):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(12, 12, 12, 0)
-        self.viewport = Viewport3D()
+
+        self._use_vtk = False
+        self.viewport = None
+        try:
+            if is_gl_available():
+                self.viewport = Viewport3D()
+                self._use_vtk = True
+        except Exception:
+            self.viewport = None
+
+        if self.viewport is None:
+            self.viewport = SoftwareViewport()
+            self._use_vtk = False
+
         lay.addWidget(self.viewport)
         self._slots: dict[str, QWidget] = {}
         self._pad = 12
@@ -383,7 +401,7 @@ class MainWindow(QMainWindow):
         def divider() -> QFrame:
             d = QFrame()
             d.setFrameShape(QFrame.Shape.VLine)
-            d.setStyleSheet("color: #313236; margin: 2px 14px;")
+            d.setStyleSheet(f"color: {PALETTE['border_soft']}; margin: 2px 14px;")
             d.setFixedHeight(48)
             return d
 
@@ -577,6 +595,8 @@ class MainWindow(QMainWindow):
         self.properties.generateMesh.connect(self._on_generate_mesh)
         self.properties.runFEA.connect(self._on_run_fea)
         self.properties.runOptimization.connect(self._on_run_optimization)
+        self.properties.forceAdded.connect(self._on_add_force)
+        self.properties.constraintAdded.connect(self._on_add_constraint)
         self.design_tree.clear_button().clicked.connect(self._on_clear_selection)
         self.controller_reset_after_model()
 
@@ -627,7 +647,7 @@ class MainWindow(QMainWindow):
         self._viewer_info.setProperty("viewinfo", True)
         sl.addWidget(self._viewer_info, 1)
         status.setStyleSheet(
-            "background: rgba(14,14,16,0.9); border: 1px solid #313236;"
+            f"background: {PALETTE['overlay_center_bg']}; border: 1px solid {PALETTE['border_soft']};"
             "border-top-left-radius: 6px; border-top-right-radius: 6px;")
         self.host.place("status", status)
 
@@ -640,9 +660,9 @@ class MainWindow(QMainWindow):
         box.setAlignment(Qt.AlignmentFlag.AlignCenter)
         box.setFixedSize(90, 90)
         box.setStyleSheet(
-            "border: 2px dashed #5b5c60; border-radius: 10px; font-size: 26px;")
+            f"border: 2px dashed {PALETTE['placeholder_border']}; border-radius: 10px; font-size: 26px;")
         hint = QLabel("Importe un archivo STEP para cargar el modelo 3D")
-        hint.setStyleSheet("font-size: 11.5px; color: #6f7075;")
+        hint.setStyleSheet(f"font-size: 11.5px; color: {TEXT_FAINT};")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         pl.addStretch(1)
         pl.addWidget(box, 0, Qt.AlignmentFlag.AlignCenter)
@@ -758,7 +778,7 @@ class MainWindow(QMainWindow):
         self.design_tree.set_features(features)
         conditions = self.controller.conditions.all
         self.design_tree.set_conditions(conditions)
-        studies = list(self.controller._studies.values())
+        studies = list(self.controller.studies)
         self.design_tree.set_studies(studies)
 
     def _show_tessellation(self, tess: Dict[str, Any]) -> None:
@@ -985,7 +1005,7 @@ class MainWindow(QMainWindow):
         """Execute the selected / last topology study in the background."""
         from core.cae_studies import StudyStatus
 
-        studies = list(self.controller._studies.values())
+        studies = list(self.controller.studies)
         if not studies:
             QMessageBox.information(
                 self, "Sin estudio",
@@ -1407,6 +1427,32 @@ class MainWindow(QMainWindow):
 
     def _set_busy(self, busy: bool, message: str) -> None:
         self.properties.set_busy(busy, message)
+
+    # ------------------------------------------------------------------ #
+    # "Agregar Fuerza" / "Agregar Restricción" from the Properties panel
+    # ------------------------------------------------------------------ #
+    def _on_add_force(self, magnitude: float, dx: float, dy: float, dz: float) -> None:
+        """Persist a force configured in the Properties panel into the shared
+        boundary state consumed by FEA / SIMP."""
+        if not self.controller.forces:
+            self.controller.forces = [{}]
+        self.controller.forces[0].update({
+            "magnitude": magnitude, "direction_x": dx, "direction_y": dy, "direction_z": dz,
+        })
+        self.statusBar().showMessage(
+            f"Fuerza registrada: {magnitude:g} N en ({dx:g}, {dy:g}, {dz:g})")
+
+    def _on_add_constraint(self, constraint_type: str) -> None:
+        """Persist a constraint configured in the Properties panel into the
+        controller so the next FEA / SIMP run applies it."""
+        dof = {"ux": True, "uy": True, "uz": True}
+        constraint = {"constraint_type": constraint_type, "location": "",
+                      "degrees_of_freedom": dof}
+        csel = self.properties.constraint_selection()
+        if csel:
+            constraint["selection"] = csel
+        self.controller.constraints = [constraint]
+        self.statusBar().showMessage(f"Restricción registrada: {constraint_type}")
 
     def _on_clear_selection(self) -> None:
         self.viewport.clear_selection()

@@ -1034,6 +1034,11 @@ class PipelineController:
         self.document.add_study(study)
         return sid
 
+    @property
+    def studies(self) -> list:
+        """Read-only view of the registered studies (study objects)."""
+        return list(self._studies.values())
+
     def execute_study(self, study, progress_cb: Optional[Callable] = None) -> "StudyResult":
         """Execute an engineering study through the pipeline.
 

@@ -1,0 +1,52 @@
+{
+  "_comment": "Tema visual de la aplicacion. Edita estos colores y reinicia la app para reestilizar TODA la interfaz (widgets creados en codigo y cualquier .ui cargado). Cada token se usa tanto en la hoja de estilos (QSS) como en la paleta de colores de Python, asi que un solo cambio aqui se refleja en toda la UI.",
+  "accent": "#2f7bf6",
+  "accent_hover": "#3d86ff",
+  "accent_soft": "rgba(47,123,246,0.16)",
+  "accent_border": "rgba(47,123,246,0.5)",
+  "accent_badge_bg": "rgba(47,123,246,0.18)",
+  "accent_badge_border": "rgba(47,123,246,0.4)",
+  "accent_disabled_bg": "rgba(47,123,246,0.35)",
+  "accent_disabled_border": "rgba(47,123,246,0.35)",
+  "accent_text": "#bcd8ff",
+
+  "bg_app": "#1b1c1e",
+  "bg_panel": "#232427",
+  "bg_panel2": "#2a2b2f",
+  "bg_toolbtn": "#2c2d31",
+  "bg_viewport": "#3c3d41",
+  "bg_menubar": "#1a1a1c",
+  "bg_statusbar": "#161719",
+  "bg_scrollbar": "#3a3b3f",
+  "bg_scrollbar_hover": "#56575d",
+
+  "border": "#38393d",
+  "border_soft": "#313236",
+
+  "text_main": "#f2f2f3",
+  "text_dim": "#9a9ba0",
+  "text_faint": "#6f7075",
+  "text_white": "#ffffff",
+
+  "ok_text": "#b9f2c4",
+  "ok_bg": "rgba(90,200,120,0.14)",
+  "ok_border": "rgba(90,200,120,0.35)",
+  "ok_done_border": "rgba(90,200,120,0.4)",
+
+  "avatar_grad_a": "#5b6cff",
+  "avatar_grad_b": "#8a5bff",
+
+  "overlay_control_bg": "rgba(26,27,29,0.85)",
+  "overlay_center_bg": "rgba(14,14,16,0.9)",
+
+  "error": "#e06c6c",
+  "placeholder_border": "#5b5c60",
+
+  "viewport_bg_top": "#3c3d41",
+  "viewport_bg_bottom": "#333437",
+  "grid_color": "#47484c",
+
+  "solid_cad": "#3b82f6",
+  "force": "#f59e0b",
+  "constraint": "#8b5cf6"
+}

@@ -137,7 +137,12 @@ class Renderer:
         if self._grid_actor is not None:
             self.remove_actor(self._grid_actor)
             self._grid_actor = None
-        self._grid_actor = self.create_grid(size, subdivisions)
+        try:
+            from desktop.ui.style import PALETTE, hex_to_rgb_float
+            color = hex_to_rgb_float(PALETTE.get("grid", "#47484c"))
+        except Exception:
+            color = (0.28, 0.29, 0.32)
+        self._grid_actor = self.create_grid(size, subdivisions, color=color)
         self.add_actor(self._grid_actor)
 
     def remove_grid(self) -> None:

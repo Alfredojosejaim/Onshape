@@ -126,10 +126,11 @@ class DesignTreePanel(QWidget):
 
     @staticmethod
     def _empty_icon():
+        from desktop.ui.style import ACCENT
         from PySide6.QtGui import QIcon, QPixmap, QColor
 
         pm = QPixmap(10, 10)
-        pm.fill(QColor("#2f7bf6"))
+        pm.fill(QColor(ACCENT))
         return QIcon(pm)
 
     # ------------------------------------------------------------------ #

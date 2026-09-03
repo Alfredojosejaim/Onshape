@@ -8,6 +8,8 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QScrollArea, QTextEdit,
 )
 
+from desktop.ui.style import PALETTE
+
 
 def _section_title(text: str) -> QLabel:
     lbl = QLabel(text.upper())
@@ -79,7 +81,7 @@ class ResultsPanel(QWidget):
         self._log = QTextEdit()
         self._log.setReadOnly(True)
         self._log.setStyleSheet(
-            "background: #2a2b2f; border: 1px solid #38393d; border-radius: 4px;"
+            f"background: {PALETTE['bg_panel2']}; border: 1px solid {PALETTE['border']}; border-radius: 4px;"
             "font-family: Consolas, monospace; font-size: 11px;"
         )
         col.addWidget(self._log)

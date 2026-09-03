@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
+from desktop.ui.style import ERROR
 from core.cad_entity import CadEntityRef, EntityType
 from core.conditions import Condition, ConditionManager
 from core.optimization_studies import TopologyOptimizationStudy
@@ -144,7 +145,7 @@ class StudyPanel(QDialog):
         root.addWidget(bb)
 
         self._error = QLabel("")
-        self._error.setStyleSheet("color: #e06c6c;")
+        self._error.setStyleSheet(f"color: {ERROR};")
         self._error.setWordWrap(True)
         root.addWidget(self._error)
 

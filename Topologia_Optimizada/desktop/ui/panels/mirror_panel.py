@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QPushButton, QDoubleSpinBox, QCheckBox, QDialogButtonBox, QWidget,
 )
 
+from desktop.ui.style import ERROR
 from core.cad_entity import CadEntityRef, EntityType
 from core.commands import MirrorCommand
 
@@ -90,7 +91,7 @@ class MirrorPanel(QDialog):
         root.addWidget(bb)
 
         self._error_label = QLabel("")
-        self._error_label.setStyleSheet("color: #e06c6c;")
+        self._error_label.setStyleSheet(f"color: {ERROR};")
         self._error_label.setWordWrap(True)
         root.addWidget(self._error_label)
 

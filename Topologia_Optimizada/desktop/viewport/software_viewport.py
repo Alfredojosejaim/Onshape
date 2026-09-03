@@ -94,12 +94,17 @@ class _SoftwareSelectionManager:
         self._callback = None
         self._selected_faces: list[int] = []
         self._selected_solids: set[int] = set()
+        self._solid_resolver = None
 
     def attach(self, scene) -> None:
         self._scene = scene
 
     def set_selection_callback(self, fn) -> None:
         self._callback = fn
+
+    def set_solid_resolver(self, resolver) -> None:
+        """Registra un callable opcional para promover una cara a su sólido padre."""
+        self._solid_resolver = resolver
 
     def clear(self) -> None:
         self._selected_faces.clear()
@@ -131,10 +136,16 @@ class _SoftwareSelectionManager:
         if self._callback is None:
             return
         solid = self._scene.face_to_solid(face) if self._scene else None
+        meta = self._scene.face_meta(face) if self._scene else None
         payload = {
+            "kind": "face",
+            "type": "face",
             "face_index": face,
             "solid_index": solid,
-            "type": "face",
+            "id": (meta or {}).get("id", f"face_{face}"),
+            "center": (meta or {}).get("center", []),
+            "normal": (meta or {}).get("normal", []),
+            "area": (meta or {}).get("area", 0.0),
             "ctrl": ctrl,
             "multi": len(self._selected_faces) > 1,
         }
@@ -203,6 +214,14 @@ class _SoftwareScene:
     def face_to_solid(self, face_idx: int) -> int | None:
         return self._solid_index_map.get(face_idx)
 
+    def face_meta(self, face_idx: int) -> dict | None:
+        if self._faces_meta is None:
+            return None
+        for meta in self._faces_meta:
+            if meta and int(meta.get("face_index", -1)) == int(face_idx):
+                return meta
+        return None
+
     # -- Malla --
     def set_mesh(self, nodes, elements) -> None:
         self._mesh_nodes = np.asarray(nodes, dtype=float)
@@ -255,13 +274,18 @@ class _SoftwareScene:
 
     # -- Picking por coordenadas de pantalla --
     def pick_face(self, sx: float, sy: float) -> int | None:
-        """Devuelve el índice de la cara más cercana al punto de pantalla (sx, sy), o None."""
+        """Devuelve el índice B-Rep de la cara más cercana al punto de pantalla (sx, sy).
+
+        El punto de pantalla se resuelve primero al triángulo 3D más cercano (por
+        profundidad) y ese triángulo se asigna a su cara B-Rep vía ``_face_index_map``
+        (equivalente al ``face_index_for_cell`` del viewport VTK).
+        """
         if (self._triangles is None or self._vertices is None
                 or self._projected_pts is None):
             return None
         pts2d = self._projected_pts
         tris = self._triangles
-        best_face = None
+        best_tri = None
         best_depth = float("inf")
         for i in range(tris.shape[0]):
             t = tris[i]
@@ -272,8 +296,23 @@ class _SoftwareScene:
                 depth = (pts2d[t[0], 2] + pts2d[t[1], 2] + pts2d[t[2], 2]) / 3.0
                 if depth < best_depth:
                     best_depth = depth
-                    best_face = int(i)
-        return best_face
+                    best_tri = int(i)
+        if best_tri is None:
+            return None
+        # Atribuir el triángulo a su cara B-Rep; si no hay mapeo, devolver el
+        # índice del propio triángulo como fallback (comportamiento previo).
+        fm = self._face_index_map
+        if fm is not None and best_tri < len(fm):
+            face = int(fm[best_tri])
+            return face if face >= 0 else best_tri
+        return best_tri
+
+    def face_to_triangles(self, face_index: int) -> list[int]:
+        """Índices de los triángulos que pertenecen a la cara B-Rep dada."""
+        fm = self._face_index_map
+        if fm is None or self._triangles is None:
+            return []
+        return [int(i) for i in range(fm.shape[0]) if int(fm[i]) == int(face_index)]
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -329,7 +368,7 @@ class SoftwareViewport(QWidget):
         self._model_edge = QColor("#0d1117")
         self._grid_color = QColor("#47484c")
         self._axes_colors = [QColor("#e06c6c"), QColor("#b9f2c4"), QColor("#61afef")]  # R G B
-        self._selection_color = QColor("#ffffff")
+        self._selection_color = QColor("#f2c94c")
         self._mesh_color = QColor("#9a9ba0")
 
         try:
@@ -476,7 +515,7 @@ class SoftwareViewport(QWidget):
         ev.accept()
         if self._click_start and self._mode == "idle":
             x, y = float(ev.position().x()), float(ev.position().y())
-            self._selection_mgr.pick(int(x), int(y),
+            self._selection_mgr.pick(x, y,
                                       ctrl=bool(ev.modifiers() & Qt.KeyboardModifier.ControlModifier))
             self.update()
         self._mode = "idle"
@@ -647,6 +686,15 @@ class SoftwareViewport(QWidget):
 
         face_index_map = self._scene._face_index_map
         selected_faces = set(self._selection_mgr._selected_faces)
+        # Cuando hay mapeo por cara, los triángulos seleccionados son los que
+        # pertenecen a las caras B-Rep seleccionadas (resalta la cara completa).
+        if face_index_map is not None:
+            selected_tris = set(
+                int(fi) for fi in face_index_map
+                if int(fi) in selected_faces
+            )
+        else:
+            selected_tris = selected_faces
 
         mode = self._scene._display_mode
         draw_fill = mode in ("surfaced", "surfaced_edges", "transparent")
@@ -662,28 +710,34 @@ class SoftwareViewport(QWidget):
             ])
 
             # Color de la cara
-            if i in selected_faces:
+            selected = i in selected_tris
+            if selected:
                 fc = self._selection_color
-            elif face_index_map is not None and i < len(face_index_map):
-                fc = self._model_color
             else:
                 fc = self._model_color
 
             if draw_fill:
-                # Iluminación flat
-                v0, v1, v2 = verts[t[0]], verts[t[1]], verts[t[2]]
-                n = _face_normal(v0, v1, v2)
-                n_rot = _apply_rotation(rot, n.reshape(1, 3))[0]
-                n_rot = _normalize(n_rot)
-                dot = max(0.0, np.dot(n_rot, light_dir))
-                ambient = 0.3
-                intensity = min(1.0, ambient + (1.0 - ambient) * dot)
-                r = int(fc.red() * intensity)
-                g = int(fc.green() * intensity)
-                b = int(fc.blue() * intensity)
-                fill_color = QColor(r, g, b)
-                if opacity < 1.0:
-                    fill_color.setAlphaF(opacity)
+                if selected:
+                    # Cara seleccionada: dorado brillante y uniforme (sin sombra
+                    # flat) para que toda la cara se distinga inequívocamente.
+                    fill_color = QColor(fc.red(), fc.green(), fc.blue())
+                    if opacity < 1.0:
+                        fill_color.setAlphaF(opacity)
+                else:
+                    # Iluminación flat
+                    v0, v1, v2 = verts[t[0]], verts[t[1]], verts[t[2]]
+                    n = _face_normal(v0, v1, v2)
+                    n_rot = _apply_rotation(rot, n.reshape(1, 3))[0]
+                    n_rot = _normalize(n_rot)
+                    dot = max(0.0, np.dot(n_rot, light_dir))
+                    ambient = 0.3
+                    intensity = min(1.0, ambient + (1.0 - ambient) * dot)
+                    r = int(fc.red() * intensity)
+                    g = int(fc.green() * intensity)
+                    b = int(fc.blue() * intensity)
+                    fill_color = QColor(r, g, b)
+                    if opacity < 1.0:
+                        fill_color.setAlphaF(opacity)
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.setBrush(QBrush(fill_color))
                 painter.drawPolygon(poly)

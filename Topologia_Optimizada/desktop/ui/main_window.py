@@ -1516,9 +1516,11 @@ class MainWindow(QMainWindow):
             if payload.get("kind") == "face":
                 normal = payload.get("normal") or []
                 nstr = ", ".join(f"{v:+.3f}" for v in normal)
+                fid = payload.get("id") or f"face_{payload.get('face_index')}"
                 self.statusBar().showMessage(
-                    f"Cara {payload.get('face_index')} de '{payload.get('key')}' "
-                    f"· normal ({nstr}) · área {payload.get('area', 0.0):.2f} mm²")
+                    f"Cara {payload.get('face_index')} seleccionada ({fid})"
+                    f" · normal ({nstr}) · área {payload.get('area', 0.0):.2f} mm² · "
+                    f"Ctrl+clic para añadir/quitar")
             else:
                 self.statusBar().showMessage(f"Seleccionado: {payload.get('key')}")
         # Keep the properties panel's advanced-selection controls in sync.

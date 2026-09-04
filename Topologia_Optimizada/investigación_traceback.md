@@ -1,4 +1,49 @@
-nota: investigación genética 
+Analizando los cuatro puntos presentados a partir de la evidencia del repositorio, se identifican las causas raíz, sus implicaciones físicas y los mecanismos de resolución requeridos para cada uno:
+1. Mapeo CAD Face ↔ Gmsh Surface (Prioridad Máxima)
+Causa Raíz
+El bucle actual en core/meshing.py asume de forma implícita un orden indexado (0, 1, \dots, N-1) que no está garantizado por OpenCASCADE (OCC) ni por el API de Gmsh. Cuando CadQuery/OpenCASCADE exporta o genera un modelo STEP, los punteros o índices internos de shape.Faces() pueden diferir de las etiquetas numéricas (tags) que Gmsh asigna internamente a las entidades de dimensión 2 (dim=2).
+Solución Técnica Determinista
+Para lograr un mapeo determinista 1:1 entre cq.Shape().Faces()[fi] y las superficies de Gmsh sin depender del orden de enumeración, se pueden aplicar dos enfoques dentro de la integración OCC/Gmsh:
+ * Uso de Physical Groups de Gmsh (Recomendado):
+   Al transferir la geometría a Gmsh mediante la API C++/Python de OpenCASCADE/Gmsh (gmsh.model.occ), se debe asignar a cada cara CAD un Physical Group explícito utilizando su índice CAD fi:
+   # tag_gmsh es el tag devuelto al importar o crear la superficie en OCC
+gmsh.model.addPhysicalGroup(2, [tag_gmsh], tag=fi, name=f"face_{fi}")
+
+   Al extraer los elementos de superficie, en lugar de iterar con enumerate(), se consulta directamente a Gmsh por el tag o nombre del Physical Group asociado a la entidad.
+ * Identificación por Centroide / Propiedades Geométricas:
+   Si la malla proviene de la importación de un archivo STEP intermedio donde se perdieron los tags OCC, la correspondencia se verifica calculando el centroide y la superficie total de shape.Faces()[fi] mediante OpenCASCADE (GProp_GProps) y comparándolo con el centroide de la superficie en Gmsh mediante gmsh.model.getCenterOfMass(2, stag).
+2. Compatibilidad de ProvisionalTet4Mesher con Cargas por Cara
+Causa Raíz
+ProvisionalTet4Mesher agrupa globalmente todas las caras externas bajo la clave genérica "boundary". Al carecer de segmentación por caras individuales, GenerativeDesignEngine._face_triangles_for_load() intenta buscar la clave face_<fi> y, al no hallarla, recurre al fallback uniforme (aplicar la carga sobre todo el contorno o sobre el volumen/nodos más cercanos).
+Diagnóstico e Implementación
+ * ¿Tiene información suficiente actualmente? No. ProvisionalTet4Mesher genera una representación de contorno simplificada/convex-hull/global que carece de la topología refinada del modelo CAD original.
+ * Acción Requerida:
+   * Evitar la falsa asociación: No intentar mapear artificialmente "boundary" a face_<fi>.
+   * Mecanismo de Fallback Explícito: Si se utiliza ProvisionalTet4Mesher, la interfaz debe explicitar que la condición de carga se aplicará de forma global o distribuida uniformemente en la frontera exterior disponible, emitiendo un warning explícito cuando se requiera aplicar una carga en una cara específica (fi).
+3. Semántica y Cálculo de volfrac
+Conflicto Conceptual
+Existen dos formas de definir la fracción de volumen (volfrac) en optimización topológica con regiones preservadas:
+Diagnóstico
+La fórmula actual del código (target_vol = self.volfrac * self._vol0_free) implementa la Opción A si no se suma el volumen protegido, lo que significa que el volfrac especificado por el usuario aplica únicamente sobre el material no protegido.
+Si el usuario especifica volfrac = 0.30 (esperando que la pieza final pese el 30% del volumen del bounding box original), pero un 10% del modelo está protegido por cargas/apoyos, la masa final real de la pieza terminada será 0.30 \times 0.90 + 0.10 = 0.37 (37% del total).
+Semántica Correcta recomendada para el Proyecto
+Para software de diseño generativo CAD/FEM, la convención estándar en la industria (e.g., SIMP tradicional, Ansys, Fusion 360) es la Opción B (Volumen Físico Total) respecto al dominio total de entrada:
+Si V_{\text{protegido}} \ge \text{volfrac} \times V_{\text{total}}, el solver debe lanzar una excepción o fijar la región optimizable al límite inferior \rho_{\text{min}}.
+4. Comportamiento e Interacción del Halo Automático
+Análisis de la Interacción de Regiones
+El flujo de estado para las variables en topopt.py debe mantener la siguiente jerarquía de conjuntos disjuntos y/o superpuestos:
+ * _active (Elementos Optimitzables): Elementos que forman parte de las variables de diseño (\rho). Excluye los Voids/Obstructions y los elementos en ProtectedRegion / Halo.
+ * _preserved (Elementos Fijos a \rho = 1.0): Unión de \text{ProtectedRegion} \cup \text{Halo}(\text{LoadNodes} \cup \text{SupportNodes}).
+ * _void (Elementos Fijos a \rho = \rho_{\text{min}}): Volúmenes de interferencia o pasajes de herramientas.
+Verificación de Requisitos para la Implementación
+ * Unión de Cargas y Apoyos: La operación halo_nodes = set(load_nodes) | set(support_nodes) asegura que la interfaz mecánica completa quede protegida contra discontinuidades numéricas en el cálculo de esfuerzos/SENS.
+ * Cálculo Automático del Radio (radius = None): Cuando radius es None o <= 0, el método debe calcular el radio efectivo R_{\text{halo}} en función del tamaño medio del elemento (h_{\text{elem}}), típicamente:
+   
+   
+   Esto garantiza que al menos 1 o 2 capas de elementos adyacentes a las condiciones de contorno no sufran degradación de densidad durante las primeras iteraciones del algoritmo optimizador (MMA/OC).
+
+
+# nota: investigación genética en la siguiente fracción del documento 
 
 Nota de alcance: no tengo acceso al repositorio real (no se subió código, solo este documento). El análisis que sigue es una investigación de arquitectura/semántica basada en el comportamiento documentado de Gmsh, OCCT/CadQuery y SIMP, no una lectura del código fuente real. Donde la confirmación requiere evidencia empírica del repo, indico el diagnóstico exacto a correr contra el código real.
 P1 — CAD Face ↔ Gmsh Surface

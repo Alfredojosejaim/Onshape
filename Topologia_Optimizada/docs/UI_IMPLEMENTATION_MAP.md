@@ -191,6 +191,11 @@ como NO CONECTADO, conforme a la regla de no inventar funcionalidad futura).
 - Arranque de `MainWindow` confirmado en entorno headless (`QT_QPA_PLATFORM=offscreen`
   con `SoftwareViewport`; el viewport VTK real requiere GPU y degrada
   automáticamente a `SoftwareViewport` vía `is_gl_available()`).
+  **Nota headless/CI**: en `offscreen` la sonda `is_gl_available()` (subprocess) puede
+  devolver True sin GPU real, y la construcción de `Viewport3D` (VTK) entonces
+  aborta por pixel format inválido. Por eso tests y smoke headless fuerzan
+  `SoftwareViewport` parcheando el símbolo `Viewport3D` (patrón de
+  `test_ui_validate_connection.py`), no la detección automática.
 - Modularización de la composición visual: `menu`/`topbar`/`tabs`/`ribbon`/
   `overlays` extraídos a `desktop/ui/components/`; `MainWindow` conserva handlers
   y coordinación. Conexiones verificadas por

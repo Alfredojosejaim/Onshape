@@ -87,7 +87,7 @@ QMainWindow, QWidget {{
     background-color: {bg_app};
 }}
 QFrame#viewportContainer {{ background-color: transparent; }}
-QFrame#timelinePanel, QFrame#treePanel, QFrame#propsPanel {{
+QFrame#timelinePanel, QFrame#treePanel, QFrame#propsPanel, QFrame#resultsPanel {{
     background-color: {bg_panel};
     border: 1px solid {border_soft};
     border-radius: 6px;

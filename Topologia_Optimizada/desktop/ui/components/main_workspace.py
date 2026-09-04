@@ -176,7 +176,7 @@ class MainWorkspaceBuilder:
         rl = QVBoxLayout(right)
         rl.setContentsMargins(0, 12, 12, 12)
         owner.results = ResultsPanel()
-        rl.addWidget(self._panel_frame(owner.results, "propsPanel", (12, 10, 12, 10)))
+        rl.addWidget(self._panel_frame(owner.results, "resultsPanel", (12, 10, 12, 10)))
         main_row.addWidget(right)
 
         layout.addLayout(main_row, 1)

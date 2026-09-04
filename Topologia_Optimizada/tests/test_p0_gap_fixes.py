@@ -2,7 +2,12 @@
 1. Gmsh surface extraction works without physical_groups (always populated).
 2. ProvisionalTet4Mesher produces boundary-surface triangles via tet-face counting.
 3. Halo radius defaults from mesh element size, not filter_radius.
+Plus P2: the provisional mesher's undifferentiated ``"boundary"`` bucket is
+recovered per-load via node-label propagation and the uniform-distribution
+fallback is no longer silent.
 """
+
+import logging
 
 import numpy as np
 import pytest
@@ -185,3 +190,146 @@ def test_halo_protect_computes_radius_when_none():
     solver.protect_elements_near_nodes([0, 1, 2])
     assert solver._preserved is not None
     assert solver._preserved.any()
+
+
+# ================================================================== #
+# P2: "boundary" bucket -> per-load face triangles (node propagation)
+# and explicit uniform-distribution fallback warning
+# ================================================================== #
+def _load_face_0():
+    from core.cad_entity import CadEntityRef, EntityType
+    from core.conditions import (
+        LoadCondition, LoadOrientation, LoadSense, SelectionSet,
+    )
+    return LoadCondition(
+        name="carga", magnitude=10.0,
+        sense=LoadSense.POSITIVE, orientation=LoadOrientation.PERPENDICULAR,
+        faces=SelectionSet(
+            name="f",
+            entities=[CadEntityRef(entity_type=EntityType.FACE, face_index=0)],
+        ),
+    )
+
+
+def test_boundary_bucket_propagated_by_node_labels():
+    """ProvisionalMesher only ever produces a 'boundary' bucket with no
+    per-CAD-face labels. _face_triangles_for_load must attribute each boundary
+    triangle to the load's face when all three of its nodes belong to the face
+    (recovered via CAD node selection)."""
+    from core.generative_engine import GenerativeDesignEngine
+
+    engine = GenerativeDesignEngine(model_id=None)
+    engine.face_surface_elements = {
+        "boundary": [
+            [0, 1, 2],   # all nodes on the load face
+            [1, 3, 2],   # all nodes on the load face
+            [0, 2, 4],   # node 4 NOT on the load face -> must be excluded
+        ],
+    }
+    load = _load_face_0()
+    tris = engine._face_triangles_for_load(load, node_indices=[0, 1, 2, 3])
+    assert tris == [[0, 1, 2], [1, 3, 2]]
+
+
+def test_boundary_bucket_ignored_when_face_key_exists():
+    """Once a named per-face key ('face_<id>') exists, the undifferentiated
+    'boundary' bucket must NOT be mixed in."""
+    from core.generative_engine import GenerativeDesignEngine
+
+    engine = GenerativeDesignEngine(model_id=None)
+    engine.face_surface_elements = {
+        "face_0": [[9, 10, 11]],
+        "boundary": [[0, 1, 2]],
+    }
+    load = _load_face_0()
+    tris = engine._face_triangles_for_load(load, node_indices=[0, 1, 2])
+    assert tris == [[9, 10, 11]]
+
+
+def test_boundary_no_propagation_returns_empty():
+    """When none of the load's selected nodes fully define a boundary triangle,
+    nothing is attributed: the caller falls back to uniform distribution."""
+    from core.generative_engine import GenerativeDesignEngine
+
+    engine = GenerativeDesignEngine(model_id=None)
+    engine.face_surface_elements = {"boundary": [[0, 1, 2]]}
+    load = _load_face_0()
+    tris = engine._face_triangles_for_load(load, node_indices=[9, 10])
+    assert tris == []
+
+
+def test_kratos_face_triangles_boundary_propagation():
+    """Kratos path mirrors the local engine: the 'boundary' bucket is attributed
+    to the load face through its node set (node_indices from CAD selection)."""
+    from core.kratos_adapter import _face_triangles_for_load
+    from core.study import LoadDefinition, LoadType
+
+    load = LoadDefinition(
+        id="l1", magnitude=100.0, direction=(0.0, 0.0, -1.0),
+        application_face_id="0", load_type=LoadType.DISTRIBUTED,
+    )
+    tris = _face_triangles_for_load(
+        load,
+        face_surface_elements={"boundary": [[0, 1, 2], [5, 6, 7]]},
+        physical_groups=None,
+        node_indices=[0, 1, 2],
+    )
+    assert tris == [[0, 1, 2]]
+
+
+def test_local_uniform_fallback_warns(caplog):
+    """Local engine: a load whose face produces no surface triangles falls back
+    to UNIFORM per-node distribution AND emits an explicit warning (no more
+    silent fallback)."""
+    from core.conditions import ConditionType
+    from core.generative_engine import GenerativeDesignEngine
+
+    nodes = np.array([
+        [0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0],
+        [0, 0, 1], [1, 0, 1], [0, 1, 1], [1, 1, 1],
+    ], dtype=float)
+    els = np.array([
+        [0, 1, 2, 4], [1, 2, 4, 5],
+        [1, 5, 4, 6], [2, 4, 6, 7],
+        [1, 2, 5, 7], [1, 5, 7, 4],
+    ])
+    engine = GenerativeDesignEngine(
+        model_id=None, mesh_nodes=nodes, mesh_elements=els,
+        face_surface_elements={"boundary": [[0, 1, 100]]},
+    )
+    load = _load_face_0()
+    with caplog.at_level(logging.WARNING, logger="core.generative_engine"):
+        forces, _, _, _, _ = engine._map_conditions_to_problem(
+            {
+                ConditionType.LOAD: [load],
+                ConditionType.ELASTICITY: [],
+                ConditionType.PROTECTED_REGION: [],
+                ConditionType.OBSTRUCTION: [],
+            },
+            raise_on_unmapped_face=False,
+        )
+    assert any("UNIFORM" in r.getMessage() for r in caplog.records)
+
+    from core.generative_engine import direction_vector
+    vec = direction_vector(load)
+    total = forces.reshape(-1, 3).sum(axis=0)
+    np.testing.assert_allclose(total, vec * 10.0, atol=1e-12)
+
+
+def test_kratos_uniform_fallback_warns(caplog):
+    """Kratos adapter: distribute=True without face_triangles/mesh_nodes falls
+    back to uniform per-node forces with an explicit warning."""
+    from unittest.mock import MagicMock
+
+    from core.kratos_adapter import KratosAdapter
+
+    adapter = KratosAdapter()
+    adapter.apply_point_load = MagicMock()
+    model_part = MagicMock()
+    with caplog.at_level(logging.WARNING, logger="core.kratos_adapter"):
+        adapter.apply_distributed_load(
+            model_part, [0, 1, 2, 3], [0.0, 0.0, -1000.0], distribute=True,
+            face_triangles=None, mesh_nodes=None,
+        )
+    assert any("UNIFORM" in r.getMessage() for r in caplog.records)
+    assert adapter.apply_point_load.call_count == 4

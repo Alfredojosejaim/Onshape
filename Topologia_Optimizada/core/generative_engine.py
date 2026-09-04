@@ -233,26 +233,58 @@ class GenerativeDesignEngine:
             default_tolerance=0.5,
         )
 
-    def _face_triangles_for_load(self, load: LoadCondition) -> List[List[int]]:
+    def _face_triangles_for_load(self, load: LoadCondition,
+                                 node_indices: Optional[List[int]] = None) -> List[List[int]]:
         """Collect surface triangles for the faces referenced by *load*.
 
         Returns a flat list of ``[n0, n1, n2]`` triangles (0-based mesh node
         indices) covering all faces of the load.  Empty list when no surface
         triangulation is available (triggers uniform fallback).
+
+        When neither a named physical group nor a ``face_<id>`` key is available
+        (e.g. the provisional voxel mesher, which only ever populates a single
+        undifferentiated ``"boundary"`` bucket with no per-CAD-face labeling),
+        falls back to node-label propagation: a boundary triangle is attributed
+        to this load's face if all three of its nodes already belong (via
+        CAD-geometry node selection, passed in as ``node_indices``) to that face.
         """
         if not self.face_surface_elements:
             return []
         tris: List[List[int]] = []
+        matched_specific = False
         for e in load.faces.entities:
             if e.entity_type == EntityType.FACE and e.face_index is not None:
                 fi = int(e.face_index)
                 # 1) Named physical groups (caller-provided group mapping).
                 for grp_name in self._face_index_to_groups.get(fi, []):
                     tris.extend(self.face_surface_elements.get(grp_name, []))
+                    matched_specific = True
                 # 2) Per-face keys from Gmsh fallback ("face_0", "face_1", ...).
                 face_key = f"face_{fi}"
                 if face_key in self.face_surface_elements:
                     tris.extend(self.face_surface_elements[face_key])
+                    matched_specific = True
+
+        # 3) Provisional mesher fallback: undifferentiated "boundary" bucket,
+        #    attributed by node-label propagation.
+        if not matched_specific and "boundary" in self.face_surface_elements:
+            if node_indices is None:
+                node_indices = self._node_indices_for_load(load)
+            node_set = set(node_indices or [])
+            if node_set:
+                boundary_tris = self.face_surface_elements["boundary"]
+                propagated = [
+                    tri for tri in boundary_tris if all(n in node_set for n in tri)
+                ]
+                if propagated:
+                    logger.debug(
+                        "Load %s: no named group / face_<id> key found; "
+                        "recovered %d/%d triangles from the undifferentiated "
+                        "'boundary' bucket via node-label propagation.",
+                        getattr(load, "name", "?"), len(propagated), len(boundary_tris),
+                    )
+                    tris.extend(propagated)
+
         return tris
 
     def _load_node_indices(self, conditions: Dict) -> List[int]:
@@ -439,13 +471,22 @@ class GenerativeDesignEngine:
             # Tributary-area weighting: distribute total magnitude proportionally
             # to each node's tributary surface area when face triangulation is
             # available; fall back to uniform distribution otherwise.
-            face_tris = self._face_triangles_for_load(load)
+            face_tris = self._face_triangles_for_load(load, node_indices=idx)
             if face_tris:
                 from core.boundary import nodal_area_weights
                 weights = nodal_area_weights(nodes, face_tris, idx)
                 for ni in idx:
                     forces[ni * 3: ni * 3 + 3] += vec * (mag * weights.get(ni, 1.0 / max(len(idx), 1)))
             else:
+                if len(idx) > 1:
+                    logger.warning(
+                        "Load %s: no surface triangulation available for its "
+                        "face -- falling back to UNIFORM per-node force "
+                        "distribution across %d nodes. Total force resultant is "
+                        "conserved but the spatial distribution is likely "
+                        "physically inaccurate.",
+                        getattr(load, "name", "?"), len(idx),
+                    )
                 for ni in idx:
                     forces[ni * 3: ni * 3 + 3] += vec * (mag / max(len(idx), 1))
 

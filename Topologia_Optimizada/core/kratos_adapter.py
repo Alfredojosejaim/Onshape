@@ -36,11 +36,19 @@ class KratosInitializationError(Exception):
     pass
 
 
-def _face_triangles_for_load(load, face_surface_elements, physical_groups):
+def _face_triangles_for_load(load, face_surface_elements, physical_groups, node_indices=None):
     """Collect surface triangles for a LoadDefinition's application face.
 
     Returns a flat list of ``[n0, n1, n2]`` triangles (0-based mesh node
     indices).  Empty list when no surface triangulation is available.
+
+    When neither a named physical group nor a ``face_<id>`` key is available
+    (e.g. the provisional voxel mesher, which only ever populates a single
+    undifferentiated ``"boundary"`` bucket with no per-CAD-face labeling),
+    falls back to node-label propagation: a boundary triangle is attributed
+    to this load's face if all three of its nodes are already known (via
+    CAD-geometry node selection, passed in as ``node_indices``) to belong to
+    that face.
     """
     if not face_surface_elements:
         return []
@@ -52,13 +60,33 @@ def _face_triangles_for_load(load, face_surface_elements, physical_groups):
     except (TypeError, ValueError):
         return []
     tris = []
+    matched_specific = False
     if physical_groups:
         for grp_name, face_indices in physical_groups.items():
             if fi in face_indices:
                 tris.extend(face_surface_elements.get(grp_name, []))
+                matched_specific = True
     face_key = f"face_{fi}"
     if face_key in face_surface_elements:
         tris.extend(face_surface_elements[face_key])
+        matched_specific = True
+
+    if not matched_specific and "boundary" in face_surface_elements:
+        node_set = set(node_indices or [])
+        if node_set:
+            boundary_tris = face_surface_elements["boundary"]
+            propagated = [
+                tri for tri in boundary_tris if all(n in node_set for n in tri)
+            ]
+            if propagated:
+                logger.debug(
+                    "Load face %d: no named group / face_<id> key found; "
+                    "recovered %d/%d triangles from the undifferentiated "
+                    "'boundary' bucket via node-label propagation.",
+                    fi, len(propagated), len(boundary_tris),
+                )
+                tris.extend(propagated)
+
     return tris
 
 
@@ -768,6 +796,17 @@ class KratosAdapter:
                         w = weights.get(node_idx, 1.0 / len(node_indices))
                         self.apply_point_load(model_part, node_idx, [f * w for f in force_vector])
                 else:
+                    if len(node_indices) > 1:
+                        logger.warning(
+                            "Distributed load: no surface triangulation available "
+                            "(face_triangles=%s, mesh_nodes=%s) -- falling back to "
+                            "UNIFORM per-node force distribution across %d nodes. "
+                            "Total force resultant is conserved but the spatial "
+                            "distribution is likely physically inaccurate.",
+                            "empty" if not face_triangles else "provided",
+                            "missing" if mesh_nodes is None else "provided",
+                            len(node_indices),
+                        )
                     force_per_node = [f / len(node_indices) for f in force_vector]
                     for node_idx in node_indices:
                         self.apply_point_load(model_part, node_idx, force_per_node)
@@ -834,6 +873,7 @@ class KratosAdapter:
             else:
                 face_tris = _face_triangles_for_load(
                     load, face_surface_elements, physical_groups,
+                    node_indices=node_indices,
                 )
                 self.apply_distributed_load(
                     model_part, node_indices, force_vector, distribute=True,

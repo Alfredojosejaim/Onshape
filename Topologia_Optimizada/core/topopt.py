@@ -203,6 +203,43 @@ class SIMPSolver:
         self._void = mask
         self._finalize_active()
 
+    def protect_elements_near_nodes(
+        self,
+        node_indices,
+        radius: Optional[float] = None,
+    ) -> None:
+        """Mark as preserved (rho=1, non-optimisable) every element whose
+        centroid lies within *radius* of any node in *node_indices*.
+
+        This creates an automatic keep-out zone around load / support nodes,
+        preventing the SIMP optimiser from removing material precisely where
+        forces are applied or reactions are concentrated (the classic spurious
+        sensitivity artifact near boundary conditions).
+
+        The halo **unites** with any previously preserved elements and never
+        replaces them.
+
+        Args:
+            node_indices: Iterable of 0-based mesh node indices (typically the
+                union of load and support node sets).
+            radius: Keep-out radius in mesh length units.  When ``None``,
+                defaults to ``2.0 * self.filter_radius`` (two neighbourhoods of
+                the density filter — a conservative, physics-motivated default
+                following the Saint-Venant principle).
+        """
+        if radius is None:
+            radius = 2.0 * self.filter_radius
+        node_indices = np.asarray(list(node_indices), dtype=np.int64)
+        if node_indices.size == 0:
+            return
+        from scipy.spatial import cKDTree
+        tree = cKDTree(self.nodes[node_indices])
+        dist, _ = tree.query(self.element_centers, k=1)
+        halo = np.nonzero(dist <= radius)[0]
+        if self._preserved is not None:
+            halo = np.union1d(halo, np.nonzero(self._preserved)[0])
+        self.set_preserved_elements(halo)
+
     # ------------------------------------------------------------------ #
     # Objective / sensitivity
     # ------------------------------------------------------------------ #

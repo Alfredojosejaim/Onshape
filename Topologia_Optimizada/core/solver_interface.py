@@ -140,6 +140,7 @@ def create_kratos_fea_solver(
     loads: Any,
     cad_shape: Any = None,
     physical_groups: Optional[Dict[str, List[int]]] = None,
+    face_surface_elements: Optional[Dict[str, List[List[int]]]] = None,
 ) -> Callable[..., Dict[str, Any]]:
     """Create a Kratos-based FEA solver for use with TopOptSolver.
     
@@ -238,7 +239,10 @@ def create_kratos_fea_solver(
             # CRITICAL FIX: No longer applies to ALL nodes
             # Instead, use geometric information to select load surface nodes
             for load in loads:
-                status = _apply_load_geometrically(adapter, model_part, load, nodes_list, cad_shape)
+                status = _apply_load_geometrically(adapter, model_part, load, nodes_list, cad_shape,
+                                                    face_surface_elements=face_surface_elements,
+                                                    physical_groups=physical_groups,
+                                                    mesh_nodes=nodes)
                 if isinstance(status, str) and status.startswith("UNRESOLVED"):
                     unresolved_conditions.append(status)
 
@@ -572,7 +576,10 @@ def _apply_constraint_geometrically(adapter: Any, model_part: Any, constraint: A
 
 
 def _apply_load_by_face_mapping(adapter: Any, model_part: Any, load: Any,
-                                nodes_list: List[List[float]], cad_shape: Any) -> str:
+                                nodes_list: List[List[float]], cad_shape: Any,
+                                face_surface_elements: Any = None,
+                                physical_groups: Any = None,
+                                mesh_nodes: Any = None) -> str:
     """Apply a load to the mesh nodes that lie on a real CAD face.
 
     Mirrors ``_apply_constraint_by_face_mapping`` using ``application_face_id``
@@ -626,7 +633,10 @@ def _apply_load_by_face_mapping(adapter: Any, model_part: Any, load: Any,
         return "NO_NODES_MATCHED"
 
     node_indices = mapped[0].node_indices
-    adapter.apply_load_from_core(model_part, load, node_indices)
+    adapter.apply_load_from_core(model_part, load, node_indices,
+                                  face_surface_elements=face_surface_elements,
+                                  physical_groups=physical_groups,
+                                  mesh_nodes=mesh_nodes)
     logger.info(
         f"Load {load.id} applied to {len(node_indices)} nodes "
         f"via CAD face index {face_index} (face-based mapping) METHOD=CAD_FACE_MAPPING"
@@ -635,7 +645,10 @@ def _apply_load_by_face_mapping(adapter: Any, model_part: Any, load: Any,
 
 
 def _apply_load_geometrically(adapter: Any, model_part: Any, load: Any,
-                              nodes_list: List[List[float]], cad_shape: Any = None) -> str:
+                              nodes_list: List[List[float]], cad_shape: Any = None,
+                              face_surface_elements: Any = None,
+                              physical_groups: Any = None,
+                              mesh_nodes: Any = None) -> str:
     """Apply load using geometric node selection.
     
     ARCHITECTURE NOTE:
@@ -682,7 +695,10 @@ def _apply_load_geometrically(adapter: Any, model_part: Any, load: Any,
         if submodelpart_name:
             node_indices = adapter.get_nodes_from_submodelpart(model_part, submodelpart_name)
             if node_indices:
-                adapter.apply_load_from_core(model_part, load, node_indices)
+                adapter.apply_load_from_core(model_part, load, node_indices,
+                                              face_surface_elements=face_surface_elements,
+                                              physical_groups=physical_groups,
+                                              mesh_nodes=mesh_nodes)
                 logger.info(f"Load {load.id} applied to {len(node_indices)} nodes "
                             f"via submodelpart '{submodelpart_name}'")
                 return "APPLIED"
@@ -690,7 +706,10 @@ def _apply_load_geometrically(adapter: Any, model_part: Any, load: Any,
                            f"{load.id}; falling through to face mapping")
         
         # Strategy 2: CAD face mapping (primary geometric mechanism, physically anchored)
-        status = _apply_load_by_face_mapping(adapter, model_part, load, nodes_list, cad_shape)
+        status = _apply_load_by_face_mapping(adapter, model_part, load, nodes_list, cad_shape,
+                                              face_surface_elements=face_surface_elements,
+                                              physical_groups=physical_groups,
+                                              mesh_nodes=mesh_nodes)
         if status == "APPLIED":
             return "APPLIED"
         if status != "NO_FACE_ID":
@@ -721,7 +740,10 @@ def _apply_load_geometrically(adapter: Any, model_part: Any, load: Any,
             )
             
             if node_indices:
-                adapter.apply_load_from_core(model_part, load, node_indices)
+                adapter.apply_load_from_core(model_part, load, node_indices,
+                                              face_surface_elements=face_surface_elements,
+                                              physical_groups=physical_groups,
+                                              mesh_nodes=mesh_nodes)
                 logger.info(f"Load applied to {len(node_indices)} nodes by coordinate filter")
                 return "APPLIED"
             else:

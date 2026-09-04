@@ -36,6 +36,28 @@ class KratosInitializationError(Exception):
     pass
 
 
+def _face_triangles_for_load(load, face_surface_elements, physical_groups):
+    """Collect surface triangles for a LoadDefinition's application face.
+
+    Returns a flat list of ``[n0, n1, n2]`` triangles (0-based mesh node
+    indices).  Empty list when no surface triangulation is available.
+    """
+    if not face_surface_elements or not physical_groups:
+        return []
+    face_id = getattr(load, "application_face_id", None)
+    if face_id is None:
+        return []
+    try:
+        fi = int(face_id)
+    except (TypeError, ValueError):
+        return []
+    tris = []
+    for grp_name, face_indices in physical_groups.items():
+        if fi in face_indices:
+            tris.extend(face_surface_elements.get(grp_name, []))
+    return tris
+
+
 class KratosAdapter:
     """Main adapter class for Kratos Multiphysics integration."""
     
@@ -713,26 +735,41 @@ class KratosAdapter:
             raise
     
     def apply_distributed_load(self, model_part: Any, node_indices: List[int], 
-                              force_vector: List[float], distribute: bool = True) -> None:
+                              force_vector: List[float], distribute: bool = True,
+                              face_triangles: Optional[List[List[int]]] = None,
+                              mesh_nodes: Optional[Any] = None) -> None:
         """Apply distributed load to multiple nodes.
         
         Args:
             model_part: Kratos ModelPart with nodes and DOFs
             node_indices: List of node indices to apply load to
             force_vector: Total force vector [Fx, Fy, Fz] in Newtons
-            distribute: If True, distribute force evenly among nodes
+            distribute: If True, distribute force among nodes
+            face_triangles: Optional surface triangulation for tributary-area
+                weighting.  When provided, each node receives force proportional
+                to its tributary area instead of uniformly.
+            mesh_nodes: (N, 3) node coordinates, required when face_triangles is
+                provided for area computation.
         """
         try:
             logger.info(f"Applying distributed load {force_vector} N to {len(node_indices)} nodes")
             
             if distribute and len(node_indices) > 0:
-                # Distribute force evenly
-                force_per_node = [f / len(node_indices) for f in force_vector]
+                if face_triangles and mesh_nodes is not None:
+                    from core.boundary import nodal_area_weights
+                    weights = nodal_area_weights(
+                        np.asarray(mesh_nodes, dtype=float), face_triangles, node_indices,
+                    )
+                    for node_idx in node_indices:
+                        w = weights.get(node_idx, 1.0 / len(node_indices))
+                        self.apply_point_load(model_part, node_idx, [f * w for f in force_vector])
+                else:
+                    force_per_node = [f / len(node_indices) for f in force_vector]
+                    for node_idx in node_indices:
+                        self.apply_point_load(model_part, node_idx, force_per_node)
             else:
-                force_per_node = force_vector
-            
-            for node_idx in node_indices:
-                self.apply_point_load(model_part, node_idx, force_per_node)
+                for node_idx in node_indices:
+                    self.apply_point_load(model_part, node_idx, force_vector)
             
             logger.info("Distributed load applied successfully")
             
@@ -740,7 +777,10 @@ class KratosAdapter:
             logger.error(f"Failed to apply distributed load: {e}")
             raise
     
-    def apply_load_from_core(self, model_part: Any, load: Any, node_indices: List[int]) -> None:
+    def apply_load_from_core(self, model_part: Any, load: Any, node_indices: List[int],
+                             face_surface_elements: Optional[Dict[str, List[List[int]]]] = None,
+                             physical_groups: Optional[Dict[str, List[int]]] = None,
+                             mesh_nodes: Optional[Any] = None) -> None:
         """Apply load from Core's LoadDefinition to Kratos.
 
         Dispatch explícito por ``LoadType`` alineado con el motor local
@@ -749,9 +789,9 @@ class KratosAdapter:
 
         * ``POINT`` (1 nodo) → ``apply_point_load``: la magnitud total en el nodo.
         * ``DISTRIBUTED`` / superficial (N nodos) → ``apply_distributed_load``:
-          reparte la magnitud total uniformemente entre los nodos
-          (``mag / len(node_indices)``), igual que el motor local. Cada nodo se
-          materializa después como una ``PointLoadCondition3D1N`` real.
+          reparte la magnitud total entre los nodos, proporcionalmente al área
+          tributaria de cada nodo cuando la triangulación de superficie está
+          disponible (fallback uniforme si no).
         * ``PRESSURE`` → **error claro**: el sistema no modela área de superficie,
           por lo que Pa→N requeriría integrar área (no disponible). Tratar Pa como
           N sería un error físico silencioso; se rechaza con ``ValueError`` en vez
@@ -761,6 +801,10 @@ class KratosAdapter:
             model_part: Kratos ModelPart con nodos y DOFs
             load: LoadDefinition object from core.study
             node_indices: List of node indices to apply load to
+            face_surface_elements: Optional {group_name: [[n0,n1,n2], ...]} surface
+                triangulation per physical group, for tributary-area weighting.
+            physical_groups: Optional {group_name: [face_indices]} mapping.
+            mesh_nodes: (N, 3) node coordinates for area computation.
 
         Raises:
             ValueError: para ``LoadType.PRESSURE`` (carga de presión requiere área,
@@ -784,9 +828,14 @@ class KratosAdapter:
             if load.load_type == LoadType.POINT and len(node_indices) == 1:
                 self.apply_point_load(model_part, node_indices[0], force_vector)
             else:
-                # DISTRIBUTED (superficial) o varios nodos: reparte la magnitud
-                # TOTAL uniformemente (misma semántica que el motor local).
-                self.apply_distributed_load(model_part, node_indices, force_vector, distribute=True)
+                face_tris = _face_triangles_for_load(
+                    load, face_surface_elements, physical_groups,
+                )
+                self.apply_distributed_load(
+                    model_part, node_indices, force_vector, distribute=True,
+                    face_triangles=face_tris or None,
+                    mesh_nodes=mesh_nodes,
+                )
 
             logger.info(f"Load {load.id} applied successfully")
 

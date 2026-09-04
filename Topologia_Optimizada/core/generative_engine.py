@@ -188,6 +188,8 @@ class GenerativeDesignEngine:
         material: Optional[Material] = None,
         condition_manager: Optional[ConditionManager] = None,
         model_shape: Any = None,
+        face_surface_elements: Optional[Dict[str, List[List[int]]]] = None,
+        physical_groups: Optional[Dict[str, List[int]]] = None,
     ) -> None:
         self.model_id = model_id
         self.mesh_nodes = np.asarray(mesh_nodes, dtype=float) if mesh_nodes is not None else None
@@ -196,6 +198,12 @@ class GenerativeDesignEngine:
         self.material = material or STANDARD_MATERIALS.get("steel", STANDARD_MATERIALS["steel"])
         self.condition_manager = condition_manager or ConditionManager()
         self.model_shape = model_shape
+        self.face_surface_elements = face_surface_elements or {}
+        self._face_index_to_groups: Dict[int, List[str]] = {}
+        if physical_groups:
+            for grp_name, face_indices in physical_groups.items():
+                for fi in face_indices:
+                    self._face_index_to_groups.setdefault(int(fi), []).append(grp_name)
 
     def _node_indices_for_load(self, load: LoadCondition) -> List[int]:
         """Map the load's selected faces to mesh node indices."""
@@ -224,6 +232,50 @@ class GenerativeDesignEngine:
             self.mesh_nodes, region.to_dict(), cad_shape=self.model_shape,
             default_tolerance=0.5,
         )
+
+    def _face_triangles_for_load(self, load: LoadCondition) -> List[List[int]]:
+        """Collect surface triangles for the faces referenced by *load*.
+
+        Returns a flat list of ``[n0, n1, n2]`` triangles (0-based mesh node
+        indices) covering all faces of the load.  Empty list when no surface
+        triangulation is available (triggers uniform fallback).
+        """
+        if not self.face_surface_elements:
+            return []
+        tris: List[List[int]] = []
+        for e in load.faces.entities:
+            if e.entity_type == EntityType.FACE and e.face_index is not None:
+                fi = int(e.face_index)
+                for grp_name in self._face_index_to_groups.get(fi, []):
+                    tris.extend(self.face_surface_elements.get(grp_name, []))
+        return tris
+
+    def _load_node_indices(self, conditions: Dict) -> List[int]:
+        """Collect all mesh node indices targeted by load conditions."""
+        nodes: set = set()
+        for load in conditions.get(ConditionType.LOAD, []):
+            if isinstance(load, LoadCondition):
+                nodes |= set(self._node_indices_for_load(load))
+        return sorted(nodes)
+
+    def _support_node_indices(self, conditions: Dict) -> List[int]:
+        """Collect all mesh node indices targeted by elasticity (support) conditions."""
+        nodes: set = set()
+        for cond in conditions.get(ConditionType.ELASTICITY, []):
+            if not isinstance(cond, ElasticityCondition):
+                continue
+            face_indices = [
+                int(e.face_index) for e in cond.faces.entities
+                if e.entity_type == EntityType.FACE and e.face_index is not None
+            ]
+            if self.model_shape is not None and face_indices:
+                from core.selection import FaceRegion, NodeSelectionEngine
+                region = FaceRegion(face_indices=face_indices, tolerance=0.5)
+                nodes |= set(NodeSelectionEngine.select_nodes(
+                    self.mesh_nodes, region.to_dict(),
+                    cad_shape=self.model_shape, default_tolerance=0.5,
+                ))
+        return sorted(nodes)
 
     def _protected_elements(self, conditions: List[ProtectedRegion]) -> np.ndarray:
         """Element indices that must keep material (protected regions)."""
@@ -371,20 +423,26 @@ class GenerativeDesignEngine:
             mag = float(load.magnitude if load.magnitude is not None else 1000.0)
             idx = self._node_indices_for_load(load)
             if not idx and load.faces.entities and raise_on_unmapped_face:
-                # a real face was selected but could not be mapped: never
-                # silently relocate the load to arbitrary nodes.
                 unsupported.append("load")
                 continue
             if not idx:
-                # no face selected (or permissive SIMP mode): default to the
-                # max-coordinate nodes along the load direction.
                 axis = int(np.argmax(np.abs(vec)))
                 coord = nodes[:, axis].max() if vec[axis] > 0 else nodes[:, axis].min()
                 tol = 1e-3 * float(np.ptp(nodes[:, axis]))
                 idx = [i for i in range(nodes.shape[0])
                        if abs(float(nodes[i, axis]) - coord) <= tol]
-            for ni in idx:
-                forces[ni * 3: ni * 3 + 3] += vec * (mag / max(len(idx), 1))
+            # Tributary-area weighting: distribute total magnitude proportionally
+            # to each node's tributary surface area when face triangulation is
+            # available; fall back to uniform distribution otherwise.
+            face_tris = self._face_triangles_for_load(load)
+            if face_tris:
+                from core.boundary import nodal_area_weights
+                weights = nodal_area_weights(nodes, face_tris, idx)
+                for ni in idx:
+                    forces[ni * 3: ni * 3 + 3] += vec * (mag * weights.get(ni, 1.0 / max(len(idx), 1)))
+            else:
+                for ni in idx:
+                    forces[ni * 3: ni * 3 + 3] += vec * (mag / max(len(idx), 1))
 
         # Fixed DOFs from elasticity conditions (faces of elastic supports).
         fixed_dofs = []
@@ -471,6 +529,17 @@ class GenerativeDesignEngine:
         if void.size:
             solver.set_void_elements(void)
 
+        # Automatic halo around load / support nodes (opt-in via halo_radius;
+        # None means disabled for backward compatibility with existing tests).
+        halo_radius = kwargs.get("halo_radius")
+        if halo_radius is not None:
+            halo_nodes = set(self._load_node_indices(conditions))
+            halo_nodes |= set(self._support_node_indices(conditions))
+            if halo_nodes:
+                solver.protect_elements_near_nodes(
+                    list(halo_nodes), radius=float(halo_radius),
+                )
+
         progress_cb = kwargs.get("progress_cb")
         result = solver.optimize(
             max_iterations=kwargs.get("max_iterations", 30),
@@ -509,6 +578,7 @@ def run_generative_design(
         filter_radius=p.filter_radius,
         tolerance=p.convergence_tolerance,
         progress_cb=progress_cb,
+        halo_radius=2.0 * p.filter_radius,
     )
 
     if study.scenario == "A":

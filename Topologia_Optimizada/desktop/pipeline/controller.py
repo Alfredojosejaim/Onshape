@@ -405,6 +405,7 @@ class PipelineController:
         nodes = self.mesh_nodes
         elements = self.mesh_elements
         physical_groups = self.mesh.get("physical_groups") or None
+        face_surface_elements = self.mesh.get("face_surface_elements") or None
         model_shape = self.cad.get_model_shape(self.model_id) if self.model_id else None
 
         try:
@@ -417,6 +418,7 @@ class PipelineController:
                 loads=loads,
                 cad_shape=model_shape,
                 physical_groups=physical_groups,
+                face_surface_elements=face_surface_elements,
             )
         except RuntimeError as exc:  # Kratos not available
             raise PipelineError(str(exc)) from exc
@@ -442,6 +444,7 @@ class PipelineController:
         tolerance: float = 1e-3,
         progress_cb: Optional[Callable[[dict], None]] = None,
         conditions=None,
+        halo_radius: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Run the self-contained SIMP topology optimisation.
 
@@ -466,6 +469,8 @@ class PipelineController:
                 material=mat,
                 condition_manager=self.conditions,
                 model_shape=self.cad.get_model_shape(self.model_id) if self.model_id else None,
+                face_surface_elements=self.mesh.get("face_surface_elements") or None,
+                physical_groups=self.mesh.get("physical_groups") or None,
             )
             by_type = consume_conditions(self.conditions, [c.id for c in conditions])
             g = engine.solve_simp(
@@ -476,6 +481,7 @@ class PipelineController:
                 filter_radius=filter_radius,
                 tolerance=tolerance,
                 progress_cb=progress_cb,
+                halo_radius=halo_radius,
             )
             self.result = g
             self.result_densities = np.asarray(g["densities"], dtype=float)

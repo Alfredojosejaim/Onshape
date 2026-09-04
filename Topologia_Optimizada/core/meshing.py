@@ -46,6 +46,7 @@ class MeshResult:
     is_provisional: bool = True
     metadata: Dict[str, Any] = field(default_factory=dict)
     physical_groups: Dict[str, List[int]] = field(default_factory=dict)
+    face_surface_elements: Dict[str, List[List[int]]] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -59,6 +60,7 @@ class MeshResult:
             "is_provisional": self.is_provisional,
             "metadata": self.metadata,
             "physical_groups": self.physical_groups,
+            "face_surface_elements": self.face_surface_elements,
         }
 
 
@@ -167,6 +169,37 @@ class GmshTet4Mesher(BaseMesher):
             groups[name] = indices
         return groups
 
+    @staticmethod
+    def _surface_elements_for_physical_groups(
+        gmsh, group_tags: Dict[str, int],
+    ) -> Dict[str, List[List[int]]]:
+        """Extract surface triangle connectivity per physical group (dim=2).
+
+        Each surface triangle is stored as a list of 3 zero-based mesh node
+        indices, suitable for computing nodal tributary areas.
+        """
+        if not group_tags:
+            return {}
+        node_tags, _coords, _ = gmsh.model.mesh.getNodes()
+        tag_to_index = {int(t): i for i, t in enumerate(node_tags)}
+        result: Dict[str, List[List[int]]] = {}
+        for name, phy_tag in group_tags.items():
+            try:
+                etypes, _etags, econn = gmsh.model.mesh.getElements(2, phy_tag)
+            except Exception:
+                continue
+            triangles: List[List[int]] = []
+            for k, etype in enumerate(etypes):
+                if etype != 3:  # Gmsh type 3 = Tri3
+                    continue
+                conn = np.asarray(econn[k], dtype=int).reshape(-1, 3)
+                for tri in conn:
+                    mapped = [int(tag_to_index.get(int(t), -1)) for t in tri]
+                    if -1 not in mapped:
+                        triangles.append(mapped)
+            result[name] = triangles
+        return result
+
     def generate_mesh_from_step(
         self,
         step_file: str,
@@ -260,6 +293,7 @@ class GmshTet4Mesher(BaseMesher):
             elements = (np.array(tet_connectivity).reshape(-1, 4) - 1).tolist()
 
             physical_group_nodes = self._nodes_for_physical_groups(gmsh, group_tags)
+            face_surface_elements = self._surface_elements_for_physical_groups(gmsh, group_tags)
 
             return MeshResult(
                 nodes=nodes,
@@ -275,6 +309,7 @@ class GmshTet4Mesher(BaseMesher):
                     "gmsh_volumes": len(volumes),
                 },
                 physical_groups=physical_group_nodes,
+                face_surface_elements=face_surface_elements,
             )
         finally:
             gmsh.finalize()
@@ -390,6 +425,7 @@ class GmshTet4Mesher(BaseMesher):
             elements = (np.array(tet_connectivity).reshape(-1, 4) - 1).tolist()
 
             physical_group_nodes = self._nodes_for_physical_groups(gmsh, group_tags)
+            face_surface_elements = self._surface_elements_for_physical_groups(gmsh, group_tags)
 
             return MeshResult(
                 nodes=nodes,
@@ -406,6 +442,7 @@ class GmshTet4Mesher(BaseMesher):
                     "n_size_points": len(size_points) if size_points else 0,
                 },
                 physical_groups=physical_group_nodes,
+                face_surface_elements=face_surface_elements,
             )
         finally:
             gmsh.finalize()

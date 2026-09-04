@@ -103,3 +103,58 @@ class BoundaryConditionMapper:
             )
 
         return mapped_faces
+
+
+def nodal_area_weights(
+    nodes: np.ndarray,
+    face_triangles,
+    node_indices,
+):
+    """Tributary-area weights for distributing a total force over mesh nodes
+    on a triangulated CAD face.
+
+    Uses the ``lumped mass`` approach: 1/3 of each triangle's area is assigned
+    to each of its 3 vertices, then normalised so all weights sum to 1.
+
+    * ``nodes`` — (N, 3) mesh node coordinates.
+    * ``face_triangles`` — list of ``[n0, n1, n2]`` (0-based mesh node indices)
+      representing the surface triangulation of the face on the FEM mesh.
+    * ``node_indices`` — list of 0-based mesh node indices on this face (the
+      same nodes the load/support is mapped to).
+
+    Returns ``{node_index: weight}`` where each weight is in ``(0, 1]`` and
+    ``sum(weights) == 1``.
+
+    **Fallback:** when ``face_triangles`` is ``None``, empty, or produces zero
+    total area (degenerate triangles), returns a uniform distribution
+    ``{n: 1/len(node_indices) for n in node_indices}`` — the original
+    behaviour — so existing code that lacks surface triangulation is never
+    broken.
+    """
+    nodes = np.asarray(nodes, dtype=float)
+    node_indices = list(node_indices)
+    if not node_indices:
+        return {}
+
+    if not face_triangles:
+        n = len(node_indices)
+        return {ni: 1.0 / n for ni in node_indices}
+
+    idx_set = set(node_indices)
+    area_per_node = {n: 0.0 for n in node_indices}
+
+    for tri in face_triangles:
+        tri = [int(t) for t in tri]
+        if not any(t in idx_set for t in tri):
+            continue
+        p0, p1, p2 = nodes[tri[0]], nodes[tri[1]], nodes[tri[2]]
+        tri_area = 0.5 * float(np.linalg.norm(np.cross(p1 - p0, p2 - p0)))
+        for t in tri:
+            if t in idx_set:
+                area_per_node[t] += tri_area / 3.0
+
+    total = sum(area_per_node.values())
+    if total <= 0.0:
+        n = len(node_indices)
+        return {ni: 1.0 / n for ni in node_indices}
+    return {ni: a / total for ni, a in area_per_node.items()}

@@ -263,6 +263,77 @@ def test_halo_disabled_when_radius_none():
 
 
 # ================================================================== #
-# 11. Existing FEA/SIMP/Kratos tests still pass — verified externally
+# 11. Halo from load + support nodes = union of the two halos.
+# ================================================================== #
+def test_halo_combines_load_and_support_nodes():
+    from core.topopt import SIMPSolver
+
+    nodes, elements = _hex_grid()
+    solver = SIMPSolver(nodes, elements, 210e3, 0.3, volfrac=0.5, filter_radius=0.5)
+
+    def _halo(nodes_idx, radius):
+        s = SIMPSolver(nodes, elements, 210e3, 0.3, volfrac=0.5, filter_radius=0.5)
+        s.protect_elements_near_nodes(list(nodes_idx), radius=radius)
+        return set(np.nonzero(s._preserved)[0])
+
+    load_halo = _halo([11], 1.0)     # far-right-top: load node
+    support_halo = _halo([0], 1.0)   # origin: support node
+    assert len(load_halo) > 0 and len(support_halo) > 0
+
+    combined = _halo([0, 11], 1.0)   # both at once
+    assert combined == load_halo | support_halo, (
+        "carga + apoyo deben generar el halo combinado (union, no interseccion)"
+    )
+
+
+# ================================================================== #
+# 12. Halo is LOCAL: elements far from the load/support stay free
+#     (it must not convert the whole contour into protected material).
+# ================================================================== #
+def test_halo_is_local_not_whole_contour():
+    from core.topopt import SIMPSolver
+
+    # Bigger mesh so there are genuinely distant elements.
+    def _grid(nx=4, ny=1, nz=1):
+        n_nodes = (nx + 1) * (ny + 1) * (nz + 1)
+        nodes = np.zeros((n_nodes, 3))
+        idx = 0
+        for i in range(nx + 1):
+            for j in range(ny + 1):
+                for k in range(nz + 1):
+                    nodes[idx] = [float(i), float(j), float(k)]
+                    idx += 1
+
+        def ni(i, j, k):
+            return i * (ny + 1) * (nz + 1) + j * (nz + 1) + k
+
+        els = []
+        for i in range(nx):
+            for j in range(ny):
+                for k in range(nz):
+                    a = ni(i, j, k); b = ni(i + 1, j, k)
+                    c = ni(i + 1, j + 1, k); d = ni(i, j + 1, k)
+                    e = ni(i, j, k + 1); f = ni(i + 1, j, k + 1)
+                    g = ni(i + 1, j + 1, k + 1); h = ni(i, j + 1, k + 1)
+                    els.append([a, b, e, c]); els.append([b, f, e, c])
+                    els.append([e, f, g, c]); els.append([e, g, h, c])
+                    els.append([a, e, d, c]); els.append([h, e, d, c])
+        return nodes, np.asarray(els, dtype=int)
+
+    nodes, elements = _grid()  # 24 elements
+    solver = SIMPSolver(nodes, elements, 210e3, 0.3, volfrac=0.5, filter_radius=0.5)
+    solver.protect_elements_near_nodes([0], radius=1.0)
+    preserved = set(np.nonzero(solver._preserved)[0])
+    # Elements near the origin are protected...
+    assert len(preserved) > 0
+    # ...but NOT the whole contour: far elements (x>=3) stay free.
+    far = {e for e in range(solver.num_elements)
+           if nodes[solver.elements[e]].mean(axis=0)[0] >= 3.0}
+    assert far, "mesh must include far elements for this check"
+    assert not (far & preserved), "halo must be local, not preserve the whole contour"
+
+
+# ================================================================== #
+# 13. Existing FEA/SIMP/Kratos tests still pass — verified externally
 #     by CI.  (Run `pytest tests/` to confirm.)
 # ================================================================== #

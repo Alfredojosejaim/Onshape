@@ -1,190 +1,177 @@
-Procesó durante 20s
+CORRECCIÓN FUNCIONAL — SELECCIÓN, CICLO DE MODELO Y MALLADO
 
-Sí. Hice la auditoría directamente sobre el estado actual del repositorio, incluyendo el último commit 905f968 y su integración con el cambio anterior.
+Audita primero el estado REAL del repositorio y corrige los siguientes problemas observados durante pruebas con un STEP complejo. No rehagas sistemas que ya funcionan ni cambies la arquitectura general. Trabaja sobre las implementaciones existentes.
 
-Resultado de la auditoría
+1. SELECCIÓN MÚLTIPLE DE CARAS — PRIORIDAD P0
 
-Estado general: 🟢/🟡 — el problema P0 principal mejoró sustancialmente, pero todavía no lo considero cerrado al 100 %.
+La selección de caras debe funcionar mediante clic normal, sin Ctrl ni otras teclas modificadoras.
 
-El último commit sí atacó correctamente varios puntos que habíamos detectado:
+Comportamiento requerido:
 
-implementó asignación global húngara para obtener una correspondencia 1:1;
+- Clic sobre una cara no seleccionada → la agrega a la selección.
+- Clic nuevamente sobre una cara ya seleccionada → la quita de la selección.
+- Se pueden acumular tantas caras como sea necesario.
+- Todas las caras seleccionadas deben permanecer visualmente resaltadas.
+- La selección debe conservarse mientras se realizan nuevos clics.
+- "ConditionPanel" debe recibir correctamente TODAS las caras seleccionadas.
+- No crear un segundo sistema de selección: corregir el "SelectionManager"/picking existente.
+- Mantener cuerpos/solidos y caras como tipos de entidad diferenciados.
 
-eliminó el UnboundLocalError concreto del fallback de c/n;
+Revisar especialmente la cadena:
 
-propagó el bucket "boundary" hacia las cargas;
+"VTK picking → CellId → face_index → CadEntityRef → SelectionManager → MainWindow → ConditionPanel"
 
-agregó advertencias explícitas cuando termina usando distribución uniforme;
+2. PRECISIÓN DEL PICKING — PRIORIDAD P0
 
-propagó la misma lógica al adaptador de Kratos.
+Con STEP complejos la selección de caras no es suficientemente precisa.
 
+Audita el mecanismo actual de picking y corrígelo para que:
 
-Pero encontré dos problemas técnicos importantes que todavía deben resolverse antes de declarar cerrado el P0.
+- el clic identifique la cara B-Rep correcta;
+- caras curvas, pequeñas o próximas puedan seleccionarse correctamente;
+- no se seleccione una cara vecina por error;
+- el "face_index" utilizado por el viewport corresponda realmente a la cara CAD;
+- se mantenga la correspondencia ya implementada entre tessellation y cara CAD;
+- no reemplaces innecesariamente "FaceSignature" ni el sistema CAD↔Gmsh ya endurecido.
 
-🔴 P0.1 — La correspondencia húngara ya es biyectiva, pero la firma geométrica sigue siendo insuficiente
+Añade pruebas automatizadas para geometrías con:
 
-La implementación ahora sí garantiza que dos caras CAD no reciban el mismo tag Gmsh: utiliza linear_sum_assignment, por lo que existe una asignación global 1:1. Eso corrige el defecto principal del commit anterior.
+- varias caras;
+- caras curvas;
+- caras próximas;
+- múltiples selecciones acumulativas.
 
-Sin embargo, el algoritmo sigue basándose exclusivamente en:
+3. CERRAR/ELIMINAR MODELO — PRIORIDAD P0
 
-centro + normal + área
+Actualmente "Reiniciar flujo" no elimina realmente el modelo cargado.
 
-y además compara la normal con:
+Implementa un ciclo de vida correcto:
 
-abs(dot(normal))
+"Importar STEP → trabajar → Cerrar modelo → estado limpio → Importar otro STEP"
 
-Por tanto, dos superficies geométricamente equivalentes o simétricas pueden continuar siendo indistinguibles.
+Cerrar/eliminar el modelo debe:
 
-El propio código reconoce que ante ese caso rechaza la correspondencia, lo cual es mucho mejor que asignar silenciosamente una cara incorrecta.
+- eliminarlo de la caché del "CADService";
+- limpiar la escena 3D;
+- limpiar selección;
+- limpiar tessellation;
+- limpiar malla;
+- limpiar condiciones;
+- limpiar estudios/resultados asociados;
+- limpiar referencias al modelo anterior;
+- actualizar Design Tree / Properties / Results / Timeline;
+- dejar la aplicación lista para importar otro STEP sin reiniciarla.
 
-Conclusión: no es un fallo de seguridad física porque el sistema prefiere fallar antes que inventar una correspondencia, pero todavía no es una solución completamente robusta para geometrías CAD arbitrarias.
+No dupliques gestores de estado. Utiliza los existentes y añade únicamente los métodos necesarios.
 
+El usuario debe poder probar sucesivamente:
 
----
+"pieza_A.step → cerrar → pieza_B.step → cerrar → pieza_C.step"
 
-🔴 P0.2 — Encontré un problema más serio en el muestreo Gmsh
+sin cerrar la aplicación.
 
-En _gmsh_surface_signatures() se construye una cuadrícula de samples × samples, pero los puntos que fallan en getValue() simplemente se omiten:
+4. REINICIO VS CERRAR MODELO
 
-except Exception:
-    continue
+No confundas:
 
-Después el código presupone que pts_arr sigue teniendo exactamente samples² elementos y accede mediante:
+- Reiniciar flujo: reinicia operaciones/estado del flujo.
+- Cerrar modelo: elimina el documento/modelo CAD actualmente cargado.
 
-pts_arr[i * samples + j]
+Si actualmente no existe esta separación, implementarla de forma coherente con la arquitectura existente.
 
-Esto significa que si falla aunque sea uno de los muestreos, los índices posteriores dejan de corresponder con la cuadrícula original y pueden:
+Añade una acción visible en la UI para cerrar el modelo.
 
-producir un IndexError;
+5. DIAGNÓSTICO DEL MALLADOR — PRIORIDAD P0
 
-asociar puntos de distintas posiciones;
+El usuario observa geometría cúbica/escalonada en zonas curvas durante la optimización.
 
-calcular un área incorrecta;
+Audita exactamente qué mallador está utilizando el STEP.
 
-generar una firma geométrica incorrecta.
+El sistema actual puede utilizar:
 
+"GmshTet4Mesher"
 
-Este es un problema real de robustez del algoritmo de correspondencia.
+y hacer fallback a:
 
+"ProvisionalTet4Mesher"
 
----
+No asumas cuál está ocurriendo.
 
-🟠 P1 — El fallback "boundary" es útil, pero no equivale a una correspondencia de caras
+Implementa diagnóstico explícito que permita saber:
 
-La nueva propagación:
-
-propagated = [
-    tri for tri in boundary_tris if all(n in node_set for n in tri)
-]
-
-es una buena solución para el ProvisionalTet4Mesher, y evita caer inmediatamente en distribución uniforme.
-
-Pero tiene una limitación geométrica importante:
-
-exige que los tres nodos del triángulo pertenezcan al conjunto de nodos seleccionados de la cara.
-
-En una discretización real, especialmente cerca de bordes entre caras, puede haber triángulos legítimos que compartan nodos con otra región y por tanto no cumplan all(...).
-
-Así que esto debe considerarse fallback aproximado, no equivalente al mapeo CAD→Gmsh.
-
-La ventaja es que el código ya no oculta esto: si no consigue triángulos específicos, avisa que usa distribución uniforme y reconoce que puede ser físicamente inexacta.
-
-
----
-
-🟢 Lo que considero correctamente resuelto
-
-Correspondencia 1:1
-
-Antes: CAD face index → Gmsh surface enumeration
-
-❌ inseguro.
-
-Ahora: CAD face signature → matriz de costes → Hungarian assignment → mapping 1:1
-
-✅ Mucho mejor y conceptualmente correcto.
-
-Fallback peligroso
-
-Antes podía ocurrir una distribución uniforme sin dejar claro por qué.
-
-Ahora:
-
-intenta grupo físico;
-
-intenta face_<id>;
-
-intenta propagación desde "boundary";
-
-si no puede, registra warning explícito.
-
-
-✅ Mejora importante.
-
-Tributary area
-
-La distribución sigue usando nodal_area_weights cuando existen triángulos de superficie.
-
-✅ Correcto conceptualmente.
-
-Kratos
-
-La misma lógica de recuperación y warning fue trasladada al adaptador de Kratos.
-
-✅ Bien: no tenemos dos comportamientos físicos diferentes entre los motores.
-
-
----
-
-Auditoría global actual
-
-Área	Estado
-
-CAD Face ↔ Gmsh Surface 1:1	🟢
-Asignación global	🟢
-Prevención de duplicados	🟢
-Manejo de ambigüedad	🟢
-Firma geométrica universal	🟡
-Muestreo UV de Gmsh	🔴
-Fallback boundary	🟡
-Tributary area	🟢
-Warning de fallback uniforme	🟢
-Paridad NumPy/Kratos	🟢
-Halo carga/soporte	🟢 implementación
-Semántica definitiva de volfrac	🟡 pendiente de cerrar
-ProvisionalTet4 como mallador definitivo	🔴 no
-
-
-Mi decisión
-
-No mandaría todavía al programador a continuar con nuevas funcionalidades.
-
-El siguiente paso correcto es un P0 de endurecimiento del mapeo, muy acotado:
-
-1. corregir el muestreo UV para que los puntos mantengan su posición (i,j) aunque falle una evaluación;
-
-
-2. evitar que una superficie parcialmente muestreada genere una firma aparentemente válida;
-
-
-3. añadir tests específicos de:
-
-caras simétricas;
-
-superficies curvas;
-
-fallo parcial de getValue;
-
-correspondencia biyectiva;
-
-rechazo de correspondencias ambiguas;
-
-
-
-4. después de eso, verificar nuevamente el pipeline completo de carga → triángulos → tributary area → NumPy/Kratos.
-
-
-
-No cambiaría todavía la arquitectura. La dirección actual es correcta; estamos en fase de endurecimiento y validación, no de rediseño.
-
-[Repositorio Onshape](https://github.com/Alfredojosejaim/Onshape?utm_source=chatgpt.com)
+- qué mallador fue utilizado;
+- por qué se produjo fallback, si ocurrió;
+- número de nodos;
+- número de elementos;
+- tamaño objetivo;
+- información suficiente para diagnosticar el STEP complejo.
+
+No ocultes errores de Gmsh detrás de un fallback silencioso.
+
+6. GEOMETRÍA CURVA
+
+Si los cubos observados provienen del "ProvisionalTet4Mesher", NO intentes solucionar el problema modificando el optimizador.
+
+Primero determina y demuestra el origen.
+
+Si Gmsh está funcionando, analiza la discretización resultante y determina si el problema está en:
+
+- generación de malla;
+- visualización de la malla;
+- reconstrucción del resultado;
+- representación de densidades.
+
+Si Gmsh está fallando y se está utilizando el mallador provisional, identifica la causa concreta del fallo y corrígela si es una regresión o integración defectuosa.
+
+El "ProvisionalTet4Mesher" sigue siendo un fallback, no debe convertirse accidentalmente en el mallador principal.
+
+7. OPTIMIZACIÓN EXPERIMENTAL
+
+La optimización actualmente puede ejecutarse aunque el flujo completo todavía no esté terminado.
+
+No elimines el motor experimental.
+
+Pero evita presentar el resultado como una optimización CAD/CAE final si todavía existen limitaciones conocidas.
+
+Mantén la ejecución disponible para pruebas, pero registra claramente el estado experimental cuando corresponda.
+
+8. PRUEBAS Y REGRESIÓN
+
+Antes de terminar:
+
+1. Ejecuta la suite existente.
+2. Añade tests específicos para:
+   - selección múltiple mediante clic normal;
+   - toggle de selección;
+   - picking correcto de varias caras;
+   - limpieza completa al cerrar modelo;
+   - importar un segundo STEP después de cerrar el primero;
+   - detección explícita del mallador utilizado;
+   - comportamiento ante fallback de Gmsh.
+3. No rompas las pruebas existentes de:
+   - correspondencia CAD↔Gmsh;
+   - volfrac;
+   - halo;
+   - FEA NumPy/SciPy;
+   - Kratos;
+   - condiciones;
+   - historial/timeline.
+
+REGLAS
+
+- Primero audita, después modifica.
+- No rehagas arquitectura existente sin necesidad.
+- No dupliques managers.
+- No elimines funcionalidad existente.
+- No implementes nuevas características de optimización en esta tarea.
+- No conviertas el "ProvisionalTet4Mesher" en solución definitiva.
+- Corrige las causas reales, no solamente los síntomas.
+- Mantén Python/PySide6/VTK/Gmsh/Kratos y la arquitectura actual.
+- Al finalizar, indica exactamente:
+  1. archivos modificados;
+  2. problemas corregidos;
+  3. causa encontrada del picking;
+  4. causa encontrada de los cubos;
+  5. comportamiento del cierre de modelo;
+  6. resultado de los tests;
+  7. cualquier limitación que permanezca.

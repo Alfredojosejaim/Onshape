@@ -17,70 +17,25 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 from PySide6.QtCore import Qt, QSignalBlocker
-from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
-    QFrame, QPushButton, QFileDialog, QMessageBox, QComboBox, QInputDialog,
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QFrame, QFileDialog, QMessageBox, QInputDialog,
 )
 
-from desktop.viewport.viewport_3d import Viewport3D, StandardView, is_gl_available
+from desktop.viewport.viewport_3d import Viewport3D, is_gl_available
 from desktop.viewport.software_viewport import SoftwareViewport
 from desktop.pipeline.controller import PipelineController, launch_qt
 from desktop.ui.panels.design_tree import DesignTreePanel
 from desktop.ui.panels.properties import PropertiesPanel
 from desktop.ui.panels.results import ResultsPanel
 from desktop.ui.panels.timeline import TimelinePanel
-from desktop.ui.style import PALETTE
+from desktop.ui.components.menus import MenuBuilder
+from desktop.ui.components.workspace import WorkspaceBuilder
+from desktop.ui.components.overlays import OverlayBuilder
+from desktop.ui.components.widgets import repolish
 from core.user_preferences import UserPreferences
 from core.navigation import NavigationManager
 from core.cad_entity import EntityType
-
-ACCENT = PALETTE["accent"]
-TEXT_DIM = PALETTE["text_dim"]
-TEXT_FAINT = PALETTE["text_faint"]
-
-
-def _repolish(widget) -> None:
-    widget.style().unpolish(widget)
-    widget.style().polish(widget)
-    widget.update()
-
-
-def _glyph_label(text: str, size: int = 15) -> QLabel:
-    lbl = QLabel(text)
-    lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    lbl.setStyleSheet(f"background: transparent; font-size: {size}px; color: {TEXT_DIM};")
-    return lbl
-
-
-def _mini_label(text: str) -> QLabel:
-    lbl = QLabel(text)
-    lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    lbl.setStyleSheet(f"background: transparent; font-size: 9px; color: {TEXT_DIM};")
-    return lbl
-
-
-class RibbonTool(QPushButton):
-    """A 62x50 tool button with a glyph on top and a tiny label below (HTML .tool-btn)."""
-
-    def __init__(self, glyph: str, label: str, tooltip: str = "", parent=None) -> None:
-        super().__init__(parent)
-        self.setProperty("ribbon", True)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFixedSize(64, 52)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(3, 4, 3, 3)
-        lay.setSpacing(2)
-        lay.addStretch(1)
-        lay.addWidget(_glyph_label(glyph))
-        lay.addWidget(_mini_label(label))
-        lay.addStretch(1)
-        if tooltip:
-            self.setToolTip(tooltip)
-
-    def set_active(self, active: bool) -> None:
-        self.setProperty("active", active)
-        _repolish(self)
 
 
 class _ViewportHost(QFrame):
@@ -185,326 +140,24 @@ class MainWindow(QMainWindow):
     # Menus (Archivo · Editar · Diseño · Herramientas · Ayuda)
     # ------------------------------------------------------------------ #
     def _build_menus(self) -> None:
-        menubar = self.menuBar()
-        self._actions_view: dict[str, QAction] = {}
-
-        # Archivo
-        file_menu = menubar.addMenu("&Archivo")
-        act_open = QAction("Importar archivo STEP...", self)
-        act_open.setShortcut("Ctrl+O")
-        act_open.triggered.connect(self._on_import)
-        file_menu.addAction(act_open)
-        act_exp = QAction("Exportar resultado...", self)
-        act_exp.triggered.connect(self._on_export)
-        file_menu.addAction(act_exp)
-        file_menu.addSeparator()
-        act_quit = QAction("Salir", self)
-        act_quit.setShortcut("Ctrl+Q")
-        act_quit.triggered.connect(self.close)
-        file_menu.addAction(act_quit)
-
-        # Editar
-        edit_menu = menubar.addMenu("&Editar")
-        act_clr = QAction("Limpiar selección", self)
-        act_clr.triggered.connect(self._on_clear_selection)
-        edit_menu.addAction(act_clr)
-        act_reset = QAction("Reiniciar flujo", self)
-        act_reset.triggered.connect(self._on_reset_flow)
-        edit_menu.addAction(act_reset)
-
-        # Operaciones (CAD operations; extensible to future ops)
-        ops_menu = menubar.addMenu("&Operaciones")
-        boolean_sub = ops_menu.addMenu("Boolean")
-        act_bool_union = QAction("Unión", self)
-        act_bool_union.triggered.connect(lambda: self._on_boolean_op("union"))
-        boolean_sub.addAction(act_bool_union)
-        act_bool_cut = QAction("Corte", self)
-        act_bool_cut.triggered.connect(lambda: self._on_boolean_op("difference"))
-        boolean_sub.addAction(act_bool_cut)
-        act_bool_intersect = QAction("Intersección", self)
-        act_bool_intersect.triggered.connect(lambda: self._on_boolean_op("intersection"))
-        boolean_sub.addAction(act_bool_intersect)
-
-        act_transform = QAction("Transformar...", self)
-        act_transform.triggered.connect(self._on_transform_op)
-        ops_menu.addAction(act_transform)
-        act_mirror = QAction("Simetría...", self)
-        act_mirror.triggered.connect(self._on_mirror_op)
-        ops_menu.addAction(act_mirror)
-        act_pattern = QAction("Patrón...", self)
-        act_pattern.triggered.connect(self._on_pattern_op)
-        ops_menu.addAction(act_pattern)
-
-        # Condiciones (reusable CAD/CAE conditions)
-        cond_menu = menubar.addMenu("&Condiciones")
-        act_cond_load = QAction("Carga", self)
-        act_cond_load.triggered.connect(lambda: self._on_condition_op("load"))
-        cond_menu.addAction(act_cond_load)
-        act_cond_elast = QAction("Elasticidad", self)
-        act_cond_elast.triggered.connect(lambda: self._on_condition_op("elasticity"))
-        cond_menu.addAction(act_cond_elast)
-        act_cond_obstr = QAction("Obstrucción", self)
-        act_cond_obstr.triggered.connect(lambda: self._on_condition_op("obstruction"))
-        cond_menu.addAction(act_cond_obstr)
-        act_cond_prot = QAction("Región protegida", self)
-        act_cond_prot.triggered.connect(lambda: self._on_condition_op("protected"))
-        cond_menu.addAction(act_cond_prot)
-
-        # Estudio (architecture layer: create & run a topology study)
-        study_menu = menubar.addMenu("&Estudio")
-        act_study_new = QAction("Nuevo estudio de optimización...", self)
-        act_study_new.triggered.connect(self._on_create_study)
-        study_menu.addAction(act_study_new)
-        act_study_run = QAction("Ejecutar estudio (topología)", self)
-        act_study_run.triggered.connect(self._on_run_study)
-        study_menu.addAction(act_study_run)
-
-        # Diseño (vistas + representación)
-        view_menu = menubar.addMenu("&Diseño")
-        presets = [
-            ("Isométrica", StandardView.ISO),
-            ("Frontal", StandardView.FRONT),
-            ("Superior", StandardView.TOP),
-            ("Lateral derecha", StandardView.RIGHT),
-        ]
-        for label, key in presets:
-            act = QAction(label, self)
-            act.setCheckable(True)
-            act.triggered.connect(lambda _=False, k=key: self._on_view(k))
-            view_menu.addAction(act)
-            self._actions_view[key] = act
-        view_menu.addSeparator()
-        act_fit = QAction("Ajustar a pantalla", self)
-        act_fit.setShortcut("F")
-        act_fit.triggered.connect(lambda: self.viewport.fit_to_view())
-        view_menu.addAction(act_fit)
-        act_center = QAction("Centrar modelo", self)
-        act_center.triggered.connect(lambda: self.viewport.center_model())
-        view_menu.addAction(act_center)
-
-        # Herramientas
-        tools_menu = menubar.addMenu("&Herramientas")
-        act_gm = QAction("Generar malla", self)
-        act_gm.triggered.connect(lambda: self._on_generate_mesh(self.properties._element_size.value()))
-        tools_menu.addAction(act_gm)
-        act_fea = QAction("Análisis FEM", self)
-        act_fea.triggered.connect(self._on_run_fea)
-        tools_menu.addAction(act_fea)
-        act_opt = QAction("Optimizar SIMP", self)
-        act_opt.triggered.connect(self._on_run_optimization_default)
-        tools_menu.addAction(act_opt)
-
-        # Ayuda
-        help_menu = menubar.addMenu("Ay&uda")
-        act_about = QAction("Acerca de", self)
-        act_about.triggered.connect(self._on_about)
-        help_menu.addAction(act_about)
+        _, self._actions_view = MenuBuilder(self).build()
 
     # ------------------------------------------------------------------ #
     # Top bar, workspace tabs and ribbon
     # ------------------------------------------------------------------ #
     def _build_topbar(self) -> QWidget:
-        tb = QWidget()
-        tb.setFixedHeight(52)
-        grid = QGridLayout(tb)
-        grid.setContentsMargins(16, 0, 16, 0)
-        grid.setColumnStretch(0, 1)
-        grid.setColumnStretch(1, 1)
-        grid.setColumnStretch(2, 1)
-
-        left = _glyph_label("◱", 18)
-        left.setStyleSheet(f"background: transparent; font-size: 18px; color: {TEXT_FAINT};")
-        grid.addWidget(left, 0, 0, Qt.AlignmentFlag.AlignLeft)
-
-        title = QLabel("OPTIMIZACIÓN TOPOLÓGICA")
-        title.setProperty("title", True)
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        grid.addWidget(title, 0, 1, Qt.AlignmentFlag.AlignCenter)
-
-        right = QWidget()
-        rl = QHBoxLayout(right)
-        rl.setContentsMargins(0, 0, 0, 0)
-        rl.setSpacing(12)
-        chip = QLabel("☁ Standalone")
-        chip.setProperty("chip", True)
-        self.chip_status = chip
-        self._btn_import_top = QPushButton("📁 Importar STEP")
-        self._btn_import_top.setProperty("htmlprimary", True)
-        self._btn_import_top.setStyleSheet("padding: 5px 12px; font-size: 12px;")
-        self._btn_import_top.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_import_top.clicked.connect(self._on_import)
-        avatar = QLabel("JD")
-        avatar.setProperty("avatar", True)
-        avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        rl.addWidget(chip)
-        rl.addWidget(self._btn_import_top)
-        rl.addWidget(avatar)
-        grid.addWidget(right, 0, 2, Qt.AlignmentFlag.AlignRight)
-
-        self.topbar = tb
-        return tb
+        return WorkspaceBuilder(self).build_topbar()
 
     def _build_workspace_tabs(self) -> QWidget:
-        w = QWidget()
-        w.setFixedHeight(34)
-        lay = QHBoxLayout(w)
-        lay.setContentsMargins(16, 0, 16, 0)
-        lay.setSpacing(2)
-
-        self._tabs: list[QPushButton] = []
-        for idx, label in enumerate(["Modelo", "Optimización", "Simulación", "Fabricación"]):
-            b = QPushButton(label)
-            b.setProperty("tab", True)
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.setCheckable(False)
-            b.clicked.connect(lambda _=False, i=idx: self._activate_tab(i))
-            if idx == 1:
-                b.setProperty("active", True)
-                _repolish(b)
-            self._tabs.append(b)
-            lay.addWidget(b)
-
-        doc = QLabel("📁 Sin documento cargado")
-        doc.setStyleSheet(f"font-size: 12px; color: {TEXT_FAINT}; margin-left: 14px; padding-left: 12px;")
-        doc.setProperty("faint", True)
-        self.doc_label = doc
-        lay.addWidget(doc, 1)
-        return w
+        return WorkspaceBuilder(self).build_tabs()
 
     def _activate_tab(self, index: int) -> None:
         for i, b in enumerate(self._tabs):
             b.setProperty("active", i == index)
-            _repolish(b)
+            repolish(b)
 
     def _build_ribbon(self) -> QWidget:
-        w = QWidget()
-        lay = QHBoxLayout(w)
-        lay.setContentsMargins(16, 8, 16, 4)
-        lay.setSpacing(0)
-
-        def group(rows: list[tuple[RibbonTool]], label: str) -> QWidget:
-            g = QWidget()
-            gl = QVBoxLayout(g)
-            gl.setContentsMargins(0, 0, 0, 0)
-            gl.setSpacing(4)
-            row = QHBoxLayout()
-            row.setSpacing(4)
-            for tool in rows:
-                row.addWidget(tool)
-            row.addStretch(1)
-            cap = QLabel(label.upper())
-            cap.setStyleSheet(f"font-size: 9.5px; letter-spacing: 0.6px; color: {TEXT_FAINT};")
-            gl.addLayout(row)
-            gl.addWidget(cap)
-            return g
-
-        def divider() -> QFrame:
-            d = QFrame()
-            d.setFrameShape(QFrame.Shape.VLine)
-            d.setStyleSheet(f"color: {PALETTE['border_soft']}; margin: 2px 14px;")
-            d.setFixedHeight(48)
-            return d
-
-        # Modelo
-        self.rb_import = RibbonTool("📁", "Importar STEP", "Importar archivo STEP local")
-        self.rb_import.clicked.connect(self._on_import)
-        self.rb_mesh = RibbonTool("📐", "Malla FEM", "Generar malla volumétrica FEM (Tet4)")
-        self.rb_mesh.clicked.connect(lambda: self._on_generate_mesh(self.properties._element_size.value()))
-        self.rb_mesh_adaptive = RibbonTool("▦", "Malla Adaptativa", "Refinar malla localmente según densidad")
-        self.rb_mesh_adaptive.clicked.connect(self._on_generate_adaptive_mesh)
-        self.rb_fea = RibbonTool("📊", "Análisis FEM", "Structural Mechanics — análisis estático")
-        self.rb_fea.clicked.connect(self._on_run_fea)
-        lay.addWidget(group([self.rb_import, self.rb_mesh, self.rb_mesh_adaptive, self.rb_fea], "Modelo"))
-
-        lay.addWidget(divider())
-
-        # Edición
-        self.rb_union = RibbonTool("⊕", "Unión", "Unión booleana de sólidos")
-        self.rb_union.clicked.connect(lambda: self._on_boolean_op("union"))
-        self.rb_difference = RibbonTool("⊖", "Resta", "Resta booleana de sólidos")
-        self.rb_difference.clicked.connect(lambda: self._on_boolean_op("difference"))
-        self.rb_intersect = RibbonTool("⊗", "Intersección", "Intersección booleana de sólidos")
-        self.rb_intersect.clicked.connect(lambda: self._on_boolean_op("intersection"))
-        self.rb_transform = RibbonTool("↗", "Transformar", "Trasladar / rotar cuerpo")
-        self.rb_transform.clicked.connect(self._on_transform_op)
-        self.rb_mirror = RibbonTool("◇", "Simetría", "Simetría respecto a plano")
-        self.rb_mirror.clicked.connect(self._on_mirror_op)
-        self.rb_pattern = RibbonTool("❖", "Patrón", "Patrón lineal / rectangular / circular")
-        self.rb_pattern.clicked.connect(self._on_pattern_op)
-        lay.addWidget(group([self.rb_union, self.rb_difference, self.rb_intersect,
-                             self.rb_transform, self.rb_mirror, self.rb_pattern], "Edición"))
-
-        lay.addWidget(divider())
-
-        # Optimización
-        self.rb_sens = RibbonTool("📈", "Sensibilidad", "Análisis de sensibilidad (adjoint)")
-        self.rb_sens.clicked.connect(lambda: self.statusBar().showMessage(
-            "Sensibilidad adjunto: computada internamente por el motor SIMP en cada iteración."))
-        self.rb_filtros = RibbonTool("⚙", "Filtros", "Radio de filtro de densidad")
-        self.rb_filtros.clicked.connect(self._on_focus_filter)
-        self.rb_opt = RibbonTool("▶", "Optimizar SIMP", "Optimization Application — algoritmo SIMP")
-        self.rb_opt.clicked.connect(self._on_run_optimization_default)
-        self.rb_design_space = RibbonTool("◆", "Espacio de Diseño", "Definir espacio de diseño para optimización")
-        self.rb_design_space.clicked.connect(lambda: self.statusBar().showMessage(
-            "Espacio de Diseño: seleccione cuerpos para definir el dominio de optimización."))
-        self.rb_generative = RibbonTool("✧", "Generativo", "Diseño generativo con escenarios")
-        self.rb_generative.clicked.connect(lambda: self.statusBar().showMessage(
-            "Diseño Generativo: configure escenarios y restricciones."))
-        lay.addWidget(group([self.rb_sens, self.rb_filtros, self.rb_opt,
-                             self.rb_design_space, self.rb_generative], "Optimización"))
-
-        lay.addWidget(divider())
-
-        # Postproceso
-        self.rb_viz = RibbonTool("👁", "Visualizar", "Visualizar campo de densidad por elemento")
-        self.rb_viz.clicked.connect(self._on_visualize_result)
-        self.rb_export = RibbonTool("📤", "Exportar", "Exportar resultado de la optimización")
-        self.rb_export.clicked.connect(self._on_export)
-        lay.addWidget(group([self.rb_viz, self.rb_export], "Postproceso"))
-
-        lay.addWidget(divider())
-
-        # Herramientas
-        self.rb_validate = RibbonTool("✓", "Validar", "Validar geometría y restricciones")
-        self.rb_validate.clicked.connect(self._on_validate)
-        self.rb_export_step = RibbonTool("💾", "Exportar STEP", "Exportar resultado como archivo STEP")
-        self.rb_export_step.clicked.connect(self._on_export_step)
-        lay.addWidget(group([self.rb_validate, self.rb_export_step], "Herramientas"))
-
-        lay.addStretch(1)
-
-        # right side: view preset + axes/grid toggles (native conveniences)
-        right = QWidget()
-        rl = QHBoxLayout(right)
-        rl.setContentsMargins(0, 0, 0, 0)
-        rl.setSpacing(8)
-        rl.addWidget(QLabel("Vista:"))
-        self._view_combo = QComboBox()
-        for label, key in [
-            ("Isométrica", StandardView.ISO), ("Frontal", StandardView.FRONT),
-            ("Superior", StandardView.TOP), ("Lateral derecha", StandardView.RIGHT),
-        ]:
-            self._view_combo.addItem(label, key)
-        self._view_combo.currentIndexChanged.connect(
-            lambda i: self.viewport.set_view(self._view_combo.itemData(i)) if i >= 0 else None
-        )
-        rl.addWidget(self._view_combo)
-        self._cb_axes = QPushButton("Ejes")
-        self._cb_axes.setCheckable(True)
-        self._cb_axes.setChecked(True)
-        self._cb_axes.setStyleSheet("padding: 5px 10px; font-size: 11.5px;")
-        self._cb_axes.toggled.connect(lambda on: self.viewport.toggle_axes(on))
-        rl.addWidget(self._cb_axes)
-        self._cb_grid = QPushButton("Rejilla")
-        self._cb_grid.setCheckable(True)
-        self._cb_grid.setChecked(True)
-        self._cb_grid.setStyleSheet("padding: 5px 10px; font-size: 11.5px;")
-        self._cb_grid.toggled.connect(lambda on: self.viewport.toggle_grid(on))
-        rl.addWidget(self._cb_grid)
-        lay.addWidget(right)
-
-        self.ribbon = w
-        return w
+        return WorkspaceBuilder(self).build_ribbon()
 
     # ------------------------------------------------------------------ #
     # Central layout
@@ -600,111 +253,7 @@ class MainWindow(QMainWindow):
         self.controller_reset_after_model()
 
     def _build_viewport_overlays(self) -> None:
-        # Badge (top-left)
-        badge = QWidget()
-        bl = QHBoxLayout(badge)
-        bl.setContentsMargins(0, 0, 0, 0)
-        bl.setSpacing(10)
-        t1 = QLabel("Optimización")
-        t1.setStyleSheet("font-size: 13px; font-weight: 600;")
-        t2 = QLabel("SIMP · Standalone")
-        t2.setProperty("badge", True)
-        bl.addWidget(t1)
-        bl.addWidget(t2)
-        self.host.place("badge", badge)
-
-        # View controls (top-right)
-        controls = QWidget()
-        cl = QVBoxLayout(controls)
-        cl.setContentsMargins(0, 0, 0, 0)
-        cl.setSpacing(6)
-        self.ctrl_center = self._viewer_button("📷 Centrar Vista", command=lambda: self.viewport.fit_to_view())
-        self.ctrl_wire = self._viewer_button("🔲 Wireframe", checked=True)
-        self.ctrl_wire.toggled.connect(
-            lambda on: self.viewport.set_display_mode("wireframe" if on else "surfaced"))
-        self.ctrl_axes = self._viewer_button("📐 Ejes", checked=True)
-        self.ctrl_axes.toggled.connect(self.viewport.toggle_axes)
-        self.ctrl_forces = self._viewer_button("⚡ Fuerzas", checked=True)
-        self.ctrl_forces.toggled.connect(lambda on: self._sync_sidebar_vis("forces", on))
-        self.ctrl_constraints = self._viewer_button("🔒 Fijaciones", checked=True)
-        self.ctrl_constraints.toggled.connect(lambda on: self._sync_sidebar_vis("constraints", on))
-        for b in (self.ctrl_center, self.ctrl_wire, self.ctrl_axes,
-                  self.ctrl_forces, self.ctrl_constraints):
-            cl.addWidget(b)
-        self.host.place("controls", controls)
-
-        # Status bar overlay (bottom)
-        status = QWidget()
-        sl = QHBoxLayout(status)
-        sl.setContentsMargins(14, 0, 14, 0)
-        sl.setSpacing(14)
-        sl.addWidget(self._legend_dot("Sólido CAD Real", PALETTE["solid_cad"]))
-        sl.addWidget(self._legend_dot("Fuerzas (Vectores)", PALETTE["force"]))
-        sl.addWidget(self._legend_dot("Fijaciones", PALETTE["constraint"]))
-        sl.addStretch(1)
-        self._viewer_info = QLabel("Visor 3D inicializando...")
-        self._viewer_info.setProperty("viewinfo", True)
-        sl.addWidget(self._viewer_info, 1)
-        status.setStyleSheet(
-            f"background: {PALETTE['overlay_center_bg']}; border: 1px solid {PALETTE['border_soft']};"
-            "border-top-left-radius: 6px; border-top-right-radius: 6px;")
-        self.host.place("status", status)
-
-        # Placeholder (center) while no model is loaded
-        ph = QWidget()
-        pl = QVBoxLayout(ph)
-        pl.setContentsMargins(18, 18, 18, 18)
-        pl.setSpacing(10)
-        box = QLabel("🔲")
-        box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        box.setFixedSize(90, 90)
-        box.setStyleSheet(
-            f"border: 2px dashed {PALETTE['placeholder_border']}; border-radius: 10px; font-size: 26px;")
-        hint = QLabel("Importe un archivo STEP para cargar el modelo 3D")
-        hint.setStyleSheet(f"font-size: 11.5px; color: {TEXT_FAINT};")
-        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        pl.addStretch(1)
-        pl.addWidget(box, 0, Qt.AlignmentFlag.AlignCenter)
-        pl.addWidget(hint, 0, Qt.AlignmentFlag.AlignCenter)
-        pl.addStretch(1)
-        self.placeholder = ph
-        self.host.place("placeholder", ph)
-
-    def _viewer_button(self, text: str, checked: bool = False,
-                       command=None) -> QPushButton:
-        b = QPushButton(text)
-        b.setProperty("viewercontrol", True)
-        b.setCursor(Qt.CursorShape.PointingHandCursor)
-        if command is not None:
-            b.setCheckable(False)
-            b.clicked.connect(command)
-            b.setProperty("active", False)
-            _repolish(b)
-        else:
-            b.setCheckable(True)
-            b.setChecked(checked)
-            b.toggled.connect(lambda on, btn=b: self._set_viewer_active(btn, on))
-            self._set_viewer_active(b, checked)
-        return b
-
-    @staticmethod
-    def _set_viewer_active(btn: QPushButton, active: bool) -> None:
-        btn.setProperty("active", active)
-        _repolish(btn)
-
-    def _legend_dot(self, text: str, color: str) -> QWidget:
-        w = QWidget()
-        hl = QHBoxLayout(w)
-        hl.setContentsMargins(0, 0, 0, 0)
-        hl.setSpacing(5)
-        dot = QLabel()
-        dot.setFixedSize(10, 10)
-        dot.setStyleSheet(f"background: {color}; border-radius: 2px;")
-        lab = QLabel(text)
-        lab.setProperty("legend", True)
-        hl.addWidget(dot)
-        hl.addWidget(lab)
-        return w
+        OverlayBuilder(self, self.host).build()
 
     def _sync_sidebar_vis(self, which: str, checked: bool) -> None:
         cb = {"forces": self.properties._cb_forces,

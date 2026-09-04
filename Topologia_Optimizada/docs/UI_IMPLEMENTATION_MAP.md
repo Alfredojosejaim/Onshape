@@ -13,8 +13,21 @@
 | 🔀 **Redirige / hint** | No ejecuta backend; navega/muestra ayuda apuntando a un panel real (intencional, no es código muerto). |
 | 🚫 **Solo visual / NO CONECTADO** | Muestra un mensaje decorativo; no existe implementación reutilizable conectable sin construir UI nueva. |
 
-La UI desktop es `desktop/ui/main_window.py` (composición: barra de menú +
-ribbon + paneles `desktop/ui/panels/` + viewport `desktop/viewport/`).
+La UI desktop es `desktop/ui/main_window.py` (coordinador: `__init__` +
+`_build_central` + paneles + handlers `_on_*`). La **composición visual** se
+delega en `desktop/ui/components/`:
+  - `widgets.py`    → primitivas (`repolish`, `glyph_label`, `mini_label`, `RibbonTool`)
+  - `menus.py`      → barra de menú (MenuBuilder)
+  - `workspace.py`  → topbar + pestañas + ribbon (WorkspaceBuilder)
+  - `overlays.py`   → overlays del viewport (OverlayBuilder)
+
+Los builders reciben `owner` (MainWindow) para conectar las mismas señales de
+siempre; la ventana conserva las referencias (`rb_*`, `chip_status`, `ctrl_*`,
+`_view_combo`, ...) y las rutas de trazabilidad botón→handler→controller→core
+se mantienen intactas (verificado por `tests/test_ui_integration_connections.py`).
+
+Los paneles de presentación viven en `desktop/ui/panels/` y el viewport en
+`desktop/viewport/` (VTK con fallback `SoftwareViewport` QPainter).
 El flujo controlado es `desktop/pipeline/controller.py`, que delega en
 `core/` (`document.py`, `features.py`, `commands.py`, `cae_studies.py`,
 `optimization_studies.py`, `generative.py`, `conditions.py`).
@@ -137,8 +150,9 @@ Las señales de `PropertiesPanel` (`runOptimization`, `runFEA`, `generateMesh`,
   → `core.commands.*` → `document.add_feature` + `conditions`.
 
 Fuentes de verdad auditadas (verificación visual de conexión real en el código):
-`desktop/ui/main_window.py` (menús 196-285, ribbon 409-473, wire paneis 555-599),
-paneles en `desktop/ui/panels/*.py`, `desktop/pipeline/controller.py`,
+`desktop/ui/main_window.py` (handlers `_on_*` + `_build_central`),
+`desktop/ui/components/` (menus, workspace, overlays), paneles en
+`desktop/ui/panels/*.py`, `desktop/pipeline/controller.py`,
 `core/document.py`, `core/cae_studies.py`, `core/optimization_studies.py`,
 `core/generative.py`, `core/conditions.py`, `core/commands.py`.
 
@@ -160,5 +174,9 @@ como NO CONECTADO, conforme a la regla de no inventar funcionalidad futura).
 - Arranque de `MainWindow` confirmado en entorno headless (`QT_QPA_PLATFORM=offscreen`
   con `SoftwareViewport`; el viewport VTK real requiere GPU y degrada
   automáticamente a `SoftwareViewport` vía `is_gl_available()`).
+- Modularización de la composición visual: `menu`/`topbar`/`tabs`/`ribbon`/
+  `overlays` extraídos a `desktop/ui/components/`; `MainWindow` conserva handlers
+  y coordinación. Conexiones verificadas por
+  `tests/test_ui_integration_connections.py` (6) + `test_ui_validate_connection.py` (3).
 - Suite: `python -m pytest -q -p no:cacheprovider` → **246 passed** al finalizar
   (243 previos + 3 nuevos de `test_ui_validate_connection.py`).

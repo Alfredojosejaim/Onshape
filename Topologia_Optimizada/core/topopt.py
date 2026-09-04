@@ -223,12 +223,21 @@ class SIMPSolver:
             node_indices: Iterable of 0-based mesh node indices (typically the
                 union of load and support node sets).
             radius: Keep-out radius in mesh length units.  When ``None``,
-                defaults to ``2.0 * self.filter_radius`` (two neighbourhoods of
-                the density filter — a conservative, physics-motivated default
-                following the Saint-Venant principle).
+                defaults to 2x the characteristic element size (h_element),
+                computed as the 95th percentile of nearest-centroid distances.
+                This matches the Saint-Venant dissipation length which is
+                proportional to mesh element size, not the density filter radius.
         """
         if radius is None:
-            radius = 2.0 * self.filter_radius
+            # Characteristic element size from element volume (length scale that
+            # grows/shrinks with mesh resolution, independent of filter_radius).
+            if self.num_elements >= 1:
+                _v_mean = float(np.mean(self._volumes))
+                # Regular-tet edge length: V = a^3 / (6 sqrt(2))  ->  a ~ 2.04 V^(1/3)
+                h_element = 2.0 * max(float(_v_mean) ** (1.0 / 3.0), 1e-9)
+            else:
+                h_element = 1.0
+            radius = 2.0 * h_element
         node_indices = np.asarray(list(node_indices), dtype=np.int64)
         if node_indices.size == 0:
             return

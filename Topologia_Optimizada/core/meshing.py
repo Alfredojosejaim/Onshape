@@ -190,7 +190,7 @@ class GmshTet4Mesher(BaseMesher):
                 continue
             triangles: List[List[int]] = []
             for k, etype in enumerate(etypes):
-                if etype != 3:  # Gmsh type 3 = Tri3
+                if etype != 2:  # Gmsh element type 2 = 3-node triangle (Tri3)
                     continue
                 conn = np.asarray(econn[k], dtype=int).reshape(-1, 3)
                 for tri in conn:
@@ -198,6 +198,41 @@ class GmshTet4Mesher(BaseMesher):
                     if -1 not in mapped:
                         triangles.append(mapped)
             result[name] = triangles
+        return result
+
+    @staticmethod
+    def _extract_all_surface_elements(gmsh) -> Dict[str, List[List[int]]]:
+        """Extract Tri3 surface elements from *all* surfaces of the model.
+
+        Returns a dict keyed by ``"face_<0-based_index>"`` (matching the CAD
+        face index convention used by ``core.boundary``).  Unlike
+        ``_surface_elements_for_physical_groups`` this works without any
+        caller-provided ``physical_groups`` mapping and is always called after
+        meshing to guarantee ``face_surface_elements`` is populated.
+        """
+        surfaces = gmsh.model.getEntities(2)
+        if not surfaces:
+            return {}
+        node_tags, _coords, _ = gmsh.model.mesh.getNodes()
+        tag_to_index = {int(t): i for i, t in enumerate(node_tags)}
+        result: Dict[str, List[List[int]]] = {}
+        surface_tags = [tag for dim, tag in surfaces if dim == 2]
+        for face_idx, stag in enumerate(surface_tags):
+            try:
+                etypes, _etags, econn = gmsh.model.mesh.getElements(2, stag)
+            except Exception:
+                continue
+            triangles: List[List[int]] = []
+            for k, etype in enumerate(etypes):
+                if etype != 2:  # Gmsh element type 2 = 3-node triangle (Tri3)
+                    continue
+                conn = np.asarray(econn[k], dtype=int).reshape(-1, 3)
+                for tri in conn:
+                    mapped = [int(tag_to_index.get(int(t), -1)) for t in tri]
+                    if -1 not in mapped:
+                        triangles.append(mapped)
+            if triangles:
+                result[f"face_{face_idx}"] = triangles
         return result
 
     def generate_mesh_from_step(
@@ -294,6 +329,17 @@ class GmshTet4Mesher(BaseMesher):
 
             physical_group_nodes = self._nodes_for_physical_groups(gmsh, group_tags)
             face_surface_elements = self._surface_elements_for_physical_groups(gmsh, group_tags)
+
+            # Always extract surface triangles for every CAD face (keyed by
+            # face_<index>) so that tributary-area weighting works even when
+            # no physical_groups were supplied by the caller.
+            all_surface = self._extract_all_surface_elements(gmsh)
+            if all_surface:
+                # Merge: named physical group triangles take precedence, then
+                # fill with per-face triangles for faces not already covered.
+                for face_key, tris in all_surface.items():
+                    if face_key not in face_surface_elements:
+                        face_surface_elements[face_key] = tris
 
             return MeshResult(
                 nodes=nodes,
@@ -426,6 +472,12 @@ class GmshTet4Mesher(BaseMesher):
 
             physical_group_nodes = self._nodes_for_physical_groups(gmsh, group_tags)
             face_surface_elements = self._surface_elements_for_physical_groups(gmsh, group_tags)
+
+            all_surface = self._extract_all_surface_elements(gmsh)
+            if all_surface:
+                for face_key, tris in all_surface.items():
+                    if face_key not in face_surface_elements:
+                        face_surface_elements[face_key] = tris
 
             return MeshResult(
                 nodes=nodes,
@@ -588,6 +640,19 @@ class ProvisionalTet4Mesher(BaseMesher):
                 [n001, n100, n010, n111],
             ]
 
+        face_surface_elements: Dict[str, List[List[int]]] = {}
+        if elements_list:
+            from collections import Counter
+            face_counts: Counter = Counter()
+            tet_face_patterns = [(0,1,2), (0,1,3), (0,2,3), (1,2,3)]
+            for tet in elements_list:
+                for pat in tet_face_patterns:
+                    key = tuple(sorted(tet[i] for i in pat))
+                    face_counts[key] += 1
+            boundary_tris: List[List[int]] = [list(face) for face, cnt in face_counts.items() if cnt == 1]
+            if boundary_tris:
+                face_surface_elements["boundary"] = boundary_tris
+
         return MeshResult(
             nodes=nodes_list,
             elements=elements_list,
@@ -595,4 +660,5 @@ class ProvisionalTet4Mesher(BaseMesher):
             num_elements=len(elements_list),
             element_type=element_type,
             is_provisional=True,
+            face_surface_elements=face_surface_elements,
         )

@@ -42,7 +42,7 @@ def _face_triangles_for_load(load, face_surface_elements, physical_groups):
     Returns a flat list of ``[n0, n1, n2]`` triangles (0-based mesh node
     indices).  Empty list when no surface triangulation is available.
     """
-    if not face_surface_elements or not physical_groups:
+    if not face_surface_elements:
         return []
     face_id = getattr(load, "application_face_id", None)
     if face_id is None:
@@ -52,9 +52,13 @@ def _face_triangles_for_load(load, face_surface_elements, physical_groups):
     except (TypeError, ValueError):
         return []
     tris = []
-    for grp_name, face_indices in physical_groups.items():
-        if fi in face_indices:
-            tris.extend(face_surface_elements.get(grp_name, []))
+    if physical_groups:
+        for grp_name, face_indices in physical_groups.items():
+            if fi in face_indices:
+                tris.extend(face_surface_elements.get(grp_name, []))
+    face_key = f"face_{fi}"
+    if face_key in face_surface_elements:
+        tris.extend(face_surface_elements[face_key])
     return tris
 
 

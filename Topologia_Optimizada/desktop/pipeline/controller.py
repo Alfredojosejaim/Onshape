@@ -354,6 +354,8 @@ class PipelineController:
                 material=self.material(),
                 condition_manager=self.conditions,
                 model_shape=self.cad.get_model_shape(self.model_id) if self.model_id else None,
+                face_surface_elements=self.mesh.get("face_surface_elements") or None,
+                physical_groups=self.mesh.get("physical_groups") or None,
             )
             by_type = consume_conditions(self.conditions, [c.id for c in conditions])
             force, fixed = engine.build_fea_problem(by_type)
@@ -503,6 +505,11 @@ class PipelineController:
         )
         solver.set_load(force)
         solver.set_fixed_dofs(fixed)
+        if halo_radius is not None and (self._load_nodes or self._bot_nodes):
+            solver.protect_elements_near_nodes(
+                list(set(self._load_nodes + self._bot_nodes)),
+                radius=float(halo_radius) if halo_radius > 0 else None,
+            )
         try:
             result = solver.optimize(max_iterations=max_iterations, tolerance=tolerance, callback=progress_cb)
         except Exception as exc:
@@ -1134,6 +1141,7 @@ class PipelineController:
                     tolerance=p.convergence_tolerance,
                     progress_cb=progress_cb,
                     conditions=conditions,
+                    halo_radius=None,  # enabled: solver computes from mesh
                 )
                 study.status = StudyStatus.COMPLETED
                 sr = StudyResult(success=True, status="completed", data=result)
@@ -1147,6 +1155,7 @@ class PipelineController:
         if study.study_type.value == "generative_design":
             try:
                 from core.generative_engine import GenerativeDesignEngine, run_generative_design
+                mesh_dict = self.mesh or {}
                 engine = GenerativeDesignEngine(
                     model_id=effective_model_id,
                     mesh_nodes=self.mesh_nodes,
@@ -1154,6 +1163,8 @@ class PipelineController:
                     material=self.material(),
                     condition_manager=self.conditions,
                     model_shape=self.cad.get_model_shape(effective_model_id) if effective_model_id else None,
+                    face_surface_elements=mesh_dict.get("face_surface_elements") or None,
+                    physical_groups=mesh_dict.get("physical_groups") or None,
                 )
                 result = run_generative_design(study, self.conditions, engine,
                                                progress_cb=progress_cb)

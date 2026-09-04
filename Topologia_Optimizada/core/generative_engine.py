@@ -246,8 +246,13 @@ class GenerativeDesignEngine:
         for e in load.faces.entities:
             if e.entity_type == EntityType.FACE and e.face_index is not None:
                 fi = int(e.face_index)
+                # 1) Named physical groups (caller-provided group mapping).
                 for grp_name in self._face_index_to_groups.get(fi, []):
                     tris.extend(self.face_surface_elements.get(grp_name, []))
+                # 2) Per-face keys from Gmsh fallback ("face_0", "face_1", ...).
+                face_key = f"face_{fi}"
+                if face_key in self.face_surface_elements:
+                    tris.extend(self.face_surface_elements[face_key])
         return tris
 
     def _load_node_indices(self, conditions: Dict) -> List[int]:
@@ -578,7 +583,7 @@ def run_generative_design(
         filter_radius=p.filter_radius,
         tolerance=p.convergence_tolerance,
         progress_cb=progress_cb,
-        halo_radius=2.0 * p.filter_radius,
+        halo_radius=None,  # Solver computes from actual mesh element size
     )
 
     if study.scenario == "A":

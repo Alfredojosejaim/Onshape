@@ -188,6 +188,14 @@ class GmshTet4Mesher(BaseMesher):
 
         Each surface triangle is stored as a list of 3 zero-based mesh node
         indices, suitable for computing nodal tributary areas.
+
+        NOTE: the physical group tag lives in its own tag namespace. Calling
+        ``gmsh.model.mesh.getElements(2, phy_tag)`` can silently return the
+        elements of an *unrelated surface* when a surface entity happens to
+        share the same numeric tag as the physical group (both namespaces
+        start at 1, so this is common). Each group is therefore resolved to
+        its surface entities via ``getEntitiesForPhysicalGroup`` first, and
+        elements are collected per entity tag — no namespace ambiguity.
         """
         if not group_tags:
             return {}
@@ -196,18 +204,23 @@ class GmshTet4Mesher(BaseMesher):
         result: Dict[str, List[List[int]]] = {}
         for name, phy_tag in group_tags.items():
             try:
-                etypes, _etags, econn = gmsh.model.mesh.getElements(2, phy_tag)
+                entity_tags = gmsh.model.getEntitiesForPhysicalGroup(2, phy_tag)
             except Exception:
-                continue
+                entity_tags = []
             triangles: List[List[int]] = []
-            for k, etype in enumerate(etypes):
-                if etype != 2:  # Gmsh element type 2 = 3-node triangle (Tri3)
+            for stag in entity_tags:
+                try:
+                    etypes, _etags, econn = gmsh.model.mesh.getElements(2, stag)
+                except Exception:
                     continue
-                conn = np.asarray(econn[k], dtype=int).reshape(-1, 3)
-                for tri in conn:
-                    mapped = [int(tag_to_index.get(int(t), -1)) for t in tri]
-                    if -1 not in mapped:
-                        triangles.append(mapped)
+                for k, etype in enumerate(etypes):
+                    if etype != 2:  # Gmsh element type 2 = 3-node triangle (Tri3)
+                        continue
+                    conn = np.asarray(econn[k], dtype=int).reshape(-1, 3)
+                    for tri in conn:
+                        mapped = [int(tag_to_index.get(int(t), -1)) for t in tri]
+                        if -1 not in mapped:
+                            triangles.append(mapped)
             result[name] = triangles
         return result
 

@@ -41,6 +41,35 @@ class FaceSignature:
     center: Tuple[float, float, float]
     normal: Tuple[float, float, float]
     area: float
+    # In-plane principal extents (major, minor), i.e. the square roots of
+    # the two largest eigenvalues of the covariance matrix of the sampled
+    # boundary/surface points, projected onto the tangent plane. Two faces
+    # sharing (center, normal, area) but with a different shape (e.g. a
+    # long rectangle vs. a compact one, or a slotted vs. plain face) get
+    # different values here, which (centroid, normal, area) alone cannot
+    # tell apart. Defaults to (0.0, 0.0) when too few points are available.
+    extent: Tuple[float, float] = (0.0, 0.0)
+
+
+def _pca_in_plane_extent(
+    points: np.ndarray, center: np.ndarray, normal: np.ndarray,
+) -> Tuple[float, float]:
+    """Principal in-plane extents of *points* around *center*.
+
+    Removes the component of each point along *normal* so that curvature
+    (out-of-plane deviation) does not get mixed into the in-plane shape
+    descriptor, then returns the sqrt of the two largest eigenvalues of the
+    covariance matrix of what remains (largest first).
+    """
+    if points is None or len(points) < 3:
+        return (0.0, 0.0)
+    rel = points - center
+    along_normal = rel @ normal
+    rel = rel - np.outer(along_normal, normal)
+    cov = (rel.T @ rel) / max(len(rel) - 1, 1)
+    eigvals = np.linalg.eigvalsh(cov)  # ascending
+    major, minor = eigvals[-1], eigvals[-2] if len(eigvals) > 1 else 0.0
+    return (float(np.sqrt(max(major, 0.0))), float(np.sqrt(max(minor, 0.0))))
 
 
 def _shape_face_signatures(shape: cq.Shape) -> List[FaceSignature]:
@@ -67,11 +96,18 @@ def _shape_face_signatures(shape: cq.Shape) -> List[FaceSignature]:
             area = float(face.Area())
         except Exception:
             area = 0.0
+        try:
+            verts, _tris = face.tessellate(0.1, 0.1)
+            pts = np.array([[float(v.x), float(v.y), float(v.z)] for v in verts])
+        except Exception:
+            pts = np.empty((0, 3))
+        extent = _pca_in_plane_extent(pts, c, n)
         signatures.append(
             FaceSignature(
                 center=(float(c[0]), float(c[1]), float(c[2])),
                 normal=(float(n[0]), float(n[1]), float(n[2])),
                 area=area,
+                extent=extent,
             )
         )
     return signatures
@@ -105,39 +141,70 @@ def _gmsh_surface_signatures(gmsh, samples: int = 20) -> List[Tuple[int, FaceSig
         us = np.linspace(umin, umax, samples)
         vs = np.linspace(vmin, vmax, samples)
 
-        pts = []
+        # Fixed-shape grid so that a failed getValue() at (i, j) leaves a
+        # hole at that exact grid position instead of shifting every
+        # subsequent sample. This is what previously caused pts_arr[i *
+        # samples + j] to silently read the WRONG (i, j) once any single
+        # sample failed (P0.2): the flat list was shorter than samples**2,
+        # so every index after the first failure pointed at the wrong point.
+        grid = np.full((samples, samples, 3), np.nan, dtype=float)
+        valid = np.zeros((samples, samples), dtype=bool)
         uv_center = None
-        for u in us:
-            for v in vs:
+        for i, u in enumerate(us):
+            for j, v in enumerate(vs):
                 try:
                     xyz = gmsh.model.getValue(2, tag, [float(u), float(v)])
                 except Exception:
                     continue
-                pts.append([float(xyz[0]), float(xyz[1]), float(xyz[2])])
+                grid[i, j] = [float(xyz[0]), float(xyz[1]), float(xyz[2])]
+                valid[i, j] = True
                 if abs(u - (umin + umax) / 2) < 1e-12 and abs(v - (vmin + vmax) / 2) < 1e-12:
                     uv_center = [float(u), float(v)]
 
-        if len(pts) < 4:
+        n_valid = int(valid.sum())
+        valid_ratio = n_valid / float(samples * samples)
+        # Below this coverage the signature (center/area) is no longer a
+        # trustworthy estimate of the real surface: treat it as degraded
+        # rather than silently returning a plausible-looking but wrong
+        # number, mirroring the CAD-side fallback in
+        # ``_shape_face_signatures``.
+        min_valid_ratio = 0.5
+
+        if n_valid < 4 or valid_ratio < min_valid_ratio:
+            logger.warning(
+                "Gmsh surface tag %d: only %d/%d UV samples succeeded "
+                "(coverage=%.1f%%); signature is degraded (0,0,0)/(0,0,1)/"
+                "area=0 and this surface is at high risk of an ambiguous "
+                "or wrong correspondence.",
+                tag, n_valid, samples * samples, 100.0 * valid_ratio,
+            )
             center = (0.0, 0.0, 0.0)
             area = 0.0
             normal = (0.0, 0.0, 1.0)
         else:
-            pts_arr = np.asarray(pts, dtype=float)
-            center = tuple(float(x) for x in pts_arr.mean(axis=0))
-            # Surface area by triangulating the sampled 3D grid.
-            gx, gy = samples, samples
+            pts_valid = grid[valid]
+            center = tuple(float(x) for x in pts_valid.mean(axis=0))
+
+            # Surface area by triangulating the sampled 3D grid. Only grid
+            # cells whose four corners are ALL valid contribute a triangle
+            # pair; cells touching a failed sample are skipped instead of
+            # being computed from mismatched points. This underestimates
+            # area slightly when samples are missing, which is safe (it
+            # cannot manufacture a match) as opposed to the previous
+            # silent misalignment.
             area = 0.0
             for i in range(samples - 1):
                 for j in range(samples - 1):
-                    p00 = pts_arr[i * samples + j]
-                    p01 = pts_arr[i * samples + j + 1]
-                    p10 = pts_arr[(i + 1) * samples + j]
-                    # two triangles per grid cell
-                    area += 0.5 * np.linalg.norm(
-                        np.cross(p01 - p00, p10 - p00))
-                    p11 = pts_arr[(i + 1) * samples + j + 1]
-                    area += 0.5 * np.linalg.norm(
-                        np.cross(p11 - p01, p10 - p01))
+                    if not (valid[i, j] and valid[i, j + 1]
+                            and valid[i + 1, j] and valid[i + 1, j + 1]):
+                        continue
+                    p00 = grid[i, j]
+                    p01 = grid[i, j + 1]
+                    p10 = grid[i + 1, j]
+                    p11 = grid[i + 1, j + 1]
+                    area += 0.5 * np.linalg.norm(np.cross(p01 - p00, p10 - p00))
+                    area += 0.5 * np.linalg.norm(np.cross(p11 - p01, p10 - p01))
+
             # Normal evaluated at the center of the UV domain.
             if uv_center is None:
                 uv_center = [(umin + umax) / 2, (vmin + vmax) / 2]
@@ -152,10 +219,17 @@ def _gmsh_surface_signatures(gmsh, samples: int = 20) -> List[Tuple[int, FaceSig
             else:
                 normal = (0.0, 0.0, 1.0)
 
+        if n_valid >= 4 and valid_ratio >= min_valid_ratio:
+            extent = _pca_in_plane_extent(
+                grid[valid], np.array(center), np.array(normal))
+        else:
+            extent = (0.0, 0.0)
+
         out.append((tag, FaceSignature(
             center=center,
             normal=normal,
             area=area,
+            extent=extent,
         )))
     return out
 
@@ -257,6 +331,13 @@ def _signature_distance(a: FaceSignature, b: FaceSignature) -> float:
     scale = max(float(a.area) ** 0.5, float(b.area) ** 0.5, 1e-6)
     d_n = 1.0 - abs(float(np.dot(np.array(a.normal), np.array(b.normal))))
     d_a = abs(a.area - b.area) / max(scale * scale, 1e-9)
-    # Weight centroid distance by the face scale; keep normal/area as
+    # In-plane shape descriptor: distinguishes faces that happen to share
+    # (center, normal, area) but differ in shape (e.g. rectangle vs. disk of
+    # the same area, or a slot vs. a plain rectangle). Both extents are
+    # zero (no-op) when either signature lacks enough sample points, so
+    # degraded signatures don't spuriously widen the distance.
+    de = np.array(a.extent) - np.array(b.extent)
+    d_e = float(np.linalg.norm(de)) / scale
+    # Weight centroid distance by the face scale; keep normal/area/extent as
     # multiplicative discriminates so near-parallel opposites still differ.
-    return d_c / scale + 0.5 * d_n + 0.5 * d_a
+    return d_c / scale + 0.5 * d_n + 0.5 * d_a + 0.5 * d_e

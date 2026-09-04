@@ -101,14 +101,20 @@ class GmshTet4Mesher(BaseMesher):
         self,
         gmsh,
         physical_groups: Optional[Dict[str, List[int]]],
+        face_index_to_tag: Optional[Dict[int, int]] = None,
     ) -> Dict[str, int]:
         """Define gmsh surface physical groups from the caller's mapping.
 
         ``physical_groups`` maps a group **name** to a list of **CAD face
-        indices** (0-based, sequential over the gmsh surfaces, i.e. the same
-        convention used by :mod:`core.boundary` / the Core's ``CADFace.id``).
+        indices** (0-based, matching :mod:`core.boundary` / ``CADFace.id``).
         For each entry a gmsh physical group (dim=2) is created on those surface
         entities with the given name.
+
+        ``face_index_to_tag`` optionally provides a deterministic mapping from
+        CAD face index to Gmsh surface tag (built by geometric signature, see
+        :mod:`core.face_correspondence`). When present it is used instead of
+        the (unsafe) enumeration-order fallback, so faces are matched by
+        geometry rather than by list position.
 
         Returns a dict ``{group_name: gmsh_physical_group_tag}``.
         """
@@ -117,8 +123,13 @@ class GmshTet4Mesher(BaseMesher):
 
         surfaces = gmsh.model.getEntities(2)  # [(dim, tag), ...]
         surface_tags = [tag for dim, tag in surfaces if dim == 2]
-        # Resolve a CAD face index (position in the surface list) to its gmsh tag.
-        index_to_tag = {i: tag for i, tag in enumerate(surface_tags)}
+        # Preferred: explicit deterministic correspondence. Fallback: index
+        # alignment with the gmsh surface enumeration (kept for callers that
+        # have no CAD shape available, e.g. pure STEP meshing).
+        if face_index_to_tag is not None:
+            index_to_tag = dict(face_index_to_tag)
+        else:
+            index_to_tag = {i: tag for i, tag in enumerate(surface_tags)}
 
         group_tags: Dict[str, int] = {}
         for name, face_indices in physical_groups.items():
@@ -201,7 +212,10 @@ class GmshTet4Mesher(BaseMesher):
         return result
 
     @staticmethod
-    def _extract_all_surface_elements(gmsh) -> Dict[str, List[List[int]]]:
+    def _extract_all_surface_elements(
+        gmsh,
+        face_index_to_tag: Optional[Dict[int, int]] = None,
+    ) -> Dict[str, List[List[int]]]:
         """Extract Tri3 surface elements from *all* surfaces of the model.
 
         Returns a dict keyed by ``"face_<0-based_index>"`` (matching the CAD
@@ -209,6 +223,12 @@ class GmshTet4Mesher(BaseMesher):
         ``_surface_elements_for_physical_groups`` this works without any
         caller-provided ``physical_groups`` mapping and is always called after
         meshing to guarantee ``face_surface_elements`` is populated.
+
+        When ``face_index_to_tag`` (a deterministic CAD-face→surface-tag map
+        from :mod:`core.face_correspondence`) is provided, keys are assigned by
+        that geometric correspondence instead of by surface enumeration order —
+        making the ``face_<fi>`` labels stable regardless of Gmsh's internal
+        enumeration.
         """
         surfaces = gmsh.model.getEntities(2)
         if not surfaces:
@@ -217,7 +237,15 @@ class GmshTet4Mesher(BaseMesher):
         tag_to_index = {int(t): i for i, t in enumerate(node_tags)}
         result: Dict[str, List[List[int]]] = {}
         surface_tags = [tag for dim, tag in surfaces if dim == 2]
-        for face_idx, stag in enumerate(surface_tags):
+
+        # Reverse correspondence: gmsh_tag -> stable CAD face label.
+        tag_to_face: Dict[int, int] = {}
+        if face_index_to_tag is not None:
+            for fi, tag in face_index_to_tag.items():
+                if tag in surface_tags:
+                    tag_to_face[tag] = int(fi)
+
+        for stag in surface_tags:
             try:
                 etypes, _etags, econn = gmsh.model.mesh.getElements(2, stag)
             except Exception:
@@ -231,8 +259,16 @@ class GmshTet4Mesher(BaseMesher):
                     mapped = [int(tag_to_index.get(int(t), -1)) for t in tri]
                     if -1 not in mapped:
                         triangles.append(mapped)
-            if triangles:
-                result[f"face_{face_idx}"] = triangles
+            if not triangles:
+                continue
+            if tag_to_face and stag in tag_to_face:
+                label = f"face_{tag_to_face[stag]}"
+            else:
+                try:
+                    label = f"face_{surface_tags.index(stag)}"
+                except ValueError:
+                    continue
+            result[label] = triangles
         return result
 
     def generate_mesh_from_step(
@@ -241,6 +277,8 @@ class GmshTet4Mesher(BaseMesher):
         target_element_size: Optional[float] = None,
         element_type: str = "tet4",
         physical_groups: Optional[Dict[str, List[int]]] = None,
+        cq_shape: Optional[Any] = None,
+        face_index_to_tag: Optional[Dict[int, int]] = None,
     ) -> MeshResult:
         """Generate a Tet4 volumetric mesh from a real STEP file via Gmsh.
 
@@ -257,6 +295,13 @@ class GmshTet4Mesher(BaseMesher):
                 after meshing. The returned :class:`MeshResult.physical_groups`
                 then contains the exact 0-based node indices per named group
                 (Fase 2: robust, CAD-faithful boundary selection).
+            cq_shape: Optional CadQuery shape corresponding to ``step_file``.
+                When provided, the CAD face -> Gmsh surface mapping is built by
+                geometric signature (see :mod:`core.face_correspondence`) so
+                ``face_<fi>`` labels are stable and not tied to Gmsh's internal
+                surface enumeration order.
+            face_index_to_tag: Optional pre-computed ``{cad_face_index: gmsh_tag}``
+                map. Overrides automatic computation from ``cq_shape``.
 
         Returns:
             :class:`MeshResult` with real nodes/elements (``is_provisional=False``).
@@ -264,6 +309,9 @@ class GmshTet4Mesher(BaseMesher):
         Raises:
             ValueError: if the element type is not ``"tet4"`` or the input
                 contains no solid/volume entities to mesh.
+            core.face_correspondence.FaceCorrespondenceError: if a CAD face
+                cannot be unambiguously matched to a Gmsh surface (only when a
+                ``cq_shape`` is supplied and correspondence is required).
         """
         if not os.path.exists(step_file):
             raise FileNotFoundError(f"STEP file not found: {step_file}")
@@ -293,9 +341,18 @@ class GmshTet4Mesher(BaseMesher):
                     f"STEP '{step_file}' contains no 3D solid/volume to mesh"
                 )
 
+            # Deterministic CAD-face -> Gmsh-surface correspondence by geometric
+            # signature when a CAD shape is available (P1): never rely on
+            # surface enumeration order for face_<fi> labels.
+            if face_index_to_tag is None and cq_shape is not None:
+                from core.face_correspondence import build_face_correspondence
+                face_index_to_tag = build_face_correspondence(cq_shape, gmsh)
+
             # Fase 2: define requested boundary physical groups BEFORE meshing so
             # their node sets are available afterwards.
-            group_tags = self._emit_physical_groups(gmsh, physical_groups)
+            group_tags = self._emit_physical_groups(
+                gmsh, physical_groups, face_index_to_tag=face_index_to_tag
+            )
 
             if target_element_size and target_element_size > 0:
                 gmsh.option.setNumber("Mesh.CharacteristicLengthMin", float(target_element_size))
@@ -333,7 +390,9 @@ class GmshTet4Mesher(BaseMesher):
             # Always extract surface triangles for every CAD face (keyed by
             # face_<index>) so that tributary-area weighting works even when
             # no physical_groups were supplied by the caller.
-            all_surface = self._extract_all_surface_elements(gmsh)
+            all_surface = self._extract_all_surface_elements(
+                gmsh, face_index_to_tag=face_index_to_tag
+            )
             if all_surface:
                 # Merge: named physical group triangles take precedence, then
                 # fill with per-face triangles for faces not already covered.
@@ -369,6 +428,8 @@ class GmshTet4Mesher(BaseMesher):
         element_type: str = "tet4",
         density: Optional[list] = None,
         physical_groups: Optional[Dict[str, List[int]]] = None,
+        cq_shape: Optional[Any] = None,
+        face_index_to_tag: Optional[Dict[int, int]] = None,
     ) -> MeshResult:
         """Generate a Tet4 mesh adaptively refined according to a scalar field.
 
@@ -449,8 +510,16 @@ class GmshTet4Mesher(BaseMesher):
             else:
                 gmsh.option.setNumber("Mesh.CharacteristicLengthMax", float(base_size))
 
+            # Deterministic CAD-face -> Gmsh-surface correspondence by geometric
+            # signature when a CAD shape is available (P1).
+            if face_index_to_tag is None and cq_shape is not None:
+                from core.face_correspondence import build_face_correspondence
+                face_index_to_tag = build_face_correspondence(cq_shape, gmsh)
+
             # Fase 2: define requested boundary physical groups BEFORE meshing.
-            group_tags = self._emit_physical_groups(gmsh, physical_groups)
+            group_tags = self._emit_physical_groups(
+                gmsh, physical_groups, face_index_to_tag=face_index_to_tag
+            )
 
             gmsh.model.mesh.generate(3)
 
@@ -473,7 +542,9 @@ class GmshTet4Mesher(BaseMesher):
             physical_group_nodes = self._nodes_for_physical_groups(gmsh, group_tags)
             face_surface_elements = self._surface_elements_for_physical_groups(gmsh, group_tags)
 
-            all_surface = self._extract_all_surface_elements(gmsh)
+            all_surface = self._extract_all_surface_elements(
+                gmsh, face_index_to_tag=face_index_to_tag
+            )
             if all_surface:
                 for face_key, tris in all_surface.items():
                     if face_key not in face_surface_elements:
@@ -524,6 +595,7 @@ class GmshTet4Mesher(BaseMesher):
                 target_element_size=target_element_size,
                 element_type=element_type,
                 physical_groups=physical_groups,
+                cq_shape=shape,
             )
         finally:
             try:

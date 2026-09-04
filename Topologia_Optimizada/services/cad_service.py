@@ -773,11 +773,13 @@ class CADService:
                         tmp, size_points=size_points,
                         base_size=base_size, min_size=min_size, element_type=element_type,
                         physical_groups=physical_groups,
+                        cq_shape=shape,
                     )
                 else:
                     mesh_result = self.gmsh_mesher.generate_mesh_from_step(
                         tmp, target_element_size=base_size, element_type=element_type,
                         physical_groups=physical_groups,
+                        cq_shape=shape,
                     )
             finally:
                 if _os.path.exists(tmp):

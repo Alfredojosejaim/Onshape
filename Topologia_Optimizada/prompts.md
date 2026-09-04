@@ -1,224 +1,113 @@
-\# IMPLEMENTAR P0 — DISTRIBUCIÓN FÍSICA DE CARGAS Y HALO DE PROTECCIÓN
+CORRECCIÓN P0.1 — INTEGRACIÓN DE CARGAS, MALLA Y HALO
+
+Audita primero el estado actual del repositorio y lee completamente:
 
+"investigación_traceback.md"
 
+Ese archivo contiene la investigación técnica realizada sobre los problemas detectados en la integración de cargas superficiales, correspondencia CAD/Gmsh, mesher provisional, halo y semántica de "volfrac".
 
-Trabaja sobre el estado REAL actual de `master`.
-
-
-
-Usa como referencia técnica:
-
-`recomendaciones\_topologia\_optimizada.md`
-
-
-
-El documento identifica dos brechas P0. Implementa únicamente esas dos mejoras.
-
-
-
-NO hagas refactorizaciones generales, NO cambies la arquitectura y NO implementes los puntos P1/P2 del documento.
-
-
-
-\## 1. Distribución de cargas por área tributaria
-
-
-
-Actualmente las cargas distribuidas se reparten uniformemente entre nodos.
-
-
-
-Implementa una distribución ponderada por área tributaria para las cargas cuya magnitud total ya está definida.
-
-
-
-Requisitos:
-
-
-
-\- reutilizar la triangulación real de la cara/malla cuando esté disponible;
-
-\- asignar a cada nodo un peso proporcional al área tributaria que representa;
-
-\- conservar exactamente la magnitud total de la carga;
-
-\- mantener fallback uniforme cuando no exista información geométrica suficiente;
-
-\- aplicar la misma semántica al motor local y a Kratos;
-
-\- evitar duplicar la lógica entre motores;
-
-\- no modificar el tratamiento de `PRESSURE`: debe continuar rechazándose explícitamente porque todavía no existe integración de presión × área.
-
-
-
-Primero identifica dónde se encuentra actualmente la información de triangulación y dónde se centraliza la conversión de condiciones a cargas. Integra la solución en esos puntos existentes en lugar de crear una capa paralela innecesaria.
-
-
-
-\## 2. Halo automático alrededor de cargas y apoyos
-
-
-
-Implementa en `SIMPsolver` un mecanismo para preservar automáticamente los elementos cercanos a:
-
-
-
-\- nodos de aplicación de cargas;
-
-\- nodos de restricciones/apoyos.
-
-
-
-El halo debe:
-
-
-
-\- marcar esos elementos como preservados/no optimizables;
-
-\- unirse con cualquier región preservada existente;
-
-\- no eliminar ni reemplazar `set\_preserved\_elements()` / `set\_void\_elements()`;
-
-\- tener un radio configurable;
-
-\- disponer de un valor por defecto razonable basado en el tamaño/filtro de la malla;
-
-\- permitir desactivarlo cuando sea necesario para compatibilidad o comparación;
-
-\- ejecutarse antes de comenzar las iteraciones SIMP.
-
-
-
-Integra el mecanismo en `GenerativeDesignEngine` usando los nodos que ya obtiene al resolver las condiciones.
-
-
-
-NO protejas arbitrariamente todo el borde del modelo. El halo debe derivarse de los nodos reales asociados a cargas y restricciones.
-
-
-
-\## 3. Compatibilidad
-
-
-
-Preservar:
-
-
-
-\- arquitectura actual;
-
-\- `ConditionManager`;
-
-\- `LoadCondition`;
-
-\- `ElasticityCondition`;
-
-\- `ProtectedRegion`;
-
-\- `ObstructionCondition`;
-
-\- motor SIMP existente;
-
-\- motor FEA local;
-
-\- adaptador Kratos;
-
-\- reconstrucción B-Rep;
-
-\- pipeline desktop.
-
-
-
-No sustituir el solver SIMP por Kratos.
-
-No implementar MMA/GCMMA.
-
-No implementar proyección Heaviside.
-
-No implementar nuevas condiciones.
-
-No modificar la UI salvo que sea estrictamente necesario para exponer una configuración ya prevista.
-
-
-
-\## 4. Validación obligatoria
-
-
-
-Crear o ampliar tests para demostrar:
-
-
-
-1\. una carga distribuida conserva exactamente la fuerza total;
-
-2\. una distribución ponderada produce pesos distintos cuando las áreas tributarias son distintas;
-
-3\. el fallback uniforme funciona cuando no existe triangulación;
-
-4\. local y Kratos reciben la misma distribución física;
-
-5\. `PRESSURE` continúa produciendo un error explícito;
-
-6\. el halo preserva elementos alrededor de cargas;
-
-7\. el halo preserva elementos alrededor de apoyos;
-
-8\. el halo se combina correctamente con regiones preservadas existentes;
-
-9\. el radio configurable funciona;
-
-10\. el halo puede desactivarse;
-
-11\. los tests existentes de FEA/SIMP/Kratos continúan pasando.
-
-
-
-No modificar tests para ocultar fallos.
-
-
-
-\## 5. Documentación
-
-
-
-Actualizar `PROJECT\_STATUS.md` únicamente si la implementación cambia realmente el estado documentado.
-
-
-
-No modificar la investigación ni `recomendaciones\_topologia\_optimizada.md`.
-
-
-
-\## 6. Resultado
-
-
-
-Al finalizar informa:
-
-
-
-\- archivos modificados;
-
-\- arquitectura reutilizada;
-
-\- implementación de distribución por área;
-
-\- implementación del halo;
-
-\- tests nuevos/modificados;
-
-\- resultado completo de tests;
-
-\- compatibilidad local/Kratos;
-
-\- cualquier limitación que permanezca.
-
-
-
-Criterio de éxito:
-
-
-
-\*\*las dos brechas P0 quedan implementadas y verificadas sin introducir una nueva arquitectura ni alterar funcionalidades ya cerradas.\*\*
-
+OBJETIVO
+
+Implementar las correcciones necesarias según las conclusiones de "investigación_traceback.md", integrándolas con la arquitectura existente.
+
+No vuelvas a investigar desde cero ni cambies la arquitectura salvo que la investigación demuestre que es estrictamente necesario.
+
+Debes corregir y verificar:
+
+1. Correspondencia CAD Face ↔ Gmsh Surface
+   
+   - Garantizar que una cara CAD seleccionada utilice exclusivamente los elementos superficiales correspondientes a esa misma cara.
+   - No depender de un orden de enumeración que no esté garantizado.
+   - Mantener correctamente el flujo:
+     "CAD Face → Gmsh Surface → Triángulos → Pesos tributarios → Fuerza nodal".
+
+2. ProvisionalTet4Mesher
+   
+   - Corregir la integración de los triángulos de frontera si la investigación confirma que actualmente no llegan correctamente al cálculo de cargas superficiales.
+   - Mantener fallback uniforme únicamente cuando realmente no exista información geométrica suficiente.
+   - No ocultar errores de correspondencia mediante fallbacks silenciosos.
+
+3. Distribución de cargas
+   
+   - Mantener distribución mediante área tributaria cuando existan triángulos superficiales válidos.
+   - Garantizar conservación exacta de la fuerza total.
+   - Mantener comportamiento físicamente equivalente entre FEA local y Kratos.
+
+4. Halo automático
+   
+   - Corregir cualquier problema demostrado en la investigación.
+   - El halo debe poder aplicarse alrededor de nodos asociados a cargas y apoyos.
+   - Debe combinarse correctamente con "ProtectedRegion".
+   - Debe seguir siendo configurable y desactivable.
+   - El radio automático debe basarse en el tamaño real de los elementos, no en "filter_radius".
+   - No proteger regiones arbitrariamente grandes.
+
+5. Semántica de "volfrac"
+   
+   - Aplicar la decisión técnica establecida en "investigación_traceback.md".
+   - Mantener una semántica coherente cuando existen regiones protegidas, halo y regiones void.
+   - Agregar o actualizar tests para que esta semántica quede explícitamente garantizada.
+
+RESTRICCIONES
+
+No:
+
+- reconstruir la arquitectura;
+- reemplazar SIMP;
+- reemplazar el FEA local;
+- reemplazar Kratos;
+- incorporar OptimizationApplication;
+- incorporar MMA/GCMMA;
+- incorporar Heaviside;
+- crear nuevas condiciones innecesarias;
+- rediseñar la UI;
+- eliminar funcionalidades existentes;
+- modificar código no relacionado con estos problemas.
+
+Reutiliza las abstracciones existentes.
+
+TESTS OBLIGATORIOS
+
+Después de implementar:
+
+- tests específicos de correspondencia CAD/Gmsh;
+- tests de cargas superficiales mediante área tributaria;
+- conservación de fuerza total;
+- fallback cuando corresponda;
+- paridad FEA local/Kratos;
+- halo de cargas;
+- halo de apoyos;
+- combinación halo + regiones protegidas;
+- configuración/desactivación del halo;
+- semántica de "volfrac";
+- regresión de toda la funcionalidad existente.
+
+Ejecuta primero los tests afectados y después la suite completa.
+
+Si un test existente contradice la semántica técnicamente correcta determinada por la investigación, corrígelo justificadamente; no modifiques la implementación simplemente para hacer pasar el test.
+
+CRITERIO DE FINALIZACIÓN
+
+No consideres terminada la tarea porque los tests pasen.
+
+La tarea queda cerrada solamente cuando:
+
+- la investigación de "investigación_traceback.md" fue aplicada;
+- la correspondencia CAD/Gmsh es físicamente segura;
+- las cargas superficiales utilizan correctamente áreas tributarias cuando corresponde;
+- la fuerza total se conserva;
+- FEA local y Kratos mantienen la misma semántica;
+- el halo funciona según lo especificado;
+- "volfrac" tiene una semántica explícita y testeada;
+- la suite completa continúa pasando.
+
+Al finalizar, informa:
+
+1. Problemas encontrados.
+2. Causa raíz de cada uno.
+3. Correcciones realizadas.
+4. Archivos modificados.
+5. Tests agregados/modificados.
+6. Resultado de tests dirigidos.
+7. Resultado de la suite completa.
+8. Limitaciones que permanezcan.

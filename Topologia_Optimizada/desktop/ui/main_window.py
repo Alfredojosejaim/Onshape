@@ -13,7 +13,7 @@ The viewport keeps the GPU-accelerated VTK widget with HTML-style overlays
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import numpy as np
 from PySide6.QtCore import QSignalBlocker

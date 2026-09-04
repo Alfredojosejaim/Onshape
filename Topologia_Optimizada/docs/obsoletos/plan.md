@@ -1,8 +1,12 @@
 # Plan de Integración: `crea3d_mainwindow.ui` → Reemplazo de `main_window.py`
 
+> **ARCHIVO ELIMINADO (2026-09-04):** `desktop/ui/crea3d_mainwindow.ui` fue eliminado
+> del repositorio. La UI se implementó directamente en `main_window.py` + componentes
+> modulares (`desktop/ui/components/`). Este plan está completamente obsoleto.
+
 ## 1. Archivo fuente
 
-`desktop/ui/crea3d_mainwindow.ui` — boceto Qt Designer (843 líneas XML).
+`desktop/ui/crea3d_mainwindow.ui` — ~~boceto Qt Designer (843 líneas XML)~~ **eliminado**.
 
 **Nota:** El archivo es un boceto incompleto. Faltan menús con items, señales
 no conectadas, y el viewport es un placeholder QLabel. Este plan documenta la

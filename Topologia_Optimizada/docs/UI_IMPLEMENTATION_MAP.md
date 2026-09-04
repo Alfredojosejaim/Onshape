@@ -145,10 +145,6 @@ solo-visuales anteriores son los únicos que muestran mensaje fijo.
 
 ## 10. Señales muertas / código detectado
 
-| Ubicación | Señal | Estado |
-|-----------|-------|--------|
-| `desktop/ui/panels/design_tree.py` | `entitiesChanged` | **Declarada pero NUNCA emitida** (código muerto). Ningún slot conectado en `main_window`. No afecta funcionalidad; preservada por si el árbol notifica cambios. |
-
 Las señales de `PropertiesPanel` (`runOptimization`, `runFEA`, `generateMesh`,
 `forceAdded`, `constraintAdded`) están **todas conectadas** y verificadas por
 `tests/test_ui_integration_connections.py`.

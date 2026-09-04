@@ -59,10 +59,6 @@ class RibbonTool(QPushButton):
         if tooltip:
             self.setToolTip(tooltip)
 
-    def set_active(self, active: bool) -> None:
-        self.setProperty("active", active)
-        repolish(self)
-
 
 __all__ = [
     "repolish",

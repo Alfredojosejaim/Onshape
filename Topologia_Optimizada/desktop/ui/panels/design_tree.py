@@ -11,7 +11,7 @@ Architecture integration (Phase 1):
         ├── Estudios
         └── Resultados
 
-    New methods ``set_features``, ``set_studies``, ``set_results``,
+    New methods ``set_features``, ``set_studies``,
     ``set_bodies`` are added.  The existing ``set_context`` API is
     preserved for backward compatibility.
 """
@@ -22,11 +22,10 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem,
     QLabel, QPushButton, QHBoxLayout,
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt
 
 
 class DesignTreePanel(QWidget):
-    entitiesChanged = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -136,15 +135,6 @@ class DesignTreePanel(QWidget):
     # ------------------------------------------------------------------ #
     # Getters (API kept for compatibility)
     # ------------------------------------------------------------------ #
-    def show_solids(self) -> bool:
-        return True
-
-    def show_mesh(self) -> bool:
-        return True
-
-    def show_density(self) -> bool:
-        return True
-
     def set_selection_clearable(self, enabled: bool) -> None:
         self._btn_clear.setEnabled(enabled)
 
@@ -270,30 +260,4 @@ class DesignTreePanel(QWidget):
             child = QTreeWidgetItem([label])
             child.setData(0, Qt.UserRole, "study")
             self._studies_item.addChild(child)
-        self._tree.expandAll()
-
-    # ------------------------------------------------------------------ #
-    # Results display (architecture layer)
-    # ------------------------------------------------------------------ #
-    def set_results(self, results: dict) -> None:
-        """Display results under the Resultados node.
-
-        ``results`` is a dict mapping study_id to result data.
-        """
-        if self._results_item is None:
-            return
-        while self._results_item.childCount() > 0:
-            self._results_item.removeChild(self._results_item.child(0))
-        if not results:
-            self._tree.expandAll()
-            return
-        for study_id, result in results.items():
-            if isinstance(result, dict):
-                success = result.get("success", False)
-                label = f"Resultado ({study_id[:8]}...)  {'OK' if success else 'FAIL'}"
-            else:
-                label = f"Resultado ({study_id[:8]}...)"
-            child = QTreeWidgetItem([label])
-            child.setData(0, Qt.UserRole, "result")
-            self._results_item.addChild(child)
         self._tree.expandAll()

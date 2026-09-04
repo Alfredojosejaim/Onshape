@@ -26,7 +26,7 @@ from PySide6.QtCore import Qt
 
 from desktop.viewport.camera import StandardView
 from desktop.ui.style import TEXT_FAINT, PALETTE
-from desktop.ui.components.widgets import glyph_label, mini_label, RibbonTool, repolish
+from desktop.ui.components.widgets import glyph_label, RibbonTool, repolish
 
 
 class WorkspaceBuilder:
@@ -73,7 +73,6 @@ class WorkspaceBuilder:
         btn_import.setStyleSheet("padding: 5px 12px; font-size: 12px;")
         btn_import.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_import.clicked.connect(owner._on_import)
-        owner._btn_import_top = btn_import
         avatar = QLabel("JD")
         avatar.setProperty("avatar", True)
         avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)

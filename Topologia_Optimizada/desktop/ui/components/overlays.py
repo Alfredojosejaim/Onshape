@@ -63,7 +63,8 @@ class OverlayBuilder:
     """Construye los overlays del viewport sobre un host.
 
     ``owner`` es MainWindow (provee handlers ``_on_*`` y referencia al viewport).
-    ``host`` es el _ViewportHost que expone .place() y .viewport.
+    ``host`` es el ViewportHost (desktop.ui.components.main_workspace) que
+    expone .place() y .viewport.
     Las referencias resultantes (ctrl_*, _viewer_info, placeholder) se
     registran en el owner.
     """

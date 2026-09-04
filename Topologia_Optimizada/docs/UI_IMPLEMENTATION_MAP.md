@@ -16,15 +16,32 @@
 La UI desktop es `desktop/ui/main_window.py` (coordinador: `__init__` +
 `_build_central` + paneles + handlers `_on_*`). La **composición visual** se
 delega en `desktop/ui/components/`:
-  - `widgets.py`    → primitivas (`repolish`, `glyph_label`, `mini_label`, `RibbonTool`)
-  - `menus.py`      → barra de menú (MenuBuilder)
-  - `workspace.py`  → topbar + pestañas + ribbon (WorkspaceBuilder)
-  - `overlays.py`   → overlays del viewport (OverlayBuilder)
+  - widgets: primitivas (`repolish`, `glyph_label`, `mini_label`, `RibbonTool`)
+  - menus:    barra de menú (MenuBuilder)
+  - workspace: topbar + pestañas + ribbon (WorkspaceBuilder)
+  - overlays:  overlays del viewport (OverlayBuilder)
+  - main_workspace: composición física del workspace (sidebar + viewport +
+    timeline + results) y `ViewportHost` (host del viewport con auto-selección
+    de backend VTK/software + posicionado de overlays)
 
 Los builders reciben `owner` (MainWindow) para conectar las mismas señales de
 siempre; la ventana conserva las referencias (`rb_*`, `chip_status`, `ctrl_*`,
 `_view_combo`, ...) y las rutas de trazabilidad botón→handler→controller→core
 se mantienen intactas (verificado por `tests/test_ui_integration_connections.py`).
+
+La composición del workspace principal (sidebar con `DesignTreePanel` +
+`PropertiesPanel`, centro con viewport+`TimelinePanel`, derecha con
+`ResultsPanel`, márgenes/anchuras/proporciones) la monta
+`desktop/ui/components/main_workspace.py` (`MainWorkspaceBuilder`). Antes de esa
+extracción vivía en `MainWindow._build_central()`; `ViewportHost` (antes
+`_ViewportHost`) es el frame del viewport que auto-selecciona VTK frente al
+`SoftwareViewport` según `is_gl_available()` y posiciona los overlays.
+
+ANTES → DESPUÉS → CONEXIÓN PRESERVADA
+  MainWindow._build_central (sidebar+centro+derecha)
+      → MainWorkspaceBuilder(owner).build()  (solo composición + instancia de paneles)
+      → MainWindow conserva la coordinación: set_solid_resolver, signals de
+        properties/timeline/design_tree, `_build_viewport_overlays()`.
 
 Los paneles de presentación viven en `desktop/ui/panels/` y el viewport en
 `desktop/viewport/` (VTK con fallback `SoftwareViewport` QPainter).
@@ -151,7 +168,7 @@ Las señales de `PropertiesPanel` (`runOptimization`, `runFEA`, `generateMesh`,
 
 Fuentes de verdad auditadas (verificación visual de conexión real en el código):
 `desktop/ui/main_window.py` (handlers `_on_*` + `_build_central`),
-`desktop/ui/components/` (menus, workspace, overlays), paneles en
+`desktop/ui/components/` (menus, workspace, overlays, main_workspace), paneles en
 `desktop/ui/panels/*.py`, `desktop/pipeline/controller.py`,
 `core/document.py`, `core/cae_studies.py`, `core/optimization_studies.py`,
 `core/generative.py`, `core/conditions.py`, `core/commands.py`.
@@ -178,5 +195,31 @@ como NO CONECTADO, conforme a la regla de no inventar funcionalidad futura).
   `overlays` extraídos a `desktop/ui/components/`; `MainWindow` conserva handlers
   y coordinación. Conexiones verificadas por
   `tests/test_ui_integration_connections.py` (6) + `test_ui_validate_connection.py` (3).
+- El workspace principal (sidebar + centro + results) se extrajo a
+  `desktop/ui/components/main_workspace.py` (`MainWorkspaceBuilder`), incluyendo
+  `ViewportHost`. Nota: el test `test_ui_validate_connection.py` parchea el
+  símbolo `Viewport3D` en `desktop.ui.components.main_workspace` (nueva ruta de
+  construcción), no ya en `main_window`.
 - Suite: `python -m pytest -q -p no:cacheprovider` → **246 passed** al finalizar
   (243 previos + 3 nuevos de `test_ui_validate_connection.py`).
+
+## 13b. Pendiente resuelto: crash de proceso al salir (CI `.venv`)
+
+Durante esta auditoría se detectó y **descifró** un crash de proceso al salir
+(`EXIT=-1073741819` access violation / `-1073740940` heap corruption) cuando la
+suite se ejecuta con el intérprete de `.venv`. Causa raíz:
+
+- Es un **bug de cierre del propio intérprete** (CPython **3.12.14** de `.venv`,
+  MSC v.1944) en Windows al finalizar (`Current thread <no Python frame>`),
+  disparado por la teardown GC de los módulos del paquete `core/` (los que tiran
+  de extensiones nativas como Gmsh/Kratos). No es un defecto de la aplicación.
+- Se descartó la interferencia de la UI (no precisa Qt), del módulo aislado
+  (`core/models.py` copiado en standalone sale **limpio**), y de `gc.collect()`.
+- El intérprete **self-contained `runtime/python` (CPython 3.12.10, MSC v.1943)**,
+  el que realmente se distribuye, **no lo reproduce**: suite UI + CAD/CAE completa
+  → **176 passed con EXIT=0**.
+
+Resolución recomendada para CI/tests: usar el intérprete de `runtime/python`.
+Confirmado que el crash **precede** a esta refactorización (reproducido el mismo
+comportamiento en `master` anterior vía stash): no fue introducido por la
+modularización del workspace.

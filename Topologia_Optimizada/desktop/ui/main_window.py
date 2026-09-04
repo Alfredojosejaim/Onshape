@@ -16,94 +16,20 @@ import os
 from typing import Any, Dict, Optional
 
 import numpy as np
-from PySide6.QtCore import Qt, QSignalBlocker
+from PySide6.QtCore import QSignalBlocker
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QFrame, QFileDialog, QMessageBox, QInputDialog,
+    QMainWindow, QWidget, QFileDialog, QMessageBox, QInputDialog,
 )
 
-from desktop.viewport.viewport_3d import Viewport3D, is_gl_available
-from desktop.viewport.software_viewport import SoftwareViewport
 from desktop.pipeline.controller import PipelineController, launch_qt
-from desktop.ui.panels.design_tree import DesignTreePanel
-from desktop.ui.panels.properties import PropertiesPanel
-from desktop.ui.panels.results import ResultsPanel
-from desktop.ui.panels.timeline import TimelinePanel
 from desktop.ui.components.menus import MenuBuilder
 from desktop.ui.components.workspace import WorkspaceBuilder
 from desktop.ui.components.overlays import OverlayBuilder
+from desktop.ui.components.main_workspace import MainWorkspaceBuilder
 from desktop.ui.components.widgets import repolish
 from core.user_preferences import UserPreferences
 from core.navigation import NavigationManager
 from core.cad_entity import EntityType
-
-
-class _ViewportHost(QFrame):
-    """Frames a Viewport3D (VTK) or SoftwareViewport (QPainter) with an inset
-    margin and positions overlay widgets on top of the 3D area.
-
-    Auto-selects the backend at construction time: tries VTK first, falls back
-    to the software renderer if GL is unavailable or VTK fails to initialize.
-    """
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.setObjectName("viewportContainer")
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(12, 12, 12, 0)
-
-        self._use_vtk = False
-        self.viewport = None
-        try:
-            if is_gl_available():
-                self.viewport = Viewport3D()
-                self._use_vtk = True
-        except Exception:
-            self.viewport = None
-
-        if self.viewport is None:
-            self.viewport = SoftwareViewport()
-            self._use_vtk = False
-
-        lay.addWidget(self.viewport)
-        self._slots: dict[str, QWidget] = {}
-        self._pad = 12
-
-    def place(self, slot: str, widget: QWidget) -> None:
-        widget.setParent(self)
-        widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self._slots[slot] = widget
-        self._layout_overlays()
-
-    def _layout_overlays(self) -> None:
-        r = self.rect()
-        m = self._pad
-
-        badge = self._slots.get("badge")
-        if badge:
-            badge.adjustSize()
-            badge.move(m + 14, m + 12)
-
-        controls = self._slots.get("controls")
-        if controls:
-            controls.adjustSize()
-            controls.move(r.width() - m - controls.width() - 12, m + 70)
-
-        pholder = self._slots.get("placeholder")
-        if pholder and pholder.isVisible():
-            pholder.adjustSize()
-            pholder.move((r.width() - pholder.width()) // 2, (r.height() - pholder.height()) // 2)
-
-        status = self._slots.get("status")
-        if status:
-            status.adjustSize()
-            status.setFixedWidth(r.width() - m * 2)
-            status.move(m, r.height() - status.height())
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        self._layout_overlays()
 
 
 class MainWindow(QMainWindow):
@@ -163,80 +89,20 @@ class MainWindow(QMainWindow):
     # Central layout
     # ------------------------------------------------------------------ #
     def _build_central(self) -> None:
-        central = QWidget()
-        layout = QVBoxLayout(central)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(self._build_topbar())
-        layout.addWidget(self._build_workspace_tabs())
-        layout.addWidget(self._build_ribbon())
+        # Composición física del workspace (sidebar, viewport, timeline, results)
+        # delegada a MainWorkspaceBuilder; aquí solo queda la coordinación funcional.
+        central = MainWorkspaceBuilder(self).build()
 
-        main_row = QHBoxLayout()
-        main_row.setContentsMargins(0, 0, 0, 0)
-        main_row.setSpacing(0)
-
-        # ---- Left sidebar (Navegador de Diseño + Panel de Propiedades) ----
-        left = QWidget()
-        left.setFixedWidth(265)
-        ll = QVBoxLayout(left)
-        ll.setContentsMargins(12, 12, 0, 12)
-        ll.setSpacing(10)
-
-        tree_frame = QFrame()
-        tree_frame.setObjectName("treePanel")
-        tf = QVBoxLayout(tree_frame)
-        tf.setContentsMargins(12, 10, 12, 10)
-        self.design_tree = DesignTreePanel()
-        tf.addWidget(self.design_tree)
-        ll.addWidget(tree_frame)
-
-        props_frame = QFrame()
-        props_frame.setObjectName("propsPanel")
-        pf = QVBoxLayout(props_frame)
-        pf.setContentsMargins(4, 8, 4, 8)
-        self.properties = PropertiesPanel()
-        pf.addWidget(self.properties)
-        ll.addWidget(props_frame, 1)
-        main_row.addWidget(left)
-
-        # ---- Center: viewport + timeline ----
-        center = QWidget()
-        cv = QVBoxLayout(center)
-        cv.setContentsMargins(0, 0, 0, 0)
-        cv.setSpacing(0)
-
-        self.host = _ViewportHost()
-        self.viewport = self.host.viewport
+        # Viewport: selección (promote cara → sólido padre vía CAD service, Fase 2)
         self.viewport.selectionChanged.connect(self._on_selection)
-        # Body-level selection: promote a picked face to its parent solid using
-        # the CAD service (Fase 2).
         self.viewport.selection_manager.set_solid_resolver(
             lambda model_id, face_index: self.controller.cad.resolve_solid_for_face(model_id, face_index)
             if model_id and self.controller.cad.get_model_shape(model_id) else None
         )
-        cv.addWidget(self.host, 1)
 
-        self.timeline = TimelinePanel()
+        # Timeline
         self.timeline.playRequested.connect(self._on_play_next)
         self.timeline.resetRequested.connect(self._on_reset_flow)
-        cv.addWidget(self.timeline)
-        main_row.addWidget(center, 1)
-
-        # ---- Right: Resultados ----
-        right = QWidget()
-        right.setFixedWidth(250)
-        rl = QVBoxLayout(right)
-        rl.setContentsMargins(0, 12, 12, 12)
-        res_frame = QFrame()
-        res_frame.setObjectName("propsPanel")
-        rf = QVBoxLayout(res_frame)
-        rf.setContentsMargins(12, 10, 12, 10)
-        self.results = ResultsPanel()
-        rf.addWidget(self.results)
-        rl.addWidget(res_frame)
-        main_row.addWidget(right)
-
-        layout.addLayout(main_row, 1)
 
         # ---- Viewport overlays (HTML chrome) ----
         self._build_viewport_overlays()

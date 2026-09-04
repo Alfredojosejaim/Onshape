@@ -25,6 +25,12 @@ def _make_window():
         def finalize(self):
             pass
 
+    # The viewport is built by MainWorkspaceBuilder via ViewportHost, which
+    # references the VTK class at desktop.ui.components.main_workspace.
+    # Patch that symbol so construction never attempts a real VTK/GL render
+    # (crashes on CI/headless without GPU).
+    import desktop.ui.components.main_workspace as _mwcomp
+    _mwcomp.Viewport3D = _FakeViewport
     mw.Viewport3D = _FakeViewport
     from PySide6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication([])

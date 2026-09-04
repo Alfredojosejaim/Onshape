@@ -11,6 +11,22 @@ Each FEA solve uses ``ke(rho) = rho**penalization * Ke0`` so that
 intermediate densities are penalised toward 0/1.
 
 A density filter is applied to avoid checker-boarding.
+
+Volume constraint semantics (volfrac)
+-------------------------------------
+``volfrac`` constrains a fraction of the **active (optimizable) subdomain**
+``V_active = V_total - V_preserved - V_void`` only (Option A in
+``traceback.md`` "PROBLEMA 3"). Protected regions and halos are pinned at
+``rho = 1`` (no design variable), void/obstruction elements at ``rho_min``;
+neither participates in the OC bisection, whose target is ``volfrac * V_active``.
+
+Consequence: when protected regions exist the fraction of the *physical total*
+volume actually occupied is strictly higher than ``volfrac`` (e.g. 30% of the
+free domain + 10% protected != 30% of the model). That is expected and matches
+the SIMP literature, but the solver MUST report both numbers so the user is
+never misled: :meth:`SIMPSolver.optimize` returns ``final_volume_fraction``
+(active) and ``physical_volume_fraction`` (occupied rho-weighted volume over
+the whole mesh, including preserved=1 and void=rho_min).
 """
 
 import logging
@@ -30,7 +46,13 @@ class TopOptError(Exception):
 
 
 class SIMPSolver:
-    """Minimise compliance:  min rho  c = u^T K u   s.t.  V(rho)/V0 <= volfrac."""
+    """Minimise compliance:  min rho  c = u^T K u   s.t.  V(rho)/V0 <= volfrac.
+
+    ``volfrac`` is a fraction of the ACTIVE (designable) subdomain only;
+    preserved/protected elements stay at rho=1 and void at rho_min, so the
+    physical (total-mesh) volume fraction is >= volfrac whenever protected
+    regions exist. See the module docstring for the full semantics.
+    """
 
     def __init__(
         self,
@@ -180,6 +202,19 @@ class SIMPSolver:
             np.zeros(self.num_elements, dtype=bool)
         self._active = ~(preserved | void)
         self._vol0_free = float(self._volumes[self._active].sum())
+        # Feasibility: with every active element at its lower bound rho_min the
+        # minimal achievable active volume is rho_min * V_active. If the user's
+        # volfrac demands less than that, the volume constraint is infeasible
+        # (OC bisection could never converge below it). Surface that loudly
+        # instead of silently returning an impossible optimum.
+        if self.volfrac * self._vol0_free < self.rho_min * self._vol0_free:
+            raise TopOptError(
+                "Volume fraction infeasible: volfrac={} over the active "
+                "domain (V_active={:.4g}) requires less than the minimum "
+                "material (rho_min * V_active = {:.4g}). Lower rho_min, raise "
+                "volfrac, or shrink preserved/void regions."
+                .format(self.volfrac, self._vol0_free, self.rho_min * self._vol0_free)
+            )
 
     def set_preserved_elements(self, indices) -> None:
         """Mark elements that must keep material (protected regions).
@@ -395,6 +430,9 @@ class SIMPSolver:
             "max_iterations": max_iterations,
             "tolerance": tolerance,
             "final_volume_fraction": float(np.dot(x[self._active], self._volumes[self._active]) / max(self._vol0_free, 1e-12)),
+            "physical_volume_fraction": float(
+                np.dot(x, self._volumes) / max(self._vol0, 1e-12)
+            ),
             "target_volume_fraction": float(self.volfrac),
             "final_compliance": float(compliance_final),
             "compliance_history": [h["compliance"] for h in history],

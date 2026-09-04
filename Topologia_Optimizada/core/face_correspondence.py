@@ -341,3 +341,110 @@ def _signature_distance(a: FaceSignature, b: FaceSignature) -> float:
     # Weight centroid distance by the face scale; keep normal/area/extent as
     # multiplicative discriminates so near-parallel opposites still differ.
     return d_c / scale + 0.5 * d_n + 0.5 * d_a + 0.5 * d_e
+
+
+def classify_triangles_to_faces(
+    shape: cq.Shape,
+    triangles: List[List[int]],
+    nodes: List[List[float]],
+    tol: Optional[float] = None,
+) -> Tuple[Dict[str, List[List[int]]], List[List[int]]]:
+    """Bucket provisional-mesher boundary triangles onto CAD faces (P2).
+
+    Each triangle centroid is tested with the exact B-Rep point-to-surface
+    distance ``face.distance()`` against every CAD face. The face with the
+    smallest distance (and whose normal axis aligns with the triangle) owns
+    the triangle if it is within tolerance; otherwise the triangle is left
+    unclassified. This gives ``face_<fi>`` keys instead of a single generic
+    ``boundary`` bucket, so tributary-area loads from the provisional mesher
+    are assigned to the correct CAD face while genuinely edge/ambiguous
+    triangles still fall back to ``boundary`` (never silently forced).
+
+    Args:
+        shape: CAD shape whose ``Faces()[fi]`` are the classification targets.
+        triangles: List of 3-node triangles (0-based mesh node indices).
+        nodes: (N, 3) mesh node coordinates.
+        tol: Absolute distance threshold. Defaults to a small fraction of the
+            median triangle size when omitted.
+
+    Returns:
+        ``(grouped, unclassified)`` where ``grouped`` maps ``"face_<fi>"`` to
+        the assigned triangles and ``unclassified`` holds what could not be
+        confidently matched.
+    """
+    faces = shape.Faces()
+    if not triangles:
+        return {}, []
+
+    nodes_arr = np.asarray(nodes, dtype=float)
+
+    def _tri_geometry(tri):
+        p0, p1, p2 = nodes_arr[tri[0]], nodes_arr[tri[1]], nodes_arr[tri[2]]
+        centroid = (p0 + p1 + p2) / 3.0
+        n = np.cross(p1 - p0, p2 - p0)
+        nlen = np.linalg.norm(n)
+        return centroid, (n / nlen if nlen > 1e-12 else np.array([0.0, 0.0, 1.0]))
+
+    if tol is None:
+        # Tolerance from the SMALLEST triangle edge (the voxel cell size in
+        # the provisional mesher). Using the median would be inflated by the
+        # Kuhn diagonal/space edges and could admit interior non-conforming
+        # artifacts (centroid a full cell off the CAD plane). A surface
+        # triangle has centroid ~0 from its face; an interior artifact stands
+        # at >= ~0.4*h, so 0.3*h separates them cleanly.
+        edge_lens = []
+        for tri in triangles:
+            p0, p1, p2 = nodes_arr[tri[0]], nodes_arr[tri[1]], nodes_arr[tri[2]]
+            edge_lens.append(float(np.linalg.norm(p1 - p0)))
+            edge_lens.append(float(np.linalg.norm(p2 - p0)))
+        h = float(min(edge_lens)) if edge_lens else 1.0
+        tol = 0.3 * max(h, 1e-6)
+
+    # (unit normal, outward-ish) per CAD face via _robust_face_reference_point.
+    face_normals = []
+    for face in faces:
+        _c, nrm = _robust_face_reference_point(face)
+        if nrm is None:
+            fn = np.array([0.0, 0.0, 1.0])
+        else:
+            fn = np.array([float(nrm.x), float(nrm.y), float(nrm.z)])
+            ln = np.linalg.norm(fn)
+            fn = fn / ln if ln > 1e-12 else np.array([0.0, 0.0, 1.0])
+        face_normals.append(fn)
+
+    grouped: Dict[str, List[List[int]]] = {}
+    unclassified: List[List[int]] = []
+
+    for tri in triangles:
+        centroid, tri_n = _tri_geometry(tri)
+        vertex = cq.Vertex.makeVertex(
+            float(centroid[0]), float(centroid[1]), float(centroid[2])
+        )
+        dists: List[float] = []
+        for face in faces:
+            try:
+                dists.append(float(face.distance(vertex)))
+            except Exception:  # pragma: no cover - BRep edge cases
+                dists.append(float("inf"))
+
+        order = sorted(range(len(dists)), key=lambda i: dists[i])
+        best, second = order[0], order[1] if len(order) > 1 else order[0]
+        best_d, second_d = dists[best], dists[second]
+
+        if best_d > tol:
+            unclassified.append(tri)
+            continue
+
+        if second_d - best_d < tol:  # near a shared edge/vertex: normal tie-break
+            align_best = abs(float(np.dot(tri_n, face_normals[best])))
+            align_second = abs(float(np.dot(tri_n, face_normals[second])))
+            if align_second > align_best * (1.0 + 1e-3) and align_second > 0.999:
+                best = second
+            elif align_best <= 0.999 and align_second <= 0.999:
+                # Both faces ambiguous even with normals -> keep honest.
+                unclassified.append(tri)
+                continue
+
+        grouped.setdefault("face_%d" % best, []).append(tri)
+
+    return grouped, unclassified

@@ -102,11 +102,81 @@ def test_provisional_mesher_produces_boundary_triangles():
     m = ProvisionalTet4Mesher(max_grid=2)
     result = m.generate_mesh(shape, target_element_size=1.0)
     assert result.face_surface_elements, "provisional mesh should expose boundary tris"
-    # Every triangle references valid mesh node indices.
-    boundary = result.face_surface_elements["boundary"]
+    # P2: los triangulos de frontera reales se vinculan a claves face_<fi>.
+    assert any(k.startswith("face_") for k in result.face_surface_elements), (
+        "P2: ProvisionalTet4Mesher debe exponer triangulos por CAD face: face_<fi>"
+    )
+    # Todo triangulo (face_<fi> o "boundary") referencia indices de nodo validos.
     n_nodes = result.num_nodes
-    for tri in boundary:
-        assert all(0 <= n < n_nodes for n in tri)
+    boundary = result.face_surface_elements.get("boundary", [])
+    for tris in result.face_surface_elements.values():
+        for tri in tris:
+            assert all(0 <= n < n_nodes for n in tri)
+
+
+def test_provisional_mesher_classifies_triangles_to_correct_cad_face():
+    """P2: cada triangulo de frontera asignado a face_<fi> debe estar
+    geometricamente en la cara CAD fi (distancia BRep ~0 y plano correcto)."""
+    import cadquery as cq
+    import numpy as np
+    from core.meshing import ProvisionalTet4Mesher
+
+    shape = cq.Workplane("XY").box(10, 10, 10).val()
+    result = ProvisionalTet4Mesher(max_grid=4).generate_mesh(
+        shape, target_element_size=2.5
+    )
+    nodes = np.asarray(result.nodes, dtype=float)
+    faces = shape.Faces()
+    total_assigned = 0
+    for key, tris in result.face_surface_elements.items():
+        if not key.startswith("face_"):
+            continue
+        fi = int(key.split("_")[1])
+        total_assigned += len(tris)
+        for tri in tris:
+            p = nodes[tri].mean(axis=0)
+            v = cq.Vertex.makeVertex(float(p[0]), float(p[1]), float(p[2]))
+            dist = float(faces[fi].distance(v))
+            assert dist <= 1e-3, (
+                f"F2: triangulo de {key} a {dist:.4f} de su propia cara CAD"
+            )
+    assert total_assigned > 0, "P2: al menos un triangulo por cara asignado"
+    assert all(
+        np.all(np.isfinite(nodes[tri])) for tris in result.face_surface_elements.values()
+        for tri in tris
+    )
+
+
+def test_provisional_mesher_no_interior_artifacts_admitted_as_faces():
+    """P2: los triangulos de frontera interiores (no-conformidad entre celdas,
+    a mas de una celda del plano CAD) NO deben clasificarse como face_<fi>;
+    deben quedar en el bucket "boundary" de fallback aproximado."""
+    import cadquery as cq
+    import numpy as np
+    from core.meshing import ProvisionalTet4Mesher
+
+    shape = cq.Workplane("XY").box(10, 10, 10).val()
+    result = ProvisionalTet4Mesher(max_grid=8).generate_mesh(
+        shape, target_element_size=2.5
+    )
+    nodes = np.asarray(result.nodes, dtype=float)
+    faces = shape.Faces()
+    for key, tris in result.face_surface_elements.items():
+        if not key.startswith("face_"):
+            continue
+        fi = int(key.split("_")[1])
+        for tri in tris:
+            p = nodes[tri].mean(axis=0)
+            v = cq.Vertex.makeVertex(float(p[0]), float(p[1]), float(p[2]))
+            # Distancia exacta a SU propia cara ~0; si fuera artefacto interior
+            # la distancia al plano de esa cara seria ~una celda.
+            assert float(faces[fi].distance(v)) <= 1e-3, (
+                f"P2: artefacto interior clasificado como {key}"
+            )
+    # Los triangulos que quedan sin cara son solo aproximados (documentado).
+    leftover = result.face_surface_elements.get("boundary", [])
+    for tri in leftover:
+        assert all(0 <= n < result.num_nodes for n in tri)
 
 
 def test_gmsh_surface_fallback_in_engine():

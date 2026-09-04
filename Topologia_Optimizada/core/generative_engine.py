@@ -242,11 +242,14 @@ class GenerativeDesignEngine:
         triangulation is available (triggers uniform fallback).
 
         When neither a named physical group nor a ``face_<id>`` key is available
-        (e.g. the provisional voxel mesher, which only ever populates a single
+        (e.g. pre-P2 provisional voxel meshes, which only ever populated a single
         undifferentiated ``"boundary"`` bucket with no per-CAD-face labeling),
         falls back to node-label propagation: a boundary triangle is attributed
         to this load's face if all three of its nodes already belong (via
         CAD-geometry node selection, passed in as ``node_indices``) to that face.
+        Since P2, the provisional mesher also emits ``face_<id>`` keys (boundary
+        triangles classified to their nearest CAD face), so this propagation
+        fallback only triggers for triangles no face could be assigned to.
         """
         if not self.face_surface_elements:
             return []

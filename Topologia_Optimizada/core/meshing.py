@@ -711,6 +711,12 @@ class ProvisionalTet4Mesher(BaseMesher):
 
         # Fallback minimal discretization if no cells were strictly inside
         if len(elements_list) == 0 or len(nodes_list) == 0:
+            logger.warning(
+                "ProvisionalTet4Mesher: no voxel cell of the grid fell inside "
+                "the CAD solid, so a degenerate minimal 2x2x2 discretization "
+                "was emitted. This mesh does NOT faithfully represent the "
+                "geometry; prefer the GmshTet4Mesher (definitive) pipeline."
+            )
             for i in range(2):
                 for j in range(2):
                     for k in range(2):
@@ -736,7 +742,23 @@ class ProvisionalTet4Mesher(BaseMesher):
                     face_counts[key] += 1
             boundary_tris: List[List[int]] = [list(face) for face, cnt in face_counts.items() if cnt == 1]
             if boundary_tris:
-                face_surface_elements["boundary"] = boundary_tris
+                # P2: vincula los triangulos de frontera a su cara CAD
+                # (claves face_<fi>); los no asignables honestamente quedan
+                # en la clave "boundary" (fallback aproximado, nunca forzado).
+                from core.face_correspondence import classify_triangles_to_faces
+                grouped, unclassified = classify_triangles_to_faces(
+                    shape, boundary_tris, nodes_list
+                )
+                face_surface_elements.update(grouped)
+                if unclassified:
+                    logger.warning(
+                        "ProvisionalTet4Mesher: %d/%d boundary triangles could "
+                        "not be matched to a single CAD face and were grouped "
+                        "under 'boundary' (approximate fallback, physically "
+                        "inexact near shared edges).",
+                        len(unclassified), len(boundary_tris),
+                    )
+                    face_surface_elements["boundary"] = unclassified
 
         return MeshResult(
             nodes=nodes_list,

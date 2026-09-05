@@ -67,6 +67,13 @@ def test_badge_shows_software_fallback_with_warning(_app):
     assert pills and "#e0a030" in pills[0].styleSheet()
 
 
+def test_rubber_band_stylesheet_is_translucent_selection_orange():
+    from desktop.ui.style import DARK_QSS
+    assert "QRubberBand" in DARK_QSS
+    assert "rgba(255, 165, 0, 40)" in DARK_QSS
+    assert "rgba(255, 165, 0, 200)" in DARK_QSS
+
+
 def test_main_window_logs_backend():
     import inspect
     import desktop.ui.main_window as mw

@@ -226,6 +226,14 @@ QPushButton[viewercontrol="true"][active="true"] {{
     border-color: {accent_border};
 }}
 
+/* Rubber-band de seleccion: el selector global `QWidget` le pintaria un
+fondo opaco y perderia su translucidez nativa. Naranja translucido = mismo
+color semantico que el highlight de caras seleccionadas (255,165,0). */
+QRubberBand {{
+    background-color: rgba(255, 165, 0, 40);
+    border: 1px solid rgba(255, 165, 0, 200);
+}}
+
 /* ---- Inputs ---- */
 QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox {{
     background: {bg_panel2};

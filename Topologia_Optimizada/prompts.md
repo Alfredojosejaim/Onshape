@@ -1,3 +1,15 @@
+La selección actual está montada sobre:
+
+VTK vtkCellPicker, integrado directamente en el Viewport3D de PySide6 mediante QVTKRenderWindowInteractor.
+
+Flujo exacto:
+
+Qt mouse event → Viewport3D → vtkCellPicker → CellId → scene.face_index_for_cell() → CadEntityRef.from_face() → SelectionManager → ConditionPanel / highlight
+
+No está montada sobre Qt puro, ni sobre selección propia de Gmsh, ni sobre CellId == face_index directamente.
+
+
+
 Con ese pipeline, el patrón correcto en VTK es: **`vtkCellPicker` te da `CellId` global de un `vtkPolyData` combinado (probablemente `vtkAppendPolyData` de todas las caras), y el highlight no puede vivir en la property del actor** (eso es lo que te limita a una sola cara resaltada). Necesitas colorear celdas individuales vía `vtkUnsignedCharArray` como `CellData` scalars, y separar completamente el **estado de selección** (lógico) del **picking** (evento) y del **render** (highlight).
 
 Aquí las instrucciones precisas para Muse Spark:

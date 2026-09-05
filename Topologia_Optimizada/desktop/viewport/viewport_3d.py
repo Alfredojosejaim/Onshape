@@ -32,9 +32,12 @@ SoftwareViewport sin importar VTK cuando no hay GPU disponible.
 
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QRubberBand
 from PySide6.QtCore import Qt, Signal, QRect, QPoint
 
@@ -420,7 +423,7 @@ class Viewport3D(QWidget):
             if self._rubber_band is not None:
                 self._rubber_band.hide()
         except Exception:
-            pass
+            logger.debug("rubber-band hide failed", exc_info=True)
         try:
             x, y = self._xy()
             x0, y0 = self._vtk_to_qt(self._press_x, self._press_y)
@@ -431,7 +434,7 @@ class Viewport3D(QWidget):
             self.selection.handle_rubber_band(
                 contained, additive=additive, subtractive=subtractive)
         except Exception:
-            pass
+            logger.exception("rubber-band selection failed")
         self._mode = "idle"
         self._click_start = False
 

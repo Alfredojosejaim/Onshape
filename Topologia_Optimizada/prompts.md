@@ -1,95 +1,70 @@
-Encontrado, con evidencia de código, no hipótesis. Y es un bug distinto y mucho más simple que todo lo que llevamos auditado hasta ahora.
+Encontré el error, y es mío desde el turno 1: **especifiqué mal el modelo de selección de Onshape**. No hace falta seguir cazando bugs en el pipeline VTK — el pipeline ya funciona bien, el problema es que le pedí a Muse Spark que implementara una semántica equivocada.
 
-## La causa raíz
+## La corrección, con fuente oficial
 
-`_do_pick_release()` en `viewport_3d.py` (el pipeline nuevo, prompts.md §2) **nunca valida qué actor golpeó el picker** antes de traducir el `cell_id` a una cara:
+Verifiqué contra la documentación oficial de Onshape ("Selection"): la selección en Onshape funciona como **toggle puro, sin necesidad de modificador**. Onshape confirma que su selección funciona como un interruptor: clic para seleccionar, clic de nuevo para deseleccionar, y que el clic plano ya se comporta de forma aditiva —lo que en otras apps esperarías de Ctrl+click— sin necesidad de mantener presionada ninguna tecla.
 
-```python
-self.selection._picker.Pick(click_pos[0], click_pos[1], 0, self.renderer.vtk_renderer)
-cell_id = int(self.selection._picker.GetCellId())
-...
-face_id = self.scene.face_index_for_cell(cell_id)   # <-- sin verificar el actor
+Es decir, mi especificación original ("click plano reemplaza, Shift+click hace toggle") estaba invertida respecto al Onshape real. Lo correcto es:
+
 ```
-
-`vtkCellPicker.Pick(x, y, z, renderer)` pickea contra **todos los actores del renderer**, no solo el modelo. Y en `renderer.py`, tanto el grid del suelo como el triedro de ejes se crean y añaden sin `SetPickable(False)`:
-
-```python
-def create_grid(...): ...
-self.add_actor(self._grid_actor)   # sin SetPickable(False)
-
-def create_axes(...): ...
-self.add_actor(self._axes_actor)   # sin SetPickable(False)
-```
-
-Y aquí está el golpe de gracia — `Scene.face_index_for_cell()` no sabe de qué actor viene el `cell_id`, solo comprueba que esté en rango:
-
-```python
-def face_index_for_cell(self, cell_id: int) -> Optional[int]:
-    if self._tri_face_index is None or cell_id < 0:
-        return None
-    if cell_id >= self._tri_face_index.shape[0]:
-        return None
-    fi = int(self._tri_face_index[cell_id])   # <-- indexa ciegamente
-    return fi if fi >= 0 else None
-```
-
-**Consecuencia exacta de tus dos síntomas**: cuando clicas lo que parece "vacío" (el suelo del grid, o cerca del triedro de ejes) para deseleccionar, el picker sí golpea algo — el grid o los ejes, que son geometría real pickeable — y devuelve un `cell_id` válido perteneciente a **esa** malla, no a la del modelo. `face_index_for_cell()` lo interpreta igualmente como si fuera un triángulo del modelo, siempre que el número esté dentro del rango de triángulos totales del modelo, y te devuelve una cara **arbitraria y sin relación con lo que clicaste**. Como no es un click aditivo, `handle_pick()` hace lo correcto según su propia lógica: reemplaza la selección — pero con esa cara falsa. De ahí "se desmarca la anterior pero se marca otra".
-
-Esto también es candidato fuerte para el problema de multi-selección: si al intentar Shift+click sobre una segunda cara el rayo roza el grid o los ejes cerca del borde del modelo, el mismo bug corrompe ese click también.
-
-Nota interesante: el método legado `pick()` (el que quedó como fallback en el `except`) **sí hace esta validación correctamente**:
-```python
-actor = self._picker.GetActor()
-key = self._actor_to_key(actor)
-if key is not None and getattr(self._scene, "_model_actor_key", None) == key:
-    ...  # solo entonces mapea cell_id -> face
-```
-Se perdió al escribir el pipeline nuevo — típico bug de refactor donde una validación existente no se porta.
-
-## Fix — dos capas, ambas necesarias
-
-**1. Validar el actor en `_do_pick_release()`** (fix principal):
-```python
-def _do_pick_release(self) -> None:
-    click_pos = self._interactor.GetEventPosition()
-    self.selection._picker.Pick(
-        click_pos[0], click_pos[1], 0, self.renderer.vtk_renderer)
-    picked_actor = self.selection._picker.GetActor()
-    model_key = getattr(self.scene, "_model_actor_key", None)
-    hit_actor_key = self.scene.actor_key_for(picked_actor) if picked_actor is not None else None
-
-    cell_id = int(self.selection._picker.GetCellId())
-    additive = self._qt_additive()
-
-    if cell_id == -1 or picked_actor is None or hit_actor_key != model_key:
-        entity = None   # golpeó grid/ejes/otro actor no-modelo, o nada: tratar como vacio
+on_click(entity):
+    if entity is None:
+        selected.clear()                    # clic en vacío: limpia todo
+    elif entity in selected:
+        selected.remove(entity)              # YA estaba: toggle OFF
     else:
-        face_id = self.scene.face_index_for_cell(cell_id)
-        ...
-    self.selection.handle_pick(entity, additive=additive)
-```
-(Necesitas exponer o reutilizar `_actor_to_key`, que ya existe en `SelectionManager`, para mapear `picked_actor` a su key.)
-
-**2. Defensa en profundidad — marcar grid, ejes y el outline de identificación como no-pickeables**, para que este bug no pueda repetirse aunque otro camino de picking se olvide de validar el actor:
-```python
-# renderer.py
-self._grid_actor.SetPickable(False)   # en create_grid, tras crear el actor
-self._axes_actor.SetPickable(False)   # en create_axes
-
-# selection.py, _build_identification()
-outline.SetPickable(False)            # el cubo wireframe de identificación tampoco debe ser pickeable
+        selected.add(entity)                 # no estaba: toggle ON (añade, no reemplaza)
 ```
 
-## Test de regresión sugerido
+Sin ramas de `additive`/modificador para el click puntual. Esto explica **ambos** síntomas a la vez con un solo cambio: no podías multi-seleccionar porque cada click reemplazaba en vez de añadir, y perdiste el deselect-por-click porque yo mismo introduje ese "no-op" pensando que era el comportamiento correcto de Onshape.
+
+## Fix preciso para Muse Spark
+
+**1. `SelectionManager.handle_pick()`** — quitar la lógica condicional de `additive`, siempre toggle:
 
 ```python
-def test_click_on_grid_does_not_select_random_face(scene_with_model_and_grid):
-    """Clic sobre el grid (que parece 'vacio') debe limpiar seleccion,
-    no seleccionar una cara arbitraria del modelo."""
-    select_face(viewport, face_index=3)
-    assert selection.selected == {face(3)}
-    click_at(viewport, grid_point_far_from_model)
-    assert selection.selected == set()   # no una cara aleatoria
+def handle_pick(self, entity: Optional[CadEntityRef], additive: bool = True) -> None:
+    """Onshape real (docs oficiales): click SIEMPRE hace toggle, sin
+    necesitar Shift/Ctrl. 'Click to select, click again to deselect...
+    additively select and deselect (the same behavior you would expect
+    from Ctrl+click)' -- el click plano YA es aditivo.
+    """
+    if entity is None:
+        if self._selected:
+            self._selected.clear()
+            self._sync_legacy_after_set_change()
+            self.selectionChanged.emit(self.selected)
+            self._emit_legacy()
+        return
+
+    if entity in self._selected:
+        self._selected.remove(entity)
+    else:
+        self._selected.add(entity)
+
+    self._sync_legacy_after_set_change(entity)
+    self.selectionChanged.emit(self.selected)
+    self._emit_legacy()
 ```
 
-Con el fix 1 solo (validación de actor), el bug queda resuelto de raíz sin tocar tolerancia de picker ni nada del pipeline ya auditado. El fix 2 es barato y evita que reaparezca. Pide a Muse Spark que aplique ambos y confirme si esto también resuelve la dificultad de multi-selección — sospecho que sí, pero vale la pena verificarlo por separado ya que puede haber un segundo factor (p. ej. tolerancia 0.0005 ahora demasiado ajustada cerca de bordes reales del modelo).
+**2. `handle_rubber_band()`** — por simetría/consistencia, el drag simple también debería ser aditivo (unión), no reemplazo; solo Ctrl+drag resta (esto ya está bien y confirmado: la documentación indica explícitamente Ctrl+arrastre para deseleccionar):
+
+```python
+def handle_rubber_band(self, face_indices, subtractive: bool = False) -> None:
+    faces = {int(f) for f in (face_indices or set())}
+    ...
+    before = set(self._selected)
+    if subtractive:
+        self._selected -= entities
+    else:
+        self._selected |= entities   # simple = aditivo, igual que el click
+    if self._selected == before:
+        return
+    ...
+```
+
+(Quita el parámetro `additive` distinto de `subtractive` en la firma y en `_finish_rubber_band()` — ya no hay dos modos, solo "unión" o "resta".)
+
+**3. Tests a actualizar** — `tests/test_rubber_band_select.py` tiene casos que verifican explícitamente "drag simple reemplaza" y "click simple reemplaza" en `test_pick_*`; hay que reescribirlos para afirmar unión/toggle en vez de reemplazo, no son regresiones a preservar, son tests de la especificación incorrecta anterior.
+
+Con esto, click simple sobre varias caras acumula sin tocar Shift (resuelve #1), y click sobre una cara ya seleccionada la quita (resuelve #2) — exactamente el comportamiento que recordabas y que yo había alterado por mi error de especificación inicial.

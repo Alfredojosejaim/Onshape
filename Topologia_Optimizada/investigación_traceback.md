@@ -1,77 +1,56 @@
-# Respuesta al prompt nuevo (auditoría de cierre de picking)
+# Rubber-band select estilo Onshape — implementado (Ctrl = sustractivo)
 
-## 1. `HighlightRenderer`: quedó la versión VECTORIZADA (loop Python eliminado)
+Decisión de producto confirmada: **Onshape completo** — drag simple reemplaza,
+Shift+drag añade, Ctrl+drag resta.
 
-Se confirmó que estaba implementado el loop literal (`for cid in range(n):
-SetTuple3(...)`) y se sustituyó por (`desktop/viewport/highlight.py`):
+## Menores del cierre (no bloqueantes)
 
-- Colores base precomputados una vez en `base_colors_np` (`(n, 3)` uint8).
-- `update()` = `copy()` + asignación indexada numpy (`rgb[idx] = (255,165,0)`,
-  `rgb[h] = (120,190,255)`) + un único `numpy_to_vtk(..., deep=True)` →
-  `SetScalars` + `Modified()`. O(n) en C por click, sin importar cuántas
-  caras haya en el Set.
-- Robustez añadida: ids fuera de rango se recortan antes de indexar (un
-  `cell_id` rancio no tumba el frame); si el polydata cambia de tamaño se
-  reconstruye la base. Se mantiene `self.colors` (ref viva al array en uso)
-  y `self.base_colors` (dict) por compatibilidad con el resto del código.
-- El slot traduce cara→celdas por rangos (`Scene.selected_cell_ids_for_faces`
-  sobre el cache `face→[cell_ids]`, construido una sola vez en
-  `set_model_geometry`), sin pasar por `face_index_map` completo en cada click.
-- Cubierto por `tests/test_pick_tangent_faces.py::
-  test_highlight_vectorized_update_matches_selection` (naranja/azul/base
-  verificados leyendo el array `Colors` de vuelta).
+- **Z-fighting (§3)**: no se toca ahora. Anotado el fix futuro sin fusionar
+  malla: `vtkPolyDataMapper.SetResolveCoincidentTopologyToPolygonOffset()`
+  (solo z-buffer, no afecta picking ni `face_index_map`).
+- **`angularTolerance` (§2)**: de acuerdo — constante por invariante de escala,
+  consistente con P4 (halo vs. filter_radius). Si 0.05 no basta en fillets
+  residuales, tessellation adaptativa por curvatura real (over-engineering
+  hasta tener evidencia).
 
-## 2. `angularTolerance`: confirmada CONSTANTE por diseño, ahora parametrizada
+## Implementación
 
-Estado: sigue en 0.1 rad, pero ya no es un literal enterrado — es
-`core.geometry.DEFAULT_ANGULAR_DEFLECTION` con `None` como default en toda
-la cadena (`GeometryEngine.tessellate_shape` /
-`_tessellate_with_face_mapping` → `StepAdapter.tessellate` →
-`adapters/cad/base.py` → `CADService.tessellate_model`), resuelto por
-`_resolve_angular()`. Comportamiento idéntico al anterior (0.1), un parámetro
-de distancia ahora para estrecharlo.
+**`SelectionManager.handle_rubber_band(face_indices, additive, subtractive)`**
+(`desktop/viewport/selection.py`): sustractivo resta, aditivo une, simple
+reemplaza (incluso con set vacío: soltar sobre vacío limpia). Construye los
+`CadEntityRef` desde los índices, reutiliza `_sync_legacy_after_set_change()`
+y emite `selectionChanged` + callback legacy. **Solo emite si el set cambió**:
+un drag sin efecto es no-op total (sin reflow ni re-render).
 
-Razonamiento: la tolerancia angular es un ángulo (radianes), invariante de
-escala — no tiene sentido hacerla relativa al tamaño. El que cubre caras
-pequeñas/fillets finos es el `linear_deflection` relativo (`diag*0.001`),
-porque el criterio de chord height domina cuando la deflection lineal es
-pequeña. Si la tangencia en fillets persiste tras el fix de tolerancia del
-picker (0.0005), el próximo sospechoso es este: estrechar a 0.05.
+**Contención total, no bbox** (`faces_fully_in_rect` a nivel de módulo en
+`desktop/viewport/viewport_3d.py`, testeable sin GL): la cara entra solo si
+TODOS sus vértices proyectados caen en el `QRect` — nunca intersección de
+bounding box (evita geometría de fondo parcialmente visible). `project_fn`
+inyectable para tests; por defecto `vtkCoordinate` en modo world con
+conversión `sy_qt = height - sy_vtk` (Y invertido VTK vs Qt).
 
-## 3. Vértices no compartidos entre caras: confirmado, sin cambio de código
+**Cableado Qt/VTK** (`Viewport3D`):
+- `_on_left_press` arma `_left_held`; `_on_move` en modo idle con click
+  pendiente y botón abajo activa la banda al superar 4px (mismo umbral
+  click/drag existente) y actualiza `QRubberBand` (hijo del interactor).
+- `_on_left_release` con banda activa → `_finish_rubber_band()`: oculta,
+  rect normalizado, modificadores OR Qt+VTK por separado
+  (`_drag_modifiers()` → Shift=aditivo, Ctrl=sustractivo), caras contenidas,
+  `handle_rubber_band`. El pick puntual queda intacto cuando no hubo drag.
+- La proyección se calcula **una sola vez al soltar**, no durante el arrastre
+  (el move solo mueve el rectángulo): no hace falta `vtkHardwareSelector`
+  salvo lag medible en STEPs enormes.
+- No hizo falta tocar `core/navigation`: el perfil AutoCAD resuelve LEFT
+  siempre a SELECT (con o sin modificadores), así que Shift/Ctrl+drag entran
+  en modo select sin cambios.
+- `Scene` cachea `face→[vertex_ids]` una sola vez en `set_model_geometry()`
+  (`face_vertex_cache`, con rebuild lazy + `model_vertices`).
+- `SoftwareViewport` queda fuera de alcance (sus handlers Qt son propios);
+  mantiene click-select; anotado como trabajo futuro si se quiere paridad.
 
-Verificado en la tessellation real (caja 10³ con fillet r=1.5, 524 tris):
-las caras planas quedan en 2 triángulos enormes y los fillets finos (64–130
-tris), con vértices duplicados por cara (misma coordenada, distinto índice).
-Es el diseño correcto para `CellData` por cara sin ambigüedad de picking.
-Efecto conocido documentado: posibles líneas de z-fighting/grietas sutiles
-en aristas compartidas con AA — cosmético, no bug; no se fusiona malla
-deliberadamente.
+## Tests
 
-## 4. Test de regresión con geometría real: añadido
-
-`tests/test_pick_tangent_faces.py` (3 tests, todos en verde):
-
-- `test_pick_disambiguates_tangent_faces`: caja con fillet tangente
-  (`edges("|Z").fillet(1.5)`), tessellation con face mapping; detecta la
-  arista compartida plano↔fillet por proximidad de vértices, muestrea puntos
-  DENTRO del triángulo plano pegados a la tangencia y hace ray-pick por CPU
-  (Möller–Trumbore double-sided, equivalente al `vtkCellPicker` con
-  `BackfaceCullingOff`). Assert: resuelve la cara plana, nunca el fillet.
-  Falla exactamente con los dos bugs históricos (mapa por cara o picker
-  tolerante que devuelve la vecina).
-- `test_pick_spot_check_all_faces`: rayos sobre todas las caras resuelven su
-  propia cara (cobertura global del mapeo).
-- `test_highlight_vectorized_update_matches_selection`: ver §1.
-
-Hallazgo al escribirlo: con tessellation por cara, los centroides de los
-triángulos planos quedan a >2.3u de la arista (triángulos enormes), así que
-muestrear centroides NO ejerce la tangencia — hay que muestrear junto a la
-arista compartida. Dicho de otro modo: el caso reportado ("selecciona la
-tangente") vive precisamente en esa franja que los centroides no tocan.
-
-## Pendiente sugerido
-
-Rubber-band select (máquina de estados original, punto 4): el release
-handler ya distingue click/drag (umbral 4px) y deriva a rubber-band, pero no
-hay implementación de selección por rectángulo. Siguiente paso si se pide.
+`tests/test_rubber_band_select.py` (10 tests, en verde): reemplaza / vacía /
+aditivo / sustractivo / no-op sin emisión / callback legacy con set completo /
+fully-contained vs. solape parcial (2 de 3 vértices dentro NO entra) / cache
+de vértices en `Scene` / contrato de API sin GL.

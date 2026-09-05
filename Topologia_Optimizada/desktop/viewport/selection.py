@@ -95,6 +95,34 @@ class SelectionManager(QObject):
         self.selectionChanged.emit(self.selected)
         self._emit_legacy()
 
+    def handle_rubber_band(self, face_indices, additive: bool = False,
+                           subtractive: bool = False) -> None:
+        """Aplica seleccion por rectangulo estilo Onshape (rubber-band).
+
+        - subtractive (Ctrl+drag): resta del set existente.
+        - additive (Shift+drag): une al set existente.
+        - simple: reemplaza (incluso con set vacio: limpiar al soltar).
+        Solo emite si el set cambio (evita reflow en drags sin efecto).
+        """
+        faces = {int(f) for f in (face_indices or set())}
+        model_id = None
+        if self._scene is not None:
+            model_id = getattr(self._scene, "_model_actor_key", None)
+        entities = {CadEntityRef.from_face(face_index=f, model_id=model_id)
+                    for f in faces}
+        before = set(self._selected)
+        if subtractive:
+            self._selected -= entities
+        elif additive:
+            self._selected |= entities
+        else:
+            self._selected = set(entities)
+        if self._selected == before:
+            return  # no-op: drag sin efecto no reemite ni re-renderiza
+        self._sync_legacy_after_set_change()
+        self.selectionChanged.emit(self.selected)
+        self._emit_legacy()
+
     def clear(self, notify: bool = True) -> None:
         if self._identification is not None and self._renderer is not None:
             try:

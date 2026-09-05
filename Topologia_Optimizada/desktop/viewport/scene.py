@@ -78,6 +78,8 @@ class Scene:
         self._highlight_actor_key: Optional[str] = None
         # Cache inverso cara -> lista de cell_ids (prompts.md §4.5: una sola vez)
         self._face_to_cells: Dict[int, List[int]] = {}
+        # Cache cara -> vertex ids unicos (rubber-band: proyeccion a pantalla)
+        self._face_vertex_cache: Dict[int, List[int]] = {}
         self._cell_highlight = None  # HighlightRenderer sobre el polydata modelo
 
     # ------------------------------------------------------------------ #
@@ -206,14 +208,21 @@ class Scene:
 
         cell_data = None
         self._face_to_cells = {}
+        self._face_vertex_cache = {}
         self._cell_highlight = None
         if face_index_map is not None:
             face_index_map = np.asarray(face_index_map, dtype=np.int64)
             if face_index_map.shape[0] == triangles.shape[0]:
                 self._tri_face_index = face_index_map
                 cell_data = {"face_index": face_index_map}
+                _vids: Dict[int, set] = {}
                 for cid, fi in enumerate(face_index_map.tolist()):
-                    self._face_to_cells.setdefault(int(fi), []).append(int(cid))
+                    fi = int(fi)
+                    self._face_to_cells.setdefault(fi, []).append(int(cid))
+                    if fi >= 0:
+                        s = _vids.setdefault(fi, set())
+                        s.update(int(v) for v in triangles[cid].tolist())
+                self._face_vertex_cache = {f: sorted(s) for f, s in _vids.items()}
 
         from desktop.ui.style import PALETTE, hex_to_rgb_float
 
@@ -255,6 +264,24 @@ class Scene:
 
     def face_meta(self, face_index: int) -> Optional[Dict[str, Any]]:
         return self._faces_meta.get(int(face_index))
+
+    @property
+    def face_vertex_cache(self) -> Dict[int, List[int]]:
+        """Cache cara -> vertex ids unicos (para rubber-band select)."""
+        if not self._face_vertex_cache and self._tri_face_index is not None \
+                and self._model_triangles is not None:
+            _vids: Dict[int, set] = {}
+            for cid, fi in enumerate(self._tri_face_index.tolist()):
+                fi = int(fi)
+                if fi >= 0:
+                    _vids.setdefault(fi, set()).update(
+                        int(v) for v in self._model_triangles[cid].tolist())
+            self._face_vertex_cache = {f: sorted(s) for f, s in _vids.items()}
+        return self._face_vertex_cache
+
+    @property
+    def model_vertices(self) -> Optional[np.ndarray]:
+        return self._model_vertices
 
     def cells_for_face(self, face_index: int) -> List[int]:
         """Mapeo inverso cacheado cara -> lista de cell_ids (prompts.md §3)."""
@@ -406,6 +433,7 @@ class Scene:
         self._model_actor_key = None
         self._highlight_actor_key = None
         self._face_to_cells = {}
+        self._face_vertex_cache = {}
         self._cell_highlight = None
 
     def set_mesh(self, nodes: np.ndarray, elements: np.ndarray, color=(0.6, 0.65, 0.75)) -> None:

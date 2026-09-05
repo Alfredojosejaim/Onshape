@@ -35,8 +35,32 @@ from __future__ import annotations
 from typing import Optional
 
 import numpy as np
-from PySide6.QtWidgets import QWidget, QVBoxLayout
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QRubberBand
+from PySide6.QtCore import Qt, Signal, QRect, QPoint
+
+
+def faces_fully_in_rect(face_vertex_cache, vertices, rect, project_fn) -> set[int]:
+    """Caras FULLY-contained estilo Onshape: entra solo si TODOS sus
+    vertices proyectados caen dentro del rect (no interseccion de bbox:
+    evita seleccionar geometria de fondo parcialmente visible).
+
+    ``project_fn(x, y, z)`` devuelve ``(sx, sy)`` en coords Qt del viewport.
+    """
+    result: set[int] = set()
+    verts = np.asarray(vertices, dtype=float)
+    for face_idx, vids in face_vertex_cache.items():
+        if not vids:
+            continue
+        inside = True
+        for vid in vids:
+            p = verts[int(vid)]
+            sx, sy = project_fn(float(p[0]), float(p[1]), float(p[2]))
+            if not rect.contains(int(round(sx)), int(round(sy))):
+                inside = False
+                break
+        if inside:
+            result.add(int(face_idx))
+    return result
 
 # StandardView NO depende de VTK — se puede importar a nivel de módulo.
 from desktop.viewport.camera import StandardView
@@ -110,6 +134,11 @@ class Viewport3D(QWidget):
         self._last_y = 0.0
         self._press_x = 0.0
         self._press_y = 0.0
+        # Rubber-band select (Onshape): drag con boton izquierdo en modo
+        # select muestra QRubberBand; al soltar se resuelve por rectangulo.
+        self._left_held = False
+        self._rubber_active = False
+        self._rubber_band: QRubberBand | None = None
         self._mode = "idle"  # idle | orbit | pan | zoom
         self._click_start = True
 
@@ -303,6 +332,8 @@ class Viewport3D(QWidget):
         self._resolve_and_execute(event)
         self._last_x, self._last_y = self._xy()
         self._press_x, self._press_y = self._last_x, self._last_y
+        self._left_held = True
+        self._rubber_active = False
 
     def _on_middle_press(self, obj, ev) -> None:
         event = self._make_input_event(mouse_button=MouseButton.MIDDLE)
@@ -312,7 +343,104 @@ class Viewport3D(QWidget):
     def _generic_release(self, obj, ev) -> None:
         self._mode = "idle"
 
+    def _display_height(self) -> float:
+        """Altura del viewport en px (para convertir Y VTK->Qt)."""
+        try:
+            h = float(self._interactor.height())
+            if h > 0:
+                return h
+        except Exception:
+            pass
+        try:
+            return float(self.renderer.vtk_renderer.GetSize()[1])
+        except Exception:
+            return 600.0
+
+    def _vtk_to_qt(self, x: float, y: float) -> tuple[float, float]:
+        return float(x), float(self._display_height() - float(y))
+
+    def _drag_modifiers(self) -> tuple[bool, bool]:
+        """(additive=Shift, subtractive=Ctrl), OR de Qt y VTK.
+
+        Igual que _qt_additive: el foco cautivo del QVTK interactor puede
+        dejar QApplication.keyboardModifiers() en NoModifier.
+        """
+        qshift = qctrl = False
+        try:
+            mods = QApplication.keyboardModifiers()
+            qshift = bool(mods & Qt.ShiftModifier)
+            qctrl = bool(mods & Qt.ControlModifier)
+        except Exception:
+            pass
+        try:
+            vshift = bool(self._interactor.GetShiftKey())
+        except Exception:
+            vshift = False
+        try:
+            vctrl = bool(self._interactor.GetControlKey())
+        except Exception:
+            vctrl = False
+        return (qshift or vshift), (qctrl or vctrl)
+
+    def _update_rubber_band(self, vtk_x: float, vtk_y: float) -> None:
+        try:
+            if self._rubber_band is None:
+                self._rubber_band = QRubberBand(QRubberBand.Rectangle, self._interactor)
+            x0, y0 = self._vtk_to_qt(self._press_x, self._press_y)
+            x1, y1 = self._vtk_to_qt(vtk_x, vtk_y)
+            self._rubber_band.setGeometry(
+                QRect(QPoint(int(x0), int(y0)), QPoint(int(x1), int(y1))).normalized())
+            self._rubber_band.show()
+        except Exception:
+            pass
+
+    def _faces_in_rect(self, rect, project_fn=None) -> set[int]:
+        """Caras fully-contained en el rect Qt (proyeccion world->display)."""
+        cache = self.scene.face_vertex_cache
+        verts = self.scene.model_vertices
+        if not cache or verts is None:
+            return set()
+        if project_fn is None:
+            from vtkmodules.vtkRenderingCore import vtkCoordinate
+            ren = self.renderer.vtk_renderer
+            h = self._display_height()
+            coord = vtkCoordinate()
+            coord.SetCoordinateSystemToWorld()
+
+            def project_fn(x: float, y: float, z: float):
+                coord.SetValue(float(x), float(y), float(z))
+                sx, sy = coord.GetComputedDisplayValue(ren)
+                return float(sx), float(h - sy)  # VTK Y invertido vs Qt
+
+        return faces_fully_in_rect(cache, verts, rect, project_fn)
+
+    def _finish_rubber_band(self) -> None:
+        self._rubber_active = False
+        try:
+            if self._rubber_band is not None:
+                self._rubber_band.hide()
+        except Exception:
+            pass
+        try:
+            x, y = self._xy()
+            x0, y0 = self._vtk_to_qt(self._press_x, self._press_y)
+            x1, y1 = self._vtk_to_qt(x, y)
+            rect = QRect(QPoint(int(x0), int(y0)), QPoint(int(x1), int(y1))).normalized()
+            additive, subtractive = self._drag_modifiers()
+            contained = self._faces_in_rect(rect)
+            self.selection.handle_rubber_band(
+                contained, additive=additive, subtractive=subtractive)
+        except Exception:
+            pass
+        self._mode = "idle"
+        self._click_start = False
+
     def _on_left_release(self, obj, ev) -> None:
+        self._left_held = False
+        if self._rubber_active:
+            # Drag con banda activa: resolver por rectangulo, no pick puntual.
+            self._finish_rubber_band()
+            return
         # Distincion click/drag: si hubo arrastre, lo maneja rubber-band,
         # no es un pick (prompts.md §2).
         try:
@@ -370,6 +498,17 @@ class Viewport3D(QWidget):
 
     def _on_move(self, obj, ev) -> None:
         if self._mode == "idle":
+            # En modo select (click pendiente) con boton aun abajo: si supera
+            # el umbral de 4px pasa a rubber-band en vez de pick puntual.
+            if self._click_start and self._left_held and not self._rubber_active:
+                x, y = self._xy()
+                if self._is_drag(self._press_x, self._press_y, x, y, threshold_px=4):
+                    self._click_start = False
+                    self._rubber_active = True
+                    self._update_rubber_band(x, y)
+            elif self._rubber_active:
+                x, y = self._xy()
+                self._update_rubber_band(x, y)
             return
         x, y = self._xy()
         dx = x - self._last_x

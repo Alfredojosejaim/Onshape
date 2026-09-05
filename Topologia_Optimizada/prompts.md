@@ -1,53 +1,74 @@
-Buena auditoría, y los tres descartes están bien fundamentados (offset por-triángulo, transform interno de `face.tessellate()`, logging explícito). Quedan 4 puntos que verificaría antes de dar esto por cerrado — dos son riesgos reales, dos son preguntas de confirmación:
+Cierre sólido — los tres puntos quedan resueltos con evidencia (test real, no solo cobertura sintética), y el hallazgo sobre el muestreo por centroide vs. franja de tangencia es exactamente el tipo de insight que vale la pena documentar en tus "key learnings" del proyecto, es el mismo patrón que "force conservation ≠ spatial correctness" de P2: el test ingenuo pasa por razones equivocadas si no muestreas donde realmente falla el sistema.
 
-## 1. Riesgo real: `HighlightRenderer.update()` con loop Python por celda
+Dos comentarios menores, no bloqueantes:
 
-Si aplicaste el patrón que te di literal (`for cid in range(n_cells): SetTuple3(...)`), en un STEP complejo con decenas de miles de triángulos esto se vuelve perceptible por click — cada selección recalcula el array completo en Python puro. Con `face_triangles` ya teniendo rangos `start`/`count` por cara, puedes vectorizar:
+**Sobre el z-fighting cosmético (§3):** si en algún momento se vuelve visible en producción (más probable con AA agresivo o zoom alto en fillets finos), el fix estándar sin fusionar malla es `vtkPolyDataMapper.SetResolveCoincidentTopologyToPolygonOffset()` con un offset pequeño — no toca la lógica de picking ni el `face_index_map`, solo desplaza el z-buffer en render. Lo dejo anotado para cuando (si) se vuelva molesto visualmente, no hace falta tocarlo ahora.
 
-```python
-import numpy as np
-from vtk.util.numpy_support import numpy_to_vtk
+**Sobre `angularTolerance` (§2):** tu razonamiento de por qué es invariante de escala es correcto, y coincide con la separación física/numérica que ya aplicaste en P4 (halo radius vs. filter_radius) — buena consistencia de principio en todo el codebase. Si 0.05 rad no resuelve fillets finos residuales cuando llegue el caso, el siguiente nivel es tessellation adaptativa por curvatura real (no solo un segundo valor fijo), pero eso es over-engineering hasta que haya evidencia de que 0.05 no basta.
 
-def update(self, selected_cell_ids: set[int], hovered_cell_id: int | None):
-    n = self.polydata.GetNumberOfCells()
-    rgb = self.base_colors_np.copy()          # (n, 3) uint8, precomputado una vez
-    if selected_cell_ids:
-        idx = np.fromiter(selected_cell_ids, dtype=np.int64)
-        rgb[idx] = (255, 165, 0)
-    if hovered_cell_id is not None:
-        rgb[hovered_cell_id] = (120, 190, 255)
-    vtk_arr = numpy_to_vtk(rgb, deep=True)
-    vtk_arr.SetName("Colors")
-    self.polydata.GetCellData().SetScalars(vtk_arr)
-    self.polydata.Modified()
-```
+Doy por cerrado el bloque de picking. Vamos con **rubber-band select**, que es el punto pendiente explícito.
 
-Con `face_triangles[i]["start"]:start+count` puedes ir directo de "cara seleccionada" a slice de índices sin pasar por `face_index_map` completo. Confirma con Muse Spark cuál de las dos versiones quedó implementada — si es el loop Python, vale la pena el cambio ahora que tienes multi-selección funcionando (el loop escala mal precisamente cuando seleccionas varias caras a la vez).
+## Especificación — rubber-band select estilo Onshape
 
-## 2. Pregunta: `angularTolerance` — ¿sigue en valor fijo?
-
-Bajaste `linear_deflection` a relativo, pero el fix del prompt no menciona si `angular_deflection` (parámetro `angularTolerance` de `face.tessellate()`) también es fijo. Si quedó en el default de CadQuery (típicamente ~0.1–0.5 rad), caras muy curvas con bbox pequeño (fillets finos, por ejemplo) pueden seguir generando pocos triángulos incluso con deflection lineal correcta, porque el criterio angular domina en superficies de alta curvatura y bajo tamaño. Vale la pena confirmar si esto sigue como constante o si también quedó parametrizado — si el problema de tangencia en fillets persiste tras el fix de tolerancia de picker, este es el próximo sospechoso.
-
-## 3. Riesgo real no cubierto: vértices no compartidos entre caras adyacentes
-
-Como cada cara se tessela independientemente (`face.tessellate()` por cara, sin fusión de malla), los vértices en aristas compartidas **no son el mismo punto de memoria** aunque coincidan en coordenadas — esto es correcto y esperado para que `CellData` por-cara funcione sin ambigüedad de picking, pero puede producir *z-fighting* o "grietas" visuales sutiles en el render cuando dos caras casi-tangentes comparten arista, especialmente con anti-aliasing. No afecta al picking (que ya mejoraste con tolerancia 0.0005), pero si notas líneas parpadeantes en bordes compartidos tras este fix, es este efecto — no un bug nuevo, es consecuencia del diseño correcto.
-
-## 4. Test que falta para cerrar el caso completo
-
-`test_tessellation_face_mapping_ranges_cover_all_triangles` valida el contrato de índices, pero no valida el caso que originó todo esto: **picking correcto sobre un STEP con caras tangentes/fillets reales**. Sugiero:
+Comportamiento de referencia:
+- **Drag simple (sin modificador) sobre vacío** → rectángulo de selección, **reemplaza** selección al soltar.
+- **Shift+drag** → aditivo (añade lo que caiga dentro al set existente).
+- **Ctrl+drag** en Onshape es sustractivo (resta del set existente) — confirmar si quieres replicar esto o solo aditivo con Shift, es una decisión de producto rápida.
+- **Selección completamente contenida vs. que solo toca el rectángulo**: Onshape usa *fully-contained* para caras en 3D (evita seleccionar geometría de fondo parcialmente visible), esto es importante — no uses intersección de bounding box, usa proyección de todos los vértices de la cara al plano de pantalla y verifica que **todos** caigan dentro del rectángulo.
 
 ```python
-def test_pick_disambiguates_tangent_faces(complex_step_shape):
-    """Regression test para el caso reportado: cara tangente seleccionada
-    en vez de la cara objetivo cerca de un fillet."""
-    vertices, triangles, face_triangles = tessellate_with_face_mapping(complex_step_shape)
-    # Punto conocido cerca de arista compartida entre cara plana y fillet
-    picked_face = pick_at_point(vertices, triangles, face_triangles, known_point)
-    assert picked_face == expected_face_index
+# viewport3d.py — ya tienes distinción click/drag por umbral de 4px
+
+def _on_drag_move(self, current_pos):
+    self.rubber_band_rect.setGeometry(
+        QRect(self._press_pos, current_pos).normalized()
+    )
+    self.rubber_band_rect.show()
+
+def _on_drag_end(self, end_pos, modifiers):
+    self.rubber_band_rect.hide()
+    rect = QRect(self._press_pos, end_pos).normalized()
+    additive = bool(modifiers & Qt.ShiftModifier) or self.interactor.GetShiftKey()
+    subtractive = bool(modifiers & Qt.ControlModifier) or self.interactor.GetControlKey()
+
+    contained_faces = self._faces_fully_in_rect(rect)
+    self.selection_manager.handle_rubber_band(contained_faces, additive, subtractive)
 ```
 
-Sin este test con geometría real (no sintética), el `assert` de cobertura de rangos te protege de regresiones de indexación pero no de regresiones de precisión geométrica — que es el síntoma original que reportaste.
+```python
+def _faces_fully_in_rect(self, rect: QRect) -> set[int]:
+    """Proyecta vértices de cada cara a screen-space; cara entra
+    solo si TODOS sus vértices caen dentro del rect."""
+    coord = vtk.vtkCoordinate()
+    coord.SetCoordinateSystemToWorld()
+    result = set()
+    for face_idx, vertex_ids in self.face_vertex_cache.items():  # cachear al cargar modelo
+        all_inside = True
+        for vid in vertex_ids:
+            coord.SetValue(*self.vertices[vid])
+            sx, sy = coord.GetComputedDisplayValue(self.renderer)
+            if not rect.contains(sx, self.viewport_height - sy):  # VTK Y invertido vs Qt
+                all_inside = False
+                break
+        if all_inside:
+            result.add(face_idx)
+    return result
+```
 
-¿Confirmas el estado de `angularTolerance` y cuál versión de `HighlightRenderer` quedó? Con eso cierro la auditoría de picking y pasamos a rubber-band select (mencionado en la máquina de estados original, punto 4) si sigue pendiente.
+```python
+# selection_manager.py — nuevo método
+def handle_rubber_band(self, entities: set, additive: bool, subtractive: bool):
+    if subtractive:
+        self._selected -= entities
+    elif additive:
+        self._selected |= entities
+    else:
+        self._selected = set(entities)
+    self.selectionChanged.emit(self._selected)
+```
 
-la respuesta a este prompt déjala en investigación_traceback.md (limpialo previamente)
+**Punto de rendimiento a vigilar**: proyectar cada vértice individualmente con `vtkCoordinate.GetComputedDisplayValue()` en un loop Python es lento en STEPs grandes (miles de vértices). Si notas lag al arrastrar el rectángulo, la alternativa es usar `vtkHardwareSelector` (selección por color-picking en buffer offscreen), que es lo que VTK recomienda para selección de área — pero es más código y más complejo de integrar con tu highlight actual. Empezaría con la versión simple de arriba y solo migraría si hay lag medible.
+
+¿Confirmas si quieres Ctrl como sustractivo (Onshape real) o prefieres solo Shift-aditivo para simplificar el primer pase? 
+
+responde en investigación_traceback.md (limpia primero el archivo)

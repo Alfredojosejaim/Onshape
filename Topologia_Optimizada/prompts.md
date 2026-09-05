@@ -1,177 +1,117 @@
-CORRECCIÓN FUNCIONAL — SELECCIÓN, CICLO DE MODELO Y MALLADO
+Con ese pipeline, el patrón correcto en VTK es: **`vtkCellPicker` te da `CellId` global de un `vtkPolyData` combinado (probablemente `vtkAppendPolyData` de todas las caras), y el highlight no puede vivir en la property del actor** (eso es lo que te limita a una sola cara resaltada). Necesitas colorear celdas individuales vía `vtkUnsignedCharArray` como `CellData` scalars, y separar completamente el **estado de selección** (lógico) del **picking** (evento) y del **render** (highlight).
 
-Audita primero el estado REAL del repositorio y corrige los siguientes problemas observados durante pruebas con un STEP complejo. No rehagas sistemas que ya funcionan ni cambies la arquitectura general. Trabaja sobre las implementaciones existentes.
+Aquí las instrucciones precisas para Muse Spark:
 
-1. SELECCIÓN MÚLTIPLE DE CARAS — PRIORIDAD P0
+## 1. `SelectionManager` — estado puro, sin lógica de Qt ni VTK
 
-La selección de caras debe funcionar mediante clic normal, sin Ctrl ni otras teclas modificadoras.
+```python
+# selection_manager.py
+from PySide6.QtCore import QObject, Signal
+from typing import Set
 
-Comportamiento requerido:
+class SelectionManager(QObject):
+    selectionChanged = Signal(set)  # emite el nuevo Set[CadEntityRef]
 
-- Clic sobre una cara no seleccionada → la agrega a la selección.
-- Clic nuevamente sobre una cara ya seleccionada → la quita de la selección.
-- Se pueden acumular tantas caras como sea necesario.
-- Todas las caras seleccionadas deben permanecer visualmente resaltadas.
-- La selección debe conservarse mientras se realizan nuevos clics.
-- "ConditionPanel" debe recibir correctamente TODAS las caras seleccionadas.
-- No crear un segundo sistema de selección: corregir el "SelectionManager"/picking existente.
-- Mantener cuerpos/solidos y caras como tipos de entidad diferenciados.
+    def __init__(self):
+        super().__init__()
+        self._selected: Set[CadEntityRef] = set()
 
-Revisar especialmente la cadena:
+    @property
+    def selected(self) -> Set[CadEntityRef]:
+        return frozenset(self._selected)
 
-"VTK picking → CellId → face_index → CadEntityRef → SelectionManager → MainWindow → ConditionPanel"
+    def handle_pick(self, entity: CadEntityRef | None, additive: bool):
+        if entity is None:
+            if not additive:
+                self._selected.clear()
+                self.selectionChanged.emit(self._selected)
+            return  # click vacío con Shift no hace nada (Onshape)
 
-2. PRECISIÓN DEL PICKING — PRIORIDAD P0
+        if additive:
+            if entity in self._selected:
+                self._selected.remove(entity)      # toggle OFF
+            else:
+                self._selected.add(entity)          # toggle ON
+        else:
+            if self._selected == {entity}:
+                return  # no-op, evita reflow innecesario
+            self._selected = {entity}               # reemplaza
 
-Con STEP complejos la selección de caras no es suficientemente precisa.
+        self.selectionChanged.emit(self._selected)
 
-Audita el mecanismo actual de picking y corrígelo para que:
+    def clear(self):
+        if self._selected:
+            self._selected.clear()
+            self.selectionChanged.emit(self._selected)
+```
 
-- el clic identifique la cara B-Rep correcta;
-- caras curvas, pequeñas o próximas puedan seleccionarse correctamente;
-- no se seleccione una cara vecina por error;
-- el "face_index" utilizado por el viewport corresponda realmente a la cara CAD;
-- se mantenga la correspondencia ya implementada entre tessellation y cara CAD;
-- no reemplaces innecesariamente "FaceSignature" ni el sistema CAD↔Gmsh ya endurecido.
+**Punto crítico**: si tu `SelectionManager` actual guarda `_selected` como variable singular (`self._selected_face`) en vez de `Set`, ahí está el bug raíz de "solo selecciona una cara". Pide a Muse Spark que audite esto primero antes de tocar nada más.
 
-Añade pruebas automatizadas para geometrías con:
+## 2. `Viewport3D` — captura de modificadores y distinción click/drag
 
-- varias caras;
-- caras curvas;
-- caras próximas;
-- múltiples selecciones acumulativas.
+```python
+# viewport3d.py, dentro del handler de mouse release (NO en press)
+def _on_left_button_release(self, obj, event):
+    if self._is_drag(self._press_pos, self._current_pos, threshold_px=4):
+        return  # dejar que la lógica de rubber-band lo maneje aparte
 
-3. CERRAR/ELIMINAR MODELO — PRIORIDAD P0
+    click_pos = self.interactor.GetEventPosition()
+    self.picker.Pick(click_pos[0], click_pos[1], 0, self.renderer)
+    cell_id = self.picker.GetCellId()
 
-Actualmente "Reiniciar flujo" no elimina realmente el modelo cargado.
+    modifiers = QApplication.keyboardModifiers()
+    additive = bool(modifiers & (Qt.ShiftModifier | Qt.ControlModifier))
 
-Implementa un ciclo de vida correcto:
+    if cell_id == -1:
+        entity = None
+    else:
+        face_id = self.scene.face_index_for_cell(cell_id)
+        entity = CadEntityRef.from_face(face_id)
 
-"Importar STEP → trabajar → Cerrar modelo → estado limpio → Importar otro STEP"
+    self.selection_manager.handle_pick(entity, additive=additive)
+```
 
-Cerrar/eliminar el modelo debe:
+Si actualmente estás decidiendo modificadores dentro del `vtkInteractorStyle` en vez de en `Viewport3D`/Qt, dile a Muse Spark que mueva esa lectura a nivel Qt (`QApplication.keyboardModifiers()`), porque VTK y Qt a veces desincronizan el estado de teclado cuando el foco cambia entre widgets.
 
-- eliminarlo de la caché del "CADService";
-- limpiar la escena 3D;
-- limpiar selección;
-- limpiar tessellation;
-- limpiar malla;
-- limpiar condiciones;
-- limpiar estudios/resultados asociados;
-- limpiar referencias al modelo anterior;
-- actualizar Design Tree / Properties / Results / Timeline;
-- dejar la aplicación lista para importar otro STEP sin reiniciarla.
+## 3. Highlight multi-cara — el fix que realmente te falta
 
-No dupliques gestores de estado. Utiliza los existentes y añade únicamente los métodos necesarios.
+Esto es lo que probablemente rompe el "no permite desmarcar": si el highlight se aplica con `actor.GetProperty().SetColor(...)` sobre un actor completo, solo puedes resaltar una entidad a la vez porque es una property global del actor, no por celda.
 
-El usuario debe poder probar sucesivamente:
+```python
+# highlight_renderer.py
+import vtk
 
-"pieza_A.step → cerrar → pieza_B.step → cerrar → pieza_C.step"
+class HighlightRenderer:
+    def __init__(self, polydata: vtk.vtkPolyData, n_cells: int):
+        self.polydata = polydata
+        self.base_colors = self._init_base_colors(n_cells)
+        self.colors = vtk.vtkUnsignedCharArray()
+        self.colors.SetNumberOfComponents(3)
+        self.colors.SetName("Colors")
+        self.polydata.GetCellData().SetScalars(self.colors)
 
-sin cerrar la aplicación.
+    def update(self, selected_cell_ids: set[int], hovered_cell_id: int | None):
+        self.colors.SetNumberOfTuples(self.polydata.GetNumberOfCells())
+        for cid in range(self.polydata.GetNumberOfCells()):
+            if cid in selected_cell_ids:
+                rgb = (255, 165, 0)      # naranja Onshape-like
+            elif cid == hovered_cell_id:
+                rgb = (120, 190, 255)    # azul claro prehover
+            else:
+                rgb = self.base_colors[cid]
+            self.colors.SetTuple3(cid, *rgb)
+        self.polydata.Modified()
+```
 
-4. REINICIO VS CERRAR MODELO
+Y conectar `SelectionManager.selectionChanged` a un slot que traduzca `Set[CadEntityRef]` → `Set[cell_id]` (mapeo inverso de `face_index_for_cell`, necesitas cachear ese mapeo cara→lista de cell_ids una vez al cargar la malla) y llame a `HighlightRenderer.update()`.
 
-No confundas:
+## 4. Checklist de auditoría para Muse Spark, en orden
 
-- Reiniciar flujo: reinicia operaciones/estado del flujo.
-- Cerrar modelo: elimina el documento/modelo CAD actualmente cargado.
+1. Confirmar que `SelectionManager` usa `Set`, no variable singular.
+2. Confirmar que el highlight usa `CellData` por-celda, no `actor.GetProperty()`.
+3. Mover lectura de modificadores Shift/Ctrl a nivel Qt en el release handler.
+4. Verificar que `cell_id == -1` (click vacío) limpia selección solo si no hay modificador.
+5. Cachear `face_id → List[cell_id]` una sola vez (no recalcular en cada pick).
+6. Conectar `ConditionPanel` a `selectionChanged` en vez de a un callback directo del picker (para que quede desacoplado y sirva para BCs, loads, etc. igual que planeas para P2).
 
-Si actualmente no existe esta separación, implementarla de forma coherente con la arquitectura existente.
-
-Añade una acción visible en la UI para cerrar el modelo.
-
-5. DIAGNÓSTICO DEL MALLADOR — PRIORIDAD P0
-
-El usuario observa geometría cúbica/escalonada en zonas curvas durante la optimización.
-
-Audita exactamente qué mallador está utilizando el STEP.
-
-El sistema actual puede utilizar:
-
-"GmshTet4Mesher"
-
-y hacer fallback a:
-
-"ProvisionalTet4Mesher"
-
-No asumas cuál está ocurriendo.
-
-Implementa diagnóstico explícito que permita saber:
-
-- qué mallador fue utilizado;
-- por qué se produjo fallback, si ocurrió;
-- número de nodos;
-- número de elementos;
-- tamaño objetivo;
-- información suficiente para diagnosticar el STEP complejo.
-
-No ocultes errores de Gmsh detrás de un fallback silencioso.
-
-6. GEOMETRÍA CURVA
-
-Si los cubos observados provienen del "ProvisionalTet4Mesher", NO intentes solucionar el problema modificando el optimizador.
-
-Primero determina y demuestra el origen.
-
-Si Gmsh está funcionando, analiza la discretización resultante y determina si el problema está en:
-
-- generación de malla;
-- visualización de la malla;
-- reconstrucción del resultado;
-- representación de densidades.
-
-Si Gmsh está fallando y se está utilizando el mallador provisional, identifica la causa concreta del fallo y corrígela si es una regresión o integración defectuosa.
-
-El "ProvisionalTet4Mesher" sigue siendo un fallback, no debe convertirse accidentalmente en el mallador principal.
-
-7. OPTIMIZACIÓN EXPERIMENTAL
-
-La optimización actualmente puede ejecutarse aunque el flujo completo todavía no esté terminado.
-
-No elimines el motor experimental.
-
-Pero evita presentar el resultado como una optimización CAD/CAE final si todavía existen limitaciones conocidas.
-
-Mantén la ejecución disponible para pruebas, pero registra claramente el estado experimental cuando corresponda.
-
-8. PRUEBAS Y REGRESIÓN
-
-Antes de terminar:
-
-1. Ejecuta la suite existente.
-2. Añade tests específicos para:
-   - selección múltiple mediante clic normal;
-   - toggle de selección;
-   - picking correcto de varias caras;
-   - limpieza completa al cerrar modelo;
-   - importar un segundo STEP después de cerrar el primero;
-   - detección explícita del mallador utilizado;
-   - comportamiento ante fallback de Gmsh.
-3. No rompas las pruebas existentes de:
-   - correspondencia CAD↔Gmsh;
-   - volfrac;
-   - halo;
-   - FEA NumPy/SciPy;
-   - Kratos;
-   - condiciones;
-   - historial/timeline.
-
-REGLAS
-
-- Primero audita, después modifica.
-- No rehagas arquitectura existente sin necesidad.
-- No dupliques managers.
-- No elimines funcionalidad existente.
-- No implementes nuevas características de optimización en esta tarea.
-- No conviertas el "ProvisionalTet4Mesher" en solución definitiva.
-- Corrige las causas reales, no solamente los síntomas.
-- Mantén Python/PySide6/VTK/Gmsh/Kratos y la arquitectura actual.
-- Al finalizar, indica exactamente:
-  1. archivos modificados;
-  2. problemas corregidos;
-  3. causa encontrada del picking;
-  4. causa encontrada de los cubos;
-  5. comportamiento del cierre de modelo;
-  6. resultado de los tests;
-  7. cualquier limitación que permanezca.
+Si me pasas el código real de `SelectionManager` y del handler de mouse en `Viewport3D`, te devuelvo el diff exacto en vez de este esqueleto genérico.

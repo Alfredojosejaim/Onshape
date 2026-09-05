@@ -113,20 +113,22 @@ class _SoftwareSelectionManager:
             self._callback(None)
 
     def pick(self, x: int, y: int, ctrl: bool = False) -> None:
-        """Selecciona la cara en las coordenadas de pantalla (x, y)."""
+        """Selecciona la cara en las coordenadas de pantalla (x, y).
+
+        Clic normal acumula (toggle), igual que SelectionManager VTK.
+        """
         if self._scene is None:
             return
         face = self._scene.pick_face(x, y)
         if face is None:
-            self.clear()
+            if not ctrl:
+                self.clear()
             return
-        if ctrl:
-            if face in self._selected_faces:
-                self._selected_faces.remove(face)
-            else:
-                self._selected_faces.append(face)
+        # Toggle acumulativo tanto con clic normal como con Ctrl.
+        if face in self._selected_faces:
+            self._selected_faces.remove(face)
         else:
-            self._selected_faces = [face]
+            self._selected_faces.append(face)
         solid = self._scene.face_to_solid(face)
         if solid is not None:
             self._selected_solids = {solid}
@@ -304,8 +306,10 @@ class _SoftwareScene:
         fm = self._face_index_map
         if fm is not None and best_tri < len(fm):
             face = int(fm[best_tri])
-            return face if face >= 0 else best_tri
-        return best_tri
+            # Sin correspondencia CAD (-1): no inventar face_index; el clic
+            # no atribuye cara en lugar de apuntar a una vecina errónea.
+            return face if face >= 0 else None
+        return None
 
     def face_to_triangles(self, face_index: int) -> list[int]:
         """Índices de los triángulos que pertenecen a la cara B-Rep dada."""

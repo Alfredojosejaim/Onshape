@@ -105,13 +105,19 @@ def test_face_meta_lookup():
 
 
 def test_pick_face_without_face_map_falls_back_to_triangle_index():
-    """Sin map por cara, pick_face devuelve índice de triángulo (compat)."""
+    """Sin map por cara, pick_face NO inventa face_index (devuelve None).
+
+    Devolver el índice del triángulo como face_index rompía el mapeo
+    CAD (cargas/restricciones) al apuntar a caras vecinas inexistentes.
+    Actualizado por P1-prompts.md §2: el face_index debe corresponder a
+    la cara CAD real o no atribuirse.
+    """
     scene, verts, _, _ = _sample_scene()
     scene.set_model_geometry(verts, scene._triangles, face_index_map=None, faces_meta=None)
     _project(scene)
     sx, sy = _screen_centroid(scene, [4, 5, 7])
     face = scene.pick_face(sx, sy)
-    assert face in (0, 1, 2, 3)
+    assert face is None
 
 
 # ------------------------------------------------------------------ #

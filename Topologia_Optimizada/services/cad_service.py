@@ -164,8 +164,12 @@ class CADService:
             }
 
         try:
+            fallback_reason = None
+            used_fallback = False
             if element_type != "tet4":
                 # GmshTet4Mesher only supports tet4; use the provisional mesher otherwise.
+                fallback_reason = f"element_type={element_type!r} no soportado por GmshTet4Mesher"
+                used_fallback = True
                 mesh_result = self.provisional_mesher.generate_mesh(
                     shape,
                     target_element_size=target_element_size,
@@ -183,6 +187,8 @@ class CADService:
                         physical_groups=physical_groups,
                     )
                 except (ImportError, RuntimeError, ValueError, FileNotFoundError) as exc:
+                    fallback_reason = f"{type(exc).__name__}: {exc}"
+                    used_fallback = True
                     logger.warning(
                         "GmshTet4Mesher failed (%s); falling back to ProvisionalTet4Mesher.", exc
                     )
@@ -198,7 +204,13 @@ class CADService:
                 mesh_result.num_elements,
                 mesh_result.metadata.get("mesher", "ProvisionalTet4Mesher"),
             )
-            return mesh_result.to_dict()
+            d = mesh_result.to_dict()
+            # Explicit diagnostics (P0): never hide which mesher ran.
+            d["mesher"] = d["metadata"].get("mesher", "ProvisionalTet4Mesher")
+            d["fallback"] = bool(used_fallback or d.get("is_provisional", False))
+            d["fallback_reason"] = fallback_reason
+            d["target_element_size"] = float(target_element_size or 0.0)
+            return d
         except Exception as exc:
             logger.exception("Mesh generation failed for %s", domain_label)
             return {
@@ -841,6 +853,34 @@ class CADService:
             if model_id in self._model_cache:
                 del self._model_cache[model_id]
                 logger.info("Cleared cache for model %s", model_id)
+            try:
+                self.step_adapter.clear_shape(model_id)
+            except Exception:
+                pass
         else:
             self._model_cache.clear()
+            try:
+                self.step_adapter.clear_shape(None)
+            except Exception:
+                pass
             logger.info("Cleared all model cache")
+
+    def close_model(self, model_id: Optional[str] = None) -> Optional[str]:
+        """Fully evict a model from both caches (CADService + StepAdapter).
+
+        Returns the evicted model id (or None if there was nothing cached).
+        """
+        target = model_id or next(iter(self._model_cache), None)
+        if target is None:
+            try:
+                self.step_adapter.clear_shape(None)
+            except Exception:
+                pass
+            return None
+        self._model_cache.pop(target, None)
+        try:
+            self.step_adapter.clear_shape(target)
+        except Exception:
+            pass
+        logger.info("Closed model %s", target)
+        return target

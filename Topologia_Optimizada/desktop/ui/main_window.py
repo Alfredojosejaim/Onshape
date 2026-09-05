@@ -262,9 +262,27 @@ class MainWindow(QMainWindow):
             mesh.get("is_provisional", True),
         )
         self.timeline.set_pipeline_step(3)
-        self.statusBar().showMessage(
-            f"Malla: {nodes.shape[0]} nodos, {elements.shape[0]} elementos.")
-        self._set_busy(False, "Malla generada.")
+        mesher = mesh.get("mesher", mesh.get("metadata", {}).get("mesher", "?"))
+        n, e = nodes.shape[0], elements.shape[0]
+        tgt = mesh.get("target_element_size", 0.0)
+        prov = bool(mesh.get("is_provisional", False))
+        diag = (f"Mallador: {mesher} · {n} nodos, {e} elementos · "
+                f"tamaño objetivo {tgt if tgt else 'auto'}")
+        if mesh.get("fallback_reason"):
+            diag += f" · fallback: {mesh['fallback_reason']}"
+        self.statusBar().showMessage(f"Malla: {n} nodos, {e} elementos ({mesher}).")
+        self._set_busy(False, "Malla generada. " + diag)
+        if prov:
+            # Explicit fallback notice (P0): provisional voxel mesh on
+            # curved CAD looks blocky/stepped — never present silently.
+            QMessageBox.information(
+                self, "Mallado provisional",
+                f"Gmsh no pudo mallar y se usó ProvisionalTet4Mesher.\n\n{diag}\n\n"
+                "Las zonas curvas pueden verse cúbicas/escalonadas porque el "
+                "mallador provisional voxeliza la geometría.")
+        elif tgt and tgt >= 4.0:
+            self.statusBar().showMessage(
+                f"Malla Gmsh gruesa ({tgt} mm): las curvas pueden verse facetadas. " + diag)
 
     # ------------------------------------------------------------------ #
     # Licensing status (read-only; policy lives in LicenseManager)
@@ -363,6 +381,9 @@ class MainWindow(QMainWindow):
             on_done=self._on_optimization_done,
             on_error=lambda e: self._on_error("Optimización", e),
         )
+        self.statusBar().showMessage(
+            "Optimización [EXPERIMENTAL] en curso: resultado para pruebas, "
+            "no un análisis CAD/CAE final.")
 
     def _on_optimization_done(self, result) -> None:
         ok = bool(result.get("success"))
@@ -382,7 +403,7 @@ class MainWindow(QMainWindow):
             self.rb_export.setEnabled(True)
             self.timeline.set_pipeline_step(5)
             self.statusBar().showMessage(
-                f"Optimización: V={result.get('final_volume_fraction', 0):.2%}, "
+                f"[EXPERIMENTAL] Optimización: V={result.get('final_volume_fraction', 0):.2%}, "
                 f"c={result.get('final_compliance', 0):.4e}, iter={result.get('iterations')}")
 
     # ------------------------------------------------------------------ #
@@ -807,9 +828,62 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Flujo completado. Modifique parámetros y vuelva a ejecutar.")
 
     def _on_reset_flow(self) -> None:
+        # Reiniciar flujo: solo reinicia pasos/estado del flujo (timeline +
+        # historial de resultados). NO elimina el modelo (ver _on_close_model).
         self.timeline.reset()
         self.results.clear_history()
         self.statusBar().showMessage("Flujo reiniciado. Importe o vuelva a ejecutar los pasos.")
+
+    def _on_close_model(self) -> None:
+        """Cerrar modelo: elimina el documento/modelo CAD y deja estado limpio."""
+        if not self.controller.model_id:
+            self.statusBar().showMessage("No hay modelo cargado.")
+            return
+        name = self.controller.model_name or self.controller.model_id
+        self.controller.close_model()
+        try:
+            self.viewport.scene.clear()
+        except Exception:
+            pass
+        try:
+            self.viewport.clear_selection()
+        except Exception:
+            pass
+        try:
+            self.placeholder.show()
+        except Exception:
+            pass
+        try:
+            self.doc_label.setText("Sin modelo")
+        except Exception:
+            pass
+        try:
+            self.design_tree.set_context(None, has_mesh=False, has_result=False)
+            self.design_tree.set_features([])
+            self.design_tree.set_conditions([])
+            self.design_tree.set_studies([])
+            self.design_tree.set_selection_clearable(False)
+        except Exception:
+            pass
+        try:
+            self.results.reset_all()
+        except Exception:
+            pass
+        try:
+            self.timeline.reset()
+        except Exception:
+            pass
+        try:
+            self.properties.set_enabled(False, False)
+            self.properties.clear_selection()
+        except Exception:
+            pass
+        try:
+            self.controller_reset_after_model()
+        except Exception:
+            pass
+        self.statusBar().showMessage(
+            f"Modelo {name} cerrado. Listo para importar otro STEP.")
 
     # ------------------------------------------------------------------ #
     # Helpers
@@ -923,6 +997,15 @@ class MainWindow(QMainWindow):
         self.design_tree.set_selection_clearable(False)
 
     def _on_selection(self, payload) -> None:
+        # Backward compat: older SelectionManager emitted a list for
+        # Ctrl+click multi-selection. Normalise to last payload dict.
+        n_multi = 0
+        try:
+            n_multi = len(self.viewport.selection_manager.multi_selection)
+        except Exception:
+            n_multi = 0
+        if isinstance(payload, list):
+            payload = payload[-1] if payload else None
         if payload is None:
             self.design_tree.set_selection_clearable(False)
             self.statusBar().showMessage("Nada seleccionado.")
@@ -932,10 +1015,11 @@ class MainWindow(QMainWindow):
                 normal = payload.get("normal") or []
                 nstr = ", ".join(f"{v:+.3f}" for v in normal)
                 fid = payload.get("id") or f"face_{payload.get('face_index')}"
+                extra = f" · +{n_multi - 1} más" if n_multi > 1 else ""
                 self.statusBar().showMessage(
-                    f"Cara {payload.get('face_index')} seleccionada ({fid})"
+                    f"Cara {payload.get('face_index')} seleccionada ({fid}){extra}"
                     f" · normal ({nstr}) · área {payload.get('area', 0.0):.2f} mm² · "
-                    f"Ctrl+clic para añadir/quitar")
+                    f"clic para añadir/quitar")
             else:
                 self.statusBar().showMessage(f"Seleccionado: {payload.get('key')}")
         # Keep the properties panel's advanced-selection controls in sync.

@@ -203,6 +203,10 @@ class FeatureHistory:
         self._features = [f for f in self._features if f.id != feature_id]
         return len(self._features) < before
 
+    def clear(self) -> None:
+        """Drop the whole feature history (used by Cerrar modelo)."""
+        self._features.clear()
+
     def rollback(self, feature_id: str) -> bool:
         for f in self._features:
             if f.id == feature_id:

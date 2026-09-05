@@ -242,6 +242,16 @@ class Document:
     def results(self) -> Dict[str, Any]:
         return dict(self._results)
 
+    def clear(self) -> None:
+        """Reset the document to an empty session (used by Cerrar modelo)."""
+        self._models.clear()
+        self._active_model_id = None
+        self._features.clear()
+        self._conditions.clear()
+        self._studies.clear()
+        self._results.clear()
+        self.metadata.touch()
+
     # ================================================================== #
     # Serialisation helpers
     # ================================================================== #

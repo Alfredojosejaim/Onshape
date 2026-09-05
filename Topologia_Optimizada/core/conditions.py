@@ -343,6 +343,10 @@ class ConditionManager:
     def remove(self, condition_id: str) -> bool:
         return self._conditions.pop(condition_id, None) is not None
 
+    def clear(self) -> None:
+        """Remove all reusable conditions (used by Cerrar modelo)."""
+        self._conditions.clear()
+
     @property
     def all(self) -> List[Condition]:
         return list(self._conditions.values())

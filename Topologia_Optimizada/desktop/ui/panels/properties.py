@@ -303,8 +303,11 @@ class PropertiesPanel(QWidget):
     # ------------------------------------------------------------------ #
     # Advanced geometric selection (viewport -> fuerza / restricción)
     # ------------------------------------------------------------------ #
-    def set_viewport_selection(self, payload: dict | None) -> None:
+    def set_viewport_selection(self, payload: dict | list | None) -> None:
         """Receive the entity picked in the viewport and update the controls."""
+        # Backward compat: a list means an older multi-selection payload.
+        if isinstance(payload, list):
+            payload = payload[-1] if payload else None
         self._viewport_selection = payload
         is_face = bool(payload and payload.get("kind") == "face")
         self._btn_sel_force.setEnabled(is_face)

@@ -227,15 +227,10 @@ class Renderer:
         poly = vtkPolyData()
         poly.SetPoints(points)
         poly.SetPolys(cells)
-        if compute_normals:
-            from vtkmodules.vtkFiltersCore import vtkPolyDataNormals
-            normals = vtkPolyDataNormals()
-            normals.SetInputData(poly)
-            normals.ComputePointNormalsOn()
-            normals.ComputeCellNormalsOn()
-            normals.SplittingOff()
-            normals.Update()
-            poly = normals.GetOutput()
+        # Attach per-cell data BEFORE the normals filter so the filter
+        # carries the arrays through without reordering cells. Attaching
+        # after the filter risks CellId -> face_index misalignment when the
+        # filter touches cell ordering.
         if cell_data:
             from vtkmodules.vtkCommonCore import vtkIntArray
             for name, arr in cell_data.items():
@@ -247,6 +242,20 @@ class Renderer:
                 for v in arr:
                     carr.InsertNextValue(int(v))
                 poly.GetCellData().AddArray(carr)
+        if compute_normals:
+            from vtkmodules.vtkFiltersCore import vtkPolyDataNormals
+            normals = vtkPolyDataNormals()
+            normals.SetInputData(poly)
+            normals.ComputePointNormalsOn()
+            normals.ComputeCellNormalsOn()
+            normals.SplittingOff()
+            normals.Update()
+            out = normals.GetOutput()
+            # Guard: if the filter changed the cell count, the picker's
+            # CellId would no longer match _tri_face_index. Fall back to
+            # the unfiltered poly (exact mapping beats smooth normals).
+            if out is not None and out.GetNumberOfCells() == tris.shape[0]:
+                poly = out
         return poly
 
 

@@ -43,6 +43,13 @@ class StepAdapter(BaseCADAdapter):
         """Cache a CadQuery Shape for a given CADModel ID."""
         self._shape_cache[model_id] = shape
 
+    def clear_shape(self, model_id: Optional[str] = None) -> None:
+        """Drop cached Shape(s): one model or the whole cache (Cerrar modelo)."""
+        if model_id is not None:
+            self._shape_cache.pop(model_id, None)
+        else:
+            self._shape_cache.clear()
+
     @staticmethod
     def _parse_step_bytes(data: bytes) -> cq.Shape:
         """Parse raw STEP byte buffer into a CadQuery/OpenCASCADE Shape."""

@@ -122,6 +122,53 @@ class PipelineController:
 
         return {"name": model.name, "model": model, "tessellation": tess}
 
+    def close_model(self) -> Optional[str]:
+        """Cerrar modelo: evict CAD caches + reset all downstream/UI state.
+
+        Distinct from flow reset: this removes the document/model so a
+        different STEP can be imported cleanly
+        (``A.step -> cerrar -> B.step -> cerrar -> C.step``).
+        Reuses existing managers (no duplicated state holders).
+        """
+        closed_id = self.model_id
+        try:
+            self.cad.close_model(closed_id)
+        except Exception:
+            pass
+        self.model_id = None
+        self.model_name = None
+        self.current_tessellation = None
+        self.mesh = None
+        self.mesh_nodes = None
+        self.mesh_elements = None
+        self.result = None
+        self.result_densities = None
+        self.forces = []
+        self.constraints = []
+        self._bot_nodes = []
+        self._load_nodes = []
+        self._studies.clear()
+        try:
+            self.conditions.clear()
+        except Exception:
+            pass
+        try:
+            self.feature_history.clear()
+        except Exception:
+            pass
+        try:
+            self.document.clear()
+        except Exception:
+            pass
+        # Drop study-scoped solid pointer if present.
+        for attr in ("_study_solid_index", "_active_study_id"):
+            if hasattr(self, attr):
+                try:
+                    setattr(self, attr, None)
+                except Exception:
+                    pass
+        return closed_id
+
     # ------------------------------------------------------------------ #
     # Mesh generation
     # ------------------------------------------------------------------ #

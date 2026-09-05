@@ -19,9 +19,10 @@ Architecture integration (Phase 1):
     the VTK viewport.  The existing ``kind``/``face_index`` keys are
     preserved for backward compatibility.
 
-    Multi-entity selection: holding Ctrl while clicking adds the picked
-    entity to the current selection set.  The callback receives a list
-    of all selected payloads via ``selectionChanged``.
+    Multi-entity selection: clicking (with or without Ctrl) toggles the
+    picked entity in the current selection set (accumulative click-select).
+    The callback receives the last picked payload dict via
+    ``selectionChanged``; the full set is available via ``multi_selection``.
 """
 
 from __future__ import annotations
@@ -33,12 +34,17 @@ from vtkmodules.vtkCommonColor import vtkNamedColors
 
 from core.cad_entity import CadEntityRef, EntityType, SelectionSet
 
+#: VTK cell-picker tolerance in pixels. 0.005 proved too strict for small /
+#: curved faces (sub-pixel triangles never picked); 0.025 matches the VTK
+#: default behaviour and keeps neighbour-face mis-picks low.
+PICK_TOLERANCE = 0.025
+
 
 class SelectionManager:
     def __init__(self, renderer) -> None:
         self._renderer = renderer  # vtkRenderer
         self._picker = vtkCellPicker()
-        self._picker.SetTolerance(0.005)
+        self._picker.SetTolerance(PICK_TOLERANCE)
         self._picked_actor: Optional[vtkActor] = None
         self._picked_key: Optional[str] = None
         self._last_payload: Optional[Dict[str, Any]] = None
@@ -68,8 +74,9 @@ class SelectionManager:
     def pick(self, display_x: int, display_y: int, ctrl: bool = False) -> Optional[Dict[str, Any]]:
         """Convert a Qt display coordinate to a VTK world pick and update state.
 
-        When *ctrl* is True the picked entity is added to (or removed from)
-        the multi-entity selection set instead of replacing it.
+        Plain click accumulates (toggle): clicking an unselected face adds
+        it, clicking it again removes it. ``ctrl`` is kept for backward
+        compatibility and behaves identically.
         """
         x = float(display_x)
         y_win = self._renderer.GetSize()[1] - float(display_y)
@@ -77,12 +84,14 @@ class SelectionManager:
         if not picked:
             if not ctrl:
                 self.clear()
+                self.clear_multi()
             return None
 
         actor = self._picker.GetActor()
         if actor is None or self._scene is None:
             if not ctrl:
                 self.clear()
+                self.clear_multi()
             return None
 
         key = self._actor_to_key(actor)
@@ -93,6 +102,10 @@ class SelectionManager:
         # a B-Rep face.
         if key is not None and self._scene._model_actor_key == key:
             cell_id = self._picker.GetCellId()
+            if cell_id is None or int(cell_id) < 0:
+                # No valid triangle hit (e.g. edge/gap between triangles):
+                # keep previous selection instead of silently failing.
+                return self._last_payload
             face_index = self._scene.face_index_for_cell(int(cell_id)) if cell_id is not None else None
             if face_index is not None:
                 meta = self._scene.face_meta(face_index)
@@ -123,10 +136,9 @@ class SelectionManager:
                             index=solid.get("index"),
                         )
 
-        if ctrl:
-            self._toggle_multi(payload)
-        else:
-            self.set_selected(payload)
+        # Plain click accumulates via toggle (P0 requirement); Ctrl keeps
+        # legacy behaviour (identical toggle) for backward compatibility.
+        self._toggle_multi(payload)
         return self._last_payload
 
     # ------------------------------------------------------------------ #
@@ -145,6 +157,7 @@ class SelectionManager:
             # Remove from selection
             self._multi_selection.pop(existing_idx)
             self._rebuild_multi_highlights()
+            self._last_payload = self._multi_selection[-1] if self._multi_selection else None
         else:
             # Add to selection
             self._multi_selection.append(payload)
@@ -152,11 +165,16 @@ class SelectionManager:
                 self._scene.highlight_faces([payload["face_index"]])
             elif payload.get("actor") is not None:
                 self._build_identification(payload["actor"])
-
-        self._last_payload = payload
+            self._last_payload = payload
         if self._on_selection:
-            cleaned = [{k: v for k, v in s.items() if k != "actor"} for s in self._multi_selection]
-            self._on_selection(cleaned if cleaned else None)
+            # Emit the last-picked payload as a dict (MainWindow /
+            # Properties expect ``payload.get(...)``). The full
+            # accumulative set stays available via ``multi_selection``.
+            if self._multi_selection:
+                last = self._multi_selection[-1]
+                self._on_selection({k: v for k, v in last.items() if k != "actor"})
+            else:
+                self._on_selection(None)
 
     @staticmethod
     def _selection_key(payload: Dict[str, Any]) -> str:
@@ -263,6 +281,14 @@ class SelectionManager:
         if self._identification is not None:
             self._renderer.RemoveActor(self._identification)
             self._identification = None
+        # Full clear: single highlight + accumulative multi set.
+        for actor in self._multi_identifications:
+            try:
+                self._renderer.RemoveActor(actor)
+            except Exception:
+                pass
+        self._multi_identifications.clear()
+        self._multi_selection.clear()
         if self._scene is not None:
             self._scene.clear_highlight()
         self._picked_actor = None

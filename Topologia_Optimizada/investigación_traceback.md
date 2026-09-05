@@ -54,3 +54,34 @@ conversión `sy_qt = height - sy_vtk` (Y invertido VTK vs Qt).
 aditivo / sustractivo / no-op sin emisión / callback legacy con set completo /
 fully-contained vs. solape parcial (2 de 3 vértices dentro NO entra) / cache
 de vértices en `Scene` / contrato de API sin GL.
+
+---
+
+# Verificación "¿qué viewport corre en realidad?" — hipótesis del fallback DESCARTADA aquí
+
+Pregunta del prompt: `is_gl_available()` imprime **`True`** en esta máquina
+(medido con `.venv\Scripts\python.exe -c`, 2026-09-05). La ruta VTK
+(`Viewport3D` + todo lo auditado: tolerancia 0.0005, `Set`, rubber-band,
+highlight vectorizado) **sí se ejecuta**; la hipótesis de estar corriendo el
+fallback queda descartada para este entorno.
+
+Puntos confirmados del diagnóstico (correctos, pero no aplicables aquí):
+- `main_workspace.py:57-65` elige `Viewport3D` vs `SoftwareViewport` según
+  `is_gl_available()`, con `try/except` que cae a software si VTK falla.
+- `_SoftwareSelectionManager.pick()` (`software_viewport.py:115-135`):
+  toggle acumulativo siempre, sin reemplazo en click simple, sin distinción
+  Shift/Ctrl, sin `handle_pick`/`handle_rubber_band`, sin highlight
+  vectorizado. Sus síntomas ("no multi-selección" / "desmarcar marca otra")
+  coinciden con ese toggle — pero aquí GL es `True`, así que de persistir
+  síntomas vendrían de la ruta VTK, no del fallback.
+
+Medición auxiliar: la primera llamada al probe tardó >60s (subprocess que
+importa VTK desde cero); el resultado queda cacheado (`_GL_AVAILABLE`).
+
+Acciones propuestas (pendientes de decisión, no implementadas):
+1. Badge/log al arranque con el backend activo (`_use_vtk` hoy no se usa
+   fuera del host): evita esta confusión en máquinas remotas/VM sin GPU.
+2. Si el probe diera `False` en la máquina de uso diario: camino 2 del
+   prompt — portar la máquina de estados (`Set`, reemplazo/toggle/rubber)
+   al fallback o unificar ambos viewports sobre el mismo `SelectionManager`
+   de estado puro, difiriendo solo en picking/render.

@@ -159,20 +159,33 @@ class SelectionManager:
             self._rebuild_multi_highlights()
             self._last_payload = self._multi_selection[-1] if self._multi_selection else None
         else:
-            # Add to selection
+            # Add to selection; the visual highlight must mirror the FULL
+            # accumulative set (highlight_faces clears first, so passing
+            # only the new face would un-highlight the previous ones).
             self._multi_selection.append(payload)
             if payload.get("kind") == "face" and self._scene is not None:
-                self._scene.highlight_faces([payload["face_index"]])
+                self._scene.highlight_faces([
+                    s["face_index"] for s in self._multi_selection
+                    if s.get("kind") == "face"
+                ])
             elif payload.get("actor") is not None:
                 self._build_identification(payload["actor"])
             self._last_payload = payload
         if self._on_selection:
             # Emit the last-picked payload as a dict (MainWindow /
-            # Properties expect ``payload.get(...)``). The full
-            # accumulative set stays available via ``multi_selection``.
+            # Properties expect ``payload.get(...)``) enriched with the
+            # COMPLETE current selection under ``"selection"`` so the
+            # callback alone carries the full state (P0 §4/§6). Extra
+            # keys are ignored by existing consumers.
             if self._multi_selection:
                 last = self._multi_selection[-1]
-                self._on_selection({k: v for k, v in last.items() if k != "actor"})
+                emitted = {k: v for k, v in last.items() if k != "actor"}
+                emitted["selection"] = [
+                    {k: v for k, v in s.items() if k != "actor"}
+                    for s in self._multi_selection
+                ]
+                emitted["selection_count"] = len(self._multi_selection)
+                self._on_selection(emitted)
             else:
                 self._on_selection(None)
 

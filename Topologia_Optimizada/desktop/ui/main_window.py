@@ -12,6 +12,7 @@ The viewport keeps the GPU-accelerated VTK widget with HTML-style overlays
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Dict
 
@@ -60,7 +61,12 @@ class MainWindow(QMainWindow):
             lambda st: self.chip_status.setText(f"☁ {st.value.replace('_', ' ')}")
         )
 
-        self.statusBar().showMessage("Listo. Importe un archivo STEP local (paso 1 de 5).")
+        if not self.host._use_vtk:
+            self.statusBar().showMessage(
+                "Aceleración GPU no disponible: usando renderer por software "
+                "(sin rubber-band, selección reducida).", 8000)
+        else:
+            self.statusBar().showMessage("Listo. Importe un archivo STEP local (paso 1 de 5).")
 
     # ------------------------------------------------------------------ #
     # Menus (Archivo · Editar · Diseño · Herramientas · Ayuda)
@@ -92,6 +98,11 @@ class MainWindow(QMainWindow):
         # Composición física del workspace (sidebar, viewport, timeline, results)
         # delegada a MainWorkspaceBuilder; aquí solo queda la coordinación funcional.
         central = MainWorkspaceBuilder(self).build()
+
+        # Diagnóstico de backend (prompts.md): saber siempre qué viewport corre.
+        logging.getLogger(__name__).info(
+            "Viewport backend: %s",
+            "VTK (GPU)" if self.host._use_vtk else "Software (sin GPU)")
 
         # Viewport: selección (promote cara → sólido padre vía CAD service, Fase 2)
         self.viewport.selectionChanged.connect(self._on_selection)
@@ -215,8 +226,7 @@ class MainWindow(QMainWindow):
         # Contrato (prompts.md nuevo §4.3): len(face_index_map) == n_tri
         # (UN entry por TRIANGULO, no por cara). Rango fuera de limite se
         # recorta y se loguea en vez de corromper el mapeo silenciosamente.
-        import logging as _logging
-        _log = _logging.getLogger(__name__)
+        _log = logging.getLogger(__name__)
         face_index_map = None
         face_ranges = tess.get("face_triangles") or []
         if face_ranges and n_tri:

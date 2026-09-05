@@ -88,6 +88,14 @@ class OverlayBuilder:
         t2.setProperty("badge", True)
         bl.addWidget(t1)
         bl.addWidget(t2)
+        # Pill de backend (prompts.md): visible sin abrir consola, en
+        # cualquier maquina (remoto/VM sin GPU). Amarillo si es fallback.
+        use_vtk = bool(getattr(host, "_use_vtk", False))
+        t3 = QLabel("GPU · VTK" if use_vtk else "Software · sin GPU")
+        t3.setProperty("badge", True)
+        if not use_vtk:
+            t3.setStyleSheet("color: #e0a030;")
+        bl.addWidget(t3)
         host.place("badge", badge)
 
         # View controls (top-right)

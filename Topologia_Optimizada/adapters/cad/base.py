@@ -33,8 +33,8 @@ class BaseCADAdapter(ABC):
     def tessellate(
         self,
         cad_model: CADModel,
-        linear_deflection: float = 0.1,
-        angular_deflection: float = 0.1,
+        linear_deflection: float | None = None,
+        angular_deflection: float | None = None,
     ) -> TessellatedMesh:
         """Generate triangular mesh tessellation for 3D visualization."""
         pass

@@ -1,78 +1,77 @@
-# Auditoría prompts.md (nuevo): pickeo UI vive en tessellation OCCT, no en Gmsh
+# Respuesta al prompt nuevo (auditoría de cierre de picking)
 
-Conclusión estructural: el `polydata` que alimenta a `Viewport3D`/`vtkCellPicker`
-es la triangulación directa de OCCT vía `face.tessellate()` de CadQuery
-(`core/geometry.py::GeometryEngine`), NO la malla de Gmsh. Gmsh solo genera la
-malla volumétrica FEM. Por tanto P1 (Gmsh↔OCCT) no contamina el pickeo; el
-contrato que importa es `TopoDS_Face ↔ triángulos ↔ face_index_map`.
+## 1. `HighlightRenderer`: quedó la versión VECTORIZADA (loop Python eliminado)
 
-## 1. Cómo se genera la tessellation (código real)
+Se confirmó que estaba implementado el loop literal (`for cid in range(n):
+SetTuple3(...)`) y se sustituyó por (`desktop/viewport/highlight.py`):
 
-`core/geometry.py::GeometryEngine.tessellate_shape` (deflection ahora relativa):
+- Colores base precomputados una vez en `base_colors_np` (`(n, 3)` uint8).
+- `update()` = `copy()` + asignación indexada numpy (`rgb[idx] = (255,165,0)`,
+  `rgb[h] = (120,190,255)`) + un único `numpy_to_vtk(..., deep=True)` →
+  `SetScalars` + `Modified()`. O(n) en C por click, sin importar cuántas
+  caras haya en el Set.
+- Robustez añadida: ids fuera de rango se recortan antes de indexar (un
+  `cell_id` rancio no tumba el frame); si el polydata cambia de tamaño se
+  reconstruye la base. Se mantiene `self.colors` (ref viva al array en uso)
+  y `self.base_colors` (dict) por compatibilidad con el resto del código.
+- El slot traduce cara→celdas por rangos (`Scene.selected_cell_ids_for_faces`
+  sobre el cache `face→[cell_ids]`, construido una sola vez en
+  `set_model_geometry`), sin pasar por `face_index_map` completo en cada click.
+- Cubierto por `tests/test_pick_tangent_faces.py::
+  test_highlight_vectorized_update_matches_selection` (naranja/azul/base
+  verificados leyendo el array `Colors` de vuelta).
 
-```python
-linear_deflection = GeometryEngine._relative_deflection(shape, linear_deflection)
-# _relative_deflection: None (default) => diag_bbox * 0.001 (mínimo 1e-4);
-# valor explícito se respeta tal cual.
-```
+## 2. `angularTolerance`: confirmada CONSTANTE por diseño, ahora parametrizada
 
-Antes: `linear_deflection=0.1` fijo global (patrón sospechoso del prompt §4.1:
-misma deflection para fillets/B-splines que para caras grandes planas →
-sub-tesselado + posibles caras con cero triángulos). Ahora: relativo al bbox.
+Estado: sigue en 0.1 rad, pero ya no es un literal enterrado — es
+`core.geometry.DEFAULT_ANGULAR_DEFLECTION` con `None` como default en toda
+la cadena (`GeometryEngine.tessellate_shape` /
+`_tessellate_with_face_mapping` → `StepAdapter.tessellate` →
+`adapters/cad/base.py` → `CADService.tessellate_model`), resuelto por
+`_resolve_angular()`. Comportamiento idéntico al anterior (0.1), un parámetro
+de distancia ahora para estrecharlo.
 
-`face.tessellate()` de CadQuery devuelve vértices en coordenadas globales
-(aplica `loc.Transformation()` internamente), así que el bug §4.2.1
-(transform no aplicado) queda descartado por construcción.
+Razonamiento: la tolerancia angular es un ángulo (radianes), invariante de
+escala — no tiene sentido hacerla relativa al tamaño. El que cubre caras
+pequeñas/fillets finos es el `linear_deflection` relativo (`diag*0.001`),
+porque el criterio de chord height domina cuando la deflection lineal es
+pequeña. Si la tangencia en fillets persiste tras el fix de tolerancia del
+picker (0.0005), el próximo sospechoso es este: estrechar a 0.05.
 
-## 2. Cómo se construye `face_index_map` (código real)
+## 3. Vértices no compartidos entre caras: confirmado, sin cambio de código
 
-`core/geometry.py::GeometryEngine._tessellate_with_face_mapping`:
+Verificado en la tessellation real (caja 10³ con fillet r=1.5, 524 tris):
+las caras planas quedan en 2 triángulos enormes y los fillets finos (64–130
+tris), con vértices duplicados por cara (misma coordenada, distinto índice).
+Es el diseño correcto para `CellData` por cara sin ambigüedad de picking.
+Efecto conocido documentado: posibles líneas de z-fighting/grietas sutiles
+en aristas compartidas con AA — cosmético, no bug; no se fusiona malla
+deliberadamente.
 
-```python
-for idx, face in enumerate(faces):
-    try:
-        pts, tris = face.tessellate(tolerance=linear_deflection,
-                                    angularTolerance=angular_deflection)
-    except Exception as ex:
-        logger.warning("Face %d produced no triangulation (exception: %s)", idx, ex)
-        continue
-    if not pts or not tris:
-        logger.warning("Face %d produced no triangulation (%s pts, %s tris) ...", ...)
-        continue
-    base = vertex_offset
-    for p in pts:
-        vertices.extend([float(p.x), float(p.y), float(p.z)])
-    for tri in tris:
-        indices.extend([int(tri[0]) + base, int(tri[1]) + base, int(tri[2]) + base])
-    face_triangles.append({"face_index": idx, "start": triangle_offset,
-                           "count": len(tris)})
-    vertex_offset += len(pts)
-    triangle_offset += len(tris)
-```
+## 4. Test de regresión con geometría real: añadido
 
-- Una entrada por TRIÁNGULO vía rangos `start/count` (no por cara) → el bug
-  §4.2.2 (indexado por cara) queda descartado: `face_index_map[cell_id]` es
-  correcto para todo `CellId`.
-- El `continue` con `WARNING` explícito (antes `debug` silencioso) + offsets
-  solo avanzados tras éxito → el bug §4.2.3 (desalineo de caras posteriores)
-  queda descartado/documentado.
-- `desktop/ui/main_window.py::_show_tessellation` reconstruye el mapa
-  per-triángulo desde los rangos, recorta rangos fuera de límite con warning,
-  y verifica `assert len(face_index_map) == n_tri`.
+`tests/test_pick_tangent_faces.py` (3 tests, todos en verde):
 
-Verificación rápida (§4.3): `face_triangles` cubre todos los triángulos
-(`tests/test_advanced_geometric_selection.py::test_tessellation_face_mapping_ranges_cover_all_triangles`).
+- `test_pick_disambiguates_tangent_faces`: caja con fillet tangente
+  (`edges("|Z").fillet(1.5)`), tessellation con face mapping; detecta la
+  arista compartida plano↔fillet por proximidad de vértices, muestrea puntos
+  DENTRO del triángulo plano pegados a la tangencia y hace ray-pick por CPU
+  (Möller–Trumbore double-sided, equivalente al `vtkCellPicker` con
+  `BackfaceCullingOff`). Assert: resuelve la cara plana, nunca el fillet.
+  Falla exactamente con los dos bugs históricos (mapa por cara o picker
+  tolerante que devuelve la vecina).
+- `test_pick_spot_check_all_faces`: rayos sobre todas las caras resuelven su
+  propia cara (cobertura global del mapeo).
+- `test_highlight_vectorized_update_matches_selection`: ver §1.
 
-## 3. Fixes aplicados del prompt nuevo
+Hallazgo al escribirlo: con tessellation por cara, los centroides de los
+triángulos planos quedan a >2.3u de la arista (triángulos enormes), así que
+muestrear centroides NO ejerce la tangencia — hay que muestrear junto a la
+arista compartida. Dicho de otro modo: el caso reportado ("selecciona la
+tangente") vive precisamente en esa franja que los centroides no tocan.
 
-1. **Multi-selección (§1.1)**: `_qt_additive()` = OR de Qt
-   (`QApplication.keyboardModifiers()`) y VTK (`interactor.GetShiftKey()` /
-   `GetControlKey()`); el foco cautivo del QVTK interactor ya no puede forzar
-   `additive=False`. Highlight recibe el Set completo
-   (`selected_cell_ids_for_faces` sobre todas las caras, no solo la última).
-2. **Tangentes (§2)**: `PICK_TOLERANCE` 0.025 → 0.0005.
-3. **Caras no seleccionables (§3)**: `BackfaceCullingOff()` +
-   `FrontfaceCullingOff()` en `Renderer.make_triangle_actor`; resto atribuido
-   a tessellation (ver §1/§2 arriba), no a Gmsh.
-4. **Deflection relativa (§4.1)**: default `None` → `diag*0.001` en
-   `GeometryEngine` y `StepAdapter.tessellate`.
+## Pendiente sugerido
+
+Rubber-band select (máquina de estados original, punto 4): el release
+handler ya distingue click/drag (umbral 4px) y deriva a rubber-band, pero no
+hay implementación de selección por rectángulo. Siguiente paso si se pide.

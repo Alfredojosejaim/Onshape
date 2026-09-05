@@ -14,6 +14,13 @@ from core.models import BoundingBox3D, CADFace, TessellatedMesh
 
 logger = logging.getLogger(__name__)
 
+#: Tolerancia angular default (radianes) para tessellation. Es un ANGULO, por
+#: tanto invariante de escala: se mantiene constante por diseno (prompt nuevo
+#: §2). El que cubre caras pequenas/fillets es el linear_deflection relativo
+#: (diag_bbox * 0.001). Si la tangencia en fillets persiste tras el fix de
+#: tolerancia del picker, este es el proximo sospechoso: estrechar a 0.05.
+DEFAULT_ANGULAR_DEFLECTION = 0.1
+
 
 def _robust_face_reference_point(face: cq.Face) -> Tuple[Optional[cq.Vector], Optional[cq.Vector]]:
     """Return a reference point on the face and an outward-ish normal.
@@ -165,10 +172,15 @@ class GeometryEngine:
         return 0.1
 
     @staticmethod
+    def _resolve_angular(angular_deflection: Optional[float]) -> float:
+        """None -> DEFAULT_ANGULAR_DEFLECTION; valor explicito se respeta."""
+        return DEFAULT_ANGULAR_DEFLECTION if angular_deflection is None else float(angular_deflection)
+
+    @staticmethod
     def tessellate_shape(
         shape: cq.Shape,
         linear_deflection: Optional[float] = None,
-        angular_deflection: float = 0.1,
+        angular_deflection: Optional[float] = None,
         face_mapping: bool = False,
     ) -> TessellatedMesh:
         """Tessellate 3D B-Rep shape into triangular mesh for 3D visualization.
@@ -185,6 +197,7 @@ class GeometryEngine:
         anterior para callers que lo fijan (p. ej. tests de regresion).
         """
         linear_deflection = GeometryEngine._relative_deflection(shape, linear_deflection)
+        angular_deflection = GeometryEngine._resolve_angular(angular_deflection)
         if face_mapping:
             return GeometryEngine._tessellate_with_face_mapping(
                 shape, linear_deflection, angular_deflection
@@ -230,7 +243,7 @@ class GeometryEngine:
     def _tessellate_with_face_mapping(
         shape: cq.Shape,
         linear_deflection: Optional[float],
-        angular_deflection: float,
+        angular_deflection: Optional[float],
     ) -> TessellatedMesh:
         """Accumulate per-face tessellations so triangles map exactly to faces.
 
@@ -244,6 +257,7 @@ class GeometryEngine:
         caras siguientes.
         """
         linear_deflection = GeometryEngine._relative_deflection(shape, linear_deflection)
+        angular_deflection = GeometryEngine._resolve_angular(angular_deflection)
         faces = shape.Faces()
         vertices: List[float] = []
         indices: List[int] = []

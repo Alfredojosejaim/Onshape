@@ -187,7 +187,7 @@ class StepAdapter(BaseCADAdapter):
         self,
         cad_model: CADModel,
         linear_deflection: float | None = None,
-        angular_deflection: float = 0.1,
+        angular_deflection: float | None = None,
         face_mapping: bool = False,
     ) -> TessellatedMesh:
         """Generate/refresh triangulated mesh tessellation for the given model.

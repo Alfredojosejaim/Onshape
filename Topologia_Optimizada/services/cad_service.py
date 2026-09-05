@@ -100,8 +100,8 @@ class CADService:
     def tessellate_model(
         self,
         model_id: str,
-        linear_deflection: float = 0.1,
-        angular_deflection: float = 0.1,
+        linear_deflection: float | None = None,
+        angular_deflection: float | None = None,
         face_mapping: bool = False,
     ) -> Dict[str, Any]:
         """Generate triangular tessellation for 3D visualization.

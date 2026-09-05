@@ -1,7 +1,6 @@
+Buena noticia: confirmé el comportamiento real de Onshape y la implementación actual ya es la más parecida — no hace falta tocar nada de oclusión.
+Según la documentación de Onshape, la herramienta de Window Select permite seleccionar todas las entidades encerradas por la ventana de selección o todas las que cruzan el bounding box de la ventana, incluyendo las que están ocultas detrás de la geometría visible. Es decir: Onshape selecciona a través de geometría oculta cuando cae dentro del rectángulo — exactamente lo que hace faces_fully_in_rect ahora mismo, sin chequeo de profundidad.  (Onshape)
+Así que el punto 2 de mi auditoría anterior queda descartado — no es un bug, es el comportamiento correcto tal cual está. No toques la lógica de proyección/contención.
 Lo único que queda pendiente es el punto 1 (real): cambiar el except Exception: pass de _finish_rubber_band() por logging explícito, mismo criterio que ya aplicaron en la tessellation:
-
-Python:
-except Exception:
-    logger.exception("rubber-band selection failed")
-
+Python
 Con eso, el bloque de picking + multi-selección + rubber-band queda cerrado por completo, alineado con el comportamiento real de Onshape en los tres frentes: click/shift/ctrl puntual, precisión de tangentes, y selección por rectángulo con oclusión pasante.

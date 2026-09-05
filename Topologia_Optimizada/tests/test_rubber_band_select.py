@@ -69,32 +69,27 @@ def _faces(m):
 # handle_rubber_band: semantica Onshape completa
 # --------------------------------------------------------------------------- #
 
-def test_rubber_plain_replaces():
+def test_rubber_plain_is_additive_union():
+    # Onshape real: drag simple = UNION (igual que el click puntual).
     m = _manager()
-    m.handle_rubber_band({0, 1}, additive=False, subtractive=False)
+    m.handle_rubber_band({0, 1})
     assert _faces(m) == [0, 1]
-    m.handle_rubber_band({2}, additive=False, subtractive=False)
-    assert _faces(m) == [2]
-    assert m._scene.highlighted == [2]
+    m.handle_rubber_band({2})
+    assert _faces(m) == [0, 1, 2]
+    assert m._scene.highlighted == [0, 1, 2]
 
 
-def test_rubber_plain_empty_clears():
+def test_rubber_empty_is_noop_not_clear():
+    # Rectangulo vacio = union con vacio = sin cambio (limpiar es click
+    # en vacio via handle_pick(None), no rubber).
     m = _manager()
     emitted = []
     m.set_selection_callback(emitted.append)
     m.handle_rubber_band({0, 1})
+    n_emit = len(emitted)
     m.handle_rubber_band(set())
-    assert m.selected == frozenset()
-    assert m.multi_selection == []
-    assert emitted[-1] is None
-
-
-def test_rubber_shift_adds():
-    m = _manager()
-    m.handle_rubber_band({0})
-    m.handle_rubber_band({1, 2}, additive=True)
-    assert _faces(m) == [0, 1, 2]
-    assert m._scene.highlighted == [0, 1, 2]
+    assert _faces(m) == [0, 1]
+    assert len(emitted) == n_emit
 
 
 def test_rubber_ctrl_subtracts():
@@ -119,6 +114,24 @@ def test_rubber_noop_does_not_emit():
     assert _faces(m) == [0]
     assert len(emitted) == n_emit
     assert len(changed) == 1
+
+
+def test_handle_pick_is_pure_toggle_no_modifier():
+    # Onshape real (docs): click plano YA es aditivo; click de nuevo quita;
+    # vacio limpia. Sin ramas de modificador.
+    from core.cad_entity import CadEntityRef
+    m = _manager()
+    e0 = CadEntityRef.from_face(0, model_id="m")
+    e1 = CadEntityRef.from_face(1, model_id="m")
+    m.handle_pick(e0)          # selecciona
+    assert _faces(m) == [0]
+    m.handle_pick(e1)          # acumula SIN reemplazar
+    assert _faces(m) == [0, 1]
+    m.handle_pick(e0)          # toggle OFF
+    assert _faces(m) == [1]
+    m.handle_pick(None)        # vacio limpia
+    assert m.selected == frozenset()
+    assert m.multi_selection == []
 
 
 def test_rubber_legacy_callback_carries_full_set():

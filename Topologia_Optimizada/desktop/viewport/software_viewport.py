@@ -115,16 +115,16 @@ class _SoftwareSelectionManager:
     def pick(self, x: int, y: int, ctrl: bool = False) -> None:
         """Selecciona la cara en las coordenadas de pantalla (x, y).
 
-        Clic normal acumula (toggle), igual que SelectionManager VTK.
+        Onshape real: click SIEMPRE hace toggle (plano = aditivo, sin
+        modificador); clic en vacio limpia todo.
         """
         if self._scene is None:
             return
         face = self._scene.pick_face(x, y)
         if face is None:
-            if not ctrl:
-                self.clear()
+            self.clear()
             return
-        # Toggle acumulativo tanto con clic normal como con Ctrl.
+        # Toggle puro, con o sin modificador.
         if face in self._selected_faces:
             self._selected_faces.remove(face)
         else:

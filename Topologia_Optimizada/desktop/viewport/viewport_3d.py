@@ -471,10 +471,10 @@ class Viewport3D(QWidget):
             x0, y0 = self._vtk_to_qt(self._press_x, self._press_y)
             x1, y1 = self._vtk_to_qt(x, y)
             rect = QRect(QPoint(int(x0), int(y0)), QPoint(int(x1), int(y1))).normalized()
-            additive, subtractive = self._drag_modifiers()
+            _additive, subtractive = self._drag_modifiers()
             contained = self._faces_in_rect(rect)
-            self.selection.handle_rubber_band(
-                contained, additive=additive, subtractive=subtractive)
+            # Onshape: drag simple = union aditiva; solo Ctrl+drag resta.
+            self.selection.handle_rubber_band(contained, subtractive=subtractive)
         except Exception:
             logger.exception("rubber-band selection failed")
         self._mode = "idle"

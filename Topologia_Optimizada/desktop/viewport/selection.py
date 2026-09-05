@@ -62,46 +62,43 @@ class SelectionManager(QObject):
     def selected(self) -> frozenset:
         return frozenset(self._selected)
 
-    def handle_pick(self, entity: Optional[CadEntityRef], additive: bool) -> None:
-        """Actualiza el Set segun semantica Onshape y emite selectionChanged.
+    def handle_pick(self, entity: Optional[CadEntityRef], additive: bool = True) -> None:
+        """Onshape real (docs oficiales): click SIEMPRE hace toggle, sin
+        necesitar Shift/Ctrl. 'Click to select, click again to deselect...
+        additively select and deselect (the same behavior you would expect
+        from Ctrl+click)' -- el click plano YA es aditivo.
 
-        - entity None + no additive: limpia.
-        - click vacio con additive (Shift): no hace nada.
-        - additive: toggle ON/OFF.
-        - no additive: reemplaza (no-op si ya es exactamente {entity}).
+        - entity None (vacio): limpia todo.
+        - entity en selected: toggle OFF.
+        - entity nueva: toggle ON (anade, no reemplaza).
+
+        ``additive`` se conserva por compatibilidad pero se ignora.
         """
         if entity is None:
-            if not additive:
-                if self._selected:
-                    self._selected.clear()
-                    self._sync_legacy_after_set_change()
-                    self.selectionChanged.emit(self.selected)
-                    self._emit_legacy()
-                else:
-                    self._emit_legacy()
-            return  # click vacio con Shift no hace nada (Onshape)
-
-        if additive:
-            if entity in self._selected:
-                self._selected.remove(entity)
+            if self._selected:
+                self._selected.clear()
+                self._sync_legacy_after_set_change()
+                self.selectionChanged.emit(self.selected)
+                self._emit_legacy()
             else:
-                self._selected.add(entity)
+                self._emit_legacy()
+            return
+
+        if entity in self._selected:
+            self._selected.remove(entity)
         else:
-            if self._selected == {entity}:
-                return  # no-op, evita reflow innecesario
-            self._selected = {entity}
+            self._selected.add(entity)
 
         self._sync_legacy_after_set_change(entity)
         self.selectionChanged.emit(self.selected)
         self._emit_legacy()
 
-    def handle_rubber_band(self, face_indices, additive: bool = False,
-                           subtractive: bool = False) -> None:
+    def handle_rubber_band(self, face_indices, subtractive: bool = False) -> None:
         """Aplica seleccion por rectangulo estilo Onshape (rubber-band).
 
-        - subtractive (Ctrl+drag): resta del set existente.
-        - additive (Shift+drag): une al set existente.
-        - simple: reemplaza (incluso con set vacio: limpiar al soltar).
+        - simple: UNION aditiva (igual que el click puntual).
+        - subtractive (Ctrl+drag): resta del set (docs: Ctrl+arrastre para
+          deseleccionar).
         Solo emite si el set cambio (evita reflow en drags sin efecto).
         """
         faces = {int(f) for f in (face_indices or set())}
@@ -113,10 +110,8 @@ class SelectionManager(QObject):
         before = set(self._selected)
         if subtractive:
             self._selected -= entities
-        elif additive:
-            self._selected |= entities
         else:
-            self._selected = set(entities)
+            self._selected |= entities
         if self._selected == before:
             return  # no-op: drag sin efecto no reemite ni re-renderiza
         self._sync_legacy_after_set_change()

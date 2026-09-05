@@ -207,6 +207,14 @@ class Renderer:
         prop.EdgeVisibilityOn() if edge_visibility else prop.EdgeVisibilityOff()
         prop.SetEdgeColor(edge_color[0], edge_color[1], edge_color[2])
         prop.SetLineWidth(1.0)
+        # prompts.md (nuevo §3): normales invertidas de la triangulacion
+        # OCCT/Gmsh dejan caras "de espaldas" al picker si el culling esta
+        # activo. Descarte rapido -> culling siempre OFF en el modelo.
+        try:
+            prop.BackfaceCullingOff()
+            prop.FrontfaceCullingOff()
+        except Exception:
+            pass
         return actor
 
     def _build_polydata(

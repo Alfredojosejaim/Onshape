@@ -53,8 +53,10 @@ def _payload(face):
 
 
 def test_pick_tolerance_not_ultrastrict():
+    # prompts.md (nuevo §2): tolerancia 0.0005 para desambiguar caras
+    # tangentes/fillets cerca de aristas compartidas.
     from desktop.viewport import selection as selmod
-    assert selmod.PICK_TOLERANCE >= 0.01
+    assert selmod.PICK_TOLERANCE <= 0.001
 
 
 def test_click_normal_accumulates_multiple_faces():

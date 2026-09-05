@@ -186,7 +186,7 @@ class StepAdapter(BaseCADAdapter):
     def tessellate(
         self,
         cad_model: CADModel,
-        linear_deflection: float = 0.1,
+        linear_deflection: float | None = None,
         angular_deflection: float = 0.1,
         face_mapping: bool = False,
     ) -> TessellatedMesh:

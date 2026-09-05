@@ -108,6 +108,8 @@ class Viewport3D(QWidget):
         super().__init__(parent)
         self._last_x = 0.0
         self._last_y = 0.0
+        self._press_x = 0.0
+        self._press_y = 0.0
         self._mode = "idle"  # idle | orbit | pan | zoom
         self._click_start = True
 
@@ -264,10 +266,43 @@ class Viewport3D(QWidget):
         else:
             self._mode = "idle"
 
+    def _is_drag(self, x0: float, y0: float, x1: float, y1: float,
+                 threshold_px: float = 4.0) -> bool:
+        dx = float(x1) - float(x0)
+        dy = float(y1) - float(y0)
+        return (dx * dx + dy * dy) ** 0.5 > float(threshold_px)
+
+    def _qt_additive(self) -> bool:
+        """Detecta modificador aditivo (Shift/Ctrl) combinando Qt Y VTK.
+
+        prompts.md (nuevo §1.1): QVTKRenderWindowInteractor captura el teclado
+        a nivel VTK y QApplication.keyboardModifiers() puede devolver
+        NoModifier porque el foco lo tiene el interactor, no el widget Qt.
+        La alternativa confiable es OR de ambas fuentes.
+        """
+        qt_add = False
+        try:
+            from PySide6.QtWidgets import QApplication
+            from PySide6.QtCore import Qt as _Qt
+            mods = QApplication.keyboardModifiers()
+            qt_add = bool(mods & (_Qt.ShiftModifier | _Qt.ControlModifier))
+        except Exception:
+            qt_add = False
+        try:
+            vtk_add = bool(self._interactor.GetShiftKey()) or bool(
+                self._interactor.GetControlKey())
+        except Exception:
+            try:
+                vtk_add = bool(self._ctrl_held() or self._shift_held())
+            except Exception:
+                vtk_add = False
+        return bool(qt_add or vtk_add)
+
     def _on_left_press(self, obj, ev) -> None:
         event = self._make_input_event(mouse_button=MouseButton.LEFT)
         self._resolve_and_execute(event)
         self._last_x, self._last_y = self._xy()
+        self._press_x, self._press_y = self._last_x, self._last_y
 
     def _on_middle_press(self, obj, ev) -> None:
         event = self._make_input_event(mouse_button=MouseButton.MIDDLE)
@@ -278,10 +313,60 @@ class Viewport3D(QWidget):
         self._mode = "idle"
 
     def _on_left_release(self, obj, ev) -> None:
-        if self._click_start:
+        # Distincion click/drag: si hubo arrastre, lo maneja rubber-band,
+        # no es un pick (prompts.md §2).
+        try:
             x, y = self._xy()
-            self.selection.pick(int(x), int(y), ctrl=self._ctrl_held())
+            px = getattr(self, "_press_x", self._last_x)
+            py = getattr(self, "_press_y", self._last_y)
+            if self._is_drag(px, py, x, y, threshold_px=4):
+                self._mode = "idle"
+                return
+            if not self._click_start:
+                self._mode = "idle"
+                return
+        except Exception:
+            pass
+        if self._click_start:
+            try:
+                self._do_pick_release()
+            except Exception:
+                # Fallback legacy si algo falla en el pipeline nuevo.
+                try:
+                    x, y = self._xy()
+                    self.selection.pick(int(x), int(y), ctrl=self._ctrl_held())
+                except Exception:
+                    pass
         self._mode = "idle"
+
+    def _do_pick_release(self) -> None:
+        """Pipeline prompts.md §2: picker -> CellId -> face -> entity -> handle_pick."""
+        from PySide6.QtWidgets import QApplication  # noqa: F401 (asegura contexto Qt)
+        click_pos = self._interactor.GetEventPosition()
+        self.selection._picker.Pick(
+            click_pos[0], click_pos[1], 0, self.renderer.vtk_renderer)
+        cell_id = int(self.selection._picker.GetCellId())
+        additive = self._qt_additive()
+        if cell_id == -1:
+            entity = None
+        else:
+            face_id = self.scene.face_index_for_cell(cell_id)
+            if face_id is None:
+                # Hit en hueco/arista sin cara: conserva seleccion previa.
+                return
+            from core.cad_entity import CadEntityRef
+            try:
+                meta = self.scene.face_meta(int(face_id))
+            except Exception:
+                meta = None
+            entity = CadEntityRef.from_face(
+                face_index=int(face_id),
+                model_id=getattr(self.scene, "_model_actor_key", None),
+                center=(meta.get("center") if meta else None),
+                normal=(meta.get("normal") if meta else None),
+                area=(meta.get("area") if meta else None),
+            )
+        self.selection.handle_pick(entity, additive=additive)
 
     def _on_move(self, obj, ev) -> None:
         if self._mode == "idle":

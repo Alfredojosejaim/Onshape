@@ -212,14 +212,28 @@ class MainWindow(QMainWindow):
         n_tri = len(indices) // 3
         triangles = indices.reshape(n_tri, 3) if n_tri else np.empty((0, 3), dtype=int)
         # Per-triangle B-Rep face index derived from the face_triangles ranges.
+        # Contrato (prompts.md nuevo §4.3): len(face_index_map) == n_tri
+        # (UN entry por TRIANGULO, no por cara). Rango fuera de limite se
+        # recorta y se loguea en vez de corromper el mapeo silenciosamente.
+        import logging as _logging
+        _log = _logging.getLogger(__name__)
         face_index_map = None
         face_ranges = tess.get("face_triangles") or []
         if face_ranges and n_tri:
             face_index_map = np.full(n_tri, -1, dtype=np.int64)
             for rng in face_ranges:
                 start, count = int(rng.get("start", 0)), int(rng.get("count", 0))
-                if 0 <= start < n_tri:
-                    face_index_map[start:start + count] = int(rng.get("face_index", -1))
+                if not (0 <= start < n_tri):
+                    _log.warning("face_triangles range fuera de limite: %r (n_tri=%d)", rng, n_tri)
+                    continue
+                end = min(start + max(count, 0), n_tri)
+                face_index_map[start:end] = int(rng.get("face_index", -1))
+            assert len(face_index_map) == n_tri, "BUG: face_index_map no indexado por triangulo"
+            n_mapped = int((face_index_map >= 0).sum())
+            if n_mapped != n_tri:
+                _log.warning(
+                    "face_index_map: %d/%d triangulos sin cara asignada (-1); "
+                    "esas zonas no seran seleccionables", n_tri - n_mapped, n_tri)
         self._attach_bounds(bbox)
         self.viewport.load_model(vertices, triangles, bbox,
                                  face_index_map=face_index_map,

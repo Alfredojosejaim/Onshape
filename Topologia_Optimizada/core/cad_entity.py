@@ -39,7 +39,7 @@ class SelectionMode(str, Enum):
     MULTI = "multi"
 
 
-@dataclass
+@dataclass(eq=False)
 class CadEntityRef:
     """Stable reference to a CAD entity.
 
@@ -119,6 +119,24 @@ class CadEntityRef:
             solid_id=solid_id,
             metadata=meta,
         )
+
+    def _identity(self):
+        return (
+            self.entity_type.value if isinstance(self.entity_type, EntityType) else str(self.entity_type),
+            self.model_id,
+            self.solid_id,
+            self.face_index,
+            self.edge_index,
+            self.vertex_index,
+        )
+
+    def __eq__(self, other: Any) -> bool:
+        if not isinstance(other, CadEntityRef):
+            return NotImplemented
+        return self._identity() == other._identity()
+
+    def __hash__(self) -> int:
+        return hash(self._identity())
 
     def __repr__(self) -> str:
         return f"CadEntityRef({self.entity_type.value}: {self.display_name})"

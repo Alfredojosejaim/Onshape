@@ -76,6 +76,9 @@ class Scene:
         self._faces_meta: Dict[int, Dict[str, Any]] = {}
         self._model_actor_key: Optional[str] = None
         self._highlight_actor_key: Optional[str] = None
+        # Cache inverso cara -> lista de cell_ids (prompts.md §4.5: una sola vez)
+        self._face_to_cells: Dict[int, List[int]] = {}
+        self._cell_highlight = None  # HighlightRenderer sobre el polydata modelo
 
     # ------------------------------------------------------------------ #
     # Events
@@ -202,11 +205,15 @@ class Scene:
         self._build_faces_meta(faces_meta)
 
         cell_data = None
+        self._face_to_cells = {}
+        self._cell_highlight = None
         if face_index_map is not None:
             face_index_map = np.asarray(face_index_map, dtype=np.int64)
             if face_index_map.shape[0] == triangles.shape[0]:
                 self._tri_face_index = face_index_map
                 cell_data = {"face_index": face_index_map}
+                for cid, fi in enumerate(face_index_map.tolist()):
+                    self._face_to_cells.setdefault(int(fi), []).append(int(cid))
 
         from desktop.ui.style import PALETTE, hex_to_rgb_float
 
@@ -249,8 +256,58 @@ class Scene:
     def face_meta(self, face_index: int) -> Optional[Dict[str, Any]]:
         return self._faces_meta.get(int(face_index))
 
+    def cells_for_face(self, face_index: int) -> List[int]:
+        """Mapeo inverso cacheado cara -> lista de cell_ids (prompts.md §3)."""
+        if not self._face_to_cells and self._tri_face_index is not None:
+            for cid, fi in enumerate(self._tri_face_index.tolist()):
+                self._face_to_cells.setdefault(int(fi), []).append(int(cid))
+        return list(self._face_to_cells.get(int(face_index), []))
+
+    def selected_cell_ids_for_faces(self, face_indices) -> set:
+        out: set = set()
+        for f in (face_indices or []):
+            out.update(self.cells_for_face(int(f)))
+        return out
+
+    def _update_cell_highlight(self, face_indices) -> None:
+        """Resaltado multi-cara por celda via CellData scalars (prompts.md §3).
+
+        No usa actor.GetProperty().SetColor (global al actor, solo una cara).
+        """
+        try:
+            actor = self._actors.get(self._model_actor_key) if self._model_actor_key else None
+            if actor is None:
+                return
+            mapper = actor.GetMapper()
+            poly = mapper.GetInput() if mapper is not None else None
+            if poly is None or poly.GetNumberOfCells() == 0:
+                return
+            if self._cell_highlight is None or self._cell_highlight.polydata is not poly:
+                from desktop.viewport.highlight import HighlightRenderer
+                self._cell_highlight = HighlightRenderer(poly)
+                try:
+                    mapper.SetScalarModeToUseCellData()
+                    mapper.ScalarVisibilityOn()
+                except Exception:
+                    pass
+            selected = self.selected_cell_ids_for_faces(face_indices)
+            self._cell_highlight.update(selected)
+            try:
+                mapper.ScalarVisibilityOn()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _clear_cell_highlight(self) -> None:
+        try:
+            if self._cell_highlight is not None:
+                self._cell_highlight.update(set())
+        except Exception:
+            pass
+
     def highlight_faces(self, face_indices: list) -> None:
-        """Draw a translucent gold overlay on the given B-Rep face triangles.
+        """Resaltado multi-cara: CellData por celda (primario) + overlay.
 
         The overlay reuses the model triangles, so it is exactly coplanar with
         the shaded mesh. Without a small offset it z-fights the opaque mesh,
@@ -259,7 +316,12 @@ class Scene:
         overlay vertices slightly outward (+normal) to lift it off the surface.
         """
         self.clear_highlight()
+        self._update_cell_highlight(face_indices or [])
         if not face_indices or self._tri_face_index is None:
+            try:
+                self._renderer.render()
+            except Exception:
+                pass
             return
         wanted = set(int(f) for f in face_indices)
         mask = np.isin(self._tri_face_index, np.array(sorted(wanted), dtype=np.int64))
@@ -323,10 +385,14 @@ class Scene:
         return overlay_verts, tris
 
     def clear_highlight(self) -> None:
+        self._clear_cell_highlight()
         if self._highlight_actor_key is not None:
             self.remove_object(self._highlight_actor_key)
             self._highlight_actor_key = None
-            self._renderer.render()
+            try:
+                self._renderer.render()
+            except Exception:
+                pass
 
     def clear(self) -> None:
         keys = list(self._actors.keys())
@@ -339,6 +405,8 @@ class Scene:
         self._faces_meta = {}
         self._model_actor_key = None
         self._highlight_actor_key = None
+        self._face_to_cells = {}
+        self._cell_highlight = None
 
     def set_mesh(self, nodes: np.ndarray, elements: np.ndarray, color=(0.6, 0.65, 0.75)) -> None:
         """Render the volumetric FE mesh as an outlined surface."""

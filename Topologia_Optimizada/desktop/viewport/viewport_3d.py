@@ -42,6 +42,48 @@ from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QRubberBand
 from PySide6.QtCore import Qt, Signal, QRect, QPoint
 
 
+#: Sentinel de resolve_pick_entity: el rayo golpeo al modelo pero en un
+#: hueco/arista sin cara atribuible -> conservar la seleccion previa
+#: (no limpiar, no reemplazar).
+KEEP_SELECTION = object()
+
+
+def resolve_pick_entity(picked_actor, cell_id, scene):
+    """Traduce (actor, cell_id) del vtkCellPicker a entidad o accion.
+
+    - Actor None / cell -1 / actor no-modelo (grid, ejes, overlays, malla):
+      ``None`` -> tratar como vacio (limpia salvo aditivo).
+    - Actor modelo + cara valida: ``CadEntityRef`` de la cara.
+    - Actor modelo + celda sin cara (hueco, face -1): ``KEEP_SELECTION``.
+
+    prompts.md (actor-pick): sin esta validacion, un click sobre el grid
+    devolvia un cell_id de ESA malla que face_index_for_cell indexaba
+    ciegamente como triangulo del modelo -> cara arbitraria ("desmarca una
+    pero marca otra").
+    """
+    if picked_actor is None or int(cell_id) < 0:
+        return None
+    model_key = getattr(scene, "_model_actor_key", None)
+    hit_key = scene.actor_key_for(picked_actor)
+    if hit_key != model_key:
+        return None
+    face_id = scene.face_index_for_cell(int(cell_id))
+    if face_id is None:
+        return KEEP_SELECTION
+    from core.cad_entity import CadEntityRef
+    try:
+        meta = scene.face_meta(int(face_id))
+    except Exception:
+        meta = None
+    return CadEntityRef.from_face(
+        face_index=int(face_id),
+        model_id=model_key,
+        center=(meta.get("center") if meta else None),
+        normal=(meta.get("normal") if meta else None),
+        area=(meta.get("area") if meta else None),
+    )
+
+
 def faces_fully_in_rect(face_vertex_cache, vertices, rect, project_fn) -> set[int]:
     """Caras FULLY-contained estilo Onshape: entra solo si TODOS sus
     vertices proyectados caen dentro del rect (no interseccion de bbox:
@@ -471,32 +513,19 @@ class Viewport3D(QWidget):
         self._mode = "idle"
 
     def _do_pick_release(self) -> None:
-        """Pipeline prompts.md §2: picker -> CellId -> face -> entity -> handle_pick."""
+        """Pipeline prompts.md §2 + actor-pick: picker -> (actor, CellId) ->
+        validacion de actor -> face -> entity -> handle_pick."""
         from PySide6.QtWidgets import QApplication  # noqa: F401 (asegura contexto Qt)
         click_pos = self._interactor.GetEventPosition()
         self.selection._picker.Pick(
             click_pos[0], click_pos[1], 0, self.renderer.vtk_renderer)
+        picked_actor = self.selection._picker.GetActor()
         cell_id = int(self.selection._picker.GetCellId())
         additive = self._qt_additive()
-        if cell_id == -1:
-            entity = None
-        else:
-            face_id = self.scene.face_index_for_cell(cell_id)
-            if face_id is None:
-                # Hit en hueco/arista sin cara: conserva seleccion previa.
-                return
-            from core.cad_entity import CadEntityRef
-            try:
-                meta = self.scene.face_meta(int(face_id))
-            except Exception:
-                meta = None
-            entity = CadEntityRef.from_face(
-                face_index=int(face_id),
-                model_id=getattr(self.scene, "_model_actor_key", None),
-                center=(meta.get("center") if meta else None),
-                normal=(meta.get("normal") if meta else None),
-                area=(meta.get("area") if meta else None),
-            )
+        entity = resolve_pick_entity(picked_actor, cell_id, self.scene)
+        if entity is KEEP_SELECTION:
+            # Hit en hueco/arista del modelo sin cara: conserva seleccion.
+            return
         self.selection.handle_pick(entity, additive=additive)
 
     def _on_move(self, obj, ev) -> None:

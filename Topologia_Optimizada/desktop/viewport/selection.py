@@ -503,6 +503,10 @@ class SelectionManager(QObject):
         mapper.SetInputConnection(box.GetOutputPort())
         outline = vtkActor()
         outline.SetMapper(mapper)
+        try:
+            outline.SetPickable(False)  # prompts.md actor-pick: el cubo de
+        except Exception:               # identificacion no intercepta picks
+            pass
         colors = vtkNamedColors()
         outline.GetProperty().SetColor(colors.GetColor3d("Gold"))
         outline.GetProperty().SetEdgeVisibility(True)

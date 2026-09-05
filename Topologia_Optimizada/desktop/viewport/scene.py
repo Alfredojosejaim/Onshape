@@ -182,6 +182,19 @@ class Scene:
     def get_actor(self, key: str):
         return self._actors.get(key)
 
+    def actor_key_for(self, actor) -> Optional[str]:
+        """Mapea un actor pickeado a su key de escena (None si no es nuestro).
+
+        prompts.md (actor-pick): el picker golpea TODOS los actores del
+        renderer (grid, ejes, overlays); solo el modelo resuelve a cara.
+        """
+        if actor is None:
+            return None
+        for key, scene_actor in self._actors.items():
+            if scene_actor is actor:
+                return key
+        return None
+
     # ------------------------------------------------------------------ #
     # High-level geometry / mesh / results
     # ------------------------------------------------------------------ #
@@ -366,6 +379,13 @@ class Scene:
             edge_color=(0.98, 0.9, 0.4),
             edge_visibility=True,
         )
+        try:
+            # Defensa en profundidad (prompts.md actor-pick): el overlay va
+            # desplazado +eps HACIA la camara, asi que ganaria el picker sobre
+            # el modelo y todo click en cara resaltada se veria como "vacio".
+            actor.SetPickable(False)
+        except Exception:
+            pass
         obj = SceneObject("Cara seleccionada", "selection_highlight")
         self.add_object(obj, actor)
         self._highlight_actor_key = obj.actor_key

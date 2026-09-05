@@ -131,6 +131,12 @@ class Renderer:
         actor.GetProperty().SetRepresentationToWireframe()
         actor.GetProperty().SetLineWidth(1)
         actor.GetProperty().LightingOff()
+        # Defensa en profundidad (prompts.md actor-pick): el grid nunca debe
+        # interceptar el picker (su cell_id se indexaba como cara del modelo).
+        try:
+            actor.SetPickable(False)
+        except Exception:
+            pass
         return actor
 
     def set_grid(self, size: float, subdivisions: int) -> None:
@@ -157,6 +163,11 @@ class Renderer:
         axes = vtkAxesActor()
         axes.SetTotalLength(length, length, length)
         axes.AxisLabelsOff()
+        # Defensa en profundidad (prompts.md actor-pick): los ejes tampoco.
+        try:
+            axes.SetPickable(False)
+        except Exception:
+            pass
         return axes
 
     def set_axes(self, length: float) -> None:

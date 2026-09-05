@@ -85,3 +85,36 @@ Acciones propuestas (pendientes de decisión, no implementadas):
    prompt — portar la máquina de estados (`Set`, reemplazo/toggle/rubber)
    al fallback o unificar ambos viewports sobre el mismo `SelectionManager`
    de estado puro, difiriendo solo en picking/render.
+
+---
+
+# Actor-pick: causa raíz del "desmarca una pero marca otra" (ambas capas aplicadas)
+
+Diagnóstico confirmado: `_do_pick_release()` no validaba el actor — el
+`vtkCellPicker` golpea TODOS los actores (grid, ejes, overlays) y
+`face_index_for_cell()` indexaba ese `cell_id` ciegamente como triángulo del
+modelo → cara arbitraria + `handle_pick()` reemplazando (correcto según su
+lógica, con una cara falsa). El `pick()` legacy sí validaba; se perdió en el
+refactor.
+
+**Fix 1 — validación de actor** (`desktop/viewport/viewport_3d.py`):
+`resolve_pick_entity(picked_actor, cell_id, scene)` → `None` (vacío) si
+actor None / cell −1 / actor no-modelo; `CadEntityRef` si modelo + cara;
+`KEEP_SELECTION` (conservar) si modelo + hueco sin cara. `_do_pick_release()`
+lo consume. Apoyo: `Scene.actor_key_for()` nuevo. Nota: más estricto que el
+legacy (clicks en actor-malla/densidad ahora son vacío, no selección de
+actor).
+
+**Fix 2 — defensa en profundidad** (`SetPickable(False)`): grid
+(`Renderer.create_grid`), ejes (`create_axes`), outline de identificación
+(`_build_identification`) y **overlay de highlight** (`Scene.highlight_faces`,
+no listado en el prompt pero crítico: va +eps hacia la cámara, ganaría el
+picker y rompería el toggle-off en caras resaltadas).
+
+**Multi-selección**: a nivel lógica, cerrada por la misma causa (Shift+clicks
+rozando grid/ejes se corrompían igual; P0 verdes). Segundo factor pendiente
+de runtime: tolerancia 0.0005 quizá demasiado ajustada en bordes reales —
+sin cobertura de test, solo verificable con la app.
+
+**Tests**: `tests/test_pick_actor_validation.py` (8 en verde) + suite de
+selección 42 passed.

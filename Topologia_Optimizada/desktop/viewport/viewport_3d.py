@@ -40,26 +40,53 @@ import numpy as np
 logger = logging.getLogger(__name__)
 from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout
 from PySide6.QtCore import Qt, Signal, QRect, QPoint, QEvent
-from PySide6.QtGui import QPainter, QColor, QPen
 
 
-class _SelectionRubberBand(QWidget):
-    """Rubber band pintado a mano: inmune al QSS global de la app y a
-    la falta de soporte fiable de translucidez de QRubberBand+stylesheet."""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        self.setAttribute(Qt.WA_NoSystemBackground, True)
-        self.setAttribute(Qt.WA_TranslucentBackground, True)  # canal alfa real en el backing store
-        self._fill = QColor(255, 165, 0, 40)     # naranja, mismo tono que el highlight de seleccion
-        self._border = QColor(255, 165, 0, 220)
+def _make_rect_overlay(color, fill_opacity, border_opacity, line_width=1.5):
+    """Crea (actor_fill, actor_border, points) para un rectangulo 2D en
+    coordenadas de display VTK (pixeles, origen abajo-izquierda), renderizado
+    como overlay vtkActor2D dentro del propio pase de render GL.
 
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.setBrush(self._fill)
-        painter.setPen(QPen(self._border, 1))
-        painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
+    Reemplaza el intento anterior con QWidget+QSS/WA_TranslucentBackground:
+    un widget Qt hijo de la ventana nativa de OpenGL (QVTKRenderWindowInteractor)
+    no compone su canal alfa de forma fiable contra el contenido GL (a veces
+    queda opaco, a veces queda invisible, segun plataforma/compositor). Un
+    vtkActor2D usa el mismo blending GL que el resto de la escena (p. ej. el
+    highlight naranja de caras), asi que la translucidez es garantizada.
+    """
+    import vtk  # lazy: este modulo no debe cargar VTK en import time
+
+    points = vtk.vtkPoints()
+    for _ in range(4):
+        points.InsertNextPoint(0, 0, 0)
+
+    fill_cells = vtk.vtkCellArray()
+    fill_cells.InsertNextCell(4, [0, 1, 2, 3])
+    fill_poly = vtk.vtkPolyData()
+    fill_poly.SetPoints(points)
+    fill_poly.SetPolys(fill_cells)
+
+    border_cells = vtk.vtkCellArray()
+    border_cells.InsertNextCell(5, [0, 1, 2, 3, 0])
+    border_poly = vtk.vtkPolyData()
+    border_poly.SetPoints(points)  # comparte los mismos vtkPoints que el relleno
+    border_poly.SetLines(border_cells)
+
+    def _actor2d(poly, opacity):
+        mapper = vtk.vtkPolyDataMapper2D()
+        mapper.SetInputData(poly)  # puntos ya en coords de display: sin transform
+        actor = vtk.vtkActor2D()
+        actor.SetMapper(mapper)
+        actor.GetProperty().SetColor(*color)
+        actor.GetProperty().SetOpacity(opacity)
+        actor.PickableOff()
+        actor.VisibilityOff()
+        return actor
+
+    fill_actor = _actor2d(fill_poly, fill_opacity)
+    border_actor = _actor2d(border_poly, border_opacity)
+    border_actor.GetProperty().SetLineWidth(line_width)
+    return fill_actor, border_actor, points
 
 
 #: Sentinel de resolve_pick_entity: el rayo golpeo al modelo pero en un
@@ -203,7 +230,9 @@ class Viewport3D(QWidget):
         # select muestra la banda de seleccion; al soltar se resuelve por rectangulo.
         self._left_held = False
         self._rubber_active = False
-        self._rubber_band: _SelectionRubberBand | None = None
+        self._rubber_fill = None
+        self._rubber_border = None
+        self._rubber_points = None
         self._mode = "idle"  # idle | orbit | pan | zoom
         self._click_start = True
 
@@ -453,15 +482,35 @@ class Viewport3D(QWidget):
 
     def _update_rubber_band(self, vtk_x: float, vtk_y: float) -> None:
         try:
-            if self._rubber_band is None:
-                self._rubber_band = _SelectionRubberBand(self._interactor)
-            x0, y0 = self._vtk_to_qt(self._press_x, self._press_y)
-            x1, y1 = self._vtk_to_qt(vtk_x, vtk_y)
-            self._rubber_band.setGeometry(
-                QRect(QPoint(int(x0), int(y0)), QPoint(int(x1), int(y1))).normalized())
-            self._rubber_band.show()
+            if self._rubber_fill is None:
+                self._rubber_fill, self._rubber_border, self._rubber_points = \
+                    _make_rect_overlay(color=(1.0, 0.8, 0.0),  # amarillo dorado: seleccion Onshape, un punto mas naranja
+                                        fill_opacity=0.16, border_opacity=0.85)
+                self.renderer.vtk_renderer.AddActor2D(self._rubber_fill)
+                self.renderer.vtk_renderer.AddActor2D(self._rubber_border)
+
+            # Puntos directamente en coords de display VTK (origen abajo-
+            # izquierda): sin pasar por _vtk_to_qt, que es solo para geometria
+            # de QWidget con Y invertida.
+            x0, y0 = self._press_x, self._press_y
+            x1, y1 = vtk_x, vtk_y
+            for i, (px, py) in enumerate([(x0, y0), (x1, y0), (x1, y1), (x0, y1)]):
+                self._rubber_points.SetPoint(i, px, py, 0)
+            self._rubber_points.Modified()
+            self._rubber_fill.VisibilityOn()
+            self._rubber_border.VisibilityOn()
+            self._interactor.GetRenderWindow().Render()
         except Exception:
-            pass
+            logger.debug("rubber-band update failed", exc_info=True)
+
+    def _hide_rubber_band(self) -> None:
+        try:
+            if self._rubber_fill is not None:
+                self._rubber_fill.VisibilityOff()
+                self._rubber_border.VisibilityOff()
+                self._interactor.GetRenderWindow().Render()
+        except Exception:
+            logger.debug("rubber-band hide failed", exc_info=True)
 
     def _faces_in_rect(self, rect, project_fn=None) -> set[int]:
         """Caras fully-contained en el rect Qt (proyeccion world->display)."""
@@ -485,11 +534,7 @@ class Viewport3D(QWidget):
 
     def _finish_rubber_band(self) -> None:
         self._rubber_active = False
-        try:
-            if self._rubber_band is not None:
-                self._rubber_band.hide()
-        except Exception:
-            logger.debug("rubber-band hide failed", exc_info=True)
+        self._hide_rubber_band()
         try:
             x, y = self._xy()
             x0, y0 = self._vtk_to_qt(self._press_x, self._press_y)
@@ -532,11 +577,7 @@ class Viewport3D(QWidget):
 
     def _cancel_rubber_band(self) -> None:
         self._rubber_active = False
-        try:
-            if self._rubber_band is not None:
-                self._rubber_band.hide()
-        except Exception:
-            logger.debug("rubber-band hide failed", exc_info=True)
+        self._hide_rubber_band()
         self._mode = "idle"
         self._click_start = False
         # OJO: no llamar a handle_rubber_band aqui: cancelar es descartar.

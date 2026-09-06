@@ -38,8 +38,28 @@ from typing import Optional
 import numpy as np
 
 logger = logging.getLogger(__name__)
-from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QRubberBand
-from PySide6.QtCore import Qt, Signal, QRect, QPoint
+from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout
+from PySide6.QtCore import Qt, Signal, QRect, QPoint, QEvent
+from PySide6.QtGui import QPainter, QColor, QPen
+
+
+class _SelectionRubberBand(QWidget):
+    """Rubber band pintado a mano: inmune al QSS global de la app y a
+    la falta de soporte fiable de translucidez de QRubberBand+stylesheet."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)  # canal alfa real en el backing store
+        self._fill = QColor(255, 165, 0, 40)     # naranja, mismo tono que el highlight de seleccion
+        self._border = QColor(255, 165, 0, 220)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        painter.setBrush(self._fill)
+        painter.setPen(QPen(self._border, 1))
+        painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
 
 
 #: Sentinel de resolve_pick_entity: el rayo golpeo al modelo pero en un
@@ -180,10 +200,10 @@ class Viewport3D(QWidget):
         self._press_x = 0.0
         self._press_y = 0.0
         # Rubber-band select (Onshape): drag con boton izquierdo en modo
-        # select muestra QRubberBand; al soltar se resuelve por rectangulo.
+        # select muestra la banda de seleccion; al soltar se resuelve por rectangulo.
         self._left_held = False
         self._rubber_active = False
-        self._rubber_band: QRubberBand | None = None
+        self._rubber_band: _SelectionRubberBand | None = None
         self._mode = "idle"  # idle | orbit | pan | zoom
         self._click_start = True
 
@@ -199,6 +219,10 @@ class Viewport3D(QWidget):
 
         self._interactor = QVTKRenderWindowInteractor(self)
         self._interactor.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        # Esc debe llegar aunque el foco de teclado lo tenga el interactor
+        # hijo (ventana GL nativa): se intercepta via eventFilter.
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._interactor.installEventFilter(self)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self._interactor)
@@ -430,7 +454,7 @@ class Viewport3D(QWidget):
     def _update_rubber_band(self, vtk_x: float, vtk_y: float) -> None:
         try:
             if self._rubber_band is None:
-                self._rubber_band = QRubberBand(QRubberBand.Rectangle, self._interactor)
+                self._rubber_band = _SelectionRubberBand(self._interactor)
             x0, y0 = self._vtk_to_qt(self._press_x, self._press_y)
             x1, y1 = self._vtk_to_qt(vtk_x, vtk_y)
             self._rubber_band.setGeometry(
@@ -479,6 +503,43 @@ class Viewport3D(QWidget):
             logger.exception("rubber-band selection failed")
         self._mode = "idle"
         self._click_start = False
+
+    # ------------------------------------------------------------------ #
+    # Escape (Onshape): cancela el rubber-band en curso sin aplicar
+    # seleccion; sin drag activo, limpia la seleccion actual.
+    # ------------------------------------------------------------------ #
+    def eventFilter(self, obj, event) -> bool:
+        # El foco de teclado suele estar en el interactor hijo (ventana GL
+        # nativa), no en Viewport3D: sin este filtro Esc nunca llegaria.
+        if obj is self._interactor and event.type() == QEvent.KeyPress:
+            if event.key() == Qt.Key_Escape:
+                self._handle_escape()
+                return True
+        return super().eventFilter(obj, event)
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key_Escape:
+            self._handle_escape()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def _handle_escape(self) -> None:
+        if self._rubber_active:
+            self._cancel_rubber_band()
+        else:
+            self.selection.handle_pick(None, additive=True)  # limpia seleccion
+
+    def _cancel_rubber_band(self) -> None:
+        self._rubber_active = False
+        try:
+            if self._rubber_band is not None:
+                self._rubber_band.hide()
+        except Exception:
+            logger.debug("rubber-band hide failed", exc_info=True)
+        self._mode = "idle"
+        self._click_start = False
+        # OJO: no llamar a handle_rubber_band aqui: cancelar es descartar.
 
     def _on_left_release(self, obj, ev) -> None:
         self._left_held = False

@@ -44,7 +44,7 @@ ui/components/menus.py MenuBuilder: barra de menú superior
 ui/components/widgets.py Primitivas (RibbonTool, glyph_label, repolish)
 ui/panels/design_tree.py Árbol de diseño (Onshape-style), agrupa condiciones por pieza (solid_id)
 ui/panels/condition_panel.py Diálogo modal por condición (factory pattern: cada Aceptar = instancia nueva)
-ui/panels/timeline.py Timeline tipo Fusion, HOY LINEAL (pendiente: versión ramificada por pieza)
+ui/panels/timeline.py Timeline tipo Fusion, con modo ramificado por pieza (columnas paralelas que convergen en nodo Optimizar compartido: `set_branch_view`)
 ui/theme.json Paleta de colores (dark), fuente de verdad para cualquier mockup/UI nueva
 viewport/ Viewport3D → Scene/Renderer/CameraController/SelectionManager
 pipeline/controller.py PipelineController (orquesta core desde la UI)
@@ -79,10 +79,10 @@ tests/ ~40 archivos, convención test_p0_/test_p1_/test_p3_* = ligados a bugs pr
 |---|---|---|---|
 | P1 | Sin contrato público OCCT `shape.Faces()` ↔ Gmsh `getEntities(2)` | `core/face_correspondence.py` | P2 |
 | P2 | Mesher provisorio no propaga `face_id` a triángulos de frontera → cargas caen a uniforme | `core/meshing.py` (`_extract_all_surface_elements`) | Validación de cargas reales |
-| P3 | Ambigüedad `volfrac` (dominio activo vs volumen total) | `core/topo_problem.py` (`VolfracMode`) | Decisión de producto pendiente |
-| P4 | Halo radius mal derivado de `filter_radius` en vez de tamaño de elemento | `protect_elements_near_nodes()` en meshing/topo | Independiente, fix rápido |
+| P3 | Ambigüedad `volfrac` (dominio activo vs volumen total) — RESUELTO: `ACTIVE_DOMAIN` (decisión Option A, `core/topopt.py`); `VolfracMode` lo modela en `core/topo_problem.py` | `core/topo_problem.py` (`VolfracMode`) | — (cerrado) |
+| P4 | Halo radius mal derivado de `filter_radius` — RESUELTO: deriva de tamaño de elemento de malla en `protect_elements_near_nodes()`; `halo_radius_source` lo modela | `protect_elements_near_nodes()` en meshing/topo | — (cerrado) |
 
-Orden de resolución: P1 → P2 (P2 depende de P1) → P4 (independiente) → P3 (decisión, no bug técnico).
+Orden de resolución: P1 → P2 (P2 depende de P1). P3 y P4 ya cerrados (ver arriba).
 
 ## Estado actual de trabajo en curso (sesión activa)
 
@@ -93,7 +93,7 @@ Se auditó y limpió `desktop/ui/components/workspace.py` (ribbon):
 - Eliminados 4 botones sin función real (solo mostraban mensaje en status bar): `rb_sens`, `rb_filtros`, `rb_design_space`, `rb_generative`.
 - Export consolidado en dropdown único (`rb_export`: Resultado JSON / Modelo STEP), eliminado `rb_export_step` duplicado.
 - **Pendiente**: `docs/UI_IMPLEMENTATION_MAP.md` no refleja estos cambios — actualizar.
-- **Pendiente próximo**: timeline ramificada por pieza en `timeline.py` (hoy es un `QHBoxLayout` lineal; falta soporte de columnas paralelas por pieza convergiendo en `Optimizar()`).
+- **Hecho**: timeline ramificada por pieza en `timeline.py` (columnas paralelas por pieza que convergen en `Optimizar()` vía `set_branch_view`; pipeline/feature salen del modo automáticamente).
 
 ## Convención de flujo de trabajo
 

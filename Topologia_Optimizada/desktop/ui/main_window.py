@@ -175,6 +175,13 @@ class MainWindow(QMainWindow):
             f"Modelo {name} cargado. Paso 2: definir cargas/restricciones.")
         # Architecture layer: refresh feature history in tree
         self._sync_architecture_tree()
+        # Poblar cuerpos (imprescindible en STEP multi-sólido: sin esto el
+        # árbol solo muestra el placeholder genérico aunque haya N cuerpos).
+        try:
+            self.design_tree.set_bodies(
+                self.controller.cad.list_solids(self.controller.model_id))
+        except Exception:
+            pass
 
     def controller_reset_after_model(self) -> None:
         has_model = self.controller.model_id is not None

@@ -92,6 +92,10 @@ class PipelineController:
     def import_model(self, path: str) -> Dict[str, Any]:
         if not path or not os.path.exists(path):
             raise PipelineError(f"Archivo no encontrado: {path}")
+        # Cada importación parte de sesión limpia: el modelo anterior (con
+        # sus condiciones, estudios, malla e historial) no se hereda. Sin
+        # esto, importar B tras A aplicaba a B las BCs/estudios de A.
+        self.close_model()
         model = self.cad.import_step_from_file(path)
         self.model_id = model.id
         self.model_name = model.name
@@ -104,12 +108,9 @@ class PipelineController:
         if mismatch:
             raise PipelineError(tess.get("error", "Tesselación falló (sin triángulos)"))
         self.current_tessellation = tess
-        # reset downstream state
-        self.mesh = None
-        self.mesh_nodes = self.mesh_elements = None
-        self.result = None
-        self.forces = []
-        self.constraints = []
+        # NOTE: el resto del estado downstream (malla, fuerzas,
+        # restricciones, estudios, historial, documento) ya quedó limpio
+        # vía close_model() al inicio de este método.
 
         # --- Architecture layer: record import feature in history + document ---
         import_feature = Feature.import_step(

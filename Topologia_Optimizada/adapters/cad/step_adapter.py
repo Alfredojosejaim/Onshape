@@ -8,7 +8,7 @@ import logging
 import os
 import tempfile
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import cadquery as cq
 
@@ -100,15 +100,10 @@ class StepAdapter(BaseCADAdapter):
         total_vol = float(shape.Volume())
         total_area = sum(f.area for f in cad_faces)
 
-        # Build solid representation
-        solid = CADSolid(
-            id=f"solid_0",
-            name=model_name,
-            volume=total_vol,
-            bbox=bbox_3d,
-            faces=cad_faces,
-            metadata=metadata or {},
-        )
+        # Un CADSolid por sólido OCC (antes: siempre un único solid_0 con
+        # todas las caras, falso para STEP multi-sólido). Los face_index
+        # globales se conservan para no romper picking/tessellación.
+        solids = self._split_solids(shape, model_name, cad_faces, metadata)
 
         tessellation: Optional[TessellatedMesh] = None
         if generate_tessellation:
@@ -118,7 +113,7 @@ class StepAdapter(BaseCADAdapter):
             id=model_id,
             name=model_name,
             units=Unit.MILLIMETER,
-            solids=[solid],
+            solids=solids,
             faces=cad_faces,
             bbox=bbox_3d,
             total_volume=total_vol,
@@ -127,6 +122,78 @@ class StepAdapter(BaseCADAdapter):
             tessellation=tessellation,
             metadata=metadata or {},
         )
+
+    @staticmethod
+    def _single_solid(solid_id: str, name: str, volume: float,
+                      bbox_3d, faces, metadata) -> CADSolid:
+        return CADSolid(
+            id=solid_id,
+            name=name,
+            volume=volume,
+            bbox=bbox_3d,
+            faces=faces,
+            metadata=metadata or {},
+        )
+
+    @classmethod
+    def _split_solids(cls, shape: cq.Shape, model_name: str,
+                      cad_faces, metadata) -> List[CADSolid]:
+        """Particiona las caras globales por sólido OCC.
+
+        Fallback: si no se pueden enumerar/matchear sólidos, un único
+        ``solid_0`` con todas las caras (comportamiento anterior).
+        """
+        try:
+            occ_solids = list(shape.Solids())
+        except Exception:
+            occ_solids = []
+        if len(occ_solids) <= 1:
+            bbox_3d = GeometryEngine.calculate_bounding_box(shape)
+            try:
+                vol = float(shape.Volume())
+            except Exception:
+                vol = 0.0
+            return [cls._single_solid("solid_0", model_name, vol, bbox_3d,
+                                      list(cad_faces), metadata)]
+        try:
+            global_faces = list(shape.Faces())
+            out: List[CADSolid] = []
+            for idx, solid in enumerate(occ_solids):
+                sfaces = list(solid.Faces())
+                idxs = [j for j, gf in enumerate(global_faces)
+                        if any(cls._same_shape(gf, sf) for sf in sfaces)]
+                faces = [cad_faces[j] for j in idxs if j < len(cad_faces)]
+                try:
+                    vol = float(solid.Volume())
+                except Exception:
+                    vol = 0.0
+                try:
+                    bbox = GeometryEngine.calculate_bounding_box(solid)
+                except Exception:
+                    bbox = GeometryEngine.calculate_bounding_box(shape)
+                out.append(cls._single_solid(
+                    f"solid_{idx}", f"Cuerpo {idx + 1}", vol, bbox,
+                    faces, metadata))
+            if out and sum(len(s.faces) for s in out) == len(cad_faces):
+                return out
+        except Exception:
+            logger.debug("Per-solid split failed; using single solid",
+                         exc_info=True)
+        bbox_3d = GeometryEngine.calculate_bounding_box(shape)
+        try:
+            vol = float(shape.Volume())
+        except Exception:
+            vol = 0.0
+        return [cls._single_solid("solid_0", model_name, vol, bbox_3d,
+                                  list(cad_faces), metadata)]
+
+    @staticmethod
+    def _same_shape(a: cq.Shape, b: cq.Shape) -> bool:
+        """Identidad topológica OCC (misma TShape): robusta ante re-enumeración."""
+        try:
+            return bool(a.wrapped.IsSame(b.wrapped))
+        except Exception:
+            return False
 
     def load_from_bytes(
         self,

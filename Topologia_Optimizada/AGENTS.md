@@ -1,0 +1,103 @@
+# AGENTS.md — Índice de contexto del proyecto
+
+> Este archivo es un ÍNDICE, no una explicación. Da la ubicación exacta de
+> cada cosa para que no haga falta leer toda la documentación del repo antes
+> de trabajar. Si necesitás detalle profundo de un tema, andá al doc/archivo
+> referenciado — no dupliques su contenido acá.
+
+## Qué es esto
+
+**Topología Optimizada**: app de escritorio CAD/FEM inspirada en Onshape.
+Pipeline completo: geometría B-Rep → malla FEM → optimización topológica
+SIMP → reconstrucción de geometría. Standalone (sin servidor ni navegador).
+Estado real (implementado/parcial/pendiente, por módulo): `PROJECT_STATUS.md`.
+
+## Stack
+
+| Capa | Biblioteca | Uso |
+|---|---|---|
+| Geometría B-Rep | CadQuery / OCP (OCCT) | STEP I/O, sólidos, caras |
+| Mallado | Gmsh | Malla volumétrica Tet4 |
+| FEM / Optimización | Kratos Multiphysics (`StructuralMechanicsApplication`, `OptimizationApplication`, MMA/GCMMA) | FEA + SIMP, backend dual con motor local NumPy/SciPy |
+| Reconstrucción B-Rep | Marching Tetrahedra + `OCPBRepFitter` | Campo de densidad → STEP editable |
+| Visualización | VTK (`vtkCellPicker`, `QVTKRenderWindowInteractor`, `vtkActor2D`) | Viewport 3D, picking, overlays |
+| UI | PySide6 | Layout tipo Onshape (ribbon, feature tree, topbar) |
+
+## Mapa de directorios
+
+main.py → desktop/app.py → desktop/ui/main_window.py (arranque)
+core/ Lógica de dominio, SIN dependencias de UI (test: test_core_independence.py)
+conditions.py ConditionManager: Load/Elasticity/Obstruction/ProtectedRegion (fuente de verdad, YA implementado — no reinventar esquema)
+cad_entity.py CadEntityRef (con solid_id) / SelectionSet
+topo_problem.py, topopt.py Definición y motor del problema de optimización
+kratos_adapter.py (72K) Puente a Kratos — el archivo más grande, ir con cuidado
+meshing.py Gmsh
+cad_reconstruction.py Marching Tetrahedra + fitting B-Rep
+face_correspondence.py Matching geométrico OCCT↔Gmsh (relacionado a bug P1, ver abajo)
+selection.py, navigation.py Picking / physical groups
+fea.py, materials.py, boundary.py, generative.py, generative_engine.py
+
+desktop/
+ui/main_window.py Coordinador: handlers on* (import, mesh, fea, optimize, export, validate...)
+ui/components/workspace.py WorkspaceBuilder: topbar + ribbon + pestañas (RECIÉN LIMPIADO, ver "Estado actual" abajo)
+ui/components/menus.py MenuBuilder: barra de menú superior
+ui/components/widgets.py Primitivas (RibbonTool, glyph_label, repolish)
+ui/panels/design_tree.py Árbol de diseño (Onshape-style), agrupa condiciones por pieza (solid_id)
+ui/panels/condition_panel.py Diálogo modal por condición (factory pattern: cada Aceptar = instancia nueva)
+ui/panels/timeline.py Timeline tipo Fusion, HOY LINEAL (pendiente: versión ramificada por pieza)
+ui/theme.json Paleta de colores (dark), fuente de verdad para cualquier mockup/UI nueva
+viewport/ Viewport3D → Scene/Renderer/CameraController/SelectionManager
+pipeline/controller.py PipelineController (orquesta core desde la UI)
+
+services/ cad_service.py, study_service.py — capa de servicio
+adapters/cad/ Adaptadores de import/export CAD
+tests/ ~40 archivos, convención test_p0_/test_p1_/test_p3_* = ligados a bugs priorizados
+
+
+## Qué doc leer para qué (no leer todos de entrada)
+
+| Necesito... | Leer |
+|---|---|
+| Instalar/correr la app | `README.md` §0 |
+| Especificación completa del producto | `README.md` (32K, completo) |
+| Qué está implementado vs pendiente, por módulo | `PROJECT_STATUS.md` (fuente de verdad del estado REAL) |
+| Auditoría botón→handler→controller→core de la UI (✅/🔀/🚫) | `docs/UI_IMPLEMENTATION_MAP.md` — **desactualizado tras la limpieza del ribbon (ver abajo), actualizar antes de confiar en él** |
+| Convención de navegación/selección | `docs/NAVIGATION_CONVENTION.md` |
+| Arquitectura del pipeline de selección de nodos | `ARQUITECTURA_SELECCION_NODOS.md` |
+| Detalle profundo de implementación (histórico, largo) | `RESUMEN_IMPLEMENTACION.md` (96K — último recurso) |
+
+## Principios de diseño no negociables
+
+- **No fallback silencioso**: cualquier inconsistencia se reporta explícitamente, nunca se resuelve con un default oculto.
+- **Physical groups → submodelparts** es el único mecanismo de propagación de identidad geometría→solver. No duplicar lógica de selección en otro lado (por eso `TopologyOptimizationProblem` referencia `selection_id`, no repite geometría).
+- La reconstrucción B-Rep y la validación de BCs ya están a nivel comercial — **no regresar**, solo extender.
+- Condiciones (`Load`/`Elasticity`/`Obstruction`/`ProtectedRegion`) son **instancias reutilizables**, nunca se sobrescriben: cada acción de la UI hace `append`, nunca overwrite.
+
+## Bugs conocidos (prioridad y ubicación)
+
+| ID | Bug | Ubicación | Bloquea |
+|---|---|---|---|
+| P1 | Sin contrato público OCCT `shape.Faces()` ↔ Gmsh `getEntities(2)` | `core/face_correspondence.py` | P2 |
+| P2 | Mesher provisorio no propaga `face_id` a triángulos de frontera → cargas caen a uniforme | `core/meshing.py` (`_extract_all_surface_elements`) | Validación de cargas reales |
+| P3 | Ambigüedad `volfrac` (dominio activo vs volumen total) | `core/topo_problem.py` (`VolfracMode`) | Decisión de producto pendiente |
+| P4 | Halo radius mal derivado de `filter_radius` en vez de tamaño de elemento | `protect_elements_near_nodes()` en meshing/topo | Independiente, fix rápido |
+
+Orden de resolución: P1 → P2 (P2 depende de P1) → P4 (independiente) → P3 (decisión, no bug técnico).
+
+## Estado actual de trabajo en curso (sesión activa)
+
+Se auditó y limpió `desktop/ui/components/workspace.py` (ribbon):
+- Dropdown "Condiciones" agregado (Carga/Elasticidad/Obstrucción/Región protegida) → llama `owner._on_condition_op(kind)` (ya existente, sin cambios).
+- `design_tree.py`: `set_conditions()` reescrito para agrupar por pieza (`solid_id`) con badge de valor por instancia.
+- Import consolidado a un solo botón (topbar `📁 Importar STEP`); se eliminó el duplicado del ribbon.
+- Eliminados 4 botones sin función real (solo mostraban mensaje en status bar): `rb_sens`, `rb_filtros`, `rb_design_space`, `rb_generative`.
+- Export consolidado en dropdown único (`rb_export`: Resultado JSON / Modelo STEP), eliminado `rb_export_step` duplicado.
+- **Pendiente**: `docs/UI_IMPLEMENTATION_MAP.md` no refleja estos cambios — actualizar.
+- **Pendiente próximo**: timeline ramificada por pieza en `timeline.py` (hoy es un `QHBoxLayout` lineal; falta soporte de columnas paralelas por pieza convergiendo en `Optimizar()`).
+
+## Convención de flujo de trabajo
+
+- Claude diagnostica sobre el código real (no asunciones) y entrega diffs exactos o archivos completos.
+- Muse Spark 1.3 aplica los cambios al repo real.
+- Todo diff se valida con `python3 -m ast` antes de entregarse; correr la app y los tests queda del lado de Muse Spark/Alfredo, ya que el entorno de Claude no tiene PySide6/Qt/Kratos instalados.
+- Prioridad explícita P0/P1/P2/P3/P4 en cualquier lista de bugs — no reordenar sin discutirlo.

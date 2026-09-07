@@ -21,6 +21,7 @@ class _Props:
 class _Owner:
     def __init__(self):
         self.condition_ops = []
+        self.exports = []
         self.properties = _Props()
 
     def _on_import(self):
@@ -60,10 +61,10 @@ class _Owner:
         pass
 
     def _on_export(self):
-        pass
+        self.exports.append("json")
 
     def _on_export_step(self):
-        pass
+        self.exports.append("step")
 
     def _on_validate(self):
         pass
@@ -93,3 +94,25 @@ def test_conditions_dropdown_builds_and_fires():
         action.trigger()
         assert owner.condition_ops[-1] == kind
     assert ribbon is not None
+
+
+def test_ribbon_cleanup_no_duplicates_no_placeholders():
+    """Limpieza: sin importar duplicado, sin placeholders, export dropdown."""
+    _app()
+    owner = _Owner()
+    WorkspaceBuilder(owner).build_ribbon()
+    for gone in ("rb_import", "rb_sens", "rb_filtros",
+                 "rb_design_space", "rb_generative", "rb_export_step"):
+        assert not hasattr(owner, gone), gone
+    # Exportar es dropdown con las dos salidas reales.
+    exp = owner.rb_export
+    assert isinstance(exp, RibbonTool)
+    assert [a.text() for a in exp.menu().actions()] == [
+        "Resultado (JSON)", "Modelo (STEP)"]
+    for action, want in zip(exp.menu().actions(), ["json", "step"]):
+        action.trigger()
+        assert owner.exports[-1] == want
+    # setEnabled sigue disponible (MainWindow lo usa para el flujo).
+    exp.setEnabled(False)
+    assert not exp.isEnabled()
+    exp.setEnabled(True)

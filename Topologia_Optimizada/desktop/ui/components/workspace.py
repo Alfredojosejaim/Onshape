@@ -150,9 +150,7 @@ class WorkspaceBuilder:
         lay.setContentsMargins(16, 8, 16, 4)
         lay.setSpacing(0)
 
-        # Modelo
-        owner.rb_import = RibbonTool("📁", "Importar STEP", "Importar archivo STEP local")
-        owner.rb_import.clicked.connect(owner._on_import)
+        # Modelo (importar vive en el topbar como botón único + menú Archivo)
         owner.rb_mesh = RibbonTool("📐", "Malla FEM", "Generar malla volumétrica FEM (Tet4)")
         owner.rb_mesh.clicked.connect(
             lambda: owner._on_generate_mesh(owner.properties._element_size.value()))
@@ -160,7 +158,7 @@ class WorkspaceBuilder:
         owner.rb_mesh_adaptive.clicked.connect(owner._on_generate_adaptive_mesh)
         owner.rb_fea = RibbonTool("📊", "Análisis FEM", "Structural Mechanics — análisis estático")
         owner.rb_fea.clicked.connect(owner._on_run_fea)
-        lay.addWidget(group([owner.rb_import, owner.rb_mesh, owner.rb_mesh_adaptive,
+        lay.addWidget(group([owner.rb_mesh, owner.rb_mesh_adaptive,
                              owner.rb_fea], "Modelo"))
 
         lay.addWidget(divider())
@@ -202,40 +200,36 @@ class WorkspaceBuilder:
 
         lay.addWidget(divider())
 
-        # Optimización
-        owner.rb_sens = RibbonTool("📈", "Sensibilidad", "Análisis de sensibilidad (adjoint)")
-        owner.rb_sens.clicked.connect(lambda: owner.statusBar().showMessage(
-            "Sensibilidad adjunto: computada internamente por el motor SIMP en cada iteración."))
-        owner.rb_filtros = RibbonTool("⚙", "Filtros", "Radio de filtro de densidad")
-        owner.rb_filtros.clicked.connect(owner._on_focus_filter)
+        # Optimización (solo acciones reales; los placeholders de mensaje
+        # —sensibilidad/filtros/diseño/generativo— se quitaron del ribbon)
         owner.rb_opt = RibbonTool("▶", "Optimizar SIMP", "Optimization Application — algoritmo SIMP")
         owner.rb_opt.clicked.connect(owner._on_run_optimization_default)
-        owner.rb_design_space = RibbonTool("◆", "Espacio de Diseño", "Definir espacio de diseño para optimización")
-        owner.rb_design_space.clicked.connect(lambda: owner.statusBar().showMessage(
-            "Espacio de Diseño: seleccione cuerpos para definir el dominio de optimización."))
-        owner.rb_generative = RibbonTool("✧", "Generativo", "Diseño generativo con escenarios")
-        owner.rb_generative.clicked.connect(lambda: owner.statusBar().showMessage(
-            "Diseño Generativo: configure escenarios y restricciones."))
-        lay.addWidget(group([owner.rb_sens, owner.rb_filtros, owner.rb_opt,
-                             owner.rb_design_space, owner.rb_generative], "Optimización"))
+        lay.addWidget(group([owner.rb_opt], "Optimización"))
 
         lay.addWidget(divider())
 
-        # Postproceso
+        # Postproceso (exportar como dropdown: JSON resultado / STEP modelo)
         owner.rb_viz = RibbonTool("👁", "Visualizar", "Visualizar campo de densidad por elemento")
         owner.rb_viz.clicked.connect(owner._on_visualize_result)
-        owner.rb_export = RibbonTool("📤", "Exportar", "Exportar resultado de la optimización")
-        owner.rb_export.clicked.connect(owner._on_export)
+        owner.rb_export = RibbonTool(
+            "📤", "Exportar",
+            "Exportar el resultado de la optimización (JSON) o el modelo CAD (STEP)")
+        export_menu = QMenu(owner.rb_export)
+        act_export_json = QAction("Resultado (JSON)", owner.rb_export)
+        act_export_json.triggered.connect(owner._on_export)
+        export_menu.addAction(act_export_json)
+        act_export_step = QAction("Modelo (STEP)", owner.rb_export)
+        act_export_step.triggered.connect(owner._on_export_step)
+        export_menu.addAction(act_export_step)
+        owner.rb_export.setMenu(export_menu)
         lay.addWidget(group([owner.rb_viz, owner.rb_export], "Postproceso"))
 
         lay.addWidget(divider())
 
-        # Herramientas
+        # Herramientas (verificación previa, no post-proceso)
         owner.rb_validate = RibbonTool("✓", "Validar", "Validar geometría y restricciones")
         owner.rb_validate.clicked.connect(owner._on_validate)
-        owner.rb_export_step = RibbonTool("💾", "Exportar STEP", "Exportar resultado como archivo STEP")
-        owner.rb_export_step.clicked.connect(owner._on_export_step)
-        lay.addWidget(group([owner.rb_validate, owner.rb_export_step], "Herramientas"))
+        lay.addWidget(group([owner.rb_validate], "Herramientas"))
 
         lay.addStretch(1)
 

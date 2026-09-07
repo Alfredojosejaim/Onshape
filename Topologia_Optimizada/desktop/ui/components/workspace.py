@@ -20,8 +20,9 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QWidget, QGridLayout, QHBoxLayout, QVBoxLayout, QLabel, QFrame,
-    QPushButton, QComboBox,
+    QPushButton, QComboBox, QMenu,
 )
+from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt
 
 from desktop.viewport.camera import StandardView
@@ -179,6 +180,25 @@ class WorkspaceBuilder:
         owner.rb_pattern.clicked.connect(owner._on_pattern_op)
         lay.addWidget(group([owner.rb_union, owner.rb_difference, owner.rb_intersect,
                              owner.rb_transform, owner.rb_mirror, owner.rb_pattern], "Edición"))
+
+        lay.addWidget(divider())
+
+        # Condiciones (dropdown estilo Onshape: un botón, varios tipos;
+        # mismo patrón RibbonTool que Edición/Optimización y mismos handlers
+        # que el menú &Condiciones, que se conserva por compatibilidad).
+        owner.rb_conditions = RibbonTool(
+            "⚡", "Condiciones",
+            "Carga, elasticidad, obstrucción o región protegida — se agrega "
+            "una instancia nueva cada vez, sin sobrescribir las anteriores.")
+        cond_menu = QMenu(owner.rb_conditions)
+        for label, kind in [("Carga", "load"), ("Elasticidad", "elasticity"),
+                            ("Obstrucción", "obstruction"),
+                            ("Región protegida", "protected")]:
+            act = QAction(label, owner.rb_conditions)
+            act.triggered.connect(lambda _=False, k=kind: owner._on_condition_op(k))
+            cond_menu.addAction(act)
+        owner.rb_conditions.setMenu(cond_menu)
+        lay.addWidget(group([owner.rb_conditions], "Condiciones"))
 
         lay.addWidget(divider())
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import numpy as np
 from PySide6.QtCore import QSignalBlocker
@@ -199,12 +199,64 @@ class MainWindow(QMainWindow):
 
     def _sync_architecture_tree(self) -> None:
         """Push the feature history, conditions and study list into the design tree panel."""
+        from desktop.ui.panels.condition_groups import (
+            condition_label,
+            group_conditions_by_part,
+        )
         features = self.controller.feature_history.features
         self.design_tree.set_features(features)
         conditions = self.controller.conditions.all
-        self.design_tree.set_conditions(conditions)
+        self.design_tree.set_conditions(
+            conditions, part_resolver=self._condition_part_label,
+            ref_resolver=self._condition_part_ref_label)
         studies = list(self.controller.studies)
         self.design_tree.set_studies(studies)
+        # Timeline ramificado solo en escenario multi-pieza (>= 2 grupos);
+        # con 0-1 grupos se conserva el flujo pipeline/feature vigente.
+        groups = group_conditions_by_part(
+            conditions, ref_resolver=self._condition_part_ref_label)
+        if len(groups) >= 2:
+            self.timeline.set_branch_view([
+                (label, [condition_label(c) for c in conds])
+                for label, conds in groups
+            ])
+
+    def _condition_part_ref_label(self, ref) -> Optional[str]:
+        """Etiqueta de pieza para una entidad (sólido -> nombre de cuerpo,
+        cara -> cuerpo padre resuelto). None si no se puede atribuir."""
+        from core.cad_entity import EntityType
+        try:
+            bodies = {b.get("solid_id"): b.get("name", b.get("solid_id"))
+                      for b in self.controller.cad.list_solids(self.controller.model_id)}
+        except Exception:
+            bodies = {}
+        if ref.entity_type == EntityType.SOLID:
+            if ref.solid_id and ref.solid_id in bodies:
+                return str(bodies[ref.solid_id])
+            return str(ref.solid_id) if ref.solid_id else None
+        if ref.entity_type == EntityType.FACE:
+            try:
+                solid = self.controller.cad.resolve_solid_for_face(
+                    self.controller.model_id, int(ref.face_index))
+            except Exception:
+                solid = None
+            if solid:
+                sid = solid.get("solid_id")
+                if sid in bodies:
+                    return str(bodies[sid])
+                return str(sid) if sid else None
+            return None
+        return None
+
+    def _condition_part_label(self, face_index, model_id) -> Optional[str]:
+        """Adaptador (face_index, model_id) -> etiqueta (API de set_conditions)."""
+        from core.cad_entity import CadEntityRef, EntityType
+        try:
+            ref = CadEntityRef(entity_type=EntityType.FACE,
+                               model_id=model_id, face_index=int(face_index))
+        except (TypeError, ValueError):
+            return None
+        return self._condition_part_ref_label(ref)
 
     def _show_tessellation(self, tess: Dict[str, Any]) -> None:
         vertices = np.asarray(tess.get("vertices", []), dtype=float).reshape(-1, 3)

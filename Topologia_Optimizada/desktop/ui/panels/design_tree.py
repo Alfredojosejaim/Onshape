@@ -206,8 +206,22 @@ class DesignTreePanel(QWidget):
     # ------------------------------------------------------------------ #
     # Conditions display (architecture layer)
     # ------------------------------------------------------------------ #
-    def set_conditions(self, conditions: list) -> None:
-        """Display reusable conditions under the Condiciones node."""
+    def set_conditions(self, conditions: list, part_resolver=None, ref_resolver=None) -> None:
+        """Display reusable conditions under the Condiciones node.
+
+        grouped by part (``Condiciones — <pieza>``) with a value badge per
+        instance. ``ref_resolver`` maps a full CadEntityRef to a part label
+        (preferred, covers solids); ``part_resolver`` maps
+        ``(face_index, model_id)`` for faces. Backward compatible: both
+        optional; without resolvers the previous flat behaviour degrades
+        to model/general groups.
+        """
+        from desktop.ui.panels.condition_groups import (
+            condition_color_hex,
+            condition_label,
+            group_conditions_by_part,
+        )
+        from PySide6.QtGui import QColor
         if self._conditions_item is None:
             return
         while self._conditions_item.childCount() > 0:
@@ -216,17 +230,19 @@ class DesignTreePanel(QWidget):
             self._conditions_item.addChild(QTreeWidgetItem(["(vacío)"]))
             self._tree.expandAll()
             return
-        for cond in conditions:
-            name = getattr(cond, "name", None) or (cond.get("name", "?") if isinstance(cond, dict) else "?")
-            ctype = getattr(cond, "condition_type", None)
-            if ctype is not None:
-                label = f"{name}  [{ctype.value if hasattr(ctype, 'value') else ctype}]"
-            else:
-                ctype_val = cond.get("condition_type", "?") if isinstance(cond, dict) else "?"
-                label = f"{name}  [{ctype_val}]"
-            child = QTreeWidgetItem([label])
-            child.setData(0, Qt.UserRole, "condition")
-            self._conditions_item.addChild(child)
+        for part_label, conds in group_conditions_by_part(
+                conditions, ref_resolver=ref_resolver,
+                part_resolver=part_resolver):
+            part_item = QTreeWidgetItem([f"Condiciones — {part_label}"])
+            part_item.setData(0, Qt.UserRole, "condition_group")
+            self._conditions_item.addChild(part_item)
+            for cond in conds:
+                child = QTreeWidgetItem([condition_label(cond)])
+                child.setData(0, Qt.UserRole, "condition")
+                color = condition_color_hex(cond)
+                if color:
+                    child.setForeground(0, QColor(color))
+                part_item.addChild(child)
         self._tree.expandAll()
 
     # ------------------------------------------------------------------ #

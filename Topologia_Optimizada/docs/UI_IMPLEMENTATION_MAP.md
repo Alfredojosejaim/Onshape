@@ -235,6 +235,23 @@ Decisiones del usuario: UI generativa primero (D1), PRESSURE con área real
    `linear_solver/cg_iterations/solver_fallback/solve_seconds/kratos_suggestion`;
    umbral numérico 50k elementos / 30s; aviso en log + status bar de FEA.
 
+## 12d. Riesgos E1–E4 resueltos (este ciclo, sin cambios de UI)
+
+Sin botones nuevos; impacto observable en Validar/FEA:
+
+1. **E2**: `generate_mesh_for_shape` rechaza `physical_groups` fuera de rango
+   (`INVALID_FACE_INDEX`); índices locales al dominio (ver error en status bar
+   / log si se dispara desde la UI).
+2. **E3**: `_run_fea_kratos` fabrica grupos por condición
+   (`condition_face_groups` + `submodelpart_name`) y re-malla si la malla no
+   trae ninguno — la FEA Kratos ahora usa la vía exacta (Strategy 1) en el
+   flujo por defecto en vez de aproximación geométrica.
+3. **E4**: condiciones sin cara aplican defaults con paridad local↔Kratos
+   (cargas a extremo según dirección, soportes a base min-eje); el e2e
+   verifica acuerdo en vez de `compliance == 0`.
+4. **E1**: `build_face_correspondence` con invariante de área total + techo
+   absoluto (errores explícitos ante split/merge o contraparte implausible).
+
 ## 13. Verificación
 
 - Arranque de `MainWindow` confirmado en entorno headless (`QT_QPA_PLATFORM=offscreen`

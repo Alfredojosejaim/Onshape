@@ -141,7 +141,17 @@ class ConditionPanel(QDialog):
             self._mag_spin.setRange(0.0, 1e12)
             self._mag_spin.setValue(1000.0)
             self._mag_spin.setDecimals(3)
-            self._kind_form.addRow("Magnitud (N):", self._mag_spin)
+            self._kind_form.addRow("Magnitud:", self._mag_spin)
+
+            self._unit_combo = QComboBox()
+            self._unit_combo.addItem("Fuerza (N)", "N")
+            self._unit_combo.addItem("Presión (Pa)", "Pa")
+            self._unit_combo.addItem("Presión (kPa)", "kPa")
+            self._unit_combo.addItem("Presión (MPa)", "MPa")
+            self._unit_combo.setToolTip(
+                "Presión = fuerza total Pa×área de la cara (requiere malla con "
+                "triangulación de superficie; si no hay área, falla explícito).")
+            self._kind_form.addRow("Unidad:", self._unit_combo)
 
             self._indet_check = QCheckBox("Magnitud indeterminada")
             self._indet_check.toggled.connect(lambda on: self._mag_spin.setEnabled(not on))
@@ -228,6 +238,7 @@ class ConditionPanel(QDialog):
             cmd.set_parameter("orientation", self._orient_combo.currentData())
             cmd.set_parameter("angle_deg", float(self._angle_spin.value()))
             cmd.set_parameter("magnitude", float(self._mag_spin.value()))
+            cmd.set_parameter("unit", self._unit_combo.currentData())
             cmd.set_parameter("indeterminate", bool(self._indet_check.isChecked()))
             return cmd
         if self._kind == "elasticity":

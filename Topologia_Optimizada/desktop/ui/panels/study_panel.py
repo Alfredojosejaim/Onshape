@@ -28,7 +28,6 @@ from core.cad_entity import CadEntityRef, EntityType
 from core.conditions import Condition, ConditionManager
 from core.optimization_studies import TopologyOptimizationStudy
 
-
 class StudyPanel(QDialog):
     """Modal dialog that produces a configured TopologyOptimizationStudy."""
 
@@ -231,3 +230,161 @@ class StudyPanel(QDialog):
             self.accept()
         except Exception as exc:  # pragma: no cover
             self._error.setText(f"No se pudo crear el estudio: {exc}")
+
+
+class GenerativeStudyPanel(QDialog):
+    """Modal dialog that produces a configured GenerativeDesignStudy.
+
+    Scenario A optimises the existing imported geometry; scenario B
+    generates geometry between ≥2 selected solid targets. Conditions are
+    referenced by id from the shared ConditionManager (never duplicated).
+    """
+
+    def __init__(
+        self,
+        parent=None,
+        condition_manager: Optional[ConditionManager] = None,
+        default_name: str = "",
+        parts: Optional[List[CadEntityRef]] = None,
+        model_id: Optional[str] = None,
+        get_solid_selections: Optional[Any] = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Diseño generativo")
+        self.setMinimumWidth(460)
+        self._conditions = condition_manager
+        self._available = list(condition_manager.all) if condition_manager is not None else []
+        self._default_name = default_name
+        self._model_id = model_id
+        self._get_solid_selections = get_solid_selections
+        self._parts = list(parts or [])
+        self.study = None
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        from PySide6.QtWidgets import QLineEdit
+        from core.generative import GenerativeDesignStudy  # noqa: F401 (used on accept)
+
+        root = QVBoxLayout(self)
+        root.setSpacing(12)
+        form = QFormLayout()
+        self._name = QLineEdit(self._default_name or "Diseño generativo")
+        form.addRow("Nombre:", self._name)
+        self._scenario = QComboBox()
+        self._scenario.addItem("A — Optimizar geometría existente", "A")
+        self._scenario.addItem("B — Conectar piezas (≥2 sólidos)", "B")
+        self._scenario.currentIndexChanged.connect(self._refresh_parts_list)
+        form.addRow("Escenario:", self._scenario)
+        root.addLayout(form)
+
+        parts_row = QHBoxLayout()
+        parts_row.addWidget(QLabel("Pieza(s) / objetivos:"), 1)
+        btn_capture = QPushButton("Capturar desde selección")
+        btn_capture.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_capture.clicked.connect(self._capture_parts)
+        parts_row.addWidget(btn_capture)
+        root.addLayout(parts_row)
+
+        self._parts_list = QListWidget()
+        self._parts_list.setMaximumHeight(100)
+        self._parts_list.setFrameShape(QListWidget.Shape.NoFrame)
+        root.addWidget(self._parts_list)
+
+        params = QFormLayout()
+        self._resolution = QDoubleSpinBox()
+        self._resolution.setRange(0.1, 20.0)
+        self._resolution.setDecimals(1)
+        self._resolution.setValue(1.0)
+        self._resolution.setToolTip("Tamaño de voxel del espacio de diseño (escenario B)")
+        params.addRow("Resolución:", self._resolution)
+        root.addLayout(params)
+
+        root.addWidget(QLabel("Condiciones reutilizables:"))
+        self._cond_list = QListWidget()
+        for cond in self._available:
+            self._cond_list.addItem(f"{cond.id}  —  {cond.name}")
+        root.addWidget(self._cond_list)
+
+        bb = QDialogButtonBox()
+        self._btn_ok = bb.addButton("Crear diseño", QDialogButtonBox.ButtonRole.AcceptRole)
+        self._btn_cancel = bb.addButton("Cancelar", QDialogButtonBox.ButtonRole.RejectRole)
+        self._btn_ok.clicked.connect(self._on_accept)
+        self._btn_cancel.clicked.connect(self.reject)
+        root.addWidget(bb)
+
+        self._error = QLabel("")
+        self._error.setStyleSheet(f"color: {ERROR};")
+        self._error.setWordWrap(True)
+        root.addWidget(self._error)
+        self._refresh_parts_list()
+
+    def _scenario_key(self) -> str:
+        return self._scenario.currentData()
+
+    def _refresh_parts_list(self) -> None:
+        self._parts_list.clear()
+        for ref in self._parts:
+            item = QListWidgetItem(ref.display_name)
+            item.setData(Qt.ItemDataRole.UserRole, ref)
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self._parts_list.addItem(item)
+        if not self._parts:
+            item = QListWidgetItem("(ninguna pieza seleccionada)")
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self._parts_list.addItem(item)
+        # Scenario A needs no targets (uses the imported model mesh);
+        # scenario B needs at least 2 solid targets.
+        self._btn_ok.setEnabled(self._scenario_key() == "A" or len(self._parts) >= 2)
+
+    def _capture_parts(self) -> None:
+        if self._get_solid_selections is None:
+            self._error.setText("No hay sistema de selección disponible.")
+            return
+        valid = []
+        for ref in self._get_solid_selections() or []:
+            if ref is None:
+                continue
+            if ref.entity_type != EntityType.SOLID:
+                self._error.setText(f"Solo se aceptan sólidos: {ref.display_name}")
+                continue
+            if self._model_id and ref.model_id and ref.model_id != self._model_id:
+                self._error.setText(f"La pieza {ref.display_name} no pertenece al modelo actual.")
+                continue
+            if ref not in valid:
+                valid.append(ref)
+        if not valid:
+            self._error.setText("No hay sólidos seleccionados en el viewport.")
+            return
+        self._parts = valid
+        self._error.setText("")
+        self._refresh_parts_list()
+
+    def _on_accept(self) -> None:
+        from core.generative import GenerativeDesignStudy
+
+        scenario = self._scenario_key()
+        chosen = [self._available[i] for i in range(self._cond_list.count())
+                  if self._cond_list.item(i).isSelected()]
+        if not chosen:
+            self._error.setText("Seleccione al menos una condición.")
+            return
+        try:
+            study = GenerativeDesignStudy(name=self._name.text().strip() or "Diseño generativo")
+            study.design_space.resolution = float(self._resolution.value())
+            for cond in chosen:
+                study.add_condition(cond.id)
+            if scenario == "A":
+                if not self._model_id:
+                    self._error.setText("El escenario A requiere un modelo STEP importado.")
+                    return
+                study.set_scenario_a(self._model_id)
+            else:
+                solids = [r for r in self._parts if r.entity_type == EntityType.SOLID]
+                if len(solids) < 2:
+                    self._error.setText("El escenario B requiere al menos 2 sólidos objetivo.")
+                    return
+                study.set_scenario_b(solids)
+            self.study = study
+            self.accept()
+        except Exception as exc:  # pragma: no cover
+            self._error.setText(f"No se pudo crear el diseño: {exc}")

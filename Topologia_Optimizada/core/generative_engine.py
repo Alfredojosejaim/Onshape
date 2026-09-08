@@ -29,6 +29,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import numpy as np
 
 from core.cad_entity import CadEntityRef, EntityType
+from core.boundary import is_pressure_unit
 from core.conditions import (
     Condition,
     ConditionManager,
@@ -475,6 +476,19 @@ class GenerativeDesignEngine:
             # to each node's tributary surface area when face triangulation is
             # available; fall back to uniform distribution otherwise.
             face_tris = self._face_triangles_for_load(load, node_indices=idx)
+            # PRESSURE units (Pa/kPa/MPa): total force = p × face area (mm²→m²).
+            # Without triangulation there is no area → honest unsupported, never
+            # a silent Pa-as-N substitution.
+            if is_pressure_unit(getattr(load, "unit", "N")):
+                from core.boundary import surface_area_mm2, pressure_to_total_force_N
+                area = surface_area_mm2(nodes, face_tris)
+                if area <= 0.0:
+                    if raise_on_unmapped_face:
+                        unsupported.append("load(pressure: sin área)")
+                    continue
+                mag = pressure_to_total_force_N(mag, load.unit, area)
+                logger.info("Load %s: presión %s %s sobre %.3f mm² → %.6f N totales.",
+                            getattr(load, "name", "?"), load.magnitude, load.unit, area, mag)
             if face_tris:
                 from core.boundary import nodal_area_weights
                 weights = nodal_area_weights(nodes, face_tris, idx)

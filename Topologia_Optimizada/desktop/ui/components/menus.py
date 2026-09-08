@@ -111,6 +111,13 @@ class MenuBuilder:
         act_run = QAction("Ejecutar estudio (topología)", owner)
         act_run.triggered.connect(owner._on_run_study)
         study_menu.addAction(act_run)
+        study_menu.addSeparator()
+        act_gen_new = QAction("Nuevo diseño generativo...", owner)
+        act_gen_new.triggered.connect(owner._on_create_generative_study)
+        study_menu.addAction(act_gen_new)
+        act_gen_run = QAction("Ejecutar diseño generativo", owner)
+        act_gen_run.triggered.connect(owner._on_run_generative_study)
+        study_menu.addAction(act_gen_run)
 
     # -- Diseño (vistas) --------------------------------------------
     def _build_view(self, menubar, owner) -> None:

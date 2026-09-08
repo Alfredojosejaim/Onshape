@@ -841,10 +841,11 @@ class KratosAdapter:
           reparte la magnitud total entre los nodos, proporcionalmente al área
           tributaria de cada nodo cuando la triangulación de superficie está
           disponible (fallback uniforme si no).
-        * ``PRESSURE`` → **error claro**: el sistema no modela área de superficie,
-          por lo que Pa→N requeriría integrar área (no disponible). Tratar Pa como
-          N sería un error físico silencioso; se rechaza con ``ValueError`` en vez
-          de producir una fuerza incorrecta (REGLA FUNDAMENTAL).
+        * ``PRESSURE`` → total force from pressure × face area: ``Pa × A`` with
+          the area integrated from the face surface triangulation (mesh in mm,
+          ``mm² → m²``). Requires ``face_surface_elements`` + ``mesh_nodes``;
+          without them the area is unknown and a clear ``ValueError`` is raised
+          (never a silent Pa-as-N substitution — REGLA FUNDAMENTAL).
 
         Args:
             model_part: Kratos ModelPart con nodos y DOFs
@@ -856,8 +857,8 @@ class KratosAdapter:
             mesh_nodes: (N, 3) node coordinates for area computation.
 
         Raises:
-            ValueError: para ``LoadType.PRESSURE`` (carga de presión requiere área,
-                no modelada en el sistema).
+            ValueError: para ``LoadType.PRESSURE`` sin triangulación de
+                superficie disponible (área desconocida, Pa→N imposible).
         """
         try:
             from core.study import LoadType
@@ -865,12 +866,37 @@ class KratosAdapter:
             logger.info(f"Applying load {load.id} (type: {load.load_type}) to {len(node_indices)} nodes")
 
             if load.load_type == LoadType.PRESSURE:
-                raise ValueError(
-                    f"Load {load.id}: LoadType.PRESSURE requiere un modelo de área de "
-                    f"superficie (presión en Pa * área) que el sistema no implementa; "
-                    f"no se puede convertir Pa a fuerza sin esa área. Use POINT o "
-                    f"DISTRIBUTED (fuerza total en N)."
+                from core.boundary import (
+                    is_pressure_unit, pressure_to_total_force_N,
+                    surface_area_mm2,
                 )
+                face_tris = _face_triangles_for_load(
+                    load, face_surface_elements, physical_groups,
+                    node_indices=node_indices,
+                )
+                area = surface_area_mm2(mesh_nodes, face_tris) \
+                    if mesh_nodes is not None else 0.0
+                unit = getattr(load, "unit", "Pa")
+                if not is_pressure_unit(unit):
+                    unit = "Pa"  # LoadType.PRESSURE implies pressure units.
+                if area <= 0.0:
+                    raise ValueError(
+                        f"Load {load.id}: LoadType.PRESSURE requiere el área de la "
+                        f"cara (presión {load.magnitude} {unit} × área) y no hay "
+                        f"triangulación de superficie disponible; no se puede "
+                        f"convertir Pa a fuerza. Use POINT o DISTRIBUTED (N)."
+                    )
+                total = pressure_to_total_force_N(float(load.magnitude), unit, area)
+                logger.info("Load %s: presión %s %s sobre %.3f mm² → %.6f N totales.",
+                            load.id, load.magnitude, unit, area, total)
+                force_vector = [total * load.direction[i] for i in range(3)]
+                self.apply_distributed_load(
+                    model_part, node_indices, force_vector, distribute=True,
+                    face_triangles=face_tris or None,
+                    mesh_nodes=mesh_nodes,
+                )
+                logger.info(f"Load {load.id} applied successfully")
+                return
 
             force_vector = [load.magnitude * load.direction[i] for i in range(3)]
 

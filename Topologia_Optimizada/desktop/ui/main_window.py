@@ -414,8 +414,12 @@ class MainWindow(QMainWindow):
         self.results.set_result(result, self.properties.material_name())
         ok = bool(result.get("success"))
         self._set_busy(False, "FEA completado." if ok else "FEA con errores.")
+        extra = ""
+        if result.get("kratos_suggestion"):
+            extra = f" | {result['kratos_suggestion']}"
         self.statusBar().showMessage(
-            f"FEA: compliance = {result.get('final_compliance', result.get('compliance', '—')):.4e}")
+            f"FEA: compliance = {result.get('final_compliance', result.get('compliance', '—')):.4e}"
+            f"{extra}")
 
     # ------------------------------------------------------------------ #
     # Optimization
@@ -546,39 +550,98 @@ class MainWindow(QMainWindow):
             return sr
 
         def done(sr) -> None:
-            self._set_busy(False)
-            self._sync_architecture_tree()
-            if not sr.success:
-                self.statusBar().showMessage(f"Estudio con errores: {sr.error_message}")
-                QMessageBox.warning(self, "Estudio", sr.error_message or "Error de ejecución.")
-                return
-            data = sr.data or {}
-            unsupported = data.get("_unsupported_conditions") or []
-            self.results.set_result(data, self.properties.material_name())
-            densities = self.controller.result_densities
-            if densities is not None and densities.size:
-                self.viewport.show_density(
-                    self.controller.mesh_nodes, self.controller.mesh_elements, densities
-                )
-                self.rb_viz.setEnabled(True)
-                self.rb_export.setEnabled(True)
-            msg = f"Estudio '{study.name}' completado."
-            if unsupported:
-                msg += f" Condiciones no soportadas: {', '.join(unsupported)}."
-                QMessageBox.warning(
-                    self, "Condiciones no soportadas",
-                    "El estudio se completó, pero algunas condiciones no pudieron "
-                    "mapearse a la geometría y se ignoraron:\n\n"
-                    + ", ".join(unsupported)
-                    + "\n\nRevise que las cargas/soportes/obstrucciones "
-                      "referencien caras o cuerpos válidos.",
-                )
-            self.statusBar().showMessage(msg)
+            self._finish_study_execution(study, sr)
 
         self.controller.run_in_background(
             worker,
             on_done=done,
             on_error=lambda e: self._on_error("Estudio", e),
+        )
+
+    def _finish_study_execution(self, study, sr) -> None:
+        """Shared post-processing for topology and generative studies."""
+        self._set_busy(False)
+        self._sync_architecture_tree()
+        if not sr.success:
+            self.statusBar().showMessage(f"Estudio con errores: {sr.error_message}")
+            QMessageBox.warning(self, "Estudio", sr.error_message or "Error de ejecución.")
+            return
+        data = sr.data or {}
+        unsupported = data.get("_unsupported_conditions") or []
+        self.results.set_result(data, self.properties.material_name())
+        densities = self.controller.result_densities
+        if densities is not None and densities.size:
+            self.viewport.show_density(
+                self.controller.mesh_nodes, self.controller.mesh_elements, densities
+            )
+            self.rb_viz.setEnabled(True)
+            self.rb_export.setEnabled(True)
+        msg = f"Estudio '{study.name}' completado."
+        if unsupported:
+            msg += f" Condiciones no soportadas: {', '.join(unsupported)}."
+            QMessageBox.warning(
+                self, "Condiciones no soportadas",
+                "El estudio se completó, pero algunas condiciones no pudieron "
+                "mapearse a la geometría y se ignoraron:\n\n"
+                + ", ".join(unsupported)
+                + "\n\nRevise que las cargas/soportes/obstrucciones "
+                  "referencien caras o cuerpos válidos.",
+            )
+        self.statusBar().showMessage(msg)
+
+    def _on_create_generative_study(self) -> None:
+        """Open the GenerativeStudyPanel (scenario A/B) and register the study."""
+        from desktop.ui.panels.study_panel import GenerativeStudyPanel
+
+        if not self.controller.model_id:
+            QMessageBox.warning(self, "Sin modelo", "Importe un modelo STEP primero.")
+            return
+        parts = self._current_solid_selections()
+        panel = GenerativeStudyPanel(
+            parent=self,
+            condition_manager=self.controller.conditions,
+            default_name="Diseño generativo",
+            parts=parts,
+            model_id=self.controller.model_id,
+            get_solid_selections=self._current_solid_selections,
+        )
+        result = panel.exec()
+        if result != GenerativeStudyPanel.Accepted or panel.study is None:
+            self.statusBar().showMessage("Diseño generativo cancelado.")
+            return
+        study = panel.study
+        sid = self.controller.register_study(study)
+        self._sync_architecture_tree()
+        self.statusBar().showMessage(
+            f"Diseño generativo creado: {study.name} ({sid[:8]}...) "
+            f"escenario {study.scenario}, {len(study.conditions)} condición(es).")
+
+    def _on_run_generative_study(self) -> None:
+        """Execute the last generative design study in the background."""
+        studies = [s for s in self.controller.studies
+                   if getattr(s, "study_type", None) is not None
+                   and s.study_type.value == "generative_design"]
+        if not studies:
+            QMessageBox.information(
+                self, "Sin diseño",
+                "Cree primero un diseño desde Estudio → Nuevo diseño generativo...")
+            return
+        study = studies[-1]
+        if not study.validate():
+            QMessageBox.warning(self, "Diseño incompleto",
+                                "El diseño generativo no está configurado correctamente.")
+            return
+        self._configure_boundaries()
+        self.results.clear_history()
+        self._set_busy(True, f"Ejecutando diseño '{study.name}' (generativo)...")
+
+        def worker():
+            return self.controller.execute_study(study)
+
+        self.controller.run_in_background(
+            worker,
+            on_done=lambda sr: self._finish_study_execution(study, sr),
+            on_error=lambda e: self._on_error("Diseño generativo", e),
         )
 
     # ------------------------------------------------------------------ #
@@ -1051,6 +1114,16 @@ class MainWindow(QMainWindow):
         if c.mesh_nodes is not None:
             lines.append(f"• Malla: {len(c.mesh_nodes)} nodos, {len(c.mesh_elements)} elementos.")
             mesh_state = "OK"
+            # P1: superficies Gmsh sin correspondencia CAD (nunca etiquetadas
+            # por orden; ver face_unmapped_<tag> en core/meshing.py).
+            try:
+                fse = (c.mesh or {}).get("face_surface_elements") or {}
+                unmapped = sorted(k for k in fse if str(k).startswith("face_unmapped_"))
+            except Exception:
+                unmapped = []
+            if unmapped:
+                lines.append(f"• Superficies sin match CAD: {', '.join(unmapped)} "
+                             "(excluidas de cargas por cara).")
         else:
             lines.append("• Malla: no generada.")
             mesh_state = "SIN MALLA"

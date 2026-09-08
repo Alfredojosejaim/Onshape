@@ -67,9 +67,12 @@ def load_condition_to_definition(load: LoadCondition) -> LoadDefinition:
 
     The direction is derived with the shared ``direction_vector`` (identical to
     the local solver path); the magnitude defaults to 1000 N when indeterminate,
-    again matching ``GenerativeDesignEngine``.
+    again matching ``GenerativeDesignEngine``. Pressure units (Pa/kPa/MPa) are
+    propagated as ``LoadType.PRESSURE`` so the Kratos path integrates the face
+    area (Pa × A) exactly like the local path.
     """
     from core.generative_engine import direction_vector
+    from core.boundary import is_pressure_unit
 
     vec = direction_vector(load)
     magnitude = float(load.magnitude if load.magnitude is not None else 1000.0)
@@ -93,7 +96,7 @@ def load_condition_to_definition(load: LoadCondition) -> LoadDefinition:
         magnitude=magnitude,
         direction=(float(vec[0]), float(vec[1]), float(vec[2])),
         application_face_id=application_face_id,
-        load_type=LoadType.DISTRIBUTED,
+        load_type=LoadType.PRESSURE if is_pressure_unit(load.unit) else LoadType.DISTRIBUTED,
         unit=load.unit,
         tolerance=0.5,
         selection=selection,

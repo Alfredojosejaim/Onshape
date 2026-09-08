@@ -867,3 +867,23 @@ Verificación: AST OK (BOM preexistente en controller.py, parse utf-8-sig);
 **121 passed** en áreas afectadas (`test_p0_gap_fixes` + `test_conditions`:
 38; `test_ui_validate_connection` + `test_study_pipeline`: 56;
 `test_condition_views` + `test_cae_audit_fixes` + `test_cae_kratos_bridge`: 27).
+
+### Plan D1–D6 + Fases 0/1/3 (this cycle)
+
+Plan aprobado con decisiones: UI generativa primero (D1), PRESSURE con área
+real (D2), Thermal/Modal quedan scaffold (D3), solver iterativo sí (D4),
+orden 1→3→2 (D6). Fase 2 (IDs persistentes P1/P2) diferida por D1.
+
+- **F0**: baseline `439 passed, 6 deselected` (sin benchmarks).
+- **F1**: `entitiesChanged` eliminada (0 refs); Validar lista
+  `face_unmapped_<tag>`; CI en `runtime/python`.
+- **F3a**: `GenerativeStudyPanel` A/B + menú Estudio (nuevo/ejecutar diseño
+  generativo); `tests/test_generative_study_panel.py` (4 tests).
+- **F3b**: PRESSURE honesto — `F[N]=p[Pa]×A[m²]` en local y Kratos
+  (`core/boundary.py`); sin área → error explícito; selector N/Pa/kPa/MPa en
+  el panel de carga; `tests/test_pressure_area.py` (4 tests). Los tests
+  viejos "PRESSURE falla" siguen pasando (llaman sin área).
+- **F3c**: `FEASolver(linear_solver="cg")` opt-in (default `direct` intacto,
+  fallback explícito); umbral numérico Kratos 50k elementos / 30s
+  (`kratos_suggestion`, aviso en log + status bar);
+  `tests/test_iterative_solver.py` (4 tests, CG≡direct ≤1e-6).

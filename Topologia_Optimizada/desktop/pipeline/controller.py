@@ -468,6 +468,9 @@ class PipelineController:
             forces_dofs=[(int(i), float(v)) for i, v in enumerate(force) if v != 0.0],
             fixed_dofs=fixed.tolist(),
         )
+        suggestion = result.get("kratos_suggestion")
+        if suggestion:
+            logger.warning("FEA local: %s", suggestion)
         self.result = result
         return result
 

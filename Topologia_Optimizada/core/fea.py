@@ -113,12 +113,21 @@ def _build_constitutive(young: float, poisson: float) -> np.ndarray:
 class FEASolver:
     """Solve a 3D Tet4 linear static problem K·u = F."""
 
+    #: Element count above which the local direct solver is expected to
+    #: struggle (fill-in) and the optional Kratos backend should be suggested.
+    KRATOS_SUGGEST_MIN_ELEMENTS = 50_000
+    #: Solve time (s) above which Kratos should be suggested instead.
+    KRATOS_SUGGEST_MIN_SECONDS = 30.0
+
     def __init__(
         self,
         nodes: np.ndarray,
         elements: np.ndarray,
         young_modulus: float,
         poisson_ratio: float,
+        linear_solver: str = "direct",
+        cg_tol: float = 1e-8,
+        cg_maxiter: Optional[int] = None,
     ):
         if nodes.ndim != 2 or nodes.shape[1] != 3:
             raise FEAError("nodes must be an (N, 3) array")
@@ -129,6 +138,9 @@ class FEASolver:
         if not (nodes.shape[0] > 0 and elements.shape[0] > 0):
             raise FEAError("empty mesh")
 
+        if linear_solver not in ("direct", "cg"):
+            raise FEAError(f"linear_solver must be 'direct' or 'cg', got {linear_solver!r}")
+
         self.nodes = np.asarray(nodes, dtype=float)
         self.elements = np.asarray(elements, dtype=int)
         self.num_nodes = self.nodes.shape[0]
@@ -138,6 +150,16 @@ class FEASolver:
         self.poisson = float(poisson_ratio)
         self.D = _build_constitutive(self.young, self.poisson)
         self._K = None
+        # Linear solver selection ("direct" default = spsolve; "cg" = conjugate
+        # gradients with fallback to direct on non-convergence). Diagnostics of
+        # the last solve are exposed via linear_solver_used / cg_iterations /
+        # solver_fallback.
+        self.linear_solver = linear_solver
+        self.cg_tol = float(cg_tol)
+        self.cg_maxiter = cg_maxiter
+        self.linear_solver_used = "direct"
+        self.cg_iterations = 0
+        self.solver_fallback = False
         # Cache of per-element base stiffness matrices (ke0 = V * B^T D B).
         # SIMP reassembles K every iteration with new densities; caching ke0
         # avoids recomputing the (expensive) strain-displacement B matrices.
@@ -262,11 +284,44 @@ class FEASolver:
 
         Kff = K[np.ix_(free, free)]
         Ff = F[free]
-        u_free = spla.spsolve(Kff, Ff)
+        u_free = self._solve_linear(Kff, Ff)
 
         u = np.zeros(self.num_dofs)
         u[free] = u_free
         return u
+
+    def _solve_linear(self, Kff, Ff) -> np.ndarray:
+        """Solve the free-DOF system with the configured linear solver.
+
+        ``"direct"`` (default) uses ``spsolve`` — unchanged legacy behaviour.
+        ``"cg"`` uses conjugate gradients; on non-convergence it falls back
+        to ``spsolve`` with an explicit warning (never a silent wrong answer).
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        if self.linear_solver == "cg":
+            iters = [0]
+
+            def _cb(_):
+                iters[0] += 1
+
+            u_free, info = spla.cg(
+                Kff, Ff, rtol=self.cg_tol, maxiter=self.cg_maxiter,
+                callback=_cb,
+            )
+            self.cg_iterations = iters[0]
+            if info == 0:
+                self.linear_solver_used = "cg"
+                self.solver_fallback = False
+                return np.asarray(u_free)
+            logger.warning(
+                "CG linear solver did not converge (info=%s, %d iters); "
+                "falling back to direct spsolve explicitly.",
+                info, iters[0],
+            )
+            self.solver_fallback = True
+        self.linear_solver_used = "direct"
+        return spla.spsolve(Kff, Ff)
 
     # ------------------------------------------------------------------ #
     # Post-processing
@@ -332,6 +387,23 @@ class FEASolver:
         }
 
 
+def kratos_suggestion(num_elements: int, solve_seconds: Optional[float] = None) -> Optional[str]:
+    """Return a Kratos-backend suggestion message, or None if local is fine.
+
+    Numeric migration threshold (no longer subjective "large meshes"): above
+    ``KRATOS_SUGGEST_MIN_ELEMENTS`` elements or ``KRATOS_SUGGEST_MIN_SECONDS``
+    seconds of local solve, the optional ``backend="kratos"`` should be
+    evaluated.
+    """
+    if num_elements >= FEASolver.KRATOS_SUGGEST_MIN_ELEMENTS:
+        return (f"Malla grande ({num_elements} elementos ≥ "
+                f"{FEASolver.KRATOS_SUGGEST_MIN_ELEMENTS}): evalúe backend='kratos'.")
+    if solve_seconds is not None and solve_seconds >= FEASolver.KRATOS_SUGGEST_MIN_SECONDS:
+        return (f"Solve local lento ({solve_seconds:.1f}s ≥ "
+                f"{FEASolver.KRATOS_SUGGEST_MIN_SECONDS}s): evalúe backend='kratos'.")
+    return None
+
+
 def solve_fea(
     nodes: np.ndarray,
     elements: np.ndarray,
@@ -340,6 +412,9 @@ def solve_fea(
     forces_dofs: List[Tuple[int, float]],
     fixed_dofs: List[int],
     element_densities: Optional[np.ndarray] = None,
+    linear_solver: str = "direct",
+    cg_tol: float = 1e-8,
+    cg_maxiter: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Convenience high-level FEA entry point.
 
@@ -350,11 +425,17 @@ def solve_fea(
         forces_dofs: list of (dof_index, value) global force contributions.
         fixed_dofs: list of global DOF indices to fix (set to zero).
         element_densities: optional per-element SIMP weights.
+        linear_solver: "direct" (default, spsolve) or "cg" (conjugate
+            gradients with explicit fallback to direct on non-convergence).
 
     Returns:
         A dict compatible with the application result model.
     """
-    solver = FEASolver(nodes, elements, young_modulus, poisson_ratio)
+    import time
+    t0 = time.perf_counter()
+    solver = FEASolver(nodes, elements, young_modulus, poisson_ratio,
+                       linear_solver=linear_solver, cg_tol=cg_tol,
+                       cg_maxiter=cg_maxiter)
     K = solver.assemble_global_stiffness(element_densities)
     F = np.zeros(solver.num_dofs)
     for dof, val in forces_dofs:
@@ -367,6 +448,7 @@ def solve_fea(
     displacements = u.reshape(-1, 3).tolist()
 
     max_disp = float(np.max(np.abs(u))) if u.size else 0.0
+    solve_seconds = time.perf_counter() - t0
     return {
         "success": True,
         "status": "completed",
@@ -381,4 +463,9 @@ def solve_fea(
         "num_elements": solver.num_elements,
         "fixed_dofs": fixed.tolist(),
         "engine": "self-contained-numpy-tet4",
+        "linear_solver": solver.linear_solver_used,
+        "cg_iterations": solver.cg_iterations,
+        "solver_fallback": solver.solver_fallback,
+        "solve_seconds": solve_seconds,
+        "kratos_suggestion": kratos_suggestion(solver.num_elements, solve_seconds),
     }

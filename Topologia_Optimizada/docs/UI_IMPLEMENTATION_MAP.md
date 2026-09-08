@@ -102,6 +102,8 @@ ejecuta vía pipeline (`_on_cad_edit_done` re-renderiza y sincroniza el árbol).
 |----------------|----|----------------|------------------|--------------|-------|
 | Menú Estudio → Nuevo estudio | main_window:255, StudyPanel | `triggered` | `_on_create_study` (976) → `controller.register_study` | `core.cae_studies` / `optimization_studies` | ✅ Funcional |
 | Menú Estudio → Ejecutar estudio | main_window:258 | `triggered` | `_on_run_study` (1003) → `controller.execute_study` | estudio determinista por pieza (prior cycle) | ✅ Funcional |
+| Menú Estudio → Nuevo diseño generativo... | menú Estudio, GenerativeStudyPanel | `triggered` | `_on_create_generative_study` → `controller.register_study` | `core.generative.GenerativeDesignStudy` (escenario A/B, condiciones por id) | ✅ Funcional |
+| Menú Estudio → Ejecutar diseño generativo | menú Estudio | `triggered` | `_on_run_generative_study` → `controller.execute_study` | `core.generative_engine.run_generative_design` + reconstrucción B-Rep | ✅ Funcional |
 
 ## 6. Postproceso y exportación
 
@@ -156,6 +158,9 @@ Las señales de `PropertiesPanel` (`runOptimization`, `runFEA`, `generateMesh`,
 `forceAdded`, `constraintAdded`) están **todas conectadas** y verificadas por
 `tests/test_ui_integration_connections.py`.
 
+`DesignTreePanel.entitiesChanged` (señal muerta histórica) fue **eliminada**
+del código — grep confirma 0 referencias. Sin señales muertas conocidas.
+
 ---
 
 ## 11. Trazabilidad panel → controller → core (resumen verificado)
@@ -206,6 +211,29 @@ como NO CONECTADO, conforme a la regla de no inventar funcionalidad futura).
    timeline rama: nodo converge emite `playRequested` + tooltip de vista,
    umbral unificado a ≥1 grupo (igual que el árbol); `design_tree` con helper
    `_labeled_item` e imports top-level; dropdowns ribbon con `showMenu`.
+
+## 12c. Plan aprobado D1–D6 + Fases 0/1/3 (este ciclo)
+
+Decisiones del usuario: UI generativa primero (D1), PRESSURE con área real
+(D2), Thermal/Modal quedan scaffold (D3), solver iterativo sí (D4), orden
+1→3→2 (D6). Fase 2 (IDs persistentes P1/P2) diferida.
+
+1. **Fase 0**: baseline `439 passed, 6 deselected` (sin benchmarks).
+2. **Fase 1**: `entitiesChanged` ya eliminada (confirmado 0 refs); Validar
+   muestra `face_unmapped_<tag>`; CI sigue en `runtime/python` (§13b).
+3. **Fase 3a (UI generativa)**: `GenerativeStudyPanel` (escenarios A/B,
+   `study_panel.py`), menú Estudio → Nuevo/Ejecutar diseño generativo
+   (`_on_create_generative_study` / `_on_run_generative_study`,
+   post-proceso compartido `_finish_study_execution`).
+4. **Fase 3b (PRESSURE)**: `core/boundary.py` (`is_pressure_unit`,
+   `surface_area_mm2`, `pressure_to_total_force_N`: F[N]=p[Pa]×A[m²], malla
+   en mm); motor local y Kratos integran área; sin área → error explícito;
+   `kratos_bridge` propaga `LoadType.PRESSURE`; panel de carga con selector
+   N/Pa/kPa/MPa.
+5. **Fase 3c (iterativo)**: `FEASolver(linear_solver="cg")` (default
+   `direct` intacto, fallback explícito); `solve_fea` reporta
+   `linear_solver/cg_iterations/solver_fallback/solve_seconds/kratos_suggestion`;
+   umbral numérico 50k elementos / 30s; aviso en log + status bar de FEA.
 
 ## 13. Verificación
 

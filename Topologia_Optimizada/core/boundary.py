@@ -18,6 +18,43 @@ logger = logging.getLogger(__name__)
 # Matches identifiers used by the Core's CADFace.id ("face_0", "face0", "face-3") or a plain index.
 _FACE_ID_RE = re.compile(r"^(?:face[_\-\s]?)?(\d+)$", re.IGNORECASE)
 
+#: Pressure units accepted for loads (→ force via Pa × area). Mesh geometry
+#: is in millimetres, so areas come in mm² and are converted to m².
+PRESSURE_UNITS_SI = {"Pa": 1.0, "kPa": 1e3, "MPa": 1e6}
+_MM2_TO_M2 = 1e-6
+
+
+def is_pressure_unit(unit: Optional[str]) -> bool:
+    """Whether a load ``unit`` string denotes pressure (Pa/kPa/MPa)."""
+    return str(unit or "").strip() in PRESSURE_UNITS_SI
+
+
+def surface_area_mm2(nodes: np.ndarray, face_triangles) -> float:
+    """Total area (mm²) of a surface triangulation on the FEM mesh."""
+    nodes = np.asarray(nodes, dtype=float)
+    total = 0.0
+    for tri in face_triangles or []:
+        tri = [int(t) for t in tri]
+        if any(t < 0 or t >= len(nodes) for t in tri):
+            continue
+        p0, p1, p2 = nodes[tri[0]], nodes[tri[1]], nodes[tri[2]]
+        total += 0.5 * float(np.linalg.norm(np.cross(p1 - p0, p2 - p0)))
+    return total
+
+
+def pressure_to_total_force_N(pressure_value: float, unit: str, area_mm2: float) -> float:
+    """Convert pressure to total normal force: F[N] = p[Pa] × A[m²].
+
+    Raises ValueError on unknown unit or non-positive area (explicit, never
+    a silent Pa-as-N substitution).
+    """
+    key = str(unit or "").strip()
+    if key not in PRESSURE_UNITS_SI:
+        raise ValueError(f"Unidad de presión desconocida: {unit!r} (válidas: {sorted(PRESSURE_UNITS_SI)})")
+    if not area_mm2 > 0.0:
+        raise ValueError(f"Área de superficie no positiva ({area_mm2}); no se puede convertir Pa a N.")
+    return float(pressure_value) * PRESSURE_UNITS_SI[key] * float(area_mm2) * _MM2_TO_M2
+
 
 def resolve_face_index(face_id: Optional[str]) -> Optional[int]:
     """Resolve a CAD face identifier ("face_3", "3", "face0") to its B-Rep face index.
@@ -105,8 +142,7 @@ class BoundaryConditionMapper:
         return mapped_faces
 
 
-def nodal_area_weights(
-    nodes: np.ndarray,
+def nodal_area_weights(    nodes: np.ndarray,
     face_triangles,
     node_indices,
 ):

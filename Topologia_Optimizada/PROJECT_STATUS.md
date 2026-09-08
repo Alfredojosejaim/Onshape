@@ -868,7 +868,44 @@ Verificación: AST OK (BOM preexistente en controller.py, parse utf-8-sig);
 38; `test_ui_validate_connection` + `test_study_pipeline`: 56;
 `test_condition_views` + `test_cae_audit_fixes` + `test_cae_kratos_bridge`: 27).
 
-### Plan D1–D6 + Fases 0/1/3 (this cycle)
+### Auditoría y cierre P1/P2 — prompts.md (this cycle)
+
+Tres subagentes (P1, P2, tests) + correcciones mínimas, sin rediseño:
+
+**Bugs reales encontrados y corregidos:**
+1. **`_nodes_for_physical_groups` devolvía tags Gmsh (1-based) en vez de
+   índices 0-based** (`core/meshing.py`): los SubModelParts se creaban con
+   off-by-one (`i+1` sobre tags ya 1-based) y `physical_groups` no coincidía
+   con los nodos de `face_surface_elements`. Ahora grupo ≡ triángulos ≡
+   resolver (verificado por `test_cadena_grupo_a_nodos_y_resolver`).
+2. **Doble implementación `_face_triangles_for_load`** (adapter + engine):
+   unificada en `core.boundary.face_triangles_for_indices` (única fuente).
+3. **Doble regex de `face_id`** (`boundary.py` vs `topo_problem.py`):
+   unificado en `core.boundary.parse_face_id`.
+4. **`apply_pressure_load` legacy (Pa como N)**: eliminado → `NotImplementedError`
+   con redirección a `apply_load_from_core/PRESSURE`. Legacy
+   `*_by_face_mapping` marcados DEPRECATED (warn-skip → usar
+   `create_kratos_fea_solver`, contrato UNRESOLVED).
+
+**Endurecimiento (solo diagnóstico, sin cambios de comportamiento):**
+- `MeshResult.metadata`: `face_correspondence` (`deterministic`/`order-fallback`)
+  + lista `face_unmapped`; `_extract_all_surface_elements` advierte en el
+  camino por orden; `default_face_resolver` advierte ante malla no
+  determinista; warnings en `nodal_area_weights` (uniforme), `_face_triangles`
+  sin face_id y `_protected_elements` (heurística bbox).
+- Plomería verificada completa: `generate_mesh_for_shape → generate_mesh →
+  generate_mesh_from_step(cq_shape=...)` siempre determinista; el fallback
+  por orden solo vive en STEP puro sin shape (advertido).
+
+**Tests nuevos** (`tests/test_p1_p2_closure.py`, 8 tests): ambigüedad→error
+explícito, orden→warning, resolver→warning, caras similares disjuntas,
+multisólido 12 caras, cadena grupo→nodos→resolver, helper único.
+
+**Veredicto**: P1 = PARCIAL (firma geométrica sin IDs persistentes; ya sin
+mislabeling silencioso). P2 = válido vía `GmshTet4Mesher`; provisional solo
+testing. Detalle de riesgos restantes en el reporte del ciclo (ver abajo).
+
+### Plan D1–D6 + Fases 0/1/3 (ciclo previo)
 
 Plan aprobado con decisiones: UI generativa primero (D1), PRESSURE con área
 real (D2), Thermal/Modal quedan scaffold (D3), solver iterativo sí (D4),

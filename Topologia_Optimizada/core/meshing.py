@@ -184,7 +184,8 @@ class GmshTet4Mesher(BaseMesher):
                 logger.warning("Could not query nodes for group %r: %s", name, e)
                 groups[name] = []
                 continue
-            indices = sorted(int(t) for t in group_node_tags if int(t) in tag_to_index)
+            indices = sorted(tag_to_index[int(t)] for t in group_node_tags
+                             if int(t) in tag_to_index)
             groups[name] = indices
         return groups
 
@@ -270,6 +271,15 @@ class GmshTet4Mesher(BaseMesher):
             for fi, tag in face_index_to_tag.items():
                 if tag in surface_tags:
                     tag_to_face[tag] = int(fi)
+        else:
+            # P1 order-fallback path — explicit (once per call) via logger +
+            # MeshResult metadata ("face_correspondence": "order-fallback").
+            logger.warning(
+                "No CAD-face correspondence; labeling %d surfaces by Gmsh "
+                "enumeration order (P1 order-fallback, valid only for the "
+                "generating mesh).",
+                len(surface_tags),
+            )
 
         for stag in surface_tags:
             try:
@@ -439,6 +449,8 @@ class GmshTet4Mesher(BaseMesher):
                     if face_key not in face_surface_elements:
                         face_surface_elements[face_key] = tris
 
+            unmapped = sorted(k for k in face_surface_elements
+                              if str(k).startswith("face_unmapped_"))
             return MeshResult(
                 nodes=nodes,
                 elements=elements,
@@ -451,6 +463,10 @@ class GmshTet4Mesher(BaseMesher):
                     "step_file": os.path.basename(step_file),
                     "mesh_size_max": self.mesh_size_max,
                     "gmsh_volumes": len(volumes),
+                    # P1 provenance: geometric correspondence or order fallback.
+                    "face_correspondence": "deterministic"
+                    if face_index_to_tag is not None else "order-fallback",
+                    "face_unmapped": unmapped,
                 },
                 physical_groups=physical_group_nodes,
                 face_surface_elements=face_surface_elements,
@@ -589,6 +605,8 @@ class GmshTet4Mesher(BaseMesher):
                     if face_key not in face_surface_elements:
                         face_surface_elements[face_key] = tris
 
+            unmapped_adaptive = sorted(k for k in face_surface_elements
+                                       if str(k).startswith("face_unmapped_"))
             return MeshResult(
                 nodes=nodes,
                 elements=elements,
@@ -602,6 +620,9 @@ class GmshTet4Mesher(BaseMesher):
                     "min_size": min_size,
                     "adaptive": True,
                     "n_size_points": len(size_points) if size_points else 0,
+                    "face_correspondence": "deterministic"
+                    if face_index_to_tag is not None else "order-fallback",
+                    "face_unmapped": unmapped_adaptive,
                 },
                 physical_groups=physical_group_nodes,
                 face_surface_elements=face_surface_elements,

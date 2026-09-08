@@ -235,60 +235,27 @@ class GenerativeDesignEngine:
         )
 
     def _face_triangles_for_load(self, load: LoadCondition,
-                                 node_indices: Optional[List[int]] = None) -> List[List[int]]:
+                                  node_indices: Optional[List[int]] = None) -> List[List[int]]:
         """Collect surface triangles for the faces referenced by *load*.
 
-        Returns a flat list of ``[n0, n1, n2]`` triangles (0-based mesh node
-        indices) covering all faces of the load.  Empty list when no surface
-        triangulation is available (triggers uniform fallback).
-
-        When neither a named physical group nor a ``face_<id>`` key is available
-        (e.g. pre-P2 provisional voxel meshes, which only ever populated a single
-        undifferentiated ``"boundary"`` bucket with no per-CAD-face labeling),
-        falls back to node-label propagation: a boundary triangle is attributed
-        to this load's face if all three of its nodes already belong (via
-        CAD-geometry node selection, passed in as ``node_indices``) to that face.
-        Since P2, the provisional mesher also emits ``face_<id>`` keys (boundary
-        triangles classified to their nearest CAD face), so this propagation
-        fallback only triggers for triangles no face could be assigned to.
+        Delegates to :func:`core.boundary.face_triangles_for_indices` (single
+        source of truth, shared with the Kratos path). Empty list when no
+        surface triangulation is available (triggers uniform fallback).
         """
+        from core.boundary import face_triangles_for_indices
         if not self.face_surface_elements:
             return []
-        tris: List[List[int]] = []
-        matched_specific = False
-        for e in load.faces.entities:
-            if e.entity_type == EntityType.FACE and e.face_index is not None:
-                fi = int(e.face_index)
-                # 1) Named physical groups (caller-provided group mapping).
-                for grp_name in self._face_index_to_groups.get(fi, []):
-                    tris.extend(self.face_surface_elements.get(grp_name, []))
-                    matched_specific = True
-                # 2) Per-face keys from Gmsh fallback ("face_0", "face_1", ...).
-                face_key = f"face_{fi}"
-                if face_key in self.face_surface_elements:
-                    tris.extend(self.face_surface_elements[face_key])
-                    matched_specific = True
-
-        # 3) Provisional mesher fallback: undifferentiated "boundary" bucket,
-        #    attributed by node-label propagation.
-        if not matched_specific and "boundary" in self.face_surface_elements:
-            if node_indices is None:
-                node_indices = self._node_indices_for_load(load)
-            node_set = set(node_indices or [])
-            if node_set:
-                boundary_tris = self.face_surface_elements["boundary"]
-                propagated = [
-                    tri for tri in boundary_tris if all(n in node_set for n in tri)
-                ]
-                if propagated:
-                    logger.debug(
-                        "Load %s: no named group / face_<id> key found; "
-                        "recovered %d/%d triangles from the undifferentiated "
-                        "'boundary' bucket via node-label propagation.",
-                        getattr(load, "name", "?"), len(propagated), len(boundary_tris),
-                    )
-                    tris.extend(propagated)
-
+        face_indices = [
+            int(e.face_index) for e in load.faces.entities
+            if e.entity_type == EntityType.FACE and e.face_index is not None
+        ]
+        if node_indices is None and "boundary" in self.face_surface_elements:
+            node_indices = self._node_indices_for_load(load)
+        tris, _ = face_triangles_for_indices(
+            face_indices, self.face_surface_elements,
+            group_index=getattr(self, "_face_index_to_groups", None),
+            node_indices=node_indices,
+        )
         return tris
 
     def _load_node_indices(self, conditions: Dict) -> List[int]:
@@ -337,7 +304,13 @@ class GenerativeDesignEngine:
             ))
             node_set |= face_one_nodes
         # Fallback: protect elements touching the model bounding box ends.
+        # Explicit heuristic (not a CAD-face mapping): only applies when no
+        # protected-region face resolved to nodes.
         if not node_set and self.mesh_nodes is not None:
+            logger.warning(
+                "ProtectedRegion: no face mapped to mesh nodes; protecting "
+                "bbox-end elements explicitly (heuristic fallback, not a "
+                "CAD-face mapping).")
             lo = self.mesh_nodes.min(axis=0)
             hi = self.mesh_nodes.max(axis=0)
             axis = int(np.argmax(hi - lo))

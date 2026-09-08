@@ -80,8 +80,8 @@ tests/ 44 archivos, convención test_p0_/test_p1_/test_p3_* = ligados a bugs pri
 
 | ID | Bug | Ubicación | Bloquea |
 |---|---|---|---|
-| P1 | Correspondencia OCCT `shape.Faces()` ↔ Gmsh `getEntities(2)` por firma geométrica (sin IDs persistentes); fallbacks por orden eliminados del modo determinista (`face_unmapped_<tag>` + warning, `core/meshing.py`) | `core/face_correspondence.py` | P2 |
-| P2 | Mesher provisorio clasifica frontera por cara CAD (`classify_triangles_to_faces`); resto no asignable → bucket `"boundary"` explícito (aprox. a ~h/2, solo Gmsh vale para cargas validadas) | `core/meshing.py` (`ProvisionalTet4Mesher`), `core/kratos_adapter.py` | Validación de cargas reales |
+| P1 | Correspondencia OCCT `shape.Faces()` ↔ Gmsh `getEntities(2)` por firma geométrica (sin IDs persistentes); modo determinista sin fallback por orden (`face_unmapped_<tag>` + warning, `face_correspondence` en metadata); regex único `parse_face_id` (`core/boundary.py`) | `core/face_correspondence.py` | P2 |
+| P2 | Válido vía `GmshTet4Mesher` (grupos ≡ triángulos ≡ resolver, fix tags→índices en `_nodes_for_physical_groups`); provisorio solo testing (bucket `"boundary"` explícito); helper único `face_triangles_for_indices`; legacy `apply_pressure_load` eliminado, `*_by_face_mapping` deprecated | `core/meshing.py`, `core/kratos_adapter.py` | — |
 | P3 | Ambigüedad `volfrac` (dominio activo vs volumen total) — RESUELTO: `ACTIVE_DOMAIN` (decisión Option A, `core/topopt.py`); `VolfracMode` lo modela en `core/topo_problem.py` | `core/topo_problem.py` (`VolfracMode`) | — (cerrado) |
 | P4 | Halo radius mal derivado de `filter_radius` — RESUELTO: deriva de tamaño de elemento de malla en `protect_elements_near_nodes()`; `halo_radius_source` lo modela | `protect_elements_near_nodes()` en meshing/topo | — (cerrado) |
 

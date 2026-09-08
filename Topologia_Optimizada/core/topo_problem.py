@@ -263,9 +263,8 @@ SelectionResolver = Callable[[GeometrySelection, Dict[str, Any]], Dict[str, List
 
 
 def _face_id(selection_id: str) -> Optional[int]:
-    import re
-    m = re.fullmatch(r"(?:face[_:])?(\d+)", str(selection_id).strip())
-    return int(m.group(1)) if m else None
+    from core.boundary import parse_face_id
+    return parse_face_id(selection_id)
 
 
 def default_face_resolver(sel: GeometrySelection,
@@ -285,6 +284,20 @@ def default_face_resolver(sel: GeometrySelection,
     elements = mesh.get("elements", [])
     pgroups = mesh.get("physical_groups", {}) or {}
     surfs = mesh.get("face_surface_elements", {}) or {}
+
+    # Provenance check (P1): keys may come from deterministic geometric
+    # correspondence or from Gmsh enumeration order (see MeshResult.metadata
+    # "face_correspondence"). Order-based labels are only valid for the mesh
+    # they were generated with — warn loudly when consuming them.
+    metadata = mesh.get("metadata", {}) or {}
+    if metadata.get("face_correspondence") != "deterministic":
+        import logging
+        logging.getLogger(__name__).warning(
+            "default_face_resolver: mesh face keys are ORDER-BASED "
+            "(face_correspondence=%r), not geometric. Selection identity is "
+            "only valid for the generating mesh; re-meshing may remap faces.",
+            metadata.get("face_correspondence"),
+        )
 
     node_set: set = set()
     fi = _face_id(sel.selection_id)

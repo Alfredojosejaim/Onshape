@@ -18,6 +18,23 @@ logger = logging.getLogger(__name__)
 # Matches identifiers used by the Core's CADFace.id ("face_0", "face0", "face-3") or a plain index.
 _FACE_ID_RE = re.compile(r"^(?:face[_\-\s]?)?(\d+)$", re.IGNORECASE)
 
+#: Unified face-id pattern (superset of the two historical variants):
+#: "face_3", "face:3", "face3", "face-3", "face 3" or a plain index.
+_FACE_ID_UNIFIED_RE = re.compile(r"^(?:face[_:\-\s]?)?(\d+)$", re.IGNORECASE)
+
+
+def parse_face_id(face_id) -> Optional[int]:
+    """Parse any CAD face identifier to its 0-based B-Rep face index.
+
+    Single source of truth for ``face_<i>`` / ``face:<i>`` / ``<i>`` spellings
+    (replaces the two incompatible regexes historically in ``boundary.py``
+    and ``topo_problem.py``). Returns ``None`` when not parseable.
+    """
+    if face_id is None:
+        return None
+    m = _FACE_ID_UNIFIED_RE.fullmatch(str(face_id).strip())
+    return int(m.group(1)) if m else None
+
 #: Pressure units accepted for loads (→ force via Pa × area). Mesh geometry
 #: is in millimetres, so areas come in mm² and are converted to m².
 PRESSURE_UNITS_SI = {"Pa": 1.0, "kPa": 1e3, "MPa": 1e6}
@@ -58,7 +75,6 @@ def pressure_to_total_force_N(pressure_value: float, unit: str, area_mm2: float)
 
 def resolve_face_index(face_id: Optional[str]) -> Optional[int]:
     """Resolve a CAD face identifier ("face_3", "3", "face0") to its B-Rep face index.
-
     Args:
         face_id: A face identifier string, e.g. the ``id``/``face_index`` of a
             Core ``CADFace``. ``None`` or non-index identifiers (e.g. "base")
@@ -70,8 +86,7 @@ def resolve_face_index(face_id: Optional[str]) -> Optional[int]:
     """
     if not face_id:
         return None
-    match = _FACE_ID_RE.fullmatch(str(face_id).strip())
-    return int(match.group(1)) if match else None
+    return parse_face_id(face_id)
 
 
 @dataclass
@@ -174,6 +189,10 @@ def nodal_area_weights(    nodes: np.ndarray,
 
     if not face_triangles:
         n = len(node_indices)
+        logger.warning(
+            "nodal_area_weights: no surface triangulation for %d nodes -- "
+            "falling back to UNIFORM distribution (resultant conserved, "
+            "spatial distribution likely inaccurate).", n)
         return {ni: 1.0 / n for ni in node_indices}
 
     idx_set = set(node_indices)
@@ -192,5 +211,56 @@ def nodal_area_weights(    nodes: np.ndarray,
     total = sum(area_per_node.values())
     if total <= 0.0:
         n = len(node_indices)
+        logger.warning(
+            "nodal_area_weights: zero total area (degenerate triangles) -- "
+            "falling back to UNIFORM distribution.")
         return {ni: 1.0 / n for ni in node_indices}
     return {ni: a / total for ni, a in area_per_node.items()}
+
+
+def face_triangles_for_indices(
+    face_indices,
+    face_surface_elements,
+    group_index=None,
+    node_indices=None,
+):
+    """Single source of truth for face → surface-triangle lookup (P2/D1).
+
+    Collects ``[n0, n1, n2]`` triangles (0-based mesh node indices) covering
+    the given 0-based CAD face indices, trying in order:
+
+    1. named physical groups (via ``group_index``: ``{face_index: [names]}``);
+    2. per-face ``face_<fi>`` keys (deterministic Gmsh path);
+    3. node-label propagation from the undifferentiated ``"boundary"`` bucket
+       (provisional-mesher leftovers; approximate staircase at ~h/2, logged).
+
+    Returns ``(tris, matched_specific)``. Empty list when no surface
+    triangulation exists at all (caller decides uniform fallback vs error).
+    """
+    tris = []
+    matched_specific = False
+    if not face_surface_elements:
+        return tris, matched_specific
+    group_index = group_index or {}
+    for fi in face_indices or []:
+        fi = int(fi)
+        for grp_name in group_index.get(fi, []):
+            tris.extend(face_surface_elements.get(grp_name, []))
+            matched_specific = True
+        face_key = f"face_{fi}"
+        if face_key in face_surface_elements:
+            tris.extend(face_surface_elements[face_key])
+            matched_specific = True
+    if not matched_specific and "boundary" in face_surface_elements:
+        node_set = set(node_indices or [])
+        if node_set:
+            boundary_tris = face_surface_elements["boundary"]
+            propagated = [tri for tri in boundary_tris if all(n in node_set for n in tri)]
+            if propagated:
+                logger.debug(
+                    "faces %s: no named group / face_<id> key found; recovered "
+                    "%d/%d triangles from 'boundary' via node-label propagation.",
+                    list(face_indices or []), len(propagated), len(boundary_tris),
+                )
+                tris.extend(propagated)
+    return tris, matched_specific

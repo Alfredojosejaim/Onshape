@@ -39,14 +39,10 @@ class KratosInitializationError(Exception):
 def _face_triangles_for_load(load, face_surface_elements, physical_groups, node_indices=None):
     """Collect surface triangles for a LoadDefinition's application face.
 
-    Returns a flat list of ``[n0, n1, n2]`` triangles (0-based mesh node
-    indices).  Empty list when no surface triangulation is available.
-
-    When neither a named physical group nor a ``face_<id>`` key is available,
-    falls back to node-label propagation: a boundary triangle is attributed
-    to this load's face if all three of its nodes are already known (via
-    CAD-geometry node selection, passed in as ``node_indices``) to belong to
-    that face.
+    Delegates to :func:`core.boundary.face_triangles_for_indices` (single
+    source of truth, shared with the local-engine path). Empty list when no
+    surface triangulation is available or the face id is unresolvable
+    (both cases logged explicitly; callers fall back to uniform or fail).
 
     NOTE (P2): the provisional voxel mesher (``ProvisionalTet4Mesher``) DOES
     classify boundary triangles per CAD face (``face_<fi>`` via
@@ -56,43 +52,25 @@ def _face_triangles_for_load(load, face_surface_elements, physical_groups, node_
     real B-Rep) and is logged; for validated real loads use
     ``GmshTet4Mesher``.
     """
+    from core.boundary import face_triangles_for_indices, parse_face_id
     if not face_surface_elements:
         return []
-    face_id = getattr(load, "application_face_id", None)
-    if face_id is None:
+    fi = parse_face_id(getattr(load, "application_face_id", None))
+    if fi is None:
+        logger.warning(
+            "face_triangles: application_face_id=%r unresolvable -> no "
+            "surface triangles (uniform fallback or explicit error downstream).",
+            getattr(load, "application_face_id", None),
+        )
         return []
-    try:
-        fi = int(face_id)
-    except (TypeError, ValueError):
-        return []
-    tris = []
-    matched_specific = False
-    if physical_groups:
-        for grp_name, face_indices in physical_groups.items():
-            if fi in face_indices:
-                tris.extend(face_surface_elements.get(grp_name, []))
-                matched_specific = True
-    face_key = f"face_{fi}"
-    if face_key in face_surface_elements:
-        tris.extend(face_surface_elements[face_key])
-        matched_specific = True
-
-    if not matched_specific and "boundary" in face_surface_elements:
-        node_set = set(node_indices or [])
-        if node_set:
-            boundary_tris = face_surface_elements["boundary"]
-            propagated = [
-                tri for tri in boundary_tris if all(n in node_set for n in tri)
-            ]
-            if propagated:
-                logger.debug(
-                    "Load face %d: no named group / face_<id> key found; "
-                    "recovered %d/%d triangles from the undifferentiated "
-                    "'boundary' bucket via node-label propagation.",
-                    fi, len(propagated), len(boundary_tris),
-                )
-                tris.extend(propagated)
-
+    group_index = {}
+    for grp_name, face_indices in (physical_groups or {}).items():
+        for gfi in face_indices or []:
+            group_index.setdefault(int(gfi), []).append(grp_name)
+    tris, _ = face_triangles_for_indices(
+        [fi], face_surface_elements, group_index=group_index,
+        node_indices=node_indices,
+    )
     return tris
 
 
@@ -653,6 +631,13 @@ class KratosAdapter:
         nodes: List[List[float]], tolerance: float = 0.5) -> None:
         """Apply constraints to nodes mapped from real CAD faces.
 
+        .. deprecated::
+            Prefer ``core.solver_interface._apply_constraint_by_face_mapping``
+            (via ``create_kratos_fea_solver``), which returns UNRESOLVED and
+            fails loudly instead of warn-skipping unmapped conditions.
+            This legacy path warn-skips and may leave the solve
+            under-constrained. Kept for backward compatibility only.
+
         Uses the Core's ``BoundaryConditionMapper`` to the map ``location_face_id``
         of every constraint to the mesh nodes that lie geometrically on that CAD
         face, then applies the constraint exclusively to those nodes.
@@ -664,6 +649,10 @@ class KratosAdapter:
             nodes: List of node coordinates for mapping
             tolerance: Distance tolerance (model units) for face-node matching
         """
+        logger.warning(
+            "apply_constraints_by_face_mapping is DEPRECATED: unmapped "
+            "conditions are warn-skipped here; use create_kratos_fea_solver "
+            "(fail-loud UNRESOLVED contract) instead.")
         try:
             from core.boundary import BoundaryConditionMapper, resolve_face_index
 
@@ -704,9 +693,16 @@ class KratosAdapter:
         nodes: List[List[float]], tolerance: float = 0.5) -> None:
         """Apply loads to nodes mapped from real CAD faces.
 
+        .. deprecated::
+            Same as ``apply_constraints_by_face_mapping``: prefer
+            ``create_kratos_fea_solver`` (fail-loud UNRESOLVED contract).
+
         Mirrors ``apply_constraints_by_face_mapping`` using the load's
         ``application_face_id``.
         """
+        logger.warning(
+            "apply_loads_by_face_mapping is DEPRECATED: unmapped loads are "
+            "warn-skipped here; use create_kratos_fea_solver instead.")
         try:
             from core.boundary import BoundaryConditionMapper, resolve_face_index
 
@@ -919,31 +915,22 @@ class KratosAdapter:
             logger.error(f"Failed to apply load from Core: {e}")
             raise
     
-    def apply_pressure_load(self, model_part: Any, node_indices: List[int], 
+    def apply_pressure_load(self, model_part: Any, node_indices: List[int],
                           pressure: float, normal_vector: List[float]) -> None:
-        """Apply pressure load to nodes (simplified implementation).
-        
-        Args:
-            model_part: Kratos ModelPart with nodes and DOFs
-            node_indices: List of node indices to apply pressure to
-            pressure: Pressure value in Pa
-            normal_vector: Normal vector [nx, ny, nz] indicating pressure direction
+        """Apply pressure load to nodes.
+
+        .. deprecated:: removed (was physically wrong: ``total_force =
+            pressure`` treated Pa as N). Use :meth:`apply_load_from_core`
+            with ``LoadType.PRESSURE``, which integrates the real face area
+            (Pa x m2) from the surface triangulation and fails explicitly
+            when no area is available.
         """
-        try:
-            logger.info(f"Applying pressure load {pressure} Pa to {len(node_indices)} nodes")
-            
-            # Simplified pressure implementation: distribute as point loads
-            # In a full implementation, this would use surface elements and pressure conditions
-            total_force = pressure  # Simplified (should be pressure * area)
-            force_vector = [total_force * normal_vector[i] for i in range(3)]
-            
-            self.apply_distributed_load(model_part, node_indices, force_vector, distribute=True)
-            
-            logger.info("Pressure load applied (simplified implementation)")
-            
-        except Exception as e:
-            logger.error(f"Failed to apply pressure load: {e}")
-            raise
+        raise NotImplementedError(
+            "apply_pressure_load was removed: it treated pressure (Pa) as "
+            "force (N). Use apply_load_from_core(load with "
+            "load_type=LoadType.PRESSURE, ...), which computes F = p x A "
+            "from the face triangulation."
+        )
     
     def setup_solver_and_strategy(
         self, model_part: Any, linear_solver_settings: Optional[Dict[str, Any]] = None

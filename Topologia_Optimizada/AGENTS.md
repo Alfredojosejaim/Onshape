@@ -65,6 +65,8 @@ tests/ ~40 archivos, convención test_p0_/test_p1_/test_p3_* = ligados a bugs pr
 | Convención de navegación/selección | `docs/NAVIGATION_CONVENTION.md` |
 | Arquitectura del pipeline de selección de nodos | `ARQUITECTURA_SELECCION_NODOS.md` |
 | Detalle profundo de implementación (histórico, largo) | `RESUMEN_IMPLEMENTACION.md` (96K — último recurso) |
+| Prompt histórico de etapas (stub, solo trazabilidad) | `prompts.md` — NO es especificación vigente; sus §§/ETAPAs citados en código son arqueología |
+| Archivo histórico (fases, fixes puntuales, evidencias viejas) | `docs/obsoletos/` — NO leer para trabajar; solo arqueología |
 
 ## Principios de diseño no negociables
 

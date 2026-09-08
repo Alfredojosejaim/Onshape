@@ -1,5 +1,11 @@
 # METODOLOGÍA ESTRICTA DE DESARROLLO Y VALIDACIÓN
 
+> **Nota de vigencia (2026-09-08):** este documento define reglas de ejecución
+> que siguen vigentes. Jerarquía de lectura actual: el ÍNDICE es `AGENTS.md`,
+> la fuente de verdad del estado es `PROJECT_STATUS.md`. Las menciones a
+> `prompts.md` como "prompt vigente" refieren al prompt histórico de etapas
+> (hoy stub, ver `prompts.md`); no hay requisitos pendientes en él.
+
 ## 1. PROPÓSITO
 
 Este archivo define las reglas obligatorias que toda IA o desarrollador debe seguir al modificar el proyecto **Topología Optimizada**.

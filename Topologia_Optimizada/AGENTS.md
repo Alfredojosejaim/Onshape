@@ -18,7 +18,7 @@ Estado real (implementado/parcial/pendiente, por módulo): `PROJECT_STATUS.md`.
 |---|---|---|
 | Geometría B-Rep | CadQuery / OCP (OCCT) | STEP I/O, sólidos, caras |
 | Mallado | Gmsh | Malla volumétrica Tet4 |
-| FEM / Optimización | Kratos Multiphysics (`StructuralMechanicsApplication`, `OptimizationApplication`, MMA/GCMMA) | FEA + SIMP, backend dual con motor local NumPy/SciPy |
+| FEM / Optimización | Kratos Multiphysics (`StructuralMechanicsApplication`, `OptimizationApplication`) | FEA backend opcional; SIMP local NumPy/SciPy (dual: local default + Kratos opt-in) |
 | Reconstrucción B-Rep | Marching Tetrahedra + `OCPBRepFitter` | Campo de densidad → STEP editable |
 | Visualización | VTK (`vtkCellPicker`, `QVTKRenderWindowInteractor`, `vtkActor2D`) | Viewport 3D, picking, overlays |
 | UI | PySide6 | Layout tipo Onshape (ribbon, feature tree, topbar) |
@@ -30,12 +30,12 @@ core/ Lógica de dominio, SIN dependencias de UI (test: test_core_independence.p
 conditions.py ConditionManager: Load/Elasticity/Obstruction/ProtectedRegion (fuente de verdad, YA implementado — no reinventar esquema)
 cad_entity.py CadEntityRef (con solid_id) / SelectionSet
 topo_problem.py, topopt.py Definición y motor del problema de optimización
-kratos_adapter.py (72K) Puente a Kratos — el archivo más grande, ir con cuidado
+kratos_adapter.py (75K) Puente a Kratos — el archivo más grande, ir con cuidado
 meshing.py Gmsh
 cad_reconstruction.py Marching Tetrahedra + fitting B-Rep
 face_correspondence.py Matching geométrico OCCT↔Gmsh (relacionado a bug P1, ver abajo)
 selection.py, navigation.py Picking / physical groups
-fea.py, materials.py, boundary.py, generative.py, generative_engine.py
+fea.py (direct spsolve default + CG opt-in con fallback explícito, umbral Kratos 50k elems/30s), materials.py, boundary.py (presión Pa×área, áreas tributarias), generative.py, generative_engine.py
 
 desktop/
 ui/main_window.py Coordinador: handlers on* (import, mesh, fea, optimize, export, validate...)
@@ -43,15 +43,16 @@ ui/components/workspace.py WorkspaceBuilder: topbar + ribbon + pestañas (RECIÉ
 ui/components/menus.py MenuBuilder: barra de menú superior
 ui/components/widgets.py Primitivas (RibbonTool, glyph_label, repolish)
 ui/panels/design_tree.py Árbol de diseño (Onshape-style), agrupa condiciones por pieza (solid_id)
-ui/panels/condition_panel.py Diálogo modal por condición (factory pattern: cada Aceptar = instancia nueva)
+ui/panels/condition_panel.py Diálogo modal por condición (factory pattern: cada Aceptar = instancia nueva; carga con selector N/Pa/kPa/MPa)
 ui/panels/timeline.py Timeline tipo Fusion, con modo ramificado por pieza (columnas paralelas que convergen en nodo Optimizar compartido: `set_branch_view`)
+ui/panels/study_panel.py StudyPanel (topología) + GenerativeStudyPanel (escenarios A/B) → menú Estudio
 ui/theme.json Paleta de colores (dark), fuente de verdad para cualquier mockup/UI nueva
 viewport/ Viewport3D → Scene/Renderer/CameraController/SelectionManager
 pipeline/controller.py PipelineController (orquesta core desde la UI)
 
 services/ cad_service.py, study_service.py — capa de servicio
 adapters/cad/ Adaptadores de import/export CAD
-tests/ ~40 archivos, convención test_p0_/test_p1_/test_p3_* = ligados a bugs priorizados
+tests/ 44 archivos, convención test_p0_/test_p1_/test_p3_* = ligados a bugs priorizados
 
 
 ## Qué doc leer para qué (no leer todos de entrada)
@@ -61,7 +62,7 @@ tests/ ~40 archivos, convención test_p0_/test_p1_/test_p3_* = ligados a bugs pr
 | Instalar/correr la app | `README.md` §0 |
 | Especificación completa del producto | `README.md` (32K, completo) |
 | Qué está implementado vs pendiente, por módulo | `PROJECT_STATUS.md` (fuente de verdad del estado REAL) |
-| Auditoría botón→handler→controller→core de la UI (✅/🔀/🚫) | `docs/UI_IMPLEMENTATION_MAP.md` — **actualizado tras la limpieza del ribbon y el endurecimiento (ciclo actual, §12b)** |
+| Auditoría botón→handler→controller→core de la UI (✅/🔀/🚫) | `docs/UI_IMPLEMENTATION_MAP.md` — **actualizado tras la limpieza del ribbon y el endurecimiento (ciclo actual, §§12b–12c)** |
 | Convención de navegación/selección | `docs/NAVIGATION_CONVENTION.md` |
 | Arquitectura del pipeline de selección de nodos | `ARQUITECTURA_SELECCION_NODOS.md` |
 | Detalle profundo de implementación (histórico, largo) | `RESUMEN_IMPLEMENTACION.md` (96K — último recurso) |
@@ -96,6 +97,15 @@ Se auditó y limpió `desktop/ui/components/workspace.py` (ribbon):
 - Export consolidado en dropdown único (`rb_export`: Resultado JSON / Modelo STEP), eliminado `rb_export_step` duplicado.
 - **Hecho**: `docs/UI_IMPLEMENTATION_MAP.md` sincronizado (§§1,4,6–9, §12b); ruta legacy del controller con fallbacks explícitos; timeline rama clicable con umbral ≥1.
 - **Hecho**: timeline ramificada por pieza en `timeline.py` (columnas paralelas por pieza que convergen en `Optimizar()` vía `set_branch_view`; pipeline/feature salen del modo automáticamente).
+
+## Estado actual — ciclo Fases 0/1/3 (decisiones D1–D6, orden 1→3→2)
+
+- **F0**: baseline `439 passed, 6 deselected` (sin benchmarks) → cierre `451 passed` (+12 tests nuevos).
+- **F1**: `entitiesChanged` eliminada (0 refs); Validar lista `face_unmapped_<tag>`; CI en `runtime/python`.
+- **F3a (UI generativa)**: `GenerativeStudyPanel` A/B en `study_panel.py` + menú Estudio (crear/ejecutar diseño generativo); post-proceso compartido `_finish_study_execution`.
+- **F3b (PRESSURE)**: `F[N]=p[Pa]×A[m²]` en local (`generative_engine.py`) y Kratos (`kratos_adapter.py`); helpers en `boundary.py`; sin área → error explícito; `kratos_bridge` propaga `LoadType.PRESSURE`.
+- **F3c (iterativo)**: `FEASolver(linear_solver="cg")` opt-in (default `direct` intacto, fallback explícito a spsolve); umbral numérico Kratos 50k elementos / 30s (`kratos_suggestion`, aviso en log + status bar FEA).
+- **Diferido por D1**: Fase 2 (IDs persistentes P1/P2). **Por D3**: Thermal/Modal quedan scaffold.
 
 ## Convención de flujo de trabajo
 

@@ -55,10 +55,13 @@ El flujo controlado es `desktop/pipeline/controller.py`, que delega en
 
 | Botón / Acción | UI | Señal / Acción | Método ejecutado | Backend real | Nivel |
 |----------------|----|----------------|------------------|--------------|-------|
-| `rb_import` / Menú Archivo → Importar STEP / `_on_play_next` (paso 1) | main_window:409 / 196 | `clicked` / `triggered` | `_on_import` (721) | `controller.import_model(...)` → `core` (viñeta STEP) | ✅ Funcional |
-| `rb_mesh` / PropertiesPanel | main_window:411 / QSpin `element_size` | `clicked` | `_on_generate_mesh` (819) → `controller.generate_mesh` | `core.meshing` (Gmsh Tet4) | ✅ Funcional |
-| `rb_mesh_adaptive` | main_window:413 | `clicked` | `_on_generate_adaptive_mesh` (868) | `controller.generate_adaptive_mesh` | ✅ Funcional |
-| `_on_play_next` (guía) | TimelinePanel `playRequested` | `playRequested` | `_on_play_next` (1382) | orquesta import→mesh→opt | ✅ Funcional |
+| Topbar `📁 Importar STEP` / Menú Archivo → Importar STEP / `_on_play_next` (paso 1) | workspace (topbar) / menú Archivo | `clicked` / `triggered` | `_on_import` | `controller.import_model(...)` → `core` (viñeta STEP) | ✅ Funcional |
+| `rb_mesh` / PropertiesPanel | workspace ribbon (grupo Modelo) / QSpin `element_size` | `clicked` | `_on_generate_mesh` → `controller.generate_mesh` | `core.meshing` (Gmsh Tet4) | ✅ Funcional |
+| `rb_mesh_adaptive` | workspace ribbon (grupo Modelo) | `clicked` | `_on_generate_adaptive_mesh` | `controller.generate_adaptive_mesh` (con fallback explícito a malla uniforme + flag `adaptive_fallback`) | ✅ Funcional |
+| `_on_play_next` (guía) | TimelinePanel `playRequested` | `playRequested` | `_on_play_next` | orquesta import→mesh→opt | ✅ Funcional |
+
+> Nota (limpieza del ribbon): el import vive SOLO en el topbar + menú
+> Archivo; no existe `rb_import` en el ribbon (duplicado eliminado).
 
 ## 2. FEA y optimización
 
@@ -87,7 +90,8 @@ ejecuta vía pipeline (`_on_cad_edit_done` re-renderiza y sincroniza el árbol).
 
 | Botón / Acción | UI | Señal / Acción | Método ejecutado | Backend real | Nivel |
 |----------------|----|----------------|------------------|--------------|-------|
-| Menú Condiciones → Carga / Elasticidad / Obstrucción / Región protegida | main_window:239-251 | `triggered` | `_on_condition_op(kind)` (1206) → `ConditionPanel` | `controller.execute_command` → `core.conditions.ConditionManager` | ✅ Funcional |
+| Menú Condiciones → Carga / Elasticidad / Obstrucción / Región protegida | menú &Condiciones | `triggered` | `_on_condition_op(kind)` → `ConditionPanel` | `controller.execute_command` → `core.conditions.ConditionManager` (append, nunca overwrite) | ✅ Funcional |
+| `rb_conditions` (dropdown: Carga/Elasticidad/Obstrucción/Región protegida) | workspace ribbon (grupo Condiciones) | `triggered` (cada acción) + `clicked`→`showMenu` | `_on_condition_op(kind)` (mismo handler que el menú) | idem | ✅ Funcional |
 | PropertiesPanel `forceAdded` | properties:597 | `forceAdded(mag,dx,dy,dz)` | `_on_add_force` (1433) | persiste `controller.forces` (consumido por FEA/SIMP) | ✅ Funcional |
 | PropertiesPanel `constraintAdded` | properties:598 | `constraintAdded(type)` | `_on_add_constraint` (1444) | persiste `controller.constraints` | ✅ Funcional |
 | Overlay `⚡ Fuerzas` / `🔒 Fijaciones` | main_window:627-630 | `toggled` | `_sync_sidebar_vis` | visibilidad (solo presentación) | ✅ Funcional (display) |
@@ -103,15 +107,17 @@ ejecuta vía pipeline (`_on_cad_edit_done` re-renderiza y sincroniza el árbol).
 
 | Botón / Acción | UI | Señal / Acción | Método ejecutado | Backend real | Nivel |
 |----------------|----|----------------|------------------|--------------|-------|
-| `rb_viz` | main_window:459 | `clicked` | `_on_visualize_result` (1119) | `viewport.show_density` (campo real) | ✅ Funcional |
-| `rb_export` / Menú → Exportar resultado | main_window:461, 197 | `clicked`/`triggered` | `_on_export` (1067) | escribe JSON con `controller.result` real | ✅ Funcional |
-| `rb_export_step` / Herramientas | main_window:471 | `clicked` | `_on_export_step` (1095) | `controller.cad.export_step` | ✅ Funcional |
+| `rb_viz` | workspace ribbon (grupo Postproceso) | `clicked` | `_on_visualize_result` | `viewport.show_density` (campo real, colormap elegible) | ✅ Funcional |
+| `rb_export` (dropdown: Resultado JSON / Modelo STEP) | workspace ribbon (grupo Postproceso) | `triggered` + `clicked`→`showMenu` | `_on_export` / `_on_export_step` | escribe JSON con `controller.result` real / `controller.cad.export_step` | ✅ Funcional |
+
+> Nota: `rb_export_step` como botón separado fue eliminado; vive como
+> acción dentro del dropdown `rb_export`.
 
 ## 7. Vista, navegación y guía
 
 | Botón / Acción | UI | Señal / Acción | Método ejecutado | Nivel |
 |----------------|----|----------------|------------------|-------|
-| Vistas (ISO/FRONT/TOP/RIGHT) | menú Diseño:264, combo:490 | `triggered`/`currentIndexChanged` | `_on_view` (1530) → `viewport.set_view` | ✅ Funcional |
+| Vistas (ISO/FRONT/TOP/RIGHT) | menú Diseño, combo vista (workspace, `owner._view_combo`) | `triggered`/`currentIndexChanged` | `_on_view` → `viewport.set_view` | ✅ Funcional |
 | Ajustar a pantalla / Centrar | menú:277, overlay:621 | `clicked` | `viewport.fit_to_view` / `center_model` | ✅ Funcional |
 | Wireframe / Ejes / Rejilla | overlay:622-626, ribbon:497 | `toggled` | `viewport.set_display_mode` / `toggle_axes` / `toggle_grid` | ✅ Funcional |
 | Limpiar selección | menú Editar:209, DesignTree | `triggered`/`clicked` | `_on_clear_selection` (1506) | ✅ Funcional |
@@ -123,23 +129,24 @@ ejecuta vía pipeline (`_on_cad_edit_done` re-renderiza y sincroniza el árbol).
 
 | Botón / Acción | UI | Señal / Acción | Método ejecutado | Backend real | Nivel |
 |----------------|----|----------------|------------------|--------------|-------|
-| **`rb_validate` (✓ Validar)** | main_window:468 | `clicked` | **`_on_validate` (1456)** | reporta estado real del `controller` (modelo, sólidos vía `cad.list_solids`, malla, fuerzas/restricciones, condiciones, estudios, resultado) | ✅ Funcional *(corregido en este ciclo)* |
-| `rb_filtros` (⚙ Filtros) | main_window:443 | `clicked` | `_on_focus_filter` (1135) | redirige al panel de propiedades | 🔀 Redirige |
+| **`rb_validate` (✓ Validar)** | workspace ribbon (grupo Herramientas) | `clicked` | **`_on_validate`** | reporta estado real del `controller` (modelo, sólidos vía `cad.list_solids`, malla, fuerzas/restricciones, condiciones, estudios, resultado) | ✅ Funcional *(corregido en auditoría previa)* |
 
 ---
 
-## 9. Solo visuales / NO CONECTADOS (con motivo)
+## 9. Botones eliminados en la limpieza del ribbon (histórico)
 
-| Botón | UI | Comportamiento actual | Motivo / decisión |
-|-------|----|----------------------|-------------------|
-| `rb_sens` (📈 Sensibilidad) | main_window:440 | `statusBar().showMessage(...)` estático | La sensibilidad adjunta ya se computa internamente por el motor SIMP en `controller.run_optimization`; no hay backend separado reutilizable que conectar. |
-| `rb_design_space` (◆ Espacio de Diseño) | main_window:447 | `showMessage(...)` estático | Definir espacio de diseño requiere captura de dominio nueva; el dominio se determina por pieza dentro de `execute_study` (ciclo previo) y no hay panel de dominio conectado. No se construye UI nueva (prompt: no inventar funcionalidad). |
-| `rb_generative` (✧ Generativo) | main_window:450 | `showMessage(...)` estático | Existe `core/generative.py` (motor + validación) pero no hay flujo de escenarios configurado en la UI. Conectarlo exigiría un panel de escenarios nuevo. Documentado como **NO CONECTADO**, no implementado. |
+| Botón | Comportamiento anterior | Decisión |
+|-------|------------------------|----------|
+| `rb_sens` (Sensibilidad) | `statusBar().showMessage(...)` estático | **Eliminado**: la sensibilidad ya se computa dentro del SIMP; no había backend separado que conectar. |
+| `rb_filtros` (⚙ Filtros) | redirigía al panel de propiedades (`_on_focus_filter`) | **Eliminado** junto con su handler. |
+| `rb_design_space` (Espacio de Diseño) | `showMessage(...)` estático | **Eliminado**: el dominio se determina por pieza en `execute_study`; no hay panel de dominio. |
+| `rb_generative` (Generativo) | `showMessage(...)` estático | **Eliminado de la UI**: el motor `core/generative.py` existe pero no hay flujo de escenarios conectado; conectarlo exige panel nuevo (fuera de alcance). |
+| `rb_export_step` (botón suelto) | duplicaba la exportación STEP | **Eliminado como botón**; vive como acción del dropdown `rb_export`. |
+| `rb_import` (ribbon) | duplicaba el import del topbar | **Eliminado del ribbon**; import único en topbar + menú Archivo. |
 
 Nota: `rb_mesh_adaptive`, `rb_fea`, `rb_opt`, `rb_viz`, `rb_export`,
-`rb_export_step` y todos los de Edición/Condiciones se habilitan/deshabilitan
-según el estado real del pipeline (`_set_enabled`), de modo que los botones
-solo-visuales anteriores son los únicos que muestran mensaje fijo.
+`rb_validate` y todos los de Edición/Condiciones se habilitan/deshabilitan
+según el estado real del pipeline (`_set_enabled`).
 
 ---
 
@@ -181,6 +188,24 @@ Fuentes de verdad auditadas (verificación visual de conexión real en el códig
 
 **No** se construyeron UIs nuevas (sensibilidad/espacio/generativo se documentan
 como NO CONECTADO, conforme a la regla de no inventar funcionalidad futura).
+
+## 12b. Sincronización post-limpieza del ribbon + endurecimiento (este ciclo)
+
+1. **Mapa actualizado tras la limpieza**: §§1, 4, 6–9 reescritos (import solo
+   topbar, dropdown `rb_conditions`, dropdown `rb_export`, combo de vista en
+   workspace, §9 convertido en histórico de eliminados).
+2. **P1 (fallbacks por orden)**: `_emit_physical_groups` advierte explícito sin
+   correspondencia; `_extract_all_surface_elements` en modo determinista ya no
+   etiqueta por posición — superficies sin match → `face_unmapped_<tag>` +
+   warning (nunca confundible con `face_<fi>`).
+3. **Ruta legacy explícita** (`controller.py`): `set_material` rechaza nombre
+   inválido; `generate_adaptive_mesh` marca `adaptive_fallback`; `_apply_*`,
+   `build_problem`/`run_optimization` y `run_in_background` con warnings
+   explícitos; `_apply_*` documentados LEGACY (preferir `ConditionManager`).
+4. **`_study_solid_index`/`_active_study_id`** inicializados en `__init__`;
+   timeline rama: nodo converge emite `playRequested` + tooltip de vista,
+   umbral unificado a ≥1 grupo (igual que el árbol); `design_tree` con helper
+   `_labeled_item` e imports top-level; dropdowns ribbon con `showMenu`.
 
 ## 13. Verificación
 

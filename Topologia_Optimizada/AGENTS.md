@@ -61,7 +61,7 @@ tests/ ~40 archivos, convención test_p0_/test_p1_/test_p3_* = ligados a bugs pr
 | Instalar/correr la app | `README.md` §0 |
 | Especificación completa del producto | `README.md` (32K, completo) |
 | Qué está implementado vs pendiente, por módulo | `PROJECT_STATUS.md` (fuente de verdad del estado REAL) |
-| Auditoría botón→handler→controller→core de la UI (✅/🔀/🚫) | `docs/UI_IMPLEMENTATION_MAP.md` — **desactualizado tras la limpieza del ribbon (ver abajo), actualizar antes de confiar en él** |
+| Auditoría botón→handler→controller→core de la UI (✅/🔀/🚫) | `docs/UI_IMPLEMENTATION_MAP.md` — **actualizado tras la limpieza del ribbon y el endurecimiento (ciclo actual, §12b)** |
 | Convención de navegación/selección | `docs/NAVIGATION_CONVENTION.md` |
 | Arquitectura del pipeline de selección de nodos | `ARQUITECTURA_SELECCION_NODOS.md` |
 | Detalle profundo de implementación (histórico, largo) | `RESUMEN_IMPLEMENTACION.md` (96K — último recurso) |
@@ -77,8 +77,8 @@ tests/ ~40 archivos, convención test_p0_/test_p1_/test_p3_* = ligados a bugs pr
 
 | ID | Bug | Ubicación | Bloquea |
 |---|---|---|---|
-| P1 | Sin contrato público OCCT `shape.Faces()` ↔ Gmsh `getEntities(2)` | `core/face_correspondence.py` | P2 |
-| P2 | Mesher provisorio no propaga `face_id` a triángulos de frontera → cargas caen a uniforme | `core/meshing.py` (`_extract_all_surface_elements`) | Validación de cargas reales |
+| P1 | Correspondencia OCCT `shape.Faces()` ↔ Gmsh `getEntities(2)` por firma geométrica (sin IDs persistentes); fallbacks por orden eliminados del modo determinista (`face_unmapped_<tag>` + warning, `core/meshing.py`) | `core/face_correspondence.py` | P2 |
+| P2 | Mesher provisorio clasifica frontera por cara CAD (`classify_triangles_to_faces`); resto no asignable → bucket `"boundary"` explícito (aprox. a ~h/2, solo Gmsh vale para cargas validadas) | `core/meshing.py` (`ProvisionalTet4Mesher`), `core/kratos_adapter.py` | Validación de cargas reales |
 | P3 | Ambigüedad `volfrac` (dominio activo vs volumen total) — RESUELTO: `ACTIVE_DOMAIN` (decisión Option A, `core/topopt.py`); `VolfracMode` lo modela en `core/topo_problem.py` | `core/topo_problem.py` (`VolfracMode`) | — (cerrado) |
 | P4 | Halo radius mal derivado de `filter_radius` — RESUELTO: deriva de tamaño de elemento de malla en `protect_elements_near_nodes()`; `halo_radius_source` lo modela | `protect_elements_near_nodes()` en meshing/topo | — (cerrado) |
 
@@ -92,7 +92,7 @@ Se auditó y limpió `desktop/ui/components/workspace.py` (ribbon):
 - Import consolidado a un solo botón (topbar `📁 Importar STEP`); se eliminó el duplicado del ribbon.
 - Eliminados 4 botones sin función real (solo mostraban mensaje en status bar): `rb_sens`, `rb_filtros`, `rb_design_space`, `rb_generative`.
 - Export consolidado en dropdown único (`rb_export`: Resultado JSON / Modelo STEP), eliminado `rb_export_step` duplicado.
-- **Pendiente**: `docs/UI_IMPLEMENTATION_MAP.md` no refleja estos cambios — actualizar.
+- **Hecho**: `docs/UI_IMPLEMENTATION_MAP.md` sincronizado (§§1,4,6–9, §12b); ruta legacy del controller con fallbacks explícitos; timeline rama clicable con umbral ≥1.
 - **Hecho**: timeline ramificada por pieza en `timeline.py` (columnas paralelas por pieza que convergen en `Optimizar()` vía `set_branch_view`; pipeline/feature salen del modo automáticamente).
 
 ## Convención de flujo de trabajo

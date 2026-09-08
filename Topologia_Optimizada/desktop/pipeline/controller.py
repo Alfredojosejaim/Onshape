@@ -56,6 +56,12 @@ class PipelineController:
         self._bot_nodes = []
         self._load_nodes = []
 
+        # Study-scoped solid pointer (deterministic domain). Initialized
+        # here (not dynamically in _finalize_cad_result) so every reader
+        # can rely on the attribute existing; close_model() resets it.
+        self._study_solid_index = None
+        self._active_study_id = None
+
         # --- Architecture layer (additive, does not change existing behaviour) ---
         self.document = Document()
         self.feature_history = FeatureHistory()
@@ -82,6 +88,11 @@ class PipelineController:
     def set_material(self, name: str) -> None:
         if name in STANDARD_MATERIALS:
             self._material_name = name
+        else:
+            raise PipelineError(
+                f"Material desconocido: {name!r}. "
+                f"Disponibles: {sorted(STANDARD_MATERIALS)}"
+            )
 
     def material(self):
         return STANDARD_MATERIALS.get(self._material_name, STANDARD_MATERIALS["steel"])
@@ -236,8 +247,16 @@ class PipelineController:
             min_size=min_size,
         )
         if not mesh.get("success"):
-            # Fall back to uniform mesh through the standard path.
-            return self.generate_mesh(target_element_size=base_size)
+            # Explicit (never silent) fallback: the adaptive mesher failed,
+            # so the standard uniform path is used and the result is tagged.
+            logger.warning(
+                "Adaptive mesh failed (%s); falling back to uniform mesh "
+                "with base_size=%s (explicit fallback, not silent).",
+                mesh.get("error", "unknown error"), base_size,
+            )
+            out = self.generate_mesh(target_element_size=base_size)
+            out["adaptive_fallback"] = True
+            return out
         self.mesh = mesh
         self.mesh_nodes = np.asarray(mesh["nodes"], dtype=float)
         self.mesh_elements = np.asarray(mesh["elements"], dtype=int)
@@ -248,7 +267,15 @@ class PipelineController:
     # Boundary conditions (simplified: fixed base + tip distributed load)
     # ------------------------------------------------------------------ #
     def _apply_constraints(self, nodes: np.ndarray) -> np.ndarray:
-        """Default: fix the nodes at the minimum coordinate along the longest axis."""
+        """Default: fix the nodes at the minimum coordinate along the longest axis.
+
+        LEGACY path (``self.constraints`` flat dicts). Prefer the reusable
+        ``ConditionManager`` route (``run_fea(conditions=...)`` /
+        ``run_optimization(conditions=...)``), which fails explicitly on
+        unmappable faces instead of falling back to coordinates. This method
+        is kept for backward compatibility; its coordinate fallbacks are
+        logged as explicit warnings, never silent.
+        """
         from core.boundary import BoundaryConditionMapper, resolve_face_index
         from core.selection import NodeSelectionEngine
 
@@ -287,6 +314,11 @@ class PipelineController:
                         fixed_dofs.append(ni * 3 + ax)
         self._bot_nodes = list(dict.fromkeys(node_indices))
         if not fixed_dofs:
+            logger.warning(
+                "LEGACY constraints: no constraint mapped to mesh nodes; "
+                "fixing z_min coordinate nodes explicitly (fallback, not "
+                "a CAD-face mapping). Migrate to ConditionManager."
+            )
             axis = 2
             coord = float(nodes[:, axis].min())
             node_indices = [
@@ -299,6 +331,11 @@ class PipelineController:
         return np.sort(np.unique(np.asarray(fixed_dofs, dtype=int)))
 
     def _apply_loads(self, nodes: np.ndarray, num_dofs: int) -> np.ndarray:
+        """Assemble the legacy force vector from ``self.forces`` flat dicts.
+
+        LEGACY path — same deprecation note as :meth:`_apply_constraints`:
+        coordinate fallbacks below are logged explicitly, never silent.
+        """
         from core.boundary import BoundaryConditionMapper, resolve_face_index
         from core.selection import NodeSelectionEngine
 
@@ -336,6 +373,12 @@ class PipelineController:
             if mapped_nodes:
                 node_indices.extend(mapped_nodes)
             elif not selection:
+                logger.warning(
+                    "LEGACY loads: load (mag=%s) mapped to no mesh node; "
+                    "applying to max-coordinate nodes explicitly (fallback, "
+                    "not a CAD-face mapping). Migrate to ConditionManager.",
+                    mag,
+                )
                 axis = int(np.argmax(np.abs(direction)))
                 coord = float(nodes[:, axis].max())
                 node_indices.extend(
@@ -363,6 +406,11 @@ class PipelineController:
         nodes = self.mesh_nodes
         num_dofs = int(nodes.shape[0] * 3)
         if not self.constraints:
+            logger.warning(
+                "build_problem: no legacy constraints set; auto-applying "
+                "set_simple_boundaries() explicitly (default, not a CAD "
+                "mapping). Prefer run_fea(conditions=[...])."
+            )
             self.set_simple_boundaries()
         fixed = self._apply_constraints(nodes)
         force = self._apply_loads(nodes, num_dofs)
@@ -538,6 +586,11 @@ class PipelineController:
             return g
 
         if not self.constraints:
+            logger.warning(
+                "run_optimization: no legacy constraints set; auto-applying "
+                "set_simple_boundaries() explicitly (default, not a CAD "
+                "mapping). Prefer conditions=[...]."
+            )
             self.set_simple_boundaries()
         force = self._apply_loads(nodes, int(nodes.shape[0] * 3))
         fixed = self._apply_constraints(nodes)
@@ -1275,6 +1328,11 @@ class PipelineController:
     # ------------------------------------------------------------------ #
     def run_in_background(self, fn: Callable[[], Any], on_done: Callable[[Any], None],
                           on_error: Optional[Callable[[Exception], None]] = None) -> None:
+        if on_error is None:
+            logger.warning(
+                "run_in_background called without on_error: failures will "
+                "only be logged, never shown to the user. Pass on_error."
+            )
         def worker():
             try:
                 out = fn()

@@ -196,6 +196,9 @@ class WorkspaceBuilder:
             act.triggered.connect(lambda _=False, k=kind: owner._on_condition_op(k))
             cond_menu.addAction(act)
         owner.rb_conditions.setMenu(cond_menu)
+        # RibbonTool es QPushButton: a diferencia de QToolButton, el clic en
+        # el cuerpo no abre el menú solo; se conecta explícitamente.
+        owner.rb_conditions.clicked.connect(owner.rb_conditions.showMenu)
         lay.addWidget(group([owner.rb_conditions], "Condiciones"))
 
         lay.addWidget(divider())
@@ -222,6 +225,8 @@ class WorkspaceBuilder:
         act_export_step.triggered.connect(owner._on_export_step)
         export_menu.addAction(act_export_step)
         owner.rb_export.setMenu(export_menu)
+        # Idem rb_conditions: QPushButton no abre el menú con clic solo.
+        owner.rb_export.clicked.connect(owner.rb_export.showMenu)
         lay.addWidget(group([owner.rb_viz, owner.rb_export], "Postproceso"))
 
         lay.addWidget(divider())

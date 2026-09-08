@@ -123,12 +123,20 @@ class GmshTet4Mesher(BaseMesher):
 
         surfaces = gmsh.model.getEntities(2)  # [(dim, tag), ...]
         surface_tags = [tag for dim, tag in surfaces if dim == 2]
-        # Preferred: explicit deterministic correspondence. Fallback: index
-        # alignment with the gmsh surface enumeration (kept for callers that
-        # have no CAD shape available, e.g. pure STEP meshing).
+        # Preferred: explicit deterministic correspondence. Order-based
+        # fallback: ONLY when the caller has no CAD shape available (pure
+        # STEP meshing without geometric matching). It is explicit — never
+        # silent: a warning names the affected groups so a mislabeled load
+        # can be traced back here.
         if face_index_to_tag is not None:
             index_to_tag = dict(face_index_to_tag)
         else:
+            logger.warning(
+                "No CAD-face correspondence available; physical groups %s "
+                "use Gmsh enumeration order (inexact if OCCT/Gmsh orders "
+                "differ). Provide cq_shape for geometric matching.",
+                sorted(physical_groups),
+            )
             index_to_tag = {i: tag for i, tag in enumerate(surface_tags)}
 
         group_tags: Dict[str, int] = {}
@@ -241,7 +249,12 @@ class GmshTet4Mesher(BaseMesher):
         from :mod:`core.face_correspondence`) is provided, keys are assigned by
         that geometric correspondence instead of by surface enumeration order —
         making the ``face_<fi>`` labels stable regardless of Gmsh's internal
-        enumeration.
+        enumeration. In that deterministic mode an unmapped surface (seam,
+        extra Gmsh entity) gets an explicit ``face_unmapped_<tag>`` key plus
+        a warning — never a positional ``face_<fi>`` label that a load could
+        mistake for a CAD face. Without correspondence the order-based
+        ``face_<position>`` label is kept for pure-STEP meshing (no CAD
+        shape available).
         """
         surfaces = gmsh.model.getEntities(2)
         if not surfaces:
@@ -276,6 +289,19 @@ class GmshTet4Mesher(BaseMesher):
                 continue
             if tag_to_face and stag in tag_to_face:
                 label = f"face_{tag_to_face[stag]}"
+            elif face_index_to_tag is not None:
+                # Deterministic mode: an unmapped surface (seam, split, or
+                # extra Gmsh entity) must NEVER reuse a ``face_<fi>`` label
+                # by position — that silent mislabeling is exactly P1. It
+                # gets an explicit ``face_unmapped_<tag>`` key plus a
+                # warning, so no load/BC can mistake it for a CAD face.
+                logger.warning(
+                    "Gmsh surface tag %d has no CAD-face correspondence "
+                    "(mapped %d/%d); labeled 'face_unmapped_%d', excluded "
+                    "from face-indexed loads.",
+                    stag, len(tag_to_face), len(surface_tags), stag,
+                )
+                label = f"face_unmapped_{stag}"
             else:
                 try:
                     label = f"face_{surface_tags.index(stag)}"

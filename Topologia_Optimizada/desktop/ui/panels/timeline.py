@@ -120,7 +120,6 @@ class TimelinePanel(QWidget):
     # ------------------------------------------------------------------ #
     def _clear_steps_area(self) -> None:
         """Vacía el área de pills (pills, columnas y stretches residuales)."""
-        self._step_widgets.clear()
         while self._steps_layout.count():
             item = self._steps_layout.takeAt(0)
             widget = item.widget()
@@ -247,6 +246,12 @@ class TimelinePanel(QWidget):
         y converge en un nodo compartido (``converge_label``). Sin grupos,
         vuelve al modo pipeline. Los modos pipeline/feature salen de este
         modo automáticamente (ver ``_exit_branch_mode``).
+
+        NOTA: es una vista de agrupación por pieza, no un estado de
+        ejecución — la barra muestra el nº de condiciones, no progreso real.
+        El nodo de convergencia emite ``playRequested`` (mismo que Ejecutar).
+        Se usa desde 1 pieza para no divergir del árbol de diseño, que
+        agrupa desde la primera pieza.
         """
         if not part_groups:
             self._exit_branch_mode()
@@ -284,7 +289,10 @@ class TimelinePanel(QWidget):
         conv.setProperty("pill", True)
         conv.setProperty("active", True)
         conv.setCursor(Qt.CursorShape.PointingHandCursor)
+        conv.setToolTip("Vista por pieza (no es progreso real) — clic = Ejecutar")
+        conv.clicked.connect(self.playRequested.emit)
         _repolish(conv)
+        self._step_widgets.append(conv)
         conv_col.addWidget(conv)
         conv_col.addStretch(1)
         conv_wrap = QWidget()
@@ -293,6 +301,8 @@ class TimelinePanel(QWidget):
         self._steps_layout.addStretch(1)
         self._scrub.setRange(0, max(total, 1))
         self._scrub.setValue(total)
+        self._scrub.setToolTip(
+            f"Vista por pieza: {total} condición(es) agrupada(s), no progreso de ejecución")
         self._chip.hide()
 
     def is_branch_mode(self) -> bool:

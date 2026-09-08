@@ -23,6 +23,31 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QHBoxLayout,
 )
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
+
+from desktop.ui.panels.condition_groups import (
+    condition_color_hex,
+    condition_label,
+    group_conditions_by_part,
+)
+
+
+def _labeled_item(obj) -> str:
+    """Etiqueta ``nombre [tipo] (estado)`` para Feature/Study (obj o dict)."""
+    if isinstance(obj, dict):
+        name = obj.get("name", "?")
+        ftype = obj.get("feature_type", obj.get("study_type", "?"))
+        ftype = getattr(ftype, "value", ftype)
+        status = obj.get("status")
+    else:
+        name = getattr(obj, "name", "?")
+        ftype = getattr(obj, "feature_type", getattr(obj, "study_type", "?"))
+        ftype = getattr(ftype, "value", ftype)
+        status = getattr(obj, "status", None)
+    label = f"{name}  [{ftype}]"
+    if status is not None:
+        label += f"  ({getattr(status, 'value', status)})"
+    return label
 
 
 class DesignTreePanel(QWidget):
@@ -188,17 +213,7 @@ class DesignTreePanel(QWidget):
             self._tree.expandAll()
             return
         for feat in features:
-            name = getattr(feat, "name", None) or (feat.get("name", "?") if isinstance(feat, dict) else "?")
-            ftype = getattr(feat, "feature_type", None)
-            status = getattr(feat, "status", None) if hasattr(feat, "status") else None
-            if ftype is not None:
-                label = f"{name}  [{ftype.value if hasattr(ftype, 'value') else ftype}]"
-            else:
-                ftype_val = feat.get("feature_type", "?") if isinstance(feat, dict) else "?"
-                label = f"{name}  [{ftype_val}]"
-            if status is not None:
-                label += f"  ({status.value if hasattr(status, 'value') else status})"
-            child = QTreeWidgetItem([label])
+            child = QTreeWidgetItem([_labeled_item(feat)])
             child.setData(0, Qt.UserRole, "feature")
             self._features_item.addChild(child)
         self._tree.expandAll()
@@ -216,12 +231,6 @@ class DesignTreePanel(QWidget):
         optional; without resolvers the previous flat behaviour degrades
         to model/general groups.
         """
-        from desktop.ui.panels.condition_groups import (
-            condition_color_hex,
-            condition_label,
-            group_conditions_by_part,
-        )
-        from PySide6.QtGui import QColor
         if self._conditions_item is None:
             return
         while self._conditions_item.childCount() > 0:
@@ -263,17 +272,7 @@ class DesignTreePanel(QWidget):
             self._tree.expandAll()
             return
         for stud in studies:
-            name = getattr(stud, "name", None) or (stud.get("name", "?") if isinstance(stud, dict) else "?")
-            stype = getattr(stud, "study_type", None)
-            status = getattr(stud, "status", None) if hasattr(stud, "status") else None
-            if stype is not None:
-                label = f"{name}  [{stype.value if hasattr(stype, 'value') else stype}]"
-            else:
-                stype_val = stud.get("study_type", "?") if isinstance(stud, dict) else "?"
-                label = f"{name}  [{stype_val}]"
-            if status is not None:
-                label += f"  ({status.value if hasattr(status, 'value') else status})"
-            child = QTreeWidgetItem([label])
+            child = QTreeWidgetItem([_labeled_item(stud)])
             child.setData(0, Qt.UserRole, "study")
             self._studies_item.addChild(child)
         self._tree.expandAll()

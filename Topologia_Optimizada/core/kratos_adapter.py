@@ -42,13 +42,19 @@ def _face_triangles_for_load(load, face_surface_elements, physical_groups, node_
     Returns a flat list of ``[n0, n1, n2]`` triangles (0-based mesh node
     indices).  Empty list when no surface triangulation is available.
 
-    When neither a named physical group nor a ``face_<id>`` key is available
-    (e.g. the provisional voxel mesher, which only ever populates a single
-    undifferentiated ``"boundary"`` bucket with no per-CAD-face labeling),
+    When neither a named physical group nor a ``face_<id>`` key is available,
     falls back to node-label propagation: a boundary triangle is attributed
     to this load's face if all three of its nodes are already known (via
     CAD-geometry node selection, passed in as ``node_indices``) to belong to
     that face.
+
+    NOTE (P2): the provisional voxel mesher (``ProvisionalTet4Mesher``) DOES
+    classify boundary triangles per CAD face (``face_<fi>`` via
+    ``classify_triangles_to_faces``); only triangles unmatchable near shared
+    edges stay in the undifferentiated ``"boundary"`` bucket. Propagation
+    from that bucket is approximate (staircase boundary at ~h/2 from the
+    real B-Rep) and is logged; for validated real loads use
+    ``GmshTet4Mesher``.
     """
     if not face_surface_elements:
         return []

@@ -838,3 +838,32 @@ verificó la conexión real Botón → Señal → Método → Backend. Resultado
   `is_gl_available()`).
 - Suite completa: **324 passed, 6 deselected** (243+ tests previos + nuevos de validación y de
   ciclos intermedios; sin fallos ni regresiones).
+
+### Endurecimiento post-revisión (this cycle, 5 accionables cerrados)
+
+Revisión con 3 subagentes (bugs P1/P2, code review UI-core, auditoría tests).
+Todo lo hallado se resolvió y documentó:
+
+1. **`docs/UI_IMPLEMENTATION_MAP.md` sincronizado** (§§1,4,6–9, §12b): import
+   solo topbar, dropdown `rb_conditions`, dropdown `rb_export`, combo de vista
+   en workspace, §9 convertido en histórico de botones eliminados.
+2. **P1**: modo determinista sin fallback por orden — superficie sin match →
+   `face_unmapped_<tag>` + warning (`core/meshing.py::_extract_all_surface_elements`);
+   `_emit_physical_groups` advierte explícito sin correspondencia. Sin IDs
+   persistentes aún (firma geométrica), pero el mislabeling silencioso quedó
+   eliminado. `AGENTS.md` P1/P2 actualizados.
+3. **P2**: docstring de `kratos_adapter._face_triangles_for_load` corregido
+   (el provisorio SÍ clasifica por cara; solo restos van a `"boundary"`).
+4. **Ruta legacy explícita** (`desktop/pipeline/controller.py`): `set_material`
+   rechaza nombre inválido; `generate_adaptive_mesh` marca `adaptive_fallback`;
+   `_apply_constraints/_apply_loads`/`build_problem`/`run_optimization`/`run_in_background`
+   con warnings explícitos; `_apply_*` documentados LEGACY.
+5. **Nits**: `_study_solid_index`/`_active_study_id` en `__init__`; nodo converge
+   de timeline clicable (`playRequested`) + umbral ≥1 (igual que el árbol);
+   `design_tree._labeled_item` + imports top-level; dropdowns ribbon con
+   `showMenu` (RibbonTool es QPushButton, el clic solo no abría el menú).
+
+Verificación: AST OK (BOM preexistente en controller.py, parse utf-8-sig);
+**121 passed** en áreas afectadas (`test_p0_gap_fixes` + `test_conditions`:
+38; `test_ui_validate_connection` + `test_study_pipeline`: 56;
+`test_condition_views` + `test_cae_audit_fixes` + `test_cae_kratos_bridge`: 27).

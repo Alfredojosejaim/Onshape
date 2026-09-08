@@ -218,11 +218,12 @@ class MainWindow(QMainWindow):
             ref_resolver=self._condition_part_ref_label)
         studies = list(self.controller.studies)
         self.design_tree.set_studies(studies)
-        # Timeline ramificado solo en escenario multi-pieza (>= 2 grupos);
-        # con 0-1 grupos se conserva el flujo pipeline/feature vigente.
+        # Timeline ramificado desde 1 pieza (mismo umbral que el árbol de
+        # diseño, que agrupa desde la primera pieza); con 0 grupos se
+        # conserva el flujo pipeline/feature vigente.
         groups = group_conditions_by_part(
             conditions, ref_resolver=self._condition_part_ref_label)
-        if len(groups) >= 2:
+        if len(groups) >= 1:
             self.timeline.set_branch_view([
                 (label, [condition_label(c) for c in conds])
                 for label, conds in groups

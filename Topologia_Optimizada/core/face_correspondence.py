@@ -268,6 +268,20 @@ def build_face_correspondence(
 
     gmsh_tags = [tag for tag, _ in gmsh_sigs]
 
+    # Global area invariant (E1): a seam split / merge compensated by a
+    # spurious entity can preserve the face COUNT while changing the total
+    # area. Refuse loudly when the totals disagree instead of accepting a
+    # globally-shifted bijection. Threshold 0.15 (not tighter): the fixed UV
+    # sampling grid overestimates curved-surface areas by up to ~9%.
+    cad_area = sum(float(s.area) for s in cad_sigs)
+    gmsh_area = sum(float(s.area) for _, s in gmsh_sigs)
+    if cad_area > 0.0 and abs(gmsh_area - cad_area) / cad_area > 0.15:
+        raise FaceCorrespondenceError(
+            f"Total area differs: CAD={cad_area:.6g} vs Gmsh={gmsh_area:.6g} "
+            f"(rel={abs(gmsh_area - cad_area) / cad_area:.3g} > 0.15). Possible "
+            f"seam split/merge with equal face count; refusing the mapping."
+        )
+
     # Full pairwise distance matrix: cost[fi, gj] = distance(cad face fi,
     # gmsh surface gmsh_tags[gj]).
     cost = np.empty((n, n), dtype=float)
@@ -316,6 +330,16 @@ def build_face_correspondence(
                 f"(assigned={assigned_score:.3g}). This indicates duplicate "
                 "or symmetric geometry that the signature cannot "
                 "disambiguate. Refusing to guess the correspondence."
+            )
+
+        # Absolute sanity ceiling (E1): even the undisputed best match must
+        # look like the same face. Healthy matches score ~0.1-0.35 (sampling
+        # noise); a seam-substituted or far-away match scores well above 1.
+        if local_best > 1.0:
+            raise FaceCorrespondenceError(
+                f"CAD face {fi} ({cad_sigs[fi]}) has no plausible Gmsh "
+                f"counterpart (best distance={local_best:.3g} > 1.0). "
+                f"Refusing the mapping."
             )
 
         mapping[fi] = gmsh_tags[gj]

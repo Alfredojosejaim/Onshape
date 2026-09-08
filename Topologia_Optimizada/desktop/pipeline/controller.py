@@ -184,13 +184,15 @@ class PipelineController:
     # ------------------------------------------------------------------ #
     # Mesh generation
     # ------------------------------------------------------------------ #
-    def generate_mesh(self, target_element_size: float = 0.0) -> Dict[str, Any]:
+    def generate_mesh(self, target_element_size: float = 0.0,
+                      physical_groups=None) -> Dict[str, Any]:
         if not self.model_id:
             raise PipelineError("No hay modelo importado. Importa un archivo STEP primero.")
         if target_element_size and target_element_size > 0:
-            mesh = self.cad.generate_mesh(self.model_id, target_element_size=target_element_size)
+            mesh = self.cad.generate_mesh(self.model_id, target_element_size=target_element_size,
+                                           physical_groups=physical_groups)
         else:
-            mesh = self.cad.generate_mesh(self.model_id)
+            mesh = self.cad.generate_mesh(self.model_id, physical_groups=physical_groups)
         if not mesh.get("success"):
             raise PipelineError(mesh.get("error", "Error al generar la malla"))
         self.mesh = mesh
@@ -474,6 +476,48 @@ class PipelineController:
         self.result = result
         return result
 
+    def _ensure_condition_groups(self, resolved, needed: dict) -> None:
+        """Ensure the active mesh carries physical groups for faced conditions.
+
+        Exact path (Strategy 1: named submodelpart) needs the mesh built with
+        :func:`core.kratos_bridge.condition_face_groups`. Only the common
+        no-groups-at-all mesh is re-meshed automatically (single attempt,
+        explicit log). Meshes that already carry user groups, or unmeshable
+        models, keep flowing on the geometric strategies — which fail loudly
+        (UNRESOLVED) on unmappable faces instead of guessing. No-op when
+        nothing is needed or all groups are present.
+        """
+        if not needed:
+            return
+        if self.mesh is None:
+            raise PipelineError("No hay malla. Genera la malla primero.")
+        present = set((self.mesh.get("physical_groups") or {}).keys())
+        missing = [g for g in needed if g not in present]
+        if not missing:
+            return
+        if present or not self.model_id:
+            logger.warning(
+                "Vía exacta no disponible para %s (grupos presentes: %s): "
+                "Strategy 1 no disparará; aplican estrategias geométricas "
+                "con contrato UNRESOLVED explícito.",
+                missing, sorted(present),
+            )
+            return
+        logger.warning(
+            "Malla sin physical groups; re-mallando explícitamente con grupos "
+            "por condición %s para la vía exacta (Strategy 1).",
+            sorted(needed),
+        )
+        mesh = self.generate_mesh(physical_groups=needed)
+        present = set((mesh.get("physical_groups") or {}).keys())
+        still = [g for g in needed if g not in present]
+        if still:
+            raise PipelineError(
+                f"Tras re-mallar faltan grupos por condición {still} "
+                f"(mesher={mesh.get('mesher')}). La vía exacta requiere Gmsh; "
+                f"revise el modelo o use backend='local'."
+            )
+
     def _run_fea_kratos(self, conditions) -> Dict[str, Any]:
         """Run the optional Kratos FEA backend on the current mesh/conditions.
 
@@ -498,9 +542,15 @@ class PipelineController:
             loads, constraints, _skipped = conditions_to_kratos_definitions(resolved)
         else:
             from core.kratos_bridge import conditions_to_kratos_definitions
-            loads, constraints, _skipped = conditions_to_kratos_definitions(
-                self.conditions.all
-            )
+            resolved = list(self.conditions.all)
+            loads, constraints, _skipped = conditions_to_kratos_definitions(resolved)
+
+        # E3: exact path needs per-condition physical groups in the mesh
+        # (Strategy 1: named submodelpart). If the current mesh lacks them,
+        # re-mesh explicitly with the condition groups instead of silently
+        # falling back to geometric approximation.
+        from core.kratos_bridge import condition_face_groups
+        self._ensure_condition_groups(resolved, condition_face_groups(resolved))
 
         mat = self.material()
         nodes = self.mesh_nodes

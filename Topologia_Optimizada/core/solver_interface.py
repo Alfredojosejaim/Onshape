@@ -549,8 +549,23 @@ def _apply_constraint_geometrically(adapter: Any, model_part: Any, constraint: A
         tolerance = getattr(constraint, 'tolerance', 0.01)
         
         if fixed_coord is None:
-            logger.warning(f"Constraint {constraint.id} has no coordinate or face information, cannot apply")
-            return "INDETERMINATE"
+            # Case A without coordinates: mirror the local engine's legitimate
+            # default (min-axis nodes = base of the part) so both engines fix
+            # the SAME region. Dropping the support left the body unconstrained
+            # (rigid motion, unphysical compliance) while local fixed it: a
+            # silent divergence.
+            import numpy as np
+            fixed_axis = getattr(constraint, 'fixed_axis', 2) or 0
+            try:
+                fixed_axis = int(fixed_axis)
+            except (TypeError, ValueError):
+                fixed_axis = 2
+            coords = np.asarray(nodes_list, dtype=float)[:, fixed_axis]
+            fixed_coord = float(coords.min())
+            logger.warning(
+                f"Constraint {constraint.id}: no face/selection/coordinate; "
+                f"fixing min-axis-{fixed_axis} nodes at {fixed_coord:.6f} "
+                f"(explicit local-parity default, not a CAD mapping).")
         
         node_indices = adapter.get_nodes_by_coordinate_filter(
             model_part, 
@@ -750,10 +765,37 @@ def _apply_load_geometrically(adapter: Any, model_part: Any, load: Any,
                 logger.warning(f"No nodes found matching load criteria for {load.id}")
                 return "INDETERMINATE"
         else:
-            logger.warning(f"Load {load.id} has no coordinate or face information, cannot apply")
-            # No explicit face/selection; non-fatal, matches previous behavior
-            # (the load is simply not materialized).
-            return "INDETERMINATE"
+            # Case A without coordinates: mirror the local engine's legitimate
+            # default (GenerativeDesignEngine._node_indices_for_load) — extreme
+            # nodes along the load direction — so both engines solve the SAME
+            # physics. Previously the load was silently dropped (RHS zero,
+            # compliance 0) while local applied it: a silent divergence.
+            import numpy as np
+            direction = list(getattr(load, "direction", None) or (0.0, 0.0, 0.0))
+            norm = float(np.linalg.norm(direction))
+            if norm == 0:
+                logger.warning(
+                    f"Load {load.id} has no direction, face, selection or "
+                    f"coordinate: cannot materialize; returning INDETERMINATE.")
+                return "INDETERMINATE"
+            axis = int(np.argmax(np.abs(direction)))
+            coords = np.asarray(nodes_list, dtype=float)[:, axis]
+            extreme = coords.max() if direction[axis] > 0 else coords.min()
+            tol = 1e-3 * float(np.ptp(coords))
+            node_indices = [i for i, c in enumerate(coords)
+                            if abs(float(c) - extreme) <= tol]
+            if not node_indices:
+                logger.warning(f"No extreme nodes found for load {load.id}")
+                return "INDETERMINATE"
+            logger.warning(
+                f"Load {load.id}: no face/selection/coordinate; applying to "
+                f"{len(node_indices)} extreme nodes along axis {axis} "
+                f"(explicit local-parity default, not a CAD mapping).")
+            adapter.apply_load_from_core(model_part, load, node_indices,
+                                           face_surface_elements=face_surface_elements,
+                                           physical_groups=physical_groups,
+                                           mesh_nodes=mesh_nodes)
+            return "APPLIED"
             
     except Exception as e:
         logger.error(f"Failed to apply load geometrically: {e}")

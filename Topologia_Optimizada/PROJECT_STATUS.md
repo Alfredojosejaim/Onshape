@@ -868,9 +868,31 @@ Verificación: AST OK (BOM preexistente en controller.py, parse utf-8-sig);
 38; `test_ui_validate_connection` + `test_study_pipeline`: 56;
 `test_condition_views` + `test_cae_audit_fixes` + `test_cae_kratos_bridge`: 27).
 
-### Auditoría y cierre P1/P2 — prompts.md (this cycle)
+### Riesgos E1–E4 resueltos (this cycle, "resuélvelo")
 
-Tres subagentes (P1, P2, tests) + correcciones mínimas, sin rediseño:
+1. **E2 (índices globales vs sólido)**: `generate_mesh_for_shape` rechaza
+   `physical_groups` fuera de rango (`INVALID_FACE_INDEX`, explícito); índices
+   documentados como locales al dominio.
+2. **E3 (vía exacta)**: `kratos_bridge.condition_face_groups()` + `submodelpart_name`
+   por condición; `_run_fea_kratos` re-malla con esos grupos cuando la malla no
+   trae ninguno (un intento, log explícito); `generate_mesh` acepta
+   `physical_groups`. Con grupos propios previos: warning + geométrico con
+   contrato UNRESOLVED (compatibilidad preservada).
+3. **E4 (RHS cero)**: causa raíz — cargas/soportes sin cara ni coordenadas se
+   dropeaban (`INDETERMINATE`) mientras el local aplicaba defaults → Kratos
+   resolvía cuerpo libre (compliance negativa) o vacío (compliance 0). Ahora
+   paridad explícita (extremo según dirección / base min-eje); e2e sin cara
+   verifica acuerdo local↔Kratos (rel 2.8e-15) en vez de `compliance == 0`.
+4. **E1 (falsos matches)**: invariante de área total (>15% → error, detecta
+   split/merge con conteo igual) + techo absoluto de plausibilidad (>1.0 →
+   error) en `build_face_correspondence`. Residual honesto: rotación perfecta
+   de etiquetas y tolerancia ciega en aristas → Fase 2 (IDs persistentes).
+
+Verificación: suite **460 passed + 12 benchmarks** (sin warning RHS),
+6 deselected. Tests nuevos: `test_area_total_difiere_rechaza` (E1),
+paridad e2e (E4).
+
+### Auditoría y cierre P1/P2 — prompts.md (ciclo previo)
 
 **Bugs reales encontrados y corregidos:**
 1. **`_nodes_for_physical_groups` devolvía tags Gmsh (1-based) en vez de

@@ -163,6 +163,33 @@ class CADService:
                 "error": f"CAD shape for {domain_label} not found in cache",
             }
 
+        # E2: physical-group face indices are LOCAL to this shape. A global
+        # model index passed for a single-solid domain would silently map to
+        # the wrong face — reject out-of-range indices explicitly.
+        if physical_groups:
+            try:
+                n_faces = len(shape.Faces())
+            except Exception:
+                n_faces = None
+            if n_faces is not None:
+                bad = sorted({
+                    (name, int(fi))
+                    for name, fis in physical_groups.items()
+                    for fi in (fis or [])
+                    if int(fi) < 0 or int(fi) >= n_faces
+                })
+                if bad:
+                    return {
+                        "success": False,
+                        "status": "failed",
+                        "code": "INVALID_FACE_INDEX",
+                        "error": (
+                            f"physical_groups fuera de rango para {domain_label} "
+                            f"({n_faces} caras): {bad}. Los índices son locales "
+                            f"al dominio mallado, no globales al modelo."
+                        ),
+                    }
+
         try:
             fallback_reason = None
             used_fallback = False
@@ -263,6 +290,8 @@ class CADService:
         studies: the solid selected on ``study.parts`` is meshed alone so the
         analysis domain is exactly that body (never an implicit "first solid").
         Reuses ``generate_mesh_for_shape`` -- no new meshing system.
+        ``physical_groups`` indices are LOCAL to this solid (range-checked in
+        ``generate_mesh_for_shape``; global model indices are rejected).
         """
         solid_shape = self.get_solid_shape(model_id, solid_index)
         if solid_shape is None:

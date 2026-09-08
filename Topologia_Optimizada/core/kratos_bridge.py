@@ -41,6 +41,33 @@ from core.study import (
 _FEA_CONDITION_KINDS = (ConditionType.LOAD, ConditionType.ELASTICITY)
 
 
+def condition_group_name(condition_id: str) -> str:
+    """Deterministic physical-group name for one condition (E3).
+
+    ``cond_<id>`` sanitized for Gmsh (alphanumerics + underscore). The
+    controller meshes with these groups so Strategy 1 (exact named
+    submodelpart) fires instead of geometric approximation.
+    """
+    import re
+    return re.sub(r"[^A-Za-z0-9_]", "_", f"cond_{condition_id}")
+
+
+def condition_face_groups(conditions) -> Dict[str, List[int]]:
+    """Map each faced LOAD/ELASTICITY condition to ``{group: [face_indices]}``.
+
+    Feed to the mesher (``physical_groups=``) so the mesh carries exact
+    per-condition node sets. Conditions without faces get no group.
+    """
+    groups: Dict[str, List[int]] = {}
+    for condition in conditions or []:
+        if not isinstance(condition, (LoadCondition, ElasticityCondition)):
+            continue
+        faces = _face_indices(condition)
+        if faces:
+            groups[condition_group_name(condition.id)] = faces
+    return groups
+
+
 def _face_indices(condition: Condition) -> List[int]:
     """0-based CAD face indices selected by a condition (B-Rep face refs)."""
     faces = condition.selection()
@@ -100,6 +127,10 @@ def load_condition_to_definition(load: LoadCondition) -> LoadDefinition:
         unit=load.unit,
         tolerance=0.5,
         selection=selection,
+        # Exact path: Strategy 1 looks up this named submodelpart, built at
+        # mesh time by condition_face_groups(). Falls back to geometric
+        # strategies only when the mesh lacks the group (explicitly logged).
+        submodelpart_name=condition_group_name(load.id) if face_indices else None,
     )
 
 
@@ -137,6 +168,7 @@ def elasticity_condition_to_definition(elasticity: ElasticityCondition) -> Const
         },
         tolerance=0.5,
         selection=selection,
+        submodelpart_name=condition_group_name(elasticity.id) if face_indices else None,
     )
 
 

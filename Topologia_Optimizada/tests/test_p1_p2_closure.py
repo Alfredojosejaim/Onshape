@@ -50,6 +50,7 @@ def test_parse_face_id_unificado():
 
 def test_ambiguedad_firmas_empatadas_falla_explicito():
     """Firmas Gmsh identicas (empate perfecto) -> AmbiguousFaceCorrespondenceError."""
+    import math
     import cadquery as cq
     from core.face_correspondence import (
         build_face_correspondence,
@@ -57,13 +58,17 @@ def test_ambiguedad_firmas_empatadas_falla_explicito():
         FaceCorrespondenceError,
     )
     shape = cq.Workplane("XY").box(2, 3, 4).val()
+    # Area total CAD = 2*(6+8+12) = 52: lado por superficie para igualar el
+    # total (si no, el invariante de area dispara primero, que tambien es
+    # correcto pero no es lo que este test exige).
+    side = math.sqrt(52.0 / 6.0)
 
     class _FakeModel:
         def getEntities(self, dim):
             return [(2, i) for i in range(1, 7)]  # 6 == 6 caras CAD
 
         def getParametrizationBounds(self, dim, tag):
-            return ((0.0, 0.0), (1.0, 1.0))
+            return ((0.0, 0.0), (side, side))
 
         def getValue(self, dim, tag, uv):
             return [float(uv[0]), float(uv[1]), 0.0]
@@ -78,6 +83,36 @@ def test_ambiguedad_firmas_empatadas_falla_explicito():
         build_face_correspondence(shape, _FakeGmsh())
     # La ambiguedad es subclase del error de correspondencia.
     assert issubclass(AmbiguousFaceCorrespondenceError, FaceCorrespondenceError)
+
+
+def test_area_total_difiere_rechaza():
+    """Split/merge con conteo igual pero area distinta -> FaceCorrespondenceError."""
+    import cadquery as cq
+    from core.face_correspondence import (
+        build_face_correspondence,
+        FaceCorrespondenceError,
+    )
+    shape = cq.Workplane("XY").box(2, 3, 4).val()
+
+    class _FakeModel:
+        def getEntities(self, dim):
+            return [(2, i) for i in range(1, 7)]  # 6 == 6 caras CAD
+
+        def getParametrizationBounds(self, dim, tag):
+            # Superficies 100x mas chicas: area total muy distinta.
+            return ((0.0, 0.0), (0.1, 0.1))
+
+        def getValue(self, dim, tag, uv):
+            return [float(uv[0]), float(uv[1]), 0.0]
+
+        def getNormal(self, tag, uv):
+            return (0.0, 0.0, 1.0)
+
+    class _FakeGmsh:
+        model = _FakeModel()
+
+    with pytest.raises(FaceCorrespondenceError, match="[Aa]rea"):
+        build_face_correspondence(shape, _FakeGmsh())
 
 
 def test_extract_sin_correspondencia_advierte_orden(caplog):

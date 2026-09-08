@@ -5,15 +5,15 @@ Cierra la brecha Kratos/local documentada en ``PROJECT_STATUS.md``: confirma que
 referencia, consume las mismas condiciones reutilizables (traducidas por
 ``core.kratos_bridge``) y mantiene el solve local como default.
 
-Qué se verifica en este build de Kratos (10.4.3, ruta RHS-force bloqueada -> la
-compliance por fuerza distribuida queda en 0, documentado en
-``benchmarks/benchmark_fase0.py``):
+Qué se verifica en este build de Kratos (10.4.3):
 
 1. La malla se importa de verdad (mismos nodos/elementos que el mesh).
 2. El pipeline completo corre: material, DOFs, BCs geométricos, solve, extracción.
 3. El bridge traduce las condiciones reutilizables a definiciones FEA.
-4. El solve local (NumPy) con las MISMAS condiciones produce compliance > 0
-   (la vía local no está bloqueada), y continua como default.
+4. Local y Kratos resuelven la MISMA física también con condiciones sin cara:
+   defaults coordenados con paridad explícita (extremo según dirección para
+   cargas, base min-eje para soportes) — sin RHS cero ni compliance 0.
+5. El solve local (NumPy) sigue siendo el default.
 
 El test está marcado como ``kratos`` y se ``skipif`` Kratos no está disponible:
 es un regreso real verificable, no parte de la suite rápida por defecto.
@@ -89,8 +89,26 @@ def test_run_fea_kratos_real_solve_matches_mesh():
     # El solve devolvió un campo de desplazamiento por nodo.
     disp = result["displacements"]
     assert disp.shape[0] == nodes.shape[0]
-    # En este build la ruta RHS-force queda en 0 (documentado en benchmark_fase0).
-    assert result["compliance"] == pytest.approx(0.0, abs=1e-9)
+    # Paridad local↔Kratos con condiciones sin cara: misma física (defaults
+    # coordenados explícitos), sin RHS cero. Antes: compliance 0 por cargas
+    # y soportes dropeados en silencio (INDETERMINATE).
+    c2 = PipelineController()
+    c2.mesh_nodes = nodes
+    c2.mesh_elements = elements
+    c2.mesh = {
+        "success": True,
+        "nodes": nodes.tolist(),
+        "elements": elements.tolist(),
+        "physical_groups": {},
+    }
+    load2, support2 = _face_less_conditions()
+    c2.conditions.add(load2)
+    c2.conditions.add(support2)
+    local = c2.run_fea(conditions=list(c2.conditions.all), backend="local")
+    assert result["compliance"] == pytest.approx(local["compliance"], rel=1e-6)
+    u_l = np.asarray(local["displacements"])
+    u_k = np.asarray(result["displacements"])
+    assert np.linalg.norm(u_l - u_k) / max(np.linalg.norm(u_k), 1e-300) <= 1e-6
 
 
 @pytest.mark.kratos

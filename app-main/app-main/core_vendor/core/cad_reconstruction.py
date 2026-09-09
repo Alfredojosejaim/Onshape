@@ -266,8 +266,193 @@ def smooth_surface_mesh(
     return work, tris
 
 
+def taubin_smooth_mesh(
+    vertices: np.ndarray,
+    triangles: np.ndarray,
+    iterations: int = 10,
+    lambda_param: float = 0.5,
+    mu_param: float = -0.53,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Taubin smoothing for organic mesh appearance without volume shrinkage.
+
+    Taubin smoothing alternates between positive and negative Laplacian steps,
+    which prevents the mesh from shrinking while still smoothing high-frequency
+    noise. This produces more organic, natural-looking surfaces compared to
+    basic Laplacian smoothing.
+
+    Parameters
+    ----------
+    vertices : (N, 3) array
+        Vertex positions
+    triangles : (M, 3) int array
+        Triangle connectivity
+    iterations : int
+        Number of smoothing iterations (default: 10)
+    lambda_param : float
+        Positive smoothing factor (default: 0.5)
+    mu_param : float
+        Negative smoothing factor (default: -0.53)
+
+    Returns
+    -------
+    smoothed_vertices, triangles
+    """
+    verts = np.asarray(vertices, dtype=float)
+    tris = np.asarray(triangles, dtype=int)
+    if verts.shape[0] == 0 or tris.shape[0] == 0:
+        return verts, tris
+
+    adj = _triangle_adjacency(tris, verts.shape[0])
+    fixed = _boundary_vertices(adj, tris)
+    work = verts.copy()
+
+    for _ in range(max(int(iterations), 0)):
+        # Positive Laplacian step
+        new = work.copy()
+        for i in range(verts.shape[0]):
+            if i in fixed or not adj[i]:
+                continue
+            neigh = np.asarray([work[j] for j in adj[i]], dtype=float)
+            new[i] = work[i] + lambda_param * (np.mean(neigh, axis=0) - work[i])
+        work = new
+
+        # Negative Laplacian step
+        new = work.copy()
+        for i in range(verts.shape[0]):
+            if i in fixed or not adj[i]:
+                continue
+            neigh = np.asarray([work[j] for j in adj[i]], dtype=float)
+            new[i] = work[i] + mu_param * (np.mean(neigh, axis=0) - work[i])
+        work = new
+
+    return work, tris
+
+
+def bilateral_smooth_mesh(
+    vertices: np.ndarray,
+    triangles: np.ndarray,
+    iterations: int = 5,
+    sigma_spatial: float = 1.0,
+    sigma_normal: float = 0.5,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Bilateral mesh smoothing for feature-preserving organic appearance.
+
+    Bilateral smoothing considers both spatial distance and normal direction
+    when averaging neighbors, preserving sharp features while smoothing
+    noise. This produces organic surfaces with better feature retention.
+
+    Parameters
+    ----------
+    vertices : (N, 3) array
+        Vertex positions
+    triangles : (M, 3) int array
+        Triangle connectivity
+    iterations : int
+        Number of smoothing iterations (default: 5)
+    sigma_spatial : float
+        Spatial weight (default: 1.0)
+    sigma_normal : float
+        Normal direction weight (default: 0.5)
+
+    Returns
+    -------
+    smoothed_vertices, triangles
+    """
+    verts = np.asarray(vertices, dtype=float)
+    tris = np.asarray(triangles, dtype=int)
+    if verts.shape[0] == 0 or tris.shape[0] == 0:
+        return verts, tris
+
+    # Compute initial vertex normals
+    normals = _compute_vertex_normals(verts, tris)
+    adj = _triangle_adjacency(tris, verts.shape[0])
+    fixed = _boundary_vertices(adj, tris)
+    work = verts.copy()
+
+    for _ in range(max(int(iterations), 0)):
+        new_normals = _compute_vertex_normals(work, tris)
+        new = work.copy()
+
+        for i in range(verts.shape[0]):
+            if i in fixed or not adj[i]:
+                continue
+
+            current_pos = work[i]
+            current_normal = new_normals[i]
+
+            # Compute weighted average of neighbors
+            weighted_sum = np.zeros(3)
+            weight_sum = 0.0
+
+            for j in adj[i]:
+                neighbor_pos = work[j]
+                neighbor_normal = new_normals[j]
+
+                # Spatial weight
+                spatial_dist = np.linalg.norm(neighbor_pos - current_pos)
+                w_spatial = np.exp(-(spatial_dist ** 2) / (2 * sigma_spatial ** 2))
+
+                # Normal weight
+                normal_dist = np.linalg.norm(neighbor_normal - current_normal)
+                w_normal = np.exp(-(normal_dist ** 2) / (2 * sigma_normal ** 2))
+
+                weight = w_spatial * w_normal
+                weighted_sum += weight * neighbor_pos
+                weight_sum += weight
+
+            if weight_sum > 0:
+                new[i] = weighted_sum / weight_sum
+
+        work = new
+
+    return work, tris
+
+
+def _compute_vertex_normals(vertices: np.ndarray, triangles: np.ndarray) -> np.ndarray:
+    """Compute per-vertex normals from triangle connectivity."""
+    verts = np.asarray(vertices, dtype=float)
+    tris = np.asarray(triangles, dtype=int)
+
+    normals = np.zeros_like(verts)
+    counts = np.zeros(verts.shape[0])
+
+    for tri in triangles:
+        a, b, c = int(tri[0]), int(tri[1]), int(tri[2])
+        v0, v1, v2 = verts[a], verts[b], verts[c]
+
+        # Triangle normal
+        edge1 = v1 - v0
+        edge2 = v2 - v0
+        tri_normal = np.cross(edge1, edge2)
+        tri_normal = tri_normal / (np.linalg.norm(tri_normal) + 1e-12)
+
+        # Add to vertex normals
+        normals[a] += tri_normal
+        normals[b] += tri_normal
+        normals[c] += tri_normal
+        counts[a] += 1
+        counts[b] += 1
+        counts[c] += 1
+
+    # Normalize
+    for i in range(normals.shape[0]):
+        if counts[i] > 0:
+            normals[i] = normals[i] / counts[i]
+            norm = np.linalg.norm(normals[i])
+            if norm > 1e-12:
+                normals[i] = normals[i] / norm
+
+    return normals
+
+
 class MeshSmoother:
-    """Post-process smoothing of the extracted isosurface mesh."""
+    """Post-process smoothing of the extracted isosurface mesh.
+
+    Supports multiple smoothing algorithms for organic surface generation:
+    - 'laplacian': Basic Laplacian smoothing (fast, but causes shrinkage)
+    - 'taubin': Taubin smoothing (organic, no shrinkage, recommended)
+    - 'bilateral': Bilateral smoothing (feature-preserving, organic)
+    """
 
     def smooth(
         self,
@@ -275,14 +460,73 @@ class MeshSmoother:
         triangles: np.ndarray,
         iterations: int = 3,
         alpha: float = 0.5,
+        method: str = "taubin",
+        lambda_param: float = 0.5,
+        mu_param: float = -0.53,
+        sigma_spatial: float = 1.0,
+        sigma_normal: float = 0.5,
     ) -> ReconstructionResult:
-        smv, smt = smooth_surface_mesh(vertices, triangles, iterations, alpha)
+        """Smooth the mesh using the specified method.
+
+        Parameters
+        ----------
+        vertices : (N, 3) array
+            Vertex positions
+        triangles : (M, 3) int array
+            Triangle connectivity
+        iterations : int
+            Number of smoothing iterations
+        alpha : float
+            Smoothing factor for Laplacian method
+        method : str
+            Smoothing method: 'laplacian', 'taubin', or 'bilateral'
+        lambda_param : float
+            Positive smoothing factor for Taubin method
+        mu_param : float
+            Negative smoothing factor for Taubin method
+        sigma_spatial : float
+            Spatial weight for bilateral method
+        sigma_normal : float
+            Normal weight for bilateral method
+        """
+        if method == "laplacian":
+            smv, smt = smooth_surface_mesh(vertices, triangles, iterations, alpha)
+            metadata = {
+                "method": "laplacian",
+                "iterations": int(iterations),
+                "alpha": float(alpha),
+                "triangles": int(smt.shape[0]),
+            }
+        elif method == "taubin":
+            smv, smt = taubin_smooth_mesh(
+                vertices, triangles, iterations, lambda_param, mu_param
+            )
+            metadata = {
+                "method": "taubin",
+                "iterations": int(iterations),
+                "lambda": float(lambda_param),
+                "mu": float(mu_param),
+                "triangles": int(smt.shape[0]),
+            }
+        elif method == "bilateral":
+            smv, smt = bilateral_smooth_mesh(
+                vertices, triangles, iterations, sigma_spatial, sigma_normal
+            )
+            metadata = {
+                "method": "bilateral",
+                "iterations": int(iterations),
+                "sigma_spatial": float(sigma_spatial),
+                "sigma_normal": float(sigma_normal),
+                "triangles": int(smt.shape[0]),
+            }
+        else:
+            raise ValueError(f"Unknown smoothing method: {method}")
+
         return ReconstructionResult(
             stage=ReconstructionStage.SMOOTHED_MESH,
             status=ReconstructionStatus.COMPLETED,
             data={"vertices": smv, "triangles": smt},
-            metadata={"iterations": int(iterations), "alpha": float(alpha),
-                      "triangles": int(smt.shape[0])},
+            metadata=metadata,
         )
 
 
@@ -762,7 +1006,10 @@ class ReconstructionPipeline:
                     if self._mesh_smoother is None:
                         self._mesh_smoother = MeshSmoother()
                     smooth_result = self._mesh_smoother.smooth(
-                        np.asarray(mesh_data["vertices"]), np.asarray(mesh_data["triangles"])
+                        np.asarray(mesh_data["vertices"]),
+                        np.asarray(mesh_data["triangles"]),
+                        method="taubin",  # Use Taubin for organic appearance
+                        iterations=10,  # More iterations for smoother organic surfaces
                     )
                     smoothed_data = smooth_result.data
                     self._stages[ReconstructionStage.SMOOTHED_MESH] = smooth_result

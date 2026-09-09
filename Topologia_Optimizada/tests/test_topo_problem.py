@@ -148,17 +148,24 @@ def test_adapter_rejects_multi_load():
         problem_to_solver_inputs(p, _mesh())
 
 
-def test_adapter_rejects_stress_and_frozen_and_pinned_and_heaviside():
+def test_adapter_rejects_stress_and_pinned_and_heaviside():
     p = _problem(stress_constraints=[StressConstraint(max_von_mises=1e6)])
     with pytest.raises(TopOptError, match="stress"):
         problem_to_solver_inputs(p, _mesh())
 
+def test_adapter_accepts_frozen_face_passthrough():
+    # FROZEN_FACE es passthrough válido: queda en preserved + frozen_elements.
     p = _problem(obstacles=[ObstacleRegion(
         id="f1", role=RegionRole.FROZEN_FACE,
         target=GeometrySelection("face_0", "face"))])
-    with pytest.raises(TopOptError, match="FROZEN_FACE"):
-        problem_to_solver_inputs(p, _mesh())
+    out = problem_to_solver_inputs(p, _mesh())
+    assert out["preserved_elements"] == [0]
+    assert out["frozen_elements"] == [0]
+    assert out["frozen_faces"] == ["face_0"]
+    assert out["frozen_passthrough"] == "frozen_face_as_keep_in@1.0"
 
+
+def test_adapter_rejects_pinned_and_heaviside_and_min_vol():
     p = _problem(boundary_conditions=[BoundaryCondition(
         id="b1", type=BCType.PINNED,
         target=GeometrySelection("face_0", "face"))])

@@ -235,12 +235,16 @@ class GenerativeDesignEngine:
         )
 
     def _face_triangles_for_load(self, load: LoadCondition,
-                                  node_indices: Optional[List[int]] = None) -> List[List[int]]:
+                                   node_indices: Optional[List[int]] = None,
+                                   allow_boundary_fallback: bool = True) -> List[List[int]]:
         """Collect surface triangles for the faces referenced by *load*.
 
         Delegates to :func:`core.boundary.face_triangles_for_indices` (single
         source of truth, shared with the Kratos path). Empty list when no
-        surface triangulation is available (triggers uniform fallback).
+        surface triangulation is available (triggers uniform fallback). The
+        undifferentiated ``"boundary"`` bucket is strictly a LAST RESORT
+        (explicit warning inside the helper); pass
+        ``allow_boundary_fallback=False`` to disable it.
         """
         from core.boundary import face_triangles_for_indices
         if not self.face_surface_elements:
@@ -255,6 +259,7 @@ class GenerativeDesignEngine:
             face_indices, self.face_surface_elements,
             group_index=getattr(self, "_face_index_to_groups", None),
             node_indices=node_indices,
+            allow_boundary_fallback=allow_boundary_fallback,
         )
         return tris
 
@@ -587,6 +592,9 @@ class GenerativeDesignEngine:
         result["_consumed_protected_conditions"] = len(conditions.get(ConditionType.PROTECTED_REGION, []))
         result["_consumed_obstruction_conditions"] = len(conditions.get(ConditionType.OBSTRUCTION, []))
         result["_unsupported_conditions"] = sorted(unsupported)
+        result["_preserved_elements"] = [int(i) for i in np.asarray(
+            preserved, dtype=int).ravel().tolist()] if preserved.size else []
+        result["_frozen_elements"] = []
         return result
 
 
@@ -643,6 +651,8 @@ def _reconstruct(
     result: Dict[str, Any],
     engine: GenerativeDesignEngine,
     step_path: Optional[str] = None,
+    frozen_elements: Optional[List[int]] = None,
+    preserved_elements: Optional[List[int]] = None,
 ):
     from core.cad_reconstruction import (
         ReconstructionPipeline,
@@ -650,6 +660,10 @@ def _reconstruct(
         MarchingTetrahedraExtractor,
     )
     densities = np.asarray(result.get("densities", []), dtype=float)
+    frozen = list(frozen_elements) if frozen_elements is not None else list(
+        result.get("_frozen_elements", []) or [])
+    preserved = (list(preserved_elements) if preserved_elements is not None
+                 else list(result.get("_preserved_elements", []) or []))
     pipe = ReconstructionPipeline(
         surface_extractor=MarchingTetrahedraExtractor(),
         step_path=step_path,
@@ -659,8 +673,14 @@ def _reconstruct(
         engine.mesh_elements,
         densities,
         threshold=0.5,
+        frozen_elements=frozen or None,
+        preserved_elements=preserved or None,
     )
     out = final.to_dict()
+    if frozen:
+        out["metadata"] = {**(out.get("metadata", {}) or {}),
+                           "frozen_elements": sorted(int(i) for i in frozen),
+                           "frozen_passthrough": "frozen_face_as_keep_in@1.0"}
     # Expose the reconstructed OCP solid so the layer above can register it as
     # a real CADModel (Document / viewport / history / Design Tree).  It is only
     # present when the B-Rep stage actually completed.

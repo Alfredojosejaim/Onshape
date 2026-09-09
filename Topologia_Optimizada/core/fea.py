@@ -245,6 +245,34 @@ class FEASolver:
         self._K = K
         return K
 
+    def assemble_global_mass(self, density: float) -> sp.csc_matrix:
+        """Assemble the global lumped mass matrix for Tet4 elements.
+
+        Lumped (diagonal) mass: each element contributes ``rho * V / 4`` to
+        each of its 4 nodes, replicated on the 3 translational DOFs of the
+        node. The result is strictly positive diagonal (hence SPD), which
+        keeps the generalized eigenproblem ``K*phi = w^2*M*phi`` well posed.
+
+        Args:
+            density: Material mass density (kg/m^3). Must be > 0.
+
+        Returns:
+            Sparse (num_dofs x num_dofs) diagonal M matrix in CSC format.
+        """
+        rho = float(density)
+        if not rho > 0:
+            raise FEAError(f"density must be > 0 for mass assembly, got {density!r}")
+        nodal_mass = np.zeros(self.num_nodes)
+        for e in range(self.num_elements):
+            con = self.elements[e]
+            coords = self.nodes[con]
+            vol, _ = _tet_volume_and_B(coords)
+            nodal_mass[con] += rho * float(vol) / 4.0
+        if np.any(nodal_mass <= 0.0):
+            raise FEAError("lumped mass assembly produced non-positive nodal masses")
+        diag = np.repeat(nodal_mass, 3)
+        return sp.csc_matrix(sp.diags(diag, format="csc"))
+
     def apply_bc_and_solve(
         self,
         force_vector: np.ndarray,
@@ -385,6 +413,148 @@ class FEASolver:
             "total_strain_energy": float(element_strain_energy.sum()),
             "compliance": float(2.0 * element_strain_energy.sum()),
         }
+
+
+def solve_modal(
+    nodes: np.ndarray,
+    elements: np.ndarray,
+    young_modulus: float,
+    poisson_ratio: float,
+    density: float,
+    fixed_dofs: List[int],
+    mode_count: int = 5,
+    frequency_min: Optional[float] = None,
+    frequency_max: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Solve the undamped free-vibration eigenproblem K*phi = w^2*M*phi.
+
+    Assembles the Tet4 stiffness ``K`` (via :meth:`FEASolver.element_stiffness`)
+    and the lumped mass ``M`` (via :meth:`FEASolver.assemble_global_mass`),
+    restricts both to the free DOFs derived from ``fixed_dofs`` (same
+    convention as :meth:`FEASolver.apply_bc_and_solve`), and extracts the
+    ``mode_count`` lowest modes with ``scipy.sparse.linalg.eigsh``
+    (``which='SM'``).
+
+    Args:
+        nodes: (N,3) node coordinates.
+        elements: (M,4) Tet4 connectivity.
+        young_modulus, poisson_ratio: elastic constants.
+        density: mass density (kg/m^3), must be > 0.
+        fixed_dofs: global DOF indices held at zero. Must be non-empty:
+            without constraints the stiffness matrix is singular
+            (rigid-body modes) and an :class:`FEAError` is raised explicitly.
+        mode_count: number of modes to extract, must be >= 1 and < #free DOFs.
+        frequency_min/max: optional window of interest (Hz). Modes outside
+            the window are filtered out of ``frequencies``/``mode_shapes``
+            and reported explicitly in ``warnings`` (never dropped silently).
+
+    Returns:
+        Dict with ``frequencies`` (Hz, ascending), ``mode_shapes`` (full-DOF
+        vectors, M-orthonormal, ascending by frequency), ``angular_frequencies``
+        (rad/s), ``eigenvalues`` (w^2), ``warnings``, ``num_modes``,
+        ``num_free_dofs`` and ``engine``.
+    """
+    if mode_count is None or int(mode_count) < 1:
+        raise FEAError(f"mode_count must be >= 1, got {mode_count!r}")
+    mode_count = int(mode_count)
+    if frequency_min is not None and frequency_min < 0:
+        raise FEAError(f"frequency_min must be >= 0, got {frequency_min!r}")
+    if frequency_max is not None and frequency_max < 0:
+        raise FEAError(f"frequency_max must be >= 0, got {frequency_max!r}")
+    if (frequency_min is not None and frequency_max is not None
+            and frequency_min >= frequency_max):
+        raise FEAError("frequency_min must be < frequency_max")
+
+    fixed = np.sort(np.unique(np.asarray(list(fixed_dofs), dtype=np.int64)))
+    if fixed.size == 0:
+        raise FEAError(
+            "Modal analysis requires at least one fixed DOF (constraint) to "
+            "eliminate rigid-body modes: K is singular without constraints."
+        )
+
+    solver = FEASolver(nodes, elements, young_modulus, poisson_ratio)
+    if np.any(fixed < 0) or np.any(fixed >= solver.num_dofs):
+        raise FEAError("fixed_dofs contains DOF indices out of range")
+    K = solver.assemble_global_stiffness()
+    M = solver.assemble_global_mass(density)
+
+    all_dofs = np.arange(solver.num_dofs)
+    free = np.setdiff1d(all_dofs, fixed)
+    if free.size == 0:
+        raise FEAError("no free DOFs remain after applying constraints")
+    if mode_count >= free.size:
+        raise FEAError(
+            f"mode_count ({mode_count}) must be < number of free DOFs "
+            f"({free.size}): extract fewer modes or release constraints."
+        )
+
+    Kff = K[np.ix_(free, free)].tocsc()
+    Mff = M[np.ix_(free, free)].tocsc()
+
+    try:
+        eigenvals, eigenvecs = spla.eigsh(Kff, k=mode_count, M=Mff, which="SM")
+    except Exception as exc:
+        raise FEAError(f"eigensolver failed (eigsh, which='SM'): {exc}") from exc
+
+    order = np.argsort(eigenvals)
+    eigenvals = np.asarray(eigenvals[order], dtype=float)
+    eigenvecs = np.asarray(eigenvecs[:, order])
+
+    warnings: List[str] = []
+    nonpositive = eigenvals <= 0.0
+    if np.any(nonpositive):
+        warnings.append(
+            f"{int(np.sum(nonpositive))} modo(s) con autovalor <= 0 "
+            "(posible mecanismo o constraint insuficiente); se fijan a 0 Hz."
+        )
+        eigenvals = np.clip(eigenvals, 0.0, None)
+
+    omegas = np.sqrt(eigenvals)
+    freqs = omegas / (2.0 * np.pi)
+
+    # Expand eigenvectors to full-DOF mode shapes (zeros at fixed DOFs) and
+    # enforce M-orthonormality explicitly (phi^T M phi = 1).
+    Mdiag = np.asarray(M.diagonal(), dtype=float)
+    mode_shapes = []
+    for i in range(mode_count):
+        phi = np.zeros(solver.num_dofs)
+        phi[free] = eigenvecs[:, i]
+        norm = float(np.sqrt(np.sum(Mdiag * phi * phi)))
+        if norm <= 0.0:
+            raise FEAError(f"mode shape {i} has zero mass norm")
+        phi /= norm
+        mode_shapes.append(phi)
+
+    kept = [True] * mode_count
+    for i, f in enumerate(freqs):
+        if frequency_min is not None and f < frequency_min:
+            kept[i] = False
+            warnings.append(
+                f"Modo {i + 1} ({float(f):.3f} Hz) bajo frequency_min "
+                f"({frequency_min} Hz): excluido del resultado."
+            )
+        elif frequency_max is not None and f > frequency_max:
+            kept[i] = False
+            warnings.append(
+                f"Modo {i + 1} ({float(f):.3f} Hz) sobre frequency_max "
+                f"({frequency_max} Hz): excluido del resultado."
+            )
+
+    kept_idx = [i for i, k in enumerate(kept) if k]
+    return {
+        "success": True,
+        "status": "completed",
+        "frequencies": [float(freqs[i]) for i in kept_idx],
+        "angular_frequencies": [float(omegas[i]) for i in kept_idx],
+        "eigenvalues": [float(eigenvals[i]) for i in kept_idx],
+        "mode_shapes": [mode_shapes[i].tolist() for i in kept_idx],
+        "num_modes": len(kept_idx),
+        "num_modes_computed": mode_count,
+        "num_free_dofs": int(free.size),
+        "fixed_dofs": fixed.tolist(),
+        "warnings": warnings,
+        "engine": "self-contained-numpy-tet4-modal",
+    }
 
 
 def kratos_suggestion(num_elements: int, solve_seconds: Optional[float] = None) -> Optional[str]:

@@ -464,8 +464,12 @@ class GmshTet4Mesher(BaseMesher):
                     "mesh_size_max": self.mesh_size_max,
                     "gmsh_volumes": len(volumes),
                     # P1 provenance: geometric correspondence or order fallback.
+                    # Quick-win P1: persist the deterministic map itself so the
+                    # mesh is self-describing (reproducible without recompute).
                     "face_correspondence": "deterministic"
                     if face_index_to_tag is not None else "order-fallback",
+                    "face_index_to_tag": dict(face_index_to_tag)
+                    if face_index_to_tag is not None else None,
                     "face_unmapped": unmapped,
                 },
                 physical_groups=physical_group_nodes,
@@ -622,6 +626,8 @@ class GmshTet4Mesher(BaseMesher):
                     "n_size_points": len(size_points) if size_points else 0,
                     "face_correspondence": "deterministic"
                     if face_index_to_tag is not None else "order-fallback",
+                    "face_index_to_tag": dict(face_index_to_tag)
+                    if face_index_to_tag is not None else None,
                     "face_unmapped": unmapped_adaptive,
                 },
                 physical_groups=physical_group_nodes,

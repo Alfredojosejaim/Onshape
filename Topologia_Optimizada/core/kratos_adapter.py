@@ -36,13 +36,19 @@ class KratosInitializationError(Exception):
     pass
 
 
-def _face_triangles_for_load(load, face_surface_elements, physical_groups, node_indices=None):
+def _face_triangles_for_load(load, face_surface_elements, physical_groups, node_indices=None,
+                           allow_boundary_fallback: bool = True):
     """Collect surface triangles for a LoadDefinition's application face.
 
     Delegates to :func:`core.boundary.face_triangles_for_indices` (single
     source of truth, shared with the local-engine path). Empty list when no
     surface triangulation is available or the face id is unresolvable
     (both cases logged explicitly; callers fall back to uniform or fail).
+
+    Exact-first order: named per-condition submodelparts / ``face_<fi>`` keys
+    win; the undifferentiated ``"boundary"`` bucket is strictly a LAST RESORT
+    (explicit warning, ``matched_specific=False``) and is skipped when
+    ``allow_boundary_fallback`` is ``False``.
 
     NOTE (P2): the provisional voxel mesher (``ProvisionalTet4Mesher``) DOES
     classify boundary triangles per CAD face (``face_<fi>`` via
@@ -67,10 +73,17 @@ def _face_triangles_for_load(load, face_surface_elements, physical_groups, node_
     for grp_name, face_indices in (physical_groups or {}).items():
         for gfi in face_indices or []:
             group_index.setdefault(int(gfi), []).append(grp_name)
-    tris, _ = face_triangles_for_indices(
+    tris, matched_specific = face_triangles_for_indices(
         [fi], face_surface_elements, group_index=group_index,
         node_indices=node_indices,
+        allow_boundary_fallback=allow_boundary_fallback,
     )
+    if tris and not matched_specific:
+        logger.warning(
+            "face_triangles: load %s face %s resolved ONLY via LAST-RESORT "
+            "'boundary' bucket (%d tris, approximate, NOT exact).",
+            getattr(load, "id", "?"), fi, len(tris),
+        )
     return tris
 
 

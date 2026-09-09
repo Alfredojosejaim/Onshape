@@ -223,19 +223,28 @@ def face_triangles_for_indices(
     face_surface_elements,
     group_index=None,
     node_indices=None,
+    allow_boundary_fallback: bool = True,
 ):
     """Single source of truth for face → surface-triangle lookup (P2/D1).
 
     Collects ``[n0, n1, n2]`` triangles (0-based mesh node indices) covering
     the given 0-based CAD face indices, trying in order:
 
-    1. named physical groups (via ``group_index``: ``{face_index: [names]}``);
+    1. named physical groups (via ``group_index``: ``{face_index: [names]}``)
+       — exact per-condition submodelparts (productive path);
     2. per-face ``face_<fi>`` keys (deterministic Gmsh path);
     3. node-label propagation from the undifferentiated ``"boundary"`` bucket
-       (provisional-mesher leftovers; approximate staircase at ~h/2, logged).
+       (provisional-mesher leftovers; approximate staircase at ~h/2).
 
-    Returns ``(tris, matched_specific)``. Empty list when no surface
-    triangulation exists at all (caller decides uniform fallback vs error).
+    Step 3 is strictly a LAST RESORT: it only fires when no named group or
+    ``face_<fi>`` key matched, requires ``node_indices``, emits an explicit
+    ``logger.warning`` (never silent), and is skipped entirely when
+    ``allow_boundary_fallback`` is ``False``.
+
+    Returns ``(tris, matched_specific)``. ``matched_specific`` is True only
+    when step 1 or 2 matched; the ``"boundary"`` propagation never sets it.
+    Empty list when no surface triangulation exists at all (caller decides
+    uniform fallback vs error).
     """
     tris = []
     matched_specific = False
@@ -251,15 +260,20 @@ def face_triangles_for_indices(
         if face_key in face_surface_elements:
             tris.extend(face_surface_elements[face_key])
             matched_specific = True
-    if not matched_specific and "boundary" in face_surface_elements:
+    if (
+        not matched_specific
+        and allow_boundary_fallback
+        and "boundary" in face_surface_elements
+    ):
         node_set = set(node_indices or [])
         if node_set:
             boundary_tris = face_surface_elements["boundary"]
             propagated = [tri for tri in boundary_tris if all(n in node_set for n in tri)]
             if propagated:
-                logger.debug(
-                    "faces %s: no named group / face_<id> key found; recovered "
-                    "%d/%d triangles from 'boundary' via node-label propagation.",
+                logger.warning(
+                    "faces %s: no named group / face_<id> key found; using "
+                    "LAST-RESORT 'boundary'-bucket propagation (%d/%d "
+                    "triangles, approximate staircase at ~h/2, NOT exact).",
                     list(face_indices or []), len(propagated), len(boundary_tris),
                 )
                 tris.extend(propagated)

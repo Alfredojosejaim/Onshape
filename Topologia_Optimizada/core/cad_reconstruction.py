@@ -28,9 +28,45 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
+
+
+def apply_frozen_passthrough(
+    densities: np.ndarray,
+    num_elements: int,
+    frozen_elements: Optional[Sequence[int]],
+    frozen_value: float = 1.0,
+) -> np.ndarray:
+    """Fuerza a ``frozen_value`` las densidades de los elementos FROZEN.
+
+    Pass-through FROZEN_FACE (equivalencia honesta con KEEP_IN): los
+    elementos de la cara congelada quedan fijos a 1.0 para que el marching
+    tetrahedra los incluya en la geometría reconstruida.
+
+    Levanta ``ValueError`` explícito ante índices fuera de rango (nunca
+    recorte silencioso) y ante longitud de densidades inconsistente.
+    """
+    out = np.asarray(densities, dtype=float).ravel().copy()
+    if out.shape[0] != int(num_elements):
+        raise ValueError(
+            f"densities ({out.shape[0]}) no coincide con num_elements "
+            f"({int(num_elements)}); revisar campo de densidad."
+        )
+    if not frozen_elements:
+        return out
+    frozen = np.asarray(list(frozen_elements), dtype=np.int64).ravel()
+    if frozen.size == 0:
+        return out
+    bad = frozen[(frozen < 0) | (frozen >= int(num_elements))]
+    if bad.size:
+        raise ValueError(
+            f"frozen_elements fuera de rango: {bad[:10].tolist()}... "
+            f"(num_elements={int(num_elements)})."
+        )
+    out[frozen] = float(frozen_value)
+    return out
 
 
 class ReconstructionStage(str, Enum):
@@ -655,26 +691,57 @@ class ReconstructionPipeline:
         elements: np.ndarray,
         densities: np.ndarray,
         threshold: float = 0.5,
+        frozen_elements: Optional[Sequence[int]] = None,
+        preserved_elements: Optional[Sequence[int]] = None,
     ) -> ReconstructionResult:
         """Run the full reconstruction pipeline.
+
+        ``frozen_elements`` (pass-through FROZEN_FACE) y
+        ``preserved_elements`` (KEEP_IN) fuerzan su densidad a 1.0 antes de
+        la extracción para que la isosuperficie los incluya; el rol queda
+        registrado en metadata (sin fallback silencioso: índices fuera de
+        rango levantan ValueError vía :func:`apply_frozen_passthrough`).
 
         Returns the final stage result (B-Rep or surface mesh depending
         on what is implemented).
         """
         self._status = ReconstructionStatus.IN_PROGRESS
 
+        elements_arr = np.asarray(elements, dtype=int)
+        densities_arr = np.asarray(densities, dtype=float).ravel()
+        frozen_list = sorted(int(i) for i in (frozen_elements or []))
+        preserved_list = sorted(int(i) for i in (preserved_elements or []))
+        # Unión honesta: ambos fijan a 1.0 igual que KEEP_IN.
+        force_list = sorted(set(frozen_list) | set(preserved_list))
+        densities_arr = apply_frozen_passthrough(
+            densities_arr, int(elements_arr.shape[0]),
+            force_list or None,
+        )
+
         # Stage 1: record density field
         self._stages[ReconstructionStage.DENSITY_FIELD] = ReconstructionResult(
             stage=ReconstructionStage.DENSITY_FIELD,
             status=ReconstructionStatus.COMPLETED,
-            data={"nodes": nodes, "elements": elements, "densities": densities},
+            data={"nodes": nodes, "elements": elements, "densities": densities_arr},
+            metadata={
+                "frozen_elements": frozen_list,
+                "preserved_elements": preserved_list,
+                "frozen_passthrough": (
+                    "frozen_face_as_keep_in@1.0" if frozen_list else None
+                ),
+            },
         )
 
         # Stage 2: surface extraction
         try:
             surface_result = self._surface_extractor.extract(
-                nodes, elements, densities, threshold
+                nodes, elements_arr, densities_arr, threshold
             )
+            surface_result.metadata.setdefault("frozen_elements", frozen_list)
+            surface_result.metadata.setdefault("preserved_elements", preserved_list)
+            if frozen_list:
+                surface_result.metadata.setdefault(
+                    "frozen_passthrough", "frozen_face_as_keep_in@1.0")
             self._stages[ReconstructionStage.SURFACE_MESH] = surface_result
         except Exception as exc:
             self._status = ReconstructionStatus.FAILED
@@ -765,6 +832,11 @@ class ReconstructionPipeline:
                         error_message=str(exc),
                     )
                 if r.status == ReconstructionStatus.COMPLETED:
+                    r.metadata.setdefault("frozen_elements", frozen_list)
+                    r.metadata.setdefault("preserved_elements", preserved_list)
+                    if frozen_list:
+                        r.metadata.setdefault(
+                            "frozen_passthrough", "frozen_face_as_keep_in@1.0")
                     brep_result = r
                     break
                 if brep_result is None:

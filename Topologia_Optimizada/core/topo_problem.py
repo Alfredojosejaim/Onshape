@@ -118,10 +118,13 @@ class DesignRegion:
 class ObstacleRegion:
     """Volumen o cara no modificable por el optimizador.
 
-    KEEP_OUT / KEEP_IN: densidad fija (0 o 1), excluidos de la variable de
+    KEEP_IN / KEEP_IN: densidad fija (0 o 1), excluidos de la variable de
     diseño (``set_void_elements`` / ``set_preserved_elements`` existentes).
-    FROZEN_FACE: no toca densidades; pass-through CAD en reconstrucción
-    (Fase 2, aún no implementado).
+    FROZEN_FACE: pass-through de reconstrucción implementado como
+    preserved fijo a 1.0 (igual que KEEP_IN): los elementos asociados se
+    fijan a densidad 1 y el rol ``frozen_face`` se propaga en
+    halos/metadata para que la reconstrucción los incluya. Documentado
+    como equivalencia honesta (sin pass-through geométrico exacto).
     """
     id: str
     role: RegionRole
@@ -235,7 +238,8 @@ class TopologyOptimizationProblem:
         # Halo: None + mesh_element_size = auto desde la malla (P4, válido).
         # Solo es error "manual" sin valor o fuente desconocida.
         for obs in self.obstacles:
-            if obs.role in (RegionRole.KEEP_OUT, RegionRole.KEEP_IN):
+            if obs.role in (RegionRole.KEEP_OUT, RegionRole.KEEP_IN,
+                            RegionRole.FROZEN_FACE):
                 if obs.halo_radius_source not in ("mesh_element_size", "manual"):
                     errors.append(
                         f"ObstacleRegion '{obs.id}': halo_radius_source desconocido "
@@ -327,8 +331,10 @@ def problem_to_solver_inputs(
 ) -> Dict[str, Any]:
     """Traduce el problema a entradas del SIMPSolver existente.
 
-    Devuelve material, volfrac, filtro, ``preserved_elements`` (KEEP_IN),
-    ``void_elements`` (KEEP_OUT) y spec de halo. Las cargas/BCs se
+    Devuelve material, volfrac, filtro, ``preserved_elements`` (KEEP_IN +
+    FROZEN_FACE, ambos fijos a 1.0), ``void_elements`` (KEEP_OUT),
+    ``frozen_elements`` (subconjunto preserved con rol frozen_face) y spec
+    de halo. Las cargas/BCs se
     resuelven pero su *aplicación* sigue en el pipeline existente
     (ConditionManager); aquí solo se validan y se exponen sus nodos.
 
@@ -385,22 +391,30 @@ def problem_to_solver_inputs(
                 f"(solo FIXED: el pipeline actual solo fija DOFs)."
             )
 
-    for obs in problem.obstacles:
-        if obs.role == RegionRole.FROZEN_FACE:
-            raise TopOptError(
-                f"ObstacleRegion '{obs.id}' FROZEN_FACE: pass-through en "
-                f"reconstrucción aún no implementado (Fase 2)."
-            )
-
     preserved: set = set()
     void: set = set()
+    frozen: set = set()
+    frozen_faces: List[str] = []
     halos: List[Dict[str, Any]] = []
     for obs in problem.obstacles:
         res = resolve(obs.target, mesh)
         if obs.role == RegionRole.KEEP_IN:
             preserved.update(res["element_indices"])
-        else:  # KEEP_OUT
+        elif obs.role == RegionRole.FROZEN_FACE:
+            # Pass-through FROZEN_FACE: equivalencia honesta con KEEP_IN.
+            # Los elementos de la cara se fijan a 1.0 para que la
+            # reconstrucción (marching tetrahedra sobre el campo de
+            # densidad) los incluya; el rol se propaga en halos/metadata.
+            preserved.update(res["element_indices"])
+            frozen.update(res["element_indices"])
+            frozen_faces.append(obs.target.selection_id)
+        elif obs.role == RegionRole.KEEP_OUT:
             void.update(res["element_indices"])
+        else:  # pragma: no cover - enum exhaustivo, sin fallback silencioso
+            raise TopOptError(
+                f"ObstacleRegion '{obs.id}': rol desconocido "
+                f"{obs.role!r} (usar KEEP_IN / KEEP_OUT / FROZEN_FACE)."
+            )
         halos.append({
             "id": obs.id,
             "role": obs.role.value,
@@ -449,6 +463,9 @@ def problem_to_solver_inputs(
         "filter_radius": float(problem.filter_settings.filter_radius),
         "preserved_elements": sorted(preserved),
         "void_elements": sorted(void),
+        "frozen_elements": sorted(frozen),
+        "frozen_faces": list(frozen_faces),
+        "frozen_passthrough": "frozen_face_as_keep_in@1.0" if frozen else None,
         "halos": halos,
         "loads": loads_out,
         "boundary_conditions": bcs_out,

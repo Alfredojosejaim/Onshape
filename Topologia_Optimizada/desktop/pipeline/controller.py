@@ -479,13 +479,15 @@ class PipelineController:
     def _ensure_condition_groups(self, resolved, needed: dict) -> None:
         """Ensure the active mesh carries physical groups for faced conditions.
 
-        Exact path (Strategy 1: named submodelpart) needs the mesh built with
-        :func:`core.kratos_bridge.condition_face_groups`. Only the common
-        no-groups-at-all mesh is re-meshed automatically (single attempt,
-        explicit log). Meshes that already carry user groups, or unmeshable
-        models, keep flowing on the geometric strategies — which fail loudly
-        (UNRESOLVED) on unmappable faces instead of guessing. No-op when
-        nothing is needed or all groups are present.
+        Productive exact path (Strategy 1: named submodelpart): the mesh must
+        be built with :func:`core.kratos_bridge.condition_face_groups`. When
+        groups are missing and a CAD model is available the mesh is re-meshed
+        explicitly (single attempt, explicit log) so faced loads/supports
+        travel on exact per-condition submodelparts in
+        ``run_fea(backend="kratos")``. When no model is available (e.g. unit
+        tests with synthetic meshes) only a warning is emitted and the
+        geometric strategies apply with their fail-loud UNRESOLVED contract.
+        No-op when nothing is needed or all groups are present.
         """
         if not needed:
             return
@@ -495,18 +497,18 @@ class PipelineController:
         missing = [g for g in needed if g not in present]
         if not missing:
             return
-        if present or not self.model_id:
+        if not self.model_id:
             logger.warning(
-                "Vía exacta no disponible para %s (grupos presentes: %s): "
-                "Strategy 1 no disparará; aplican estrategias geométricas "
-                "con contrato UNRESOLVED explícito.",
+                "Vía exacta no disponible para %s (grupos presentes: %s, sin "
+                "modelo CAD): Strategy 1 no disparará; aplican estrategias "
+                "geométricas con contrato UNRESOLVED explícito.",
                 missing, sorted(present),
             )
             return
         logger.warning(
-            "Malla sin physical groups; re-mallando explícitamente con grupos "
-            "por condición %s para la vía exacta (Strategy 1).",
-            sorted(needed),
+            "Malla sin grupos exactos por condición %s (presentes: %s); "
+            "re-mallando explícitamente para la vía exacta (Strategy 1).",
+            missing, sorted(present),
         )
         mesh = self.generate_mesh(physical_groups=needed)
         present = set((mesh.get("physical_groups") or {}).keys())
@@ -529,6 +531,13 @@ class PipelineController:
 
         Uses the same strict contract as the local conditions path: a selected
         CAD face that cannot be mapped is reported rather than silently relocated.
+
+        Faced loads/supports travel on exact per-condition submodelparts
+        (``condition_face_groups`` → mesh ``physical_groups`` → Kratos
+        submodelparts, Strategy 1); faceless conditions keep the explicit
+        local-parity defaults (no touching). The result carries
+        ``exact_submodelparts`` (groups present) and ``exact_path`` (all
+        needed groups present).
         """
         if self.mesh is None:
             raise PipelineError("No hay malla. Genera la malla primero.")
@@ -550,7 +559,8 @@ class PipelineController:
         # re-mesh explicitly with the condition groups instead of silently
         # falling back to geometric approximation.
         from core.kratos_bridge import condition_face_groups
-        self._ensure_condition_groups(resolved, condition_face_groups(resolved))
+        needed = condition_face_groups(resolved)
+        self._ensure_condition_groups(resolved, needed)
 
         mat = self.material()
         nodes = self.mesh_nodes
@@ -583,6 +593,9 @@ class PipelineController:
             raise PipelineError(
                 f"FEA (Kratos) fallo: {result.get('error', 'error desconocido')}"
             )
+        present = set((self.mesh.get("physical_groups") or {}).keys())
+        result["exact_submodelparts"] = sorted(g for g in needed if g in present)
+        result["exact_path"] = bool(needed) and all(g in present for g in needed)
         self.result = result
         return result
 
@@ -1341,9 +1354,64 @@ class PipelineController:
                 study.status = StudyStatus.FAILED
                 return StudyResult(success=False, status="failed", error_message=str(exc))
 
-        # Thermal / Modal are scaffolded (data model + validation complete) but
-        # their real solvers are not integrated yet. Report a clear
-        # ``not_implemented`` result instead of a confusing generic failure.
+        # Thermal has a real local solver (core.thermal) when a mesh is
+        # available; without mesh it keeps reporting ``not_implemented``.
+        # Modal is still scaffolded (data model + validation complete).
+        if study.study_type.value == "thermal" and self.mesh_nodes is not None \
+                and self.mesh_elements is not None:
+            try:
+                study.validate()
+                validation_msg = getattr(study, "validate_with_message", lambda: None)()
+                if validation_msg:
+                    study.status = StudyStatus.FAILED
+                    return StudyResult(
+                        success=False, status="validation_failed", error_message=validation_msg,
+                    )
+                sr = study.execute_on_mesh(self.mesh_nodes, self.mesh_elements)
+                if sr.success:
+                    study.status = StudyStatus.COMPLETED
+                    if sr.data:
+                        self.document.add_result(study.id, sr.data)
+                else:
+                    study.status = StudyStatus.FAILED
+                return sr
+            except StudyNotImplementedError as exc:
+                study.status = StudyStatus.FAILED
+                return StudyResult(
+                    success=False, status="not_implemented", error_message=str(exc),
+                )
+            except Exception as exc:
+                study.status = StudyStatus.FAILED
+                return StudyResult(success=False, status="failed", error_message=str(exc))
+        # Modal has a real local eigen-solver (core.fea.solve_modal) when a
+        # mesh is available; without mesh it keeps reporting ``not_implemented``.
+        if study.study_type.value == "modal" and self.mesh_nodes is not None \
+                and self.mesh_elements is not None:
+            try:
+                study.validate()
+                validation_msg = getattr(study, "validate_with_message", lambda: None)()
+                if validation_msg:
+                    study.status = StudyStatus.FAILED
+                    return StudyResult(
+                        success=False, status="validation_failed", error_message=validation_msg,
+                    )
+                fixed = self._apply_constraints(self.mesh_nodes)
+                sr = study.execute_on_mesh(self.mesh_nodes, self.mesh_elements, fixed)
+                if sr.success:
+                    study.status = StudyStatus.COMPLETED
+                    if sr.data:
+                        self.document.add_result(study.id, sr.data)
+                else:
+                    study.status = StudyStatus.FAILED
+                return sr
+            except StudyNotImplementedError as exc:
+                study.status = StudyStatus.FAILED
+                return StudyResult(
+                    success=False, status="not_implemented", error_message=str(exc),
+                )
+            except Exception as exc:
+                study.status = StudyStatus.FAILED
+                return StudyResult(success=False, status="failed", error_message=str(exc))
         if study.study_type.value in ("thermal", "modal"):
             try:
                 study.validate()

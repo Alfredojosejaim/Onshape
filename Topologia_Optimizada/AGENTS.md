@@ -100,7 +100,7 @@ Se auditó y limpió `desktop/ui/components/workspace.py` (ribbon):
 
 ## Estado actual — ciclo Fases 0/1/3 (decisiones D1–D6, orden 1→3→2)
 
-- **F0**: baseline `439 passed, 6 deselected` (sin benchmarks) → cierre `451 passed` (+12 tests nuevos).
+- **F0**: baseline `439 passed, 6 deselected` (sin benchmarks) → cierre `472 passed, 6 deselected` (verificado este ciclo, ~103s).
 - **F1**: `entitiesChanged` eliminada (0 refs); Validar lista `face_unmapped_<tag>`; CI en `runtime/python`.
 - **F3a (UI generativa)**: `GenerativeStudyPanel` A/B en `study_panel.py` + menú Estudio (crear/ejecutar diseño generativo); post-proceso compartido `_finish_study_execution`.
 - **F3b (PRESSURE)**: `F[N]=p[Pa]×A[m²]` en local (`generative_engine.py`) y Kratos (`kratos_adapter.py`); helpers en `boundary.py`; sin área → error explícito; `kratos_bridge` propaga `LoadType.PRESSURE`.

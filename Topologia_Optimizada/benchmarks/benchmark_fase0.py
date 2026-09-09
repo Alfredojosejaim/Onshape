@@ -170,7 +170,12 @@ def build_adapter(mesh_name: str, meshes_dir: str, load_mode: str = "force"):
 
     constraints = [
         ConstraintDefinition(
-            id="c1", constraint_type=ConstraintType.FIXED, location_face_id="base",
+            # NOTE: location_face_id=None on purpose (Case A). A legacy string
+            # like "base" is NOT a resolvable face index and, since P2, an
+            # unresolvable id with no cad_shape is INVALID_FACE_ID->UNRESOLVED
+            # (no silent coordinate fallback). The base fixity here IS the
+            # coordinate selection below (fixed_axis/fixed_coordinate).
+            id="c1", constraint_type=ConstraintType.FIXED, location_face_id=None,
             fixed_axis=2, fixed_coordinate=0.0, tolerance=0.01,
         )
     ]

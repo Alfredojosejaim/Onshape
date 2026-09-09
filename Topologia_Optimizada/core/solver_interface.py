@@ -343,19 +343,25 @@ def _apply_constraint_by_face_mapping(adapter: Any, model_part: Any, constraint:
     from core.boundary import BoundaryConditionMapper, resolve_face_index
 
     face_id = getattr(constraint, "location_face_id", None)
-    if cad_shape is None:
+    if not face_id:
         logger.debug(
-            f"Constraint {constraint.id}: no cad_shape available; CAD face mapping skipped"
+            f"Constraint {constraint.id}: no location_face_id; CAD face mapping skipped"
         )
         return "NO_FACE_ID"
-
     face_index = resolve_face_index(face_id)
     if face_index is None:
+        # Explicit but unresolvable identifier: a silent coordinate fallback
+        # would apply the support to an unintended region (mislabeling).
         _face_mapping_failure_log(
             "constraint", constraint.id, face_id, face_index, 0, 0.0,
             f"location_face_id={face_id!r} is not a resolvable face index",
         )
         return "INVALID_FACE_ID"
+    if cad_shape is None:
+        logger.debug(
+            f"Constraint {constraint.id}: no cad_shape available; CAD face mapping skipped"
+        )
+        return "NO_FACE_ID"
 
     n_cad_faces = len(cad_shape.Faces())
     if face_index < 0 or face_index >= n_cad_faces:
@@ -603,19 +609,25 @@ def _apply_load_by_face_mapping(adapter: Any, model_part: Any, load: Any,
     from core.boundary import BoundaryConditionMapper, resolve_face_index
 
     face_id = getattr(load, "application_face_id", None)
-    if cad_shape is None:
+    if not face_id:
         logger.debug(
-            f"Load {load.id}: no cad_shape available; CAD face mapping skipped"
+            f"Load {load.id}: no application_face_id; CAD face mapping skipped"
         )
         return "NO_FACE_ID"
-
     face_index = resolve_face_index(face_id)
     if face_index is None:
+        # Explicit but unresolvable identifier: a silent coordinate fallback
+        # would apply the load to an unintended region (mislabeling).
         _face_mapping_failure_log(
             "load", load.id, face_id, face_index, 0, 0.0,
             f"application_face_id={face_id!r} is not a resolvable face index",
         )
         return "INVALID_FACE_ID"
+    if cad_shape is None:
+        logger.debug(
+            f"Load {load.id}: no cad_shape available; CAD face mapping skipped"
+        )
+        return "NO_FACE_ID"
 
     n_cad_faces = len(cad_shape.Faces())
     if face_index < 0 or face_index >= n_cad_faces:

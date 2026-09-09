@@ -321,19 +321,13 @@ class StructuralAnalysis(Study):
 # ====================================================================== #
 
 class ThermalAnalysis(Study):
-    """Steady-state thermal analysis.
+    """Steady-state thermal analysis (real Tet4 solver in ``core.thermal``).
 
-    Scaffolding contract for the future heat-transfer solver integration.
-    The data model (``thermal_boundaries``) and validation are already in
-    place; the actual K matrix (conductivity) assembly and solve are delegated
-    to the pipeline, which currently reports ``not_implemented`` via
-    :class:`StudyNotImplementedError`.
-
-    Future integration must:
-    - require ``material.has_thermal_properties`` (K = thermal_conductivity),
-    - solve the steady heat equation for the temperature field ``T`` [K],
-    - return result.data["temperatures"] (nodal temperature field) and,
-      optionally, result.data["heat_flux"].
+    ``execute()`` without a mesh keeps raising :class:`StudyNotImplementedError`
+    (the pipeline reports ``not_implemented``); use ``execute_on_mesh(nodes,
+    elements)`` — or ``core.thermal.solve_thermal_study`` — to run the real
+    steady-state solve. Result data carries ``temperatures`` (nodal field [K])
+    and ``heat_flux`` (per-element vectors [W/m^2]).
     """
 
     study_type = StudyType.THERMAL
@@ -367,8 +361,36 @@ class ThermalAnalysis(Study):
             msg = self.validate_with_message() or "Configuración térmica inválida."
             self.status = StudyStatus.FAILED
             return StudyResult(success=False, status="validation_failed", error_message=msg)
-        # Real steady-state solve not integrated yet — clear, structured boundary.
+        # Mesh-less path: no mesh to solve on — clear, structured boundary.
         raise StudyNotImplementedError("Steady-state thermal solver not yet integrated.")
+
+    def execute_on_mesh(self, nodes, elements) -> StudyResult:
+        """Run the real steady-state thermal solve on an explicit mesh.
+
+        Each ThermalBoundary must carry its mesh mapping in ``metadata``
+        (``'nodes'`` for TEMPERATURE, ``'faces'`` for HEAT_FLUX/CONVECTION);
+        see :func:`core.thermal.solve_thermal_study`. Validation failures
+        return a ``validation_failed`` result; solver failures an explicit
+        ``failed`` result — never a silent default.
+        """
+        from core.thermal import ThermalError, solve_thermal_study
+
+        if not self.validate():
+            msg = self.validate_with_message() or "Configuración térmica inválida."
+            self.status = StudyStatus.FAILED
+            return StudyResult(success=False, status="validation_failed", error_message=msg)
+        try:
+            data = solve_thermal_study(self, nodes, elements)
+        except ThermalError as exc:
+            self.status = StudyStatus.FAILED
+            return StudyResult(success=False, status="failed", error_message=str(exc))
+        self.status = StudyStatus.COMPLETED
+        serializable = {
+            k: (v.tolist() if hasattr(v, "tolist") else v) for k, v in data.items()
+        }
+        result = StudyResult(success=True, status="completed", data=serializable)
+        self.result = result
+        return result
 
 
 # ====================================================================== #
@@ -418,10 +440,58 @@ class ModalAnalysis(Study):
             )
         return None
 
+    def execute_on_mesh(self, nodes, elements, fixed_dofs) -> StudyResult:
+        """Run the real eigen-solver on a concrete mesh.
+
+        Args:
+            nodes: (N,3) node coordinates.
+            elements: (M,4) Tet4 connectivity.
+            fixed_dofs: global DOF indices held at zero (anti-rigid-body
+                constraints resolved by the pipeline). Must be non-empty.
+
+        Returns:
+            StudyResult with ``data`` = :func:`core.fea.solve_modal` output
+            (``frequencies`` Hz ascending, ``mode_shapes``, ``warnings``).
+
+        Raises:
+            core.fea.FEAError: on invalid ``mode_count`` or empty
+                ``fixed_dofs`` — explicit, never a silent fallback.
+        """
+        from core.fea import solve_modal
+        msg = self.validate_with_message()
+        if msg is not None:
+            self.status = StudyStatus.FAILED
+            return StudyResult(success=False, status="validation_failed",
+                               error_message=msg)
+        if fixed_dofs is None or len(list(fixed_dofs)) == 0:
+            self.status = StudyStatus.FAILED
+            return StudyResult(
+                success=False, status="validation_failed",
+                error_message=(
+                    "El estudio modal requiere DOFs fijos resueltos de la malla "
+                    "(fixed_dofs vacío): sin constraints K es singular."
+                ),
+            )
+        data = solve_modal(
+            nodes, elements,
+            self.material.young_modulus, self.material.poisson_ratio,
+            self.material.density, fixed_dofs,
+            mode_count=self.modal.mode_count,
+            frequency_min=self.modal.frequency_min,
+            frequency_max=self.modal.frequency_max,
+        )
+        self.status = StudyStatus.COMPLETED
+        sr = StudyResult(success=True, status="completed", data=data)
+        self.result = sr
+        return sr
+
     def execute(self) -> StudyResult:
         if not self.validate():
             msg = self.validate_with_message() or "Configuración modal inválida."
             self.status = StudyStatus.FAILED
             return StudyResult(success=False, status="validation_failed", error_message=msg)
-        # Real eigen-solve not integrated yet — clear, structured boundary.
+        # The real eigen-solve needs a mesh + resolved fixed DOFs, which live
+        # in the pipeline layer: use ModalAnalysis.execute_on_mesh(...) or the
+        # controller's execute_study (which calls solve when a mesh exists).
+        # Without a mesh there is nothing to assemble K/M from.
         raise StudyNotImplementedError("Modal (eigen) solver not yet integrated.")

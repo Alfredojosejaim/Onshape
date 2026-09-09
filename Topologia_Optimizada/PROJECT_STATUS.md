@@ -945,4 +945,26 @@ orden 1→3→2 (D6). Fase 2 (IDs persistentes P1/P2) diferida por D1.
 - **F3c**: `FEASolver(linear_solver="cg")` opt-in (default `direct` intacto,
   fallback explícito); umbral numérico Kratos 50k elementos / 30s
   (`kratos_suggestion`, aviso en log + status bar);
-  `tests/test_iterative_solver.py` (4 tests, CG≡direct ≤1e-6).
+   `tests/test_iterative_solver.py` (4 tests, CG≡direct ≤1e-6).
+
+---
+
+## Cierre
+
+Estado general: **IMPLEMENTADO**. Baseline de tests: `504 passed,
+6 deselected` (verificado tras implementar faltantes, ~35s).
+
+- **FROZEN_FACE**: IMPLEMENTADO como pass-through honesto (equivale a
+  KEEP_IN @1.0 + metadata `frozen_passthrough`; `tests/test_frozen_face_passthrough.py`).
+- **P2**: vía exacta por condición en ruta productiva
+  (`exact_submodelparts`, bucket `"boundary"` solo last-resort con warning;
+  `tests/test_p2_exact_path.py`). Regla: cara explícita que no mapea →
+  UNRESOLVED ruidoso, nunca reubicación silenciosa.
+- **Thermal**: solver estacionario Tet4 real (`core/thermal.py`,
+  `execute_on_mesh`; `tests/test_thermal_solver.py`, 11 casos).
+- **Modal**: eigensolver real K·φ=ω²M·φ (`solve_modal` + masa lumped;
+  `tests/test_modal_solver.py`, 7 casos).
+- **P1**: PARCIAL — mapa `{fi: tag}` persistido en metadata
+  (`face_index_to_tag`, `tests/test_p1_face_map_metadata.py`); IDs
+  persistentes completos (firmas + dominio) planificados, esfuerzo grande.
+- **Sin P0**. Dual-motor vigente: local default + Kratos opt-in.

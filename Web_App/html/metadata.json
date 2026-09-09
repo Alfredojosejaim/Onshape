@@ -1,0 +1,6 @@
+{
+  "name": "Topología Optimizada",
+  "description": "Aplicación standalone de análisis estructural FEA y optimización topológica SIMP 3D para modelos CAD",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

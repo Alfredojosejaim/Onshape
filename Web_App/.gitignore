@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+core_vendor/*/__pycache__/
+html/node_modules/
+html/dist/

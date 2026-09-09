@@ -1,0 +1,10 @@
+[project]
+name = "topologia-webapp-experimento"
+version = "0.1.0"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+norecursedirs = [".*", "build", "dist", "node_modules", ".venv", "html"]
+testpaths = ["tests"]
+addopts = "-m 'not slow'"
+markers = ["slow: FEA/SIMP reales (minutos)"]

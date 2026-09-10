@@ -5,7 +5,8 @@ interface ModalsProps {
   showImport: boolean;
   onCloseImport: () => void;
   models: CadModelPreset[];
-  currentModel: CadModelPreset;
+  // UI-CLEAN (reversible): null = sin pieza de referencia.
+  currentModel: CadModelPreset | null;
   onSelectModel: (m: CadModelPreset) => void;
   onCustomFileUpload: (file: File) => void;
 
@@ -67,14 +68,16 @@ export const Modals: React.FC<ModalsProps> = ({
     setTimeout(() => {
       // Simulate downloadable artifact
       const element = document.createElement('a');
+      // UI-CLEAN (reversible): nombre generico sin modelo.
+      const baseName = (currentModel?.filename ?? 'modelo').replace('.step', '');
       const file = new Blob(
         [
-          `# TOPOLOGÍA OPTIMIZADA CAE EXPORT\n# Pieza: ${currentModel.filename}\n# Material: ${selectedMaterial.name}\n# Iteración: ${optimizationState.currentIteration}\n# Masa Optimizada: ${optimizationState.currentMassKg.toFixed(3)} kg\n`,
+          `# TOPOLOGÍA OPTIMIZADA CAE EXPORT\n# Pieza: ${currentModel?.filename ?? 'sin modelo'}\n# Material: ${selectedMaterial.name}\n# Iteración: ${optimizationState.currentIteration}\n# Masa Optimizada: ${optimizationState.currentMassKg.toFixed(3)} kg\n`,
         ],
         { type: 'text/plain' }
       );
       element.href = URL.createObjectURL(file);
-      element.download = `${currentModel.filename.replace('.step', '')}_optimizado.${format.toLowerCase()}`;
+      element.download = `${baseName}_optimizado.${format.toLowerCase()}`;
       document.body.appendChild(element);
       element.click();
       document.body.removeChild(element);
@@ -129,7 +132,11 @@ export const Modals: React.FC<ModalsProps> = ({
             <div className="flex flex-col gap-2">
               <span className="text-[11px] font-mono text-text-muted uppercase">O selecciona un modelo estándar aeroespacial:</span>
               <div className="flex flex-col gap-1.5">
-                {models.map((m) => (
+                {/* UI-CLEAN (reversible): lista vacia sin piezas de referencia. */}
+                {models.length === 0 ? (
+                  <div className="text-[11px] text-text-muted text-center py-2">Sin piezas cargadas</div>
+                ) : (
+                models.map((m) => (
                   <button
                     key={m.id}
                     onClick={() => {
@@ -137,7 +144,8 @@ export const Modals: React.FC<ModalsProps> = ({
                       onCloseImport();
                     }}
                     className={`flex items-center justify-between p-2.5 rounded-lg border text-left transition-all ${
-                      m.id === currentModel.id
+                      // UI-CLEAN (reversible): guard sin modelo.
+                      m.id === currentModel?.id
                         ? 'bg-secondary/15 border-secondary/50 text-text-primary'
                         : 'bg-surface-elevated/40 border-border-subtle/40 hover:bg-surface-elevated text-text-secondary hover:text-text-primary'
                     }`}
@@ -154,7 +162,7 @@ export const Modals: React.FC<ModalsProps> = ({
                       <div className="text-text-muted">{m.volumeCm3} cm³</div>
                     </div>
                   </button>
-                ))}
+                )))}
               </div>
             </div>
 

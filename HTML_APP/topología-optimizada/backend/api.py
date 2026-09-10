@@ -290,7 +290,12 @@ class Api:
         try:
             p = json.loads(params_json or "{}")
             backend = p.get("backend", "local")
-            jid = self._submit("fea", self._ctrl.run_fea, backend=backend)
+            conds = self._resolve_conditions(p.get("condition_ids"))
+            if conds is not None:
+                jid = self._submit("fea", self._ctrl.run_fea,
+                                   conditions=conds, backend=backend)
+            else:
+                jid = self._submit("fea", self._ctrl.run_fea, backend=backend)
             return {"ok": True, "jobId": jid}
         except Exception as exc:  # noqa: BLE001
             return _err(exc)
@@ -298,13 +303,434 @@ class Api:
     def runOptimization(self, params_json: str = "{}") -> dict:
         try:
             p = json.loads(params_json or "{}")
-            jid = self._submit(
-                "simp", self._ctrl.run_optimization,
+            conds = self._resolve_conditions(p.get("condition_ids"))
+            kwargs = dict(
                 volume_fraction=float(p.get("volume_fraction", 0.3)),
                 max_iterations=int(p.get("max_iterations", 30)),
                 penalization=float(p.get("penalization", 3.0)),
                 filter_radius=float(p.get("filter_radius", 1.5)),
                 tolerance=float(p.get("tolerance", 1e-3)))
+            if conds is not None:
+                kwargs["conditions"] = conds
+            halo = p.get("halo_radius")
+            if halo is not None:
+                kwargs["halo_radius"] = float(halo)
+            jid = self._submit("simp", self._ctrl.run_optimization, **kwargs)
+            return {"ok": True, "jobId": jid}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    # -- condiciones reutilizables (core/conditions.py, por id, sin duplicar)
+    def _resolve_conditions(self, ids):
+        """ids -> objetos Condition compartidos, o None si no se piden."""
+        if not ids:
+            return None
+        mgr = getattr(self._ctrl, "conditions", None)
+        if mgr is None:
+            raise RuntimeError("controller sin ConditionManager")
+        return mgr.resolve([str(i) for i in ids])
+
+    def createCondition(self, condition_json: str) -> dict:
+        """Crea una condicion reutilizable (load/elasticity/obstruction/
+        protected_region) y la registra en el ConditionManager."""
+        try:
+            from core.conditions import condition_from_dict
+            cond = condition_from_dict(json.loads(condition_json or "{}"))
+            cid = self._ctrl.conditions.add(cond)
+            return {"ok": True, "id": cid,
+                    "condition": _clean(cond.to_dict())}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    def listConditions(self) -> dict:
+        try:
+            mgr = getattr(self._ctrl, "conditions", None)
+            items = [c.to_dict() for c in (mgr.all if mgr else [])]
+            return {"ok": True, "conditions": _clean(items)}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    def clearConditions(self) -> dict:
+        try:
+            mgr = getattr(self._ctrl, "conditions", None)
+            if mgr is not None:
+                mgr.clear()
+            return {"ok": True, "snapshot": self._snapshot()}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    # -- diseno generativo (core/generative_engine.py, escenario A/B real)
+    def runGenerativeDesign(self, params_json: str = "{}") -> dict:
+        try:
+            from core.generative import GenerativeDesignStudy
+            from core.generative_engine import (
+                GenerativeDesignEngine, run_generative_design)
+            from core.optimization_studies import TopOptParameters
+            p = json.loads(params_json or "{}")
+            if self._ctrl.mesh is None:
+                raise RuntimeError("Sin malla. Malla primero.")
+            study = GenerativeDesignStudy(name=p.get("name", "Generative Design"))
+            study.scenario = str(p.get("scenario", "A")).upper()
+            study.conditions = [str(i) for i in (p.get("condition_ids") or [])]
+            op = TopOptParameters()
+            for k in ("volume_fraction", "max_iterations", "penalization",
+                      "filter_radius", "convergence_tolerance"):
+                if p.get(k) is not None:
+                    setattr(op, k, p[k])
+            study.optimization_params = op
+            if p.get("resolution") is not None:
+                study.design_space.resolution = float(p["resolution"])
+            c = self._ctrl
+            engine = GenerativeDesignEngine(
+                model_id=c.model_id,
+                mesh_nodes=c.mesh_nodes,
+                mesh_elements=c.mesh_elements,
+                material=c.material(),
+                condition_manager=c.conditions,
+                model_shape=c.cad.get_model_shape(c.model_id) if c.model_id else None,
+                face_surface_elements=(c.mesh.get("face_surface_elements") or None),
+                physical_groups=(c.mesh.get("physical_groups") or None),
+            )
+            step_path = p.get("step_path")
+            jid = self._submit("generative", run_generative_design,
+                               study, c.conditions, engine,
+                               step_path=step_path)
+            return {"ok": True, "jobId": jid}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    def registerReconstruction(self, job_id: str) -> dict:
+        """Registra el solido B-Rep de un job generativo como CADModel activo
+        (Document/historial/viewport). Best-effort: nunca rompe el estudio."""
+        try:
+            with self._lock:
+                j = self._jobs.get(job_id)
+                res = dict(j["result"]) if j and j["result"] else None
+            if not res:
+                return {"ok": False, "error": "job sin resultado"}
+            recon = res.get("reconstruction") or {}
+            # El solido crudo no viaja en _clean (serializado a str); se
+            # re-ejecuta la reconstruccion solo si hay densidades.
+            info = self._ctrl._register_reconstruction_model(recon)
+            return {"ok": True, "registered": _clean(info),
+                    "snapshot": self._snapshot()}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    # -- operaciones CAD (boolean/transform/mirror/pattern, geometria real)
+    def cadOperation(self, params_json: str = "{}") -> dict:
+        try:
+            from core.commands import (BooleanCommand, MirrorCommand,
+                                       PatternCommand, TransformCommand)
+            p = json.loads(params_json or "{}")
+            kind = str(p.get("op", "")).lower()
+            cls = {"boolean": BooleanCommand, "transform": TransformCommand,
+                   "mirror": MirrorCommand, "pattern": PatternCommand}.get(kind)
+            if cls is None:
+                return {"ok": False,
+                        "error": f"op desconocida: {kind} "
+                                 "(boolean|transform|mirror|pattern)"}
+            cmd = cls()
+            for k, v in p.items():
+                if k != "op":
+                    cmd.set_parameter(k, v)
+            res = self._ctrl.execute_command(cmd)
+            ok = bool(getattr(res, "success", False))
+            if not ok:
+                return {"ok": False,
+                        "error": getattr(res, "error_message", "operacion fallo")}
+            return {"ok": True,
+                    "result": _clean(getattr(res, "data", {}) or {}),
+                    "snapshot": self._snapshot()}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    def generateAdaptiveMesh(self, params_json: str = "{}") -> dict:
+        try:
+            p = json.loads(params_json or "{}")
+            res = self._ctrl.generate_adaptive_mesh(
+                base_size=float(p.get("base_size", 5.0)),
+                min_size=float(p.get("min_size", 0.5)),
+                use_density=bool(p.get("use_density", True)))
+            return {"ok": True, "result": _clean(res),
+                    "snapshot": self._snapshot()}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    def validateState(self) -> dict:
+        """Estado real del pipeline (modelo, malla, BCs, estudios, resultado),
+        equivalente al dialogo Validar del desktop."""
+        try:
+            c = self._ctrl
+            mgr = getattr(c, "conditions", None)
+            doc = getattr(c, "document", None)
+            studies = getattr(doc, "studies", []) or []
+            report = {
+                "has_model": bool(getattr(c, "model_id", None)),
+                "model_name": getattr(c, "model_name", None),
+                "has_mesh": getattr(c, "mesh", None) is not None,
+                "num_nodes": int(len(c.mesh_nodes)) if getattr(c, "mesh", None) is not None else 0,
+                "has_legacy_forces": bool(getattr(c, "forces", None)),
+                "has_legacy_constraints": bool(getattr(c, "constraints", None)),
+                "conditions": len(mgr.all) if mgr is not None else 0,
+                "studies": len(studies),
+                "has_result": getattr(c, "result", None) is not None,
+                "has_densities": getattr(c, "result_densities", None) is not None,
+            }
+            missing = [k for k, v in
+                       (("modelo STEP", report["has_model"]),
+                        ("malla", report["has_mesh"]),
+                        ("condiciones o BCs",
+                         report["conditions"] > 0 or report["has_legacy_forces"]),
+                        ("resultado", report["has_result"] or report["has_densities"]))
+                       if not v]
+            report["valid"] = not missing
+            report["missing"] = missing
+            return {"ok": True, "report": report, "snapshot": self._snapshot()}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    # -- solver lineal local (directo spsolve vs CG iterativo, core/fea.py) --
+    def _run_fea_with_linear_solver(self, linear_solver: str) -> dict:
+        c = self._ctrl
+        nodes, elements, force, fixed = c.build_problem()
+        mat = c.material()
+        from core.fea import solve_fea
+        result = solve_fea(
+            nodes=nodes, elements=elements,
+            young_modulus=mat.young_modulus,
+            poisson_ratio=mat.poisson_ratio,
+            forces_dofs=[(int(i), float(v)) for i, v in enumerate(force) if v != 0.0],
+            fixed_dofs=fixed.tolist(),
+            linear_solver=linear_solver)
+        c.result = result
+        return result
+
+    def runFeaIterative(self, params_json: str = "{}") -> dict:
+        """FEA local con solver lineal configurable ('direct'|'cg').
+        Aprovecha el escalon iterativo documentado antes de saltar a Kratos."""
+        try:
+            p = json.loads(params_json or "{}")
+            ls = str(p.get("linear_solver", "cg")).lower()
+            if ls not in ("direct", "cg"):
+                return {"ok": False,
+                        "error": f"linear_solver desconocido: {ls} (direct|cg)"}
+            jid = self._submit("fea_iter", self._run_fea_with_linear_solver, ls)
+            return {"ok": True, "jobId": jid}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    # -- licenciamiento (core/license.py: estados + gracia offline) ----------
+    def getLicense(self) -> dict:
+        try:
+            from core.license import LicenseManager
+            if not hasattr(self, "_license"):
+                self._license = LicenseManager()
+            mgr = self._license
+            state = mgr.validate()
+            return {"ok": True, "state": state.value,
+                    "is_licensed": mgr.is_licensed,
+                    "metadata": _clean(mgr.metadata)}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    # -- termico estacionario real (core/thermal.py via ThermalAnalysis) -----
+    def _run_thermal(self, t_cold: float, t_hot: float,
+                     conductivity: float) -> dict:
+        import numpy as np
+        from core.cae_studies import (ThermalAnalysis, ThermalBoundary,
+                                      ThermalBoundaryType)
+        c = self._ctrl
+        if c.mesh is None:
+            raise RuntimeError("Sin malla. Malla primero.")
+        nodes = np.asarray(c.mesh_nodes, dtype=float)
+        zmin, zmax = float(nodes[:, 2].min()), float(nodes[:, 2].max())
+        span = max(zmax - zmin, 1e-9)
+        tol = 1e-3 * span
+        bottom = [i for i, z in enumerate(nodes[:, 2]) if abs(z - zmin) <= tol]
+        top = [i for i, z in enumerate(nodes[:, 2]) if abs(z - zmax) <= tol]
+        if not bottom or not top:
+            raise RuntimeError("No se pudieron resolver caras fria/caliente.")
+        study = ThermalAnalysis(name="Thermal V2")
+        study.model_id = c.model_id
+        mat = c.material()
+        study.material = mat if mat.has_thermal_properties else \
+            mat.with_thermal_properties(float(conductivity))
+        study.add_thermal_boundary(ThermalBoundary(
+            name="Cara fria", boundary_type=ThermalBoundaryType.TEMPERATURE,
+            magnitude=float(t_cold), metadata={"nodes": bottom}))
+        study.add_thermal_boundary(ThermalBoundary(
+            name="Cara caliente", boundary_type=ThermalBoundaryType.TEMPERATURE,
+            magnitude=float(t_hot), metadata={"nodes": top}))
+        res = study.execute_on_mesh(nodes, np.asarray(c.mesh_elements, dtype=int))
+        out = res.to_dict()
+        out["t_cold_nodes"] = len(bottom)
+        out["t_hot_nodes"] = len(top)
+        return out
+
+    def runThermal(self, params_json: str = "{}") -> dict:
+        try:
+            p = json.loads(params_json or "{}")
+            jid = self._submit(
+                "thermal", self._run_thermal,
+                float(p.get("t_cold", 300.0)), float(p.get("t_hot", 400.0)),
+                float(p.get("conductivity", 45.0)))
+            return {"ok": True, "jobId": jid}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    # -- modal real (core/fea.solve_modal via ModalAnalysis) -----------------
+    def _run_modal(self, mode_count: int) -> dict:
+        import numpy as np
+        from core.cae_studies import ConstraintCase, ModalAnalysis
+        c = self._ctrl
+        if c.mesh is None:
+            raise RuntimeError("Sin malla. Malla primero.")
+        nodes = np.asarray(c.mesh_nodes, dtype=float)
+        fixed = np.asarray(c._apply_constraints(nodes)).tolist()
+        study = ModalAnalysis(name="Modal V2", mode_count=int(mode_count))
+        study.model_id = c.model_id
+        study.material = c.material()
+        study.constraints = [ConstraintCase(name="Soporte",
+                                            constraint_type="fixed")]
+        return study.execute_on_mesh(
+            nodes, np.asarray(c.mesh_elements, dtype=int),
+            fixed_dofs=fixed).to_dict()
+
+    def runModal(self, params_json: str = "{}") -> dict:
+        try:
+            p = json.loads(params_json or "{}")
+            jid = self._submit("modal", self._run_modal,
+                               int(p.get("mode_count", 5)))
+            return {"ok": True, "jobId": jid}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    # -- Kratos dentro del flujo: verificacion cruzada + SIMP verificado ----
+    # NOTA honesta: el nucleo SIMP (core/topopt.SIMPSolver) esta acoplado a su
+    # FEASolver interno y el callable de Kratos devuelve un dict, no esa
+    # interfaz; por decision documentada de la predecesora no se refactoriza.
+    # Kratos se aprovecha como oraculo mutuo: mismo caso fisico en ambos
+    # motores + comparacion automatizada (dual-motor de PROJECT_STATUS.md).
+    def _cross_check(self, condition_ids) -> dict:
+        import numpy as np
+        c = self._ctrl
+        conds = self._resolve_conditions(condition_ids)
+        local = dict(c.run_fea(conditions=conds, backend="local"))
+        try:
+            krat = dict(c.run_fea(conditions=conds, backend="kratos"))
+        except Exception as exc:  # noqa: BLE001 - Kratos opcional
+            local["kratos_error"] = f"{type(exc).__name__}: {exc}"
+            local["cross_check"] = "kratos_no_disponible"
+            return local
+        cl = float(local.get("compliance", 0.0) or 0.0)
+        ck = float(krat.get("compliance", 0.0) or 0.0)
+        rel = abs(cl - ck) / max(abs(cl), 1e-12)
+        ul = np.asarray(local.get("displacements", []), dtype=float).ravel()
+        uk = np.asarray(krat.get("displacements", []), dtype=float).ravel()
+        urel = (float(np.linalg.norm(ul - uk) / max(np.linalg.norm(ul), 1e-12))
+                if ul.size and ul.size == uk.size else None)
+        return {"local_compliance": cl, "kratos_compliance": ck,
+                "rel_compliance_diff": rel,
+                "rel_displacement_diff": urel,
+                "agreement_1e6": rel <= 1e-6,
+                "local_engine": local.get("engine"),
+                "kratos_success": krat.get("success")}
+
+    def runCrossCheck(self, params_json: str = "{}") -> dict:
+        try:
+            p = json.loads(params_json or "{}")
+            jid = self._submit("xcheck", self._cross_check,
+                               p.get("condition_ids"))
+            return {"ok": True, "jobId": jid}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    def _simp_kratos_verified(self, simp_kwargs: dict,
+                              condition_ids) -> dict:
+        c = self._ctrl
+        conds = self._resolve_conditions(condition_ids)
+        simp = dict(c.run_optimization(conditions=conds, **simp_kwargs)
+                    if conds is not None
+                    else c.run_optimization(**simp_kwargs))
+        check = self._cross_check(condition_ids)
+        simp["kratos_verification"] = check
+        return simp
+
+    def runSimpKratosVerified(self, params_json: str = "{}") -> dict:
+        """SIMP local + verificacion cruzada Kratos del mismo caso fisico."""
+        try:
+            p = json.loads(params_json or "{}")
+            kwargs = dict(
+                volume_fraction=float(p.get("volume_fraction", 0.3)),
+                max_iterations=int(p.get("max_iterations", 30)),
+                penalization=float(p.get("penalization", 3.0)),
+                filter_radius=float(p.get("filter_radius", 1.5)),
+                tolerance=float(p.get("tolerance", 1e-3)))
+            jid = self._submit("simp_verify", self._simp_kratos_verified,
+                               kwargs, p.get("condition_ids"))
+            return {"ok": True, "jobId": jid}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    # -- SIMP vendorizado con motor inyectable (local | kratos-in-loop) ----
+    # Copia del nucleo en backend/vendored (la predecesora no se toca):
+    # con engine="kratos" el equilibrio K(rho)*u=F de CADA iteracion lo
+    # resuelve Kratos con E penalizado por elemento.
+    def _simp_loop(self, simp_kwargs: dict, engine: str,
+                   halo_radius) -> dict:
+        import numpy as np
+        from vendored.simp import SIMPSolver as VendoredSIMP
+        c = self._ctrl
+        if c.mesh is None:
+            raise RuntimeError("Sin malla. Malla primero.")
+        nodes, elements, force, fixed = c.build_problem()
+        mat = c.material()
+        fea_solver = None
+        if engine == "kratos":
+            from vendored.kratos_simp_fea import KratosSimpFEA
+            fea_solver = KratosSimpFEA(
+                np.asarray(nodes, dtype=float),
+                np.asarray(elements, dtype=int),
+                mat.young_modulus, mat.poisson_ratio, mat.density,
+                penalization=float(simp_kwargs.get("penalization", 3.0)))
+        solver = VendoredSIMP(
+            nodes=nodes, elements=elements,
+            young_modulus=mat.young_modulus,
+            poisson_ratio=mat.poisson_ratio,
+            volfrac=float(simp_kwargs.get("volume_fraction", 0.3)),
+            penalization=float(simp_kwargs.get("penalization", 3.0)),
+            filter_radius=float(simp_kwargs.get("filter_radius", 1.5)),
+            fea_solver=fea_solver)
+        solver.set_load(force)
+        solver.set_fixed_dofs(fixed)
+        if halo_radius is not None and (c._load_nodes or c._bot_nodes):
+            solver.protect_elements_near_nodes(
+                list(set(c._load_nodes + c._bot_nodes)),
+                radius=float(halo_radius) if halo_radius > 0 else None)
+        try:
+            result = solver.optimize(
+                max_iterations=int(simp_kwargs.get("max_iterations", 30)),
+                tolerance=float(simp_kwargs.get("tolerance", 1e-3)))
+        except Exception as exc:
+            from desktop.pipeline.controller import PipelineError
+            raise PipelineError(f"Optimizacion ({engine}) fallo: {exc}")
+        c.result = result
+        c.result_densities = np.asarray(result["densities"], dtype=float)
+        return result
+
+    def runSimpLoop(self, params_json: str = "{}") -> dict:
+        try:
+            p = json.loads(params_json or "{}")
+            engine = str(p.get("engine", "local")).lower()
+            if engine not in ("local", "kratos"):
+                return {"ok": False,
+                        "error": f"engine desconocido: {engine} (local|kratos)"}
+            kwargs = {k: p.get(k) for k in (
+                "volume_fraction", "max_iterations", "penalization",
+                "filter_radius", "tolerance") if p.get(k) is not None}
+            jid = self._submit("simp_loop", self._simp_loop,
+                               kwargs, engine, p.get("halo_radius"))
             return {"ok": True, "jobId": jid}
         except Exception as exc:  # noqa: BLE001
             return _err(exc)

@@ -75,6 +75,36 @@ export const backend = {
       num_triangles: number;
     }>('getSurfaceMesh', JSON.stringify(params) as never),
   exportStep: (path: string) => call('exportStep', path as never),
+  // Enfoque real del core (sin UI): condiciones, generativo, CAD, validación.
+  createCondition: (conditionJson: string) =>
+    call<{ id: string }>('createCondition', conditionJson as never),
+  listConditions: () => call<{ conditions: unknown[] }>('listConditions'),
+  clearConditions: () => call('clearConditions'),
+  runGenerativeDesign: (params = {}) =>
+    call<{ jobId: string }>('runGenerativeDesign', JSON.stringify(params) as never),
+  registerReconstruction: (jobId: string) =>
+    call('registerReconstruction', jobId as never),
+  cadOperation: (params: object) =>
+    call('cadOperation', JSON.stringify(params) as never),
+  generateAdaptiveMesh: (params = {}) =>
+    call('generateAdaptiveMesh', JSON.stringify(params) as never),
+  validateState: () => call<{ report: unknown }>('validateState'),
+  // V2-NEW-START (reversible: borrar hasta V2-NEW-END + src/components/v2/)
+  runFeaIterative: (params = {}) =>
+    call<{ jobId: string }>('runFeaIterative', JSON.stringify(params) as never),
+  getLicense: () =>
+    call<{ state: string; is_licensed: boolean; metadata: unknown }>('getLicense'),
+  runThermal: (params = {}) =>
+    call<{ jobId: string }>('runThermal', JSON.stringify(params) as never),
+  runModal: (params = {}) =>
+    call<{ jobId: string }>('runModal', JSON.stringify(params) as never),
+  runCrossCheck: (params = {}) =>
+    call<{ jobId: string }>('runCrossCheck', JSON.stringify(params) as never),
+  runSimpKratosVerified: (params = {}) =>
+    call<{ jobId: string }>('runSimpKratosVerified', JSON.stringify(params) as never),
+  runSimpLoop: (params = {}) =>
+    call<{ jobId: string }>('runSimpLoop', JSON.stringify(params) as never),
+  // V2-NEW-END
   getNavProfiles: () =>
     call<{
       profiles: { name: string; display_name: string }[];

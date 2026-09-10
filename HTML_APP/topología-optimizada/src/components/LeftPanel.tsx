@@ -1,8 +1,12 @@
 import React, { useState } from 'react';
 import { BoundaryCondition, CadModelPreset } from '../types';
+// UI-CLEAN-START (reversible: quitar import y devolver bloque inline UI-CLEAN-OPROW de abajo)
+import { OperationRow } from './OperationRow';
+// UI-CLEAN-END
 
 interface LeftPanelProps {
-  currentModel: CadModelPreset;
+  // UI-CLEAN (reversible): null = arbol limpio, sin pieza de referencia.
+  currentModel: CadModelPreset | null;
   models: CadModelPreset[];
   onSelectModel: (model: CadModelPreset) => void;
   boundaryConditions: BoundaryCondition[];
@@ -97,6 +101,17 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
           )}
 
           {/* Sólido Importado STEP */}
+          {/* UI-CLEAN-START (reversible): sin modelo de referencia; estado
+              vacio + picker solo con piezas reales. Para volver atras,
+              asumir currentModel no-null como antes. */}
+          {currentModel === null ? (
+            <div className="px-2 py-2 rounded border border-dashed border-border-subtle/50 text-[11px] text-text-muted text-center">
+              Sin modelo —{' '}
+              <button onClick={onOpenImport} className="text-secondary hover:underline font-mono">
+                Importa un STEP
+              </button>
+            </div>
+          ) : (
           <div className="relative">
             <div className="group flex items-center justify-between px-2 py-1.5 rounded bg-surface-elevated/70 hover:bg-surface-elevated cursor-pointer transition-colors border border-border-subtle/30">
               <div
@@ -131,7 +146,10 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
             {showModelPicker && (
               <div className="absolute left-0 right-0 top-full mt-1 bg-surface-elevated border border-border-subtle rounded-md shadow-xl p-1 z-30">
                 <div className="px-2 py-1 text-[10px] font-mono text-text-muted uppercase">Piezas CAD Disponibles:</div>
-                {models.map((m) => (
+                {models.length === 0 ? (
+                  <div className="px-2.5 py-1.5 text-[11px] text-text-muted">Sin piezas cargadas</div>
+                ) : (
+                models.map((m) => (
                   <button
                     key={m.id}
                     onClick={() => {
@@ -139,7 +157,8 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
                       setShowModelPicker(false);
                     }}
                     className={`w-full text-left px-2.5 py-1.5 rounded text-[11px] flex items-center justify-between ${
-                      m.id === currentModel.id
+                      // UI-CLEAN (reversible): guard sin modelo.
+                      m.id === currentModel?.id
                         ? 'bg-secondary/15 text-secondary font-medium'
                         : 'hover:bg-surface-container-high text-text-secondary hover:text-text-primary'
                     }`}
@@ -147,113 +166,34 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
                     <span className="font-mono">{m.filename}</span>
                     <span className="text-[9px] text-text-muted">{m.elementsTet4.toLocaleString()} tets</span>
                   </button>
-                ))}
+                ))
+                )}
               </div>
             )}
           </div>
+          )}
+          {/* UI-CLEAN-END (cierre del ternario currentModel === null) */}
 
           {/* Feature Conditions List */}
-          {boundaryConditions.map((bc) => {
-            const isLoad = bc.type === 'carga';
-            const isFix = bc.type === 'fijacion';
-            const isSafe = bc.type === 'preservada';
-            const isKeepout = bc.type === 'keepout';
-
-            let bgClass = 'bg-surface-container-high/40 hover:bg-surface-elevated';
-            if (isSafe) bgClass = 'bg-fea-stress-optimal/10 hover:bg-fea-stress-optimal/15';
-            if (isKeepout) bgClass = 'bg-fea-stress-critical/10 hover:bg-fea-stress-critical/15';
-
-            return (
-              <div
+          {/* UI-CLEAN-OPROW-START (reversible): lista extraida a OperationRow
+              (estetica identica). El bloque inline original se movio a
+              src/components/OperationRow.tsx. Para volver atras, pegar de
+              vuelta el bloque y quitar el import + este map. */}
+          {boundaryConditions.length === 0 ? (
+            <div className="px-2 py-1.5 rounded border border-dashed border-border-subtle/50 text-[11px] text-text-muted text-center">
+              Sin operaciones
+            </div>
+          ) : (
+            boundaryConditions.map((bc) => (
+              <OperationRow
                 key={bc.id}
-                className={`flex items-center justify-between px-2 py-1.5 rounded cursor-pointer transition-colors border border-border-subtle/20 ${bgClass}`}
-                onClick={() => onEditCondition(bc)}
-              >
-                <div className="flex items-center gap-2">
-                  <div
-                    className={`w-5 h-5 rounded flex items-center justify-center ${
-                      isFix
-                        ? 'bg-secondary/10'
-                        : isLoad
-                        ? 'bg-tertiary/10'
-                        : isSafe
-                        ? 'bg-fea-stress-optimal/20'
-                        : 'bg-fea-stress-critical/20'
-                    }`}
-                  >
-                    <span
-                      className={`material-symbols-outlined text-[14px] ${
-                        isFix
-                          ? 'text-secondary'
-                          : isLoad
-                          ? 'text-tertiary'
-                          : isSafe
-                          ? 'text-fea-stress-optimal'
-                          : 'text-fea-stress-critical'
-                      }`}
-                    >
-                      {isFix ? 'anchor' : isLoad ? 'arrow_downward' : isSafe ? 'shield' : 'block'}
-                    </span>
-                  </div>
-                  <div className="flex flex-col">
-                    <span className="text-text-primary font-medium text-[11px]">{bc.name}</span>
-                    <span
-                      className={`text-[10px] font-mono ${
-                        isFix
-                          ? 'text-secondary'
-                          : isLoad
-                          ? 'text-tertiary'
-                          : isSafe
-                          ? 'text-fea-stress-optimal'
-                          : 'text-fea-stress-critical'
-                      }`}
-                    >
-                      {bc.details}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1.5">
-                  {isFix && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onToggleCondition(bc.id);
-                      }}
-                      className="text-fea-stress-optimal"
-                      title="Fijación activa"
-                    >
-                      <span className="material-symbols-outlined text-[15px]">check_circle</span>
-                    </button>
-                  )}
-                  {isLoad && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onEditCondition(bc);
-                      }}
-                      className="text-secondary hover:text-text-primary p-0.5"
-                      title="Editar vector de carga"
-                    >
-                      <span className="material-symbols-outlined text-[15px]">edit</span>
-                    </button>
-                  )}
-                  {isSafe && (
-                    <span className="font-mono text-[9px] px-1.5 py-0.5 rounded bg-fea-stress-optimal text-[#0b0e17] font-semibold">
-                      SAFE
-                    </span>
-                  )}
-                  {isKeepout && (
-                    <span className="font-mono text-[9px] px-1.5 py-0.5 rounded bg-fea-stress-critical text-[#0b0e17] font-semibold">
-                      VOID
-                    </span>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+                bc={bc}
+                onToggleCondition={onToggleCondition}
+                onEditCondition={onEditCondition}
+              />
+            ))
+          )}
+          {/* UI-CLEAN-OPROW-END */}
         </div>
       </section>
 
@@ -286,13 +226,18 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
             <div className="bg-surface-elevated/40 p-1.5 rounded border border-border-subtle/30">
               <span className="text-text-muted block text-[9px]">Tetraedros:</span>
               <span className="text-secondary font-semibold">
-                {Math.round(currentModel.elementsTet4 * (1.8 / meshElementSize)).toLocaleString()}
+                {/* UI-CLEAN (reversible): 0 sin modelo real */}
+                {currentModel
+                  ? Math.round(currentModel.elementsTet4 * (1.8 / meshElementSize)).toLocaleString()
+                  : '—'}
               </span>
             </div>
             <div className="bg-surface-elevated/40 p-1.5 rounded border border-border-subtle/30">
               <span className="text-text-muted block text-[9px]">Nodos FEA:</span>
               <span className="text-text-primary font-semibold">
-                {Math.round(currentModel.nodes * (1.8 / meshElementSize)).toLocaleString()}
+                {currentModel
+                  ? Math.round(currentModel.nodes * (1.8 / meshElementSize)).toLocaleString()
+                  : '—'}
               </span>
             </div>
           </div>

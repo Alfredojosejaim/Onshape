@@ -26,6 +26,10 @@ import { Footer } from './components/Footer';
 import { Modals } from './components/Modals';
 import { backend } from './lib/bridge';
 import { useJobPoll } from './lib/jobs';
+// V2-NEW-START (reversible: borrar estas 2 lineas + bloque V2-NEW-ABAJO)
+import { V2_ENABLED } from './lib/v2flags';
+import { V2Panel } from './components/v2/V2Panel';
+// V2-NEW-END
 import {
   mapFeaResult,
   mapLoadToBoundaries,
@@ -42,8 +46,11 @@ export default function App() {
   const [activeTool, setActiveTool] = useState<ActiveTool>('seleccionar');
 
   // CAD Models & Preset
-  const [models, setModels] = useState<CadModelPreset[]>(CAD_PRESETS);
-  const [currentModel, setCurrentModel] = useState<CadModelPreset>(CAD_PRESETS[0]);
+  // UI-CLEAN-START (reversible): arranque vacio, sin presets de referencia.
+  // Antes: useState(CAD_PRESETS[0]). Para volver: restaurar esa linea.
+  const [models, setModels] = useState<CadModelPreset[]>([]);
+  const [currentModel, setCurrentModel] = useState<CadModelPreset | null>(null);
+  // UI-CLEAN-END
   const [isModelVisible, setIsModelVisible] = useState(true);
 
   // Material Selection (reales del backend cuando hay bridge, fallback local)
@@ -64,7 +71,8 @@ export default function App() {
   });
 
   // Optimization Runtime State
-  const initialMass = (currentModel.volumeCm3 * selectedMaterial.density) / 1000;
+  // UI-CLEAN (reversible): masa 0 sin modelo real.
+  const initialMass = ((currentModel?.volumeCm3 ?? 0) * selectedMaterial.density) / 1000;
   const [optimizationState, setOptimizationState] = useState<OptimizationState>({
     isRunning: false,
     isPaused: false,
@@ -216,7 +224,8 @@ export default function App() {
       if (s.ok && snap) {
         snapRef.current = snap;
         const cur = stateRef.current.currentModel;
-        setCurrentModel({ ...cur, elementsTet4: Math.round(snap.num_elements ?? cur.elementsTet4) });
+        // UI-CLEAN (reversible): guard sin modelo.
+        if (cur) setCurrentModel({ ...cur, elementsTet4: Math.round(snap.num_elements ?? cur.elementsTet4) });
       }
     }).catch(() => undefined);
   });
@@ -224,7 +233,8 @@ export default function App() {
   const simpPoll = useJobPoll(simpJobId, (result) => {
     setOptimizationState((prev) => {
       const st = stateRef.current;
-      const baseMass = (st.currentModel.volumeCm3 * st.selectedMaterial.density) / 1000;
+      // UI-CLEAN (reversible): guard sin modelo.
+      const baseMass = ((st.currentModel?.volumeCm3 ?? 0) * st.selectedMaterial.density) / 1000;
       return mapSimpResult(result, prev, parseFloat(baseMass.toFixed(2))) ?? { ...prev, isRunning: false };
     });
     setSimpJobId(null);
@@ -249,7 +259,8 @@ export default function App() {
     if (backend.hasBridge()) void backend.setMaterial(m.name).catch(() => undefined);
   };
   useEffect(() => {
-    const newMass = (currentModel.volumeCm3 * selectedMaterial.density) / 1000;
+    // UI-CLEAN (reversible): guard sin modelo.
+    const newMass = ((currentModel?.volumeCm3 ?? 0) * selectedMaterial.density) / 1000;
     setOptimizationState((prev) => ({
       ...prev,
       initialMassKg: parseFloat(newMass.toFixed(2)),
@@ -313,7 +324,8 @@ export default function App() {
     setSimpJobId(null);
     if (!backend.hasBridge()) {
       if (timerRef.current) clearInterval(timerRef.current);
-      const baseMass = (currentModel.volumeCm3 * selectedMaterial.density) / 1000;
+      // UI-CLEAN (reversible): guard sin modelo.
+      const baseMass = ((currentModel?.volumeCm3 ?? 0) * selectedMaterial.density) / 1000;
       setOptimizationState({
         isRunning: false,
         isPaused: false,
@@ -392,7 +404,8 @@ export default function App() {
         const snap = (r as unknown as { snapshot?: ApiSnapshot }).snapshot;
         if (r.ok && snap) {
           const cur = stateRef.current.currentModel;
-          applySnapshotToModel(snap, cur.filename, cur.displayName);
+          // UI-CLEAN (reversible): guard sin modelo.
+          if (cur) applySnapshotToModel(snap, cur.filename, cur.displayName);
           setFeaJobId(null);
         }
       } catch {
@@ -430,7 +443,8 @@ export default function App() {
   const resetOptimizationState = () => {
     if (timerRef.current) clearInterval(timerRef.current);
     const st = stateRef.current;
-    const baseMass = (st.currentModel.volumeCm3 * st.selectedMaterial.density) / 1000;
+    // UI-CLEAN (reversible): guard sin modelo.
+    const baseMass = ((st.currentModel?.volumeCm3 ?? 0) * st.selectedMaterial.density) / 1000;
     setOptimizationState({
       isRunning: false,
       isPaused: false,
@@ -584,17 +598,25 @@ export default function App() {
       </div>
 
       {/* 5. BOTTOM FIXED STATUS BAR */}
+      {/* V2-NEW-START (reversible: borrar hasta V2-NEW-END para volver a la interfaz anterior) */}
+      {V2_ENABLED && <V2Panel />}
+      {/* V2-NEW-END */}
       <Footer
         coords={coords}
+        // UI-CLEAN (reversible): 0 sin modelo real.
         elementsCount={
-          backend.hasBridge()
-            ? currentModel.elementsTet4
-            : Math.round(currentModel.elementsTet4 * (1.8 / meshElementSize))
+          currentModel
+            ? backend.hasBridge()
+              ? currentModel.elementsTet4
+              : Math.round(currentModel.elementsTet4 * (1.8 / meshElementSize))
+            : 0
         }
         nodesCount={
-          backend.hasBridge()
-            ? currentModel.nodes
-            : Math.round(currentModel.nodes * (1.8 / meshElementSize))
+          currentModel
+            ? backend.hasBridge()
+              ? currentModel.nodes
+              : Math.round(currentModel.nodes * (1.8 / meshElementSize))
+            : 0
         }
       />
 

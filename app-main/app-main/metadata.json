@@ -1,7 +1,0 @@
-{
-  "name": "Topologia Optimizada",
-  "description": "Herramienta de optimización topológica (generativa y estructural) con herramientas de carga, elasticidad, obstrucciones, caras protegidas y análisis FEA/CAD.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
-

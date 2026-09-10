@@ -1,87 +1,106 @@
-export type ScreenId =
-  | 'modelo-cad-y-pre-proceso'
-  | 'mallado-y-condiciones'
-  | 'solver-fea-y-tensiones'
-  | 'optimizacion-topologica-simp'
-  | 'generativo-y-b-rep-export';
+export type TabId =
+  | 'cad-preproceso'
+  | 'mallado-condiciones'
+  | 'solver-fea'
+  | 'optimizacion-simp'
+  | 'generativo-export';
 
-export type FeaBackend = 'numpy' | 'kratos';
-
-export interface MaterialProperty {
+export interface MaterialProperties {
   id: string;
   name: string;
   category: string;
-  youngModulusGpa: number;
+  youngsModulus: number; // GPa
   poissonRatio: number;
-  yieldStrengthMpa: number;
-  densityGcm3: number;
-  tensileStrengthMpa: number;
+  yieldStrength: number; // MPa
+  density: number; // g/cm³
+  tensileStrength: number; // MPa
+  thermalConductivity?: number; // W/m·K
+  costIndex?: string;
 }
 
-export interface CadModelInfo {
-  filename: string;
-  filesize: string;
-  solidName: string;
-  facesCount: number;
-  edgesCount: number;
-  solidsCount: number;
-  initialMassKg: number;
-  initialVolumeCm3: number;
+export interface CadFeature {
+  id: string;
+  name: string;
+  type: 'origin' | 'solid' | 'boundary' | 'load' | 'preserved' | 'keepout';
+  visible: boolean;
+  status?: 'ok' | 'safe' | 'void' | 'active';
+  details: string;
+  facesCount?: number;
 }
 
-export interface GmshConfig {
-  algorithm: string;
-  hMin: number;
-  hMax: number;
-  jacobianQuality: number;
+export interface MeshingSettings {
+  algorithm: 'Frontal 3D (Delaunay)' | 'Netgen 3D' | 'HXT Parallel 3D';
+  hMin: number; // mm
+  hMax: number; // mm
+  jacobianQuality: number; // 0..1
   nodesCount: number;
-  tet4ElementsCount: number;
+  elementsCount: number;
+  elementType: 'Tet4' | 'Tet10' | 'Hex8';
+  angularTolerance: number; // deg
+  chordalDeflection: number; // mm
+  growthRate: number;
+}
+
+export interface BoundaryCondition {
+  id: string;
+  name: string;
+  type: 'fixed' | 'pinned' | 'displacement' | 'force' | 'pressure' | 'torque';
+  location: string;
+  values: {
+    x?: number | string;
+    y?: number | string;
+    z?: number | string;
+    magnitude?: number;
+    unit?: string;
+  };
+  faces: number[];
+  active: boolean;
 }
 
 export interface FeaResults {
-  maxVonMisesMpa: number;
-  criticalNodeId: number;
-  maxDisplacementMm: number;
-  displacementNodeId: number;
-  complianceJoules: number;
-  safetyFactor: number;
+  isSolved: boolean;
+  isSolving: boolean;
   solveTimeSeconds: number;
-  assemblyTimeSeconds: number;
-  factorizationTimeSeconds: number;
-  postProcessTimeSeconds: number;
-  residualError: string;
-  convergedIterations: number;
-  conditionNumber: string;
+  maxVonMises: number; // MPa
+  minVonMises: number; // MPa
+  maxDisplacement: number; // mm
+  safetyFactor: number;
+  strainEnergy: number; // mJ
+  dofCount: number;
+  deformedScale: number; // 1x, 5x, 20x, 50x
+  stressType: 'vonMises' | 'tresca' | 'principal1' | 'displacement';
 }
 
-export interface SimpConfig {
-  targetVolumeFraction: number; // e.g. 0.35
-  penaltyExponent: number; // e.g. 3.0 (usado por App/Screen4)
-  filterRadiusMm: number; // e.g. 3.5
+export interface SimpOptimizationState {
+  penaltyFactor: number; // p = 3.0
+  filterRadius: number; // r_min = 4.5 mm
+  targetVolumeFraction: number; // 0.35 (-65%)
   currentIteration: number;
   maxIterations: number;
-  convergencePercent: number;
   isRunning: boolean;
-  activeCells: number;
-  prunedElements: number;
-  finalMassKg: number;
-  massReductionPercent: number;
-  specificStiffnessGainPercent: number;
+  isCompleted: boolean;
   currentCompliance: number;
-  maxDensityChange: number;
+  initialCompliance: number;
+  currentVolumeFraction: number;
+  densityCutoff: number; // 0..1
+  history: Array<{
+    iteration: number;
+    compliance: number;
+    volumeFraction: number;
+    change: number;
+  }>;
 }
 
-export interface BRepReconstructionStatus {
-  marchingTetrahedraCompleted: boolean;
-  laplacianSmoothingCompleted: boolean;
-  geometricSewingCompleted: boolean;
-  booleanReunionCompleted: boolean;
-  triangularFacetsCount: number;
-  nonManifoldEdges: number;
-  eulerCharacteristic: number;
-  nurbsFacesCount: number;
-  reconstructionTimeSeconds: number;
-  solidVolumeCm3: number;
-  volumeReductionPercent: number;
-  uuid: string;
+export interface GenerativeExportState {
+  reconstructionMethod: 'Marching Cubes + QuadRemesh' | 'Dual Contouring' | 'NURBS B-Rep';
+  surfaceSmoothing: number; // 0..100
+  originalMassKg: number;
+  optimizedMassKg: number;
+  stiffnessRetentionPct: number;
+  manufacturingConstraint: 'Additive (3D Printing)' | 'CNC 3-Axis' | 'CNC 5-Axis' | 'Investment Casting';
+  overhangMaxAngle: number; // 45 deg
+  amBuildDirection: 'Z+' | 'Z-' | 'Y+' | 'X+';
+  amSupportsNeeded: boolean;
+  brepFaceCount: number;
+  exportFormat: 'STEP AP242' | 'STL Binary' | 'IGES' | 'Nastran BDF' | 'PDF Certificate';
 }

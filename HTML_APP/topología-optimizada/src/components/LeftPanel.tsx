@@ -11,6 +11,8 @@ interface LeftPanelProps {
   onSelectModel: (model: CadModelPreset) => void;
   // SOLIDS (reversible): cuerpos del STEP, una operacion por objeto.
   solids: SolidInfo[];
+  // UI-CLEAN2 (reversible): malla volumetrica real presente.
+  hasMesh: boolean;
   boundaryConditions: BoundaryCondition[];
   onToggleCondition: (id: string) => void;
   onEditCondition: (condition: BoundaryCondition) => void;
@@ -29,6 +31,8 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
   onSelectModel,
   // SOLIDS (reversible)
   solids,
+  // UI-CLEAN2 (reversible)
+  hasMesh,
   boundaryConditions,
   onToggleCondition,
   onEditCondition,
@@ -40,7 +44,9 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
   onRemesh,
   isRemeshing,
 }) => {
-  const [showModelPicker, setShowModelPicker] = useState(false);
+  // UI-CLEAN2 (reversible): sin nodo archivo no hay picker local.
+  // models/onSelectModel/isModelVisible/onToggleModelVisibility se conservan
+  // en props para seleccion futura y compatibilidad con App.
   // SOLIDS (reversible): planesOpen se fue con las coordenadas.
 
   return (
@@ -67,10 +73,10 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
               El bloque "Sist. Coordenado Global" + planos se elimino;
               para volver atras restaurarlo desde git. */}
 
-          {/* Sólido Importado STEP */}
-          {/* UI-CLEAN-START (reversible): sin modelo de referencia; estado
-              vacio + picker solo con piezas reales. Para volver atras,
-              asumir currentModel no-null como antes. */}
+          {/* UI-CLEAN2-START (reversible): solo objetos, sin nodo archivo.
+              El bloque del archivo importado (nombre + picker + visibilidad)
+              se elimino: el arbol lista unicamente solidos y malla.
+              Para volver atras: restaurar desde git. */}
           {currentModel === null ? (
             <div className="px-2 py-2 rounded border border-dashed border-border-subtle/50 text-[11px] text-text-muted text-center">
               Sin modelo —{' '}
@@ -79,67 +85,8 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
               </button>
             </div>
           ) : (
-          <div className="relative">
-            <div className="group flex items-center justify-between px-2 py-1.5 rounded bg-surface-elevated/70 hover:bg-surface-elevated cursor-pointer transition-colors border border-border-subtle/30">
-              <div
-                className="flex items-center gap-2 min-w-0 flex-1"
-                onClick={() => setShowModelPicker(!showModelPicker)}
-              >
-                <span className="material-symbols-outlined text-primary text-[18px]">deployed_code</span>
-                <div className="flex flex-col min-w-0">
-                  <div className="flex items-center gap-1">
-                    <span className="text-text-primary font-semibold text-[12px] leading-tight truncate">
-                      {currentModel.filename}
-                    </span>
-                    <span className="material-symbols-outlined text-text-muted text-[13px]">arrow_drop_down</span>
-                  </div>
-                  <span className="text-[10px] font-mono text-text-muted">
-                    {currentModel.faces} Caras • {currentModel.edges} Aristas • {currentModel.solids} Sólido
-                  </span>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={onToggleModelVisibility}
-                className="p-1 hover:bg-surface-container-high rounded text-secondary transition-colors"
-                title={isModelVisible ? 'Ocultar pieza CAD' : 'Mostrar pieza CAD'}
-              >
-                <span className="material-symbols-outlined text-[16px]">
-                  {isModelVisible ? 'visibility' : 'visibility_off'}
-                </span>
-              </button>
-            </div>
-
-            {showModelPicker && (
-              <div className="absolute left-0 right-0 top-full mt-1 bg-surface-elevated border border-border-subtle rounded-md shadow-xl p-1 z-30">
-                <div className="px-2 py-1 text-[10px] font-mono text-text-muted uppercase">Piezas CAD Disponibles:</div>
-                {models.length === 0 ? (
-                  <div className="px-2.5 py-1.5 text-[11px] text-text-muted">Sin piezas cargadas</div>
-                ) : (
-                models.map((m) => (
-                  <button
-                    key={m.id}
-                    onClick={() => {
-                      onSelectModel(m);
-                      setShowModelPicker(false);
-                    }}
-                    className={`w-full text-left px-2.5 py-1.5 rounded text-[11px] flex items-center justify-between ${
-                      // UI-CLEAN (reversible): guard sin modelo.
-                      m.id === currentModel?.id
-                        ? 'bg-secondary/15 text-secondary font-medium'
-                        : 'hover:bg-surface-container-high text-text-secondary hover:text-text-primary'
-                    }`}
-                  >
-                    <span className="font-mono">{m.filename}</span>
-                    <span className="text-[9px] text-text-muted">{m.elementsTet4.toLocaleString()} tets</span>
-                  </button>
-                ))
-                )}
-              </div>
-            )}
-          </div>
-          )}
-          {/* UI-CLEAN-END (cierre del ternario currentModel === null) */}
+            <>
+          {/* UI-CLEAN2-END (el cierre del fragmento esta mas abajo) */}
 
           {/* SOLIDS-START (reversible): una operacion por cuerpo del STEP,
               con la estetica aprobada (SolidOpRow). Sin cuerpos reales y con
@@ -160,6 +107,27 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
               />
             ))}
           {/* SOLIDS-END */}
+          {/* UI-CLEAN2-START (reversible): fila Malla cuando hay malla
+              volumetrica real (snapshot has_mesh). Para volver: borrar. */}
+          {currentModel !== null && hasMesh && (
+            <SolidOpRow
+              icon="grid_on"
+              badge="MESH"
+              details={`${currentModel.elementsTet4.toLocaleString()} tets • ${currentModel.nodes.toLocaleString()} nodos`}
+              solid={{
+                solid_id: 'mesh_tet4',
+                index: -1,
+                name: 'Malla Tet4',
+                volume: null,
+                faces_count: currentModel.elementsTet4,
+                center: null,
+              }}
+            />
+          )}
+          {/* UI-CLEAN2-END */}
+            </>
+          )}
+          {/* UI-CLEAN2-END (cierre: solo objetos, sin nodo archivo) */}
 
           {/* Feature Conditions List */}
           {/* UI-CLEAN-OPROW-START (reversible): lista extraida a OperationRow

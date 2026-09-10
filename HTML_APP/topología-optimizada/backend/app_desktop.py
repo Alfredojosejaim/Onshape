@@ -29,10 +29,17 @@ logging.basicConfig(level=logging.INFO,
 logger = logging.getLogger("webapp.host")
 
 # Metodos que expone el frontend (src/lib/bridge.ts) via window.pywebview.api.
+# WHITELIST-FIX (reversible): se agregaron los endpoints nuevos del backend;
+# sin ellos el frontend recibe undefined y cae a fallbacks (p. ej. un solo
+# objeto en el arbol). Para volver atras: recortar la tupla.
 _METHODS = (
     "getSnapshot", "getMaterials", "setMaterial", "validateProblem",
-    "importStep", "listFixtures", "generateMesh", "setBoundaries", "runFea",
-    "runOptimization", "pollJob", "getMeshPreview", "getSurfaceMesh",
+    "importStep", "importStepBytes", "listFixtures", "getSolids", "generateMesh",    "generateAdaptiveMesh", "setBoundaries", "runFea", "runFeaIterative",
+    "runOptimization", "runSimpLoop", "runSimpKratosVerified",
+    "runGenerativeDesign", "registerReconstruction", "runThermal", "runModal",
+    "runCrossCheck", "cadOperation", "validateState",
+    "createCondition", "listConditions", "clearConditions",
+    "getLicense", "pollJob", "getMeshPreview", "getSurfaceMesh",
     "exportStep", "getNavProfiles", "setNavProfile",
 )
 

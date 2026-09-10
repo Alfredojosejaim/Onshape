@@ -169,12 +169,17 @@ export default function App() {
     }
   };
   // SOLIDS-END
+  // UI-CLEAN2-START (reversible): malla volumetrica real presente.
+  const [hasMesh, setHasMesh] = useState(false);
+  // UI-CLEAN2-END
   const snapRef = useRef<ApiSnapshot | null>(null);
   const stateRef = useRef({ boundaryConditions, selectedMaterial, simpParams, currentModel });
   stateRef.current = { boundaryConditions, selectedMaterial, simpParams, currentModel };
 
   const applySnapshotToModel = (snap: ApiSnapshot, filename: string, displayName: string) => {
     snapRef.current = snap;
+    // UI-CLEAN2 (reversible): fila Malla solo con malla real.
+    setHasMesh(!!snap.has_mesh);
     const mapped = mapSnapshotToModel(snap, filename, displayName);
     setModels((prev) => {
       const i = prev.findIndex((m) => m.filename === filename);
@@ -456,6 +461,8 @@ export default function App() {
           // UI-CLEAN (reversible): guard sin modelo.
           if (cur) applySnapshotToModel(snap, cur.filename, cur.displayName);
           setFeaJobId(null);
+          // UI-CLEAN2 (reversible): remallado real genera la fila Malla.
+          if (r.ok) setHasMesh(true);
         }
       } catch {
         /* se conservan los datos anteriores */
@@ -528,7 +535,38 @@ export default function App() {
   };
 
   // Handle custom file upload
+  // UPLOAD-STEP (reversible): con bridge, el archivo real se envia al
+  // backend (teselado + solidos + viewport reales). Sin bridge, preset
+  // local como antes. Para volver atras: dejar solo el preset local.
   const handleCustomFileUpload = (file: File) => {
+    if (backend.hasBridge()) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = String(reader.result ?? '');
+        const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
+        void (async () => {
+          try {
+            const imp = (await backend.importStepBytes({
+              filename: file.name,
+              base64,
+            })) as { ok: boolean; snapshot?: ApiSnapshot; error?: unknown };
+            const snap = imp.snapshot;
+            if (imp.ok && snap) {
+              applySnapshotToModel(snap, file.name, prettyName(file.name));
+              setFeaJobId(null);
+              setSimpJobId(null);
+              resetOptimizationState();
+              void fetchSurface();
+              void fetchSolids();
+            }
+          } catch {
+            /* se conserva el modelo anterior */
+          }
+        })();
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
     const newPreset: CadModelPreset = {
       id: `custom_${Date.now()}`,
       filename: file.name,
@@ -546,6 +584,8 @@ export default function App() {
     setSurface(null);
     // SOLIDS (reversible): sin cuerpos reales para subidas locales.
     setSolids([]);
+    // UI-CLEAN2 (reversible): sin malla real para subidas locales.
+    setHasMesh(false);
   };
 
   // Undo / Redo helpers
@@ -608,6 +648,8 @@ export default function App() {
             onSelectModel={handleSelectModelReal}
             // SOLIDS (reversible): cuerpos del STEP, uno por objeto.
             solids={solids}
+            // UI-CLEAN2 (reversible): fila Malla con malla real.
+            hasMesh={hasMesh}
             boundaryConditions={boundaryConditions}
             onToggleCondition={handleToggleCondition}
             onEditCondition={setEditingCondition}

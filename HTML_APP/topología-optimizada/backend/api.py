@@ -278,6 +278,30 @@ class Api:
         except Exception as exc:  # noqa: BLE001
             return _err(exc)
 
+    # UPLOAD-STEP (reversible): importar un archivo local real enviado desde
+    # el frontend (drag&drop). Se guarda en backend/uploads y se importa como
+    # cualquier STEP: teselado + solidos + viewport reales.
+    def importStepBytes(self, params_json: str = "{}") -> dict:
+        import base64
+        try:
+            p = json.loads(params_json or "{}")
+            filename = os.path.basename(str(p.get("filename", "upload.step")))
+            if not filename.lower().endswith((".step", ".stp")):
+                filename += ".step"
+            raw = base64.b64decode(str(p.get("base64", "")))
+            if len(raw) > 50 * 1024 * 1024:
+                return {"ok": False, "error": "archivo mayor a 50 MB"}
+            updir = os.path.join(_HERE, "uploads")
+            os.makedirs(updir, exist_ok=True)
+            dest = os.path.join(updir, filename)
+            with open(dest, "wb") as fh:
+                fh.write(raw)
+            res = self._ctrl.import_model(dest)
+            return {"ok": True, "result": _clean(res),
+                    "snapshot": self._snapshot()}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
     def generateMesh(self, params_json: str = "{}") -> dict:
         try:
             p = json.loads(params_json or "{}")

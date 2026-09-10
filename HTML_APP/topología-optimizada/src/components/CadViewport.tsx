@@ -541,6 +541,25 @@ export const CadViewport: React.FC<CadViewportProps> = ({
           >
             <span className="material-symbols-outlined text-[16px]">aspect_ratio</span>
           </button>
+          {/* UI-CLEAN2 (reversible): selector de perfil (antes en el badge MODO).
+              Persiste en backend + localStorage. Para volver atras: borrar. */}
+          <select
+            aria-label="Perfil de navegación"
+            title="Perfil de navegación"
+            value={navProfile}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (isNavProfileName(v)) changeNavProfile(v);
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+            className="w-7 h-7 rounded bg-transparent hover:bg-surface-container-high text-text-secondary hover:text-text-primary transition-colors text-[9px] font-mono outline-none cursor-pointer [&>option]:bg-surface-elevated"
+          >
+            {(Object.keys(NAV_PROFILES) as NavProfileName[]).map((n) => (
+              <option key={n} value={n} title={NAV_PROFILES[n].displayName}>
+                {NAV_PROFILES[n].displayName.slice(0, 2).toUpperCase()}
+              </option>
+            ))}
+          </select>
         </div>
       </aside>
 
@@ -572,39 +591,12 @@ export const CadViewport: React.FC<CadViewportProps> = ({
       </div>
 
       {/* Floating Mode Info Badge */}
+      {/* UI-CLEAN2-START (reversible): badge MODO eliminado; el selector de
+          perfil se movio al stack de camara. Para volver atras: restaurar
+          este bloque desde git. */}
       <div className="absolute top-space-sm left-space-sm z-20 flex items-center gap-2 pointer-events-none">
-        <div className="bg-surface-elevated/90 backdrop-blur-md px-2.5 py-1 rounded-md border border-border-subtle/50 text-[10px] font-mono text-text-secondary flex items-center gap-2 shadow-sm">
-          <span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>
-          <span>
-            MODO:{' '}
-            <strong className="text-text-primary uppercase">
-              {activeTab === 'optimizacion' ? 'Optimización Topológica SIMP' : 'Análisis Tensional FEA'}
-            </strong>
-          </span>
-          {showSection && <span className="text-fea-stress-yield">• SECCIÓN CORTE ACTIVA</span>}
-          {showMesh && <span className="text-secondary">• MALLA ACTIVADA</span>}
-          {/* NAV-VIEW-START (reversible): selector de perfil de navegacion de
-              la predecesora (persiste en backend + localStorage). Para volver
-              atras: borrar este select. */}
-          <select
-            aria-label="Perfil de navegación"
-            value={navProfile}
-            onChange={(e) => {
-              const v = e.target.value;
-              if (isNavProfileName(v)) changeNavProfile(v);
-            }}
-            onMouseDown={(e) => e.stopPropagation()}
-            className="pointer-events-auto bg-surface-elevated border border-border-subtle/50 rounded px-1 py-0.5 text-[10px] font-mono text-text-primary outline-none"
-          >
-            {(Object.keys(NAV_PROFILES) as NavProfileName[]).map((n) => (
-              <option key={n} value={n}>
-                {NAV_PROFILES[n].displayName}
-              </option>
-            ))}
-          </select>
-          {/* NAV-VIEW-END */}
-        </div>
       </div>
+      {/* UI-CLEAN2-END */}
     </main>
   );
 };

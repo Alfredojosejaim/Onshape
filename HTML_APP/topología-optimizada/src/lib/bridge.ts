@@ -52,6 +52,9 @@ export const backend = {
   setMaterial: (name: string) => call('setMaterial', name as never),
   validateProblem: (problemJson: string) => call('validateProblem', problemJson as never),
   importStep: (path: string) => call('importStep', path as never),
+  // UPLOAD-STEP (reversible): importar un archivo local real al backend.
+  importStepBytes: (params: { filename: string; base64: string }) =>
+    call('importStepBytes', JSON.stringify(params) as never),
   // SOLIDS (reversible): cuerpos del STEP, uno por objeto.
   getSolids: () => call<{ solids: unknown[] }>('getSolids'),
   listFixtures: () =>

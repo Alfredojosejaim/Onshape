@@ -125,9 +125,18 @@ export const OperationRow: React.FC<OperationRowProps> = ({
 // componente + su uso en LeftPanel.tsx.
 export interface SolidOpRowProps {
   solid: SolidInfo;
+  // UI-CLEAN2 (reversible): permite la fila Malla con la misma estetica.
+  icon?: string;
+  badge?: string;
+  details?: string;
 }
 
-export const SolidOpRow: React.FC<SolidOpRowProps> = ({ solid }) => {
+export const SolidOpRow: React.FC<SolidOpRowProps> = ({
+  solid,
+  icon = 'deployed_code',
+  badge = 'SOLID',
+  details,
+}) => {
   const volCm3 =
     typeof solid.volume === 'number' && Number.isFinite(solid.volume)
       ? (solid.volume / 1000).toFixed(1)
@@ -137,20 +146,20 @@ export const SolidOpRow: React.FC<SolidOpRowProps> = ({ solid }) => {
       <div className="flex items-center gap-2">
         <div className="w-5 h-5 rounded flex items-center justify-center bg-secondary/10">
           <span className="material-symbols-outlined text-[14px] text-secondary">
-            deployed_code
+            {icon}
           </span>
         </div>
         <div className="flex flex-col">
           <span className="text-text-primary font-medium text-[11px]">{solid.name}</span>
           <span className="text-[10px] font-mono text-secondary">
-            {solid.faces_count} Caras • {volCm3} cm³
+            {details ?? `${solid.faces_count} Caras • ${volCm3} cm³`}
           </span>
         </div>
       </div>
 
       <div className="flex items-center gap-1.5">
         <span className="font-mono text-[9px] px-1.5 py-0.5 rounded bg-secondary/15 text-secondary font-semibold">
-          SOLID
+          {badge}
         </span>
       </div>
     </div>

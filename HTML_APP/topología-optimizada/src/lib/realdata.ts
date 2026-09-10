@@ -63,6 +63,7 @@ export interface ApiSnapshot {
   num_vertices?: number;
   num_nodes?: number;
   num_elements?: number;
+  num_solids?: number; // SOLIDS (reversible): cuerpos reales del STEP
   volume_cm3?: number;
 }
 
@@ -78,7 +79,8 @@ export function mapSnapshotToModel(
     displayName,
     faces: Math.round(num(snap?.num_faces) ?? 0),
     edges: 0, // la teselacion no expone aristas B-Rep
-    solids: snap?.model_name ? 1 : 0,
+    // SOLIDS (reversible): conteo real de cuerpos en vez del 1 fijo.
+    solids: Math.round(num(snap?.num_solids) ?? (snap?.model_name ? 1 : 0)),
     volumeCm3: num(snap?.volume_cm3) ?? 0,
     elementsTet4: Math.round(num(snap?.num_elements) ?? 0),
     nodes: Math.round(num(snap?.num_nodes) ?? 0),
@@ -152,3 +154,66 @@ export function mapLoadToBoundaries(bcs: BoundaryCondition[]): {
 export function prettyName(filename: string): string {
   return filename.replace(/\.[^/.]+$/, '').replace(/[_-]+/g, ' ').toUpperCase();
 }
+
+// SOLIDS-START (reversible): lista de cuerpos del core -> UI.
+// Para volver atras: borrar hasta SOLIDS-END + su uso en App/LeftPanel.
+import type { SolidInfo } from '../types';
+
+export function mapSolids(apiSolids: unknown): SolidInfo[] {
+  const out: SolidInfo[] = [];
+  (Array.isArray(apiSolids) ? apiSolids : []).forEach((s) => {
+    const r = (s ?? {}) as Record<string, unknown>;
+    if (typeof r.solid_id !== 'string') return;
+    out.push({
+      solid_id: r.solid_id,
+      index: typeof r.index === 'number' ? Math.round(r.index) : out.length,
+      name: typeof r.name === 'string' ? r.name : r.solid_id,
+      volume: num(r.volume) ?? null,
+      faces_count: Math.round(num(r.faces_count) ?? 0),
+      center: Array.isArray(r.center) ? (r.center as [number, number, number]) : null,
+    });
+  });
+  return out;
+}
+// SOLIDS-END
+
+// NAV-VIEW-START (reversible): superficie real del backend para el viewport.
+// getMeshPreview devuelve la teselacion del core (vertices xyz planos +
+// indices). Los arrays grandes viajan diezmados como
+// {__ndarray__: true, shape, data}; los chicos como listas planas.
+// Para volver atras: borrar hasta NAV-VIEW-END + su uso en App/CadViewport.
+export interface RealSurface {
+  positions: number[]; // xyz xyz ...
+  indices: number[]; // a b c a b c ...
+  numVertices: number;
+  numTriangles: number;
+}
+
+function decodeCleanArray(v: unknown): number[] {
+  if (Array.isArray(v)) return (v as unknown[]).filter((x) => typeof x === 'number') as number[];
+  if (v && typeof v === 'object') {
+    const o = v as { __ndarray__?: boolean; data?: unknown };
+    if (o.__ndarray__ && Array.isArray(o.data)) {
+      return (o.data as unknown[]).filter((x) => typeof x === 'number') as number[];
+    }
+  }
+  return [];
+}
+
+export function mapMeshPreview(mesh: unknown): RealSurface | null {
+  const m = (mesh ?? {}) as Record<string, unknown>;
+  const positions = decodeCleanArray(m.vertices ?? m.positions);
+  const rawIdx = decodeCleanArray(m.indices);
+  const indices = rawIdx.map((x) => Math.round(x));
+  const numVertices = Math.floor(positions.length / 3);
+  const numTriangles = Math.floor(indices.length / 3);
+  if (numVertices < 1 || numTriangles < 1) return null;
+  if (positions.length < numVertices * 3 || indices.length < numTriangles * 3) return null;
+  return {
+    positions: positions.slice(0, numVertices * 3),
+    indices: indices.slice(0, numTriangles * 3),
+    numVertices,
+    numTriangles,
+  };
+}
+// NAV-VIEW-END

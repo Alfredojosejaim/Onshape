@@ -6,7 +6,7 @@
 // Para volver atras: borrar este archivo y devolver el bloque inline
 // marcado UI-CLEAN-OPROW en LeftPanel.tsx.
 import React from 'react';
-import { BoundaryCondition } from '../types';
+import { BoundaryCondition, SolidInfo } from '../types';
 
 interface OperationRowProps {
   bc: BoundaryCondition;
@@ -119,3 +119,41 @@ export const OperationRow: React.FC<OperationRowProps> = ({
     </div>
   );
 };
+
+// SOLIDS-START (reversible): fila por cuerpo del STEP con la MISMA estetica
+// aprobada (mismas clases, iconos, badges). Para volver atras: borrar este
+// componente + su uso en LeftPanel.tsx.
+export interface SolidOpRowProps {
+  solid: SolidInfo;
+}
+
+export const SolidOpRow: React.FC<SolidOpRowProps> = ({ solid }) => {
+  const volCm3 =
+    typeof solid.volume === 'number' && Number.isFinite(solid.volume)
+      ? (solid.volume / 1000).toFixed(1)
+      : '—';
+  return (
+    <div className="flex items-center justify-between px-2 py-1.5 rounded cursor-pointer transition-colors border border-border-subtle/20 bg-surface-container-high/40 hover:bg-surface-elevated">
+      <div className="flex items-center gap-2">
+        <div className="w-5 h-5 rounded flex items-center justify-center bg-secondary/10">
+          <span className="material-symbols-outlined text-[14px] text-secondary">
+            deployed_code
+          </span>
+        </div>
+        <div className="flex flex-col">
+          <span className="text-text-primary font-medium text-[11px]">{solid.name}</span>
+          <span className="text-[10px] font-mono text-secondary">
+            {solid.faces_count} Caras • {volCm3} cm³
+          </span>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-1.5">
+        <span className="font-mono text-[9px] px-1.5 py-0.5 rounded bg-secondary/15 text-secondary font-semibold">
+          SOLID
+        </span>
+      </div>
+    </div>
+  );
+};
+// SOLIDS-END

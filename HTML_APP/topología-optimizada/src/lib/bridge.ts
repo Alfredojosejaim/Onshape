@@ -52,6 +52,8 @@ export const backend = {
   setMaterial: (name: string) => call('setMaterial', name as never),
   validateProblem: (problemJson: string) => call('validateProblem', problemJson as never),
   importStep: (path: string) => call('importStep', path as never),
+  // SOLIDS (reversible): cuerpos del STEP, uno por objeto.
+  getSolids: () => call<{ solids: unknown[] }>('getSolids'),
   listFixtures: () =>
     call<{ fixtures: { filename: string; path: string }[] }>('listFixtures'),
   generateMesh: (params = {}) =>

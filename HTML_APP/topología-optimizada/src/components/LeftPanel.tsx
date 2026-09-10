@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { BoundaryCondition, CadModelPreset } from '../types';
+import { BoundaryCondition, CadModelPreset, SolidInfo } from '../types';
 // UI-CLEAN-START (reversible: quitar import y devolver bloque inline UI-CLEAN-OPROW de abajo)
-import { OperationRow } from './OperationRow';
+import { OperationRow, SolidOpRow } from './OperationRow';
 // UI-CLEAN-END
 
 interface LeftPanelProps {
@@ -9,6 +9,8 @@ interface LeftPanelProps {
   currentModel: CadModelPreset | null;
   models: CadModelPreset[];
   onSelectModel: (model: CadModelPreset) => void;
+  // SOLIDS (reversible): cuerpos del STEP, una operacion por objeto.
+  solids: SolidInfo[];
   boundaryConditions: BoundaryCondition[];
   onToggleCondition: (id: string) => void;
   onEditCondition: (condition: BoundaryCondition) => void;
@@ -25,6 +27,8 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
   currentModel,
   models,
   onSelectModel,
+  // SOLIDS (reversible)
+  solids,
   boundaryConditions,
   onToggleCondition,
   onEditCondition,
@@ -36,8 +40,8 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
   onRemesh,
   isRemeshing,
 }) => {
-  const [planesOpen, setPlanesOpen] = useState(true);
   const [showModelPicker, setShowModelPicker] = useState(false);
+  // SOLIDS (reversible): planesOpen se fue con las coordenadas.
 
   return (
     <aside className="w-full xl:w-72 2xl:w-80 flex flex-col gap-space-sm flex-shrink-0 select-none">
@@ -59,46 +63,9 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
 
         {/* Tree Nodes List */}
         <div className="flex flex-col gap-1 py-1 text-[11px] text-text-secondary">
-          {/* Origen / Planos Base */}
-          <div
-            onClick={() => setPlanesOpen(!planesOpen)}
-            className="group flex items-center justify-between px-2 py-1 rounded hover:bg-surface-elevated cursor-pointer transition-colors"
-          >
-            <div className="flex items-center gap-1.5">
-              <span className="material-symbols-outlined text-text-muted text-[14px]">
-                {planesOpen ? 'expand_more' : 'chevron_right'}
-              </span>
-              <span className="material-symbols-outlined text-text-muted text-[14px]">grid_4x4</span>
-              <span className="text-text-primary font-medium">Sist. Coordenado Global</span>
-            </div>
-            <span className="text-[9px] font-mono text-text-muted">XYZ</span>
-          </div>
-
-          {planesOpen && (
-            <div className="pl-6 flex flex-col gap-0.5 border-l border-border-subtle/30 ml-3.5">
-              <div className="flex items-center justify-between px-2 py-1 rounded hover:bg-surface-container-high text-text-muted hover:text-text-primary text-[11px] cursor-pointer">
-                <span className="flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-fea-stress-critical"></span>
-                  Plano XY (Base)
-                </span>
-                <span className="font-mono text-[10px] opacity-60">Z=0</span>
-              </div>
-              <div className="flex items-center justify-between px-2 py-1 rounded hover:bg-surface-container-high text-text-muted hover:text-text-primary text-[11px] cursor-pointer">
-                <span className="flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-fea-stress-optimal"></span>
-                  Plano XZ (Simetría)
-                </span>
-                <span className="font-mono text-[10px] opacity-60">Y=0</span>
-              </div>
-              <div className="flex items-center justify-between px-2 py-1 rounded hover:bg-surface-container-high text-text-muted hover:text-text-primary text-[11px] cursor-pointer">
-                <span className="flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>
-                  Plano YZ (Transversal)
-                </span>
-                <span className="font-mono text-[10px] opacity-60">X=0</span>
-              </div>
-            </div>
-          )}
+          {/* SOLIDS-START (reversible): coordenadas fuera del arbol.
+              El bloque "Sist. Coordenado Global" + planos se elimino;
+              para volver atras restaurarlo desde git. */}
 
           {/* Sólido Importado STEP */}
           {/* UI-CLEAN-START (reversible): sin modelo de referencia; estado
@@ -173,6 +140,26 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
           </div>
           )}
           {/* UI-CLEAN-END (cierre del ternario currentModel === null) */}
+
+          {/* SOLIDS-START (reversible): una operacion por cuerpo del STEP,
+              con la estetica aprobada (SolidOpRow). Sin cuerpos reales y con
+              modelo local: una fila generica. Para volver atras: borrar. */}
+          {currentModel !== null &&
+            (solids.length > 0 ? (
+              solids.map((s) => <SolidOpRow key={s.solid_id} solid={s} />)
+            ) : (
+              <SolidOpRow
+                solid={{
+                  solid_id: 'solid_0',
+                  index: 0,
+                  name: currentModel.displayName,
+                  volume: currentModel.volumeCm3 * 1000,
+                  faces_count: currentModel.faces,
+                  center: null,
+                }}
+              />
+            ))}
+          {/* SOLIDS-END */}
 
           {/* Feature Conditions List */}
           {/* UI-CLEAN-OPROW-START (reversible): lista extraida a OperationRow

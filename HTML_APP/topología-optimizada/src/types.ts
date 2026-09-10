@@ -78,3 +78,13 @@ export interface CadModelPreset {
   elementsTet4: number;
   nodes: number;
 }
+
+// SOLIDS (reversible): cuerpo del STEP segun core list_solids.
+export interface SolidInfo {
+  solid_id: string;
+  index: number;
+  name: string;
+  volume?: number | null; // mm3 (core) — puede venir null
+  faces_count: number;
+  center?: [number, number, number] | null;
+}

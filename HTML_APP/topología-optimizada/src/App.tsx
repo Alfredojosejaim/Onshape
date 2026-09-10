@@ -13,8 +13,7 @@ import {
   Material,
   OptimizationState,
   SimpParameters,
-} from './types';
-import { MATERIALS } from './data/materials';
+} from './types';import { MATERIALS } from './data/materials';
 import { CAD_PRESETS, INITIAL_CONDITIONS } from './data/models';
 import { Header } from './components/Header';
 import { SecondaryNav } from './components/SecondaryNav';
@@ -39,6 +38,13 @@ import {
   prettyName,
   type ApiSnapshot,
 } from './lib/realdata';
+// SOLIDS-START (reversible): cuerpos del STEP, uno por objeto.
+import { mapSolids } from './lib/realdata';
+import type { SolidInfo } from './types';
+// SOLIDS-END
+// NAV-VIEW-START (reversible: quitar import + estado surface + fetchSurface + prop)
+import { mapMeshPreview, type RealSurface } from './lib/realdata';
+// NAV-VIEW-END
 
 export default function App() {
   // Navigation & Tools
@@ -124,6 +130,45 @@ export default function App() {
   // Jobs reales del backend (solo con bridge; sin bridge sigue la simulacion)
   const [feaJobId, setFeaJobId] = useState<string | null>(null);
   const [simpJobId, setSimpJobId] = useState<string | null>(null);
+  // NAV-VIEW-START (reversible): superficie real del STEP para el viewport.
+  const [surface, setSurface] = useState<RealSurface | null>(null);
+  const fetchSurface = async () => {
+    if (!backend.hasBridge()) {
+      setSurface(null);
+      return;
+    }
+    try {
+      const r = (await backend.getMeshPreview()) as {
+        ok: boolean;
+        mesh?: unknown;
+      };
+      setSurface(r.ok && r.mesh ? mapMeshPreview(r.mesh) : null);
+    } catch {
+      setSurface(null);
+    }
+  };
+  // NAV-VIEW-END
+  // SOLIDS-START (reversible): cuerpos reales del STEP (uno por objeto).
+  const [solids, setSolids] = useState<SolidInfo[]>([]);
+  const fetchSolids = async () => {
+    if (!backend.hasBridge()) {
+      setSolids([]);
+      return;
+    }
+    try {
+      const r = (await backend.getSolids()) as { ok: boolean; solids?: unknown[] };
+      const list = r.ok && Array.isArray(r.solids) ? mapSolids(r.solids) : [];
+      setSolids(list);
+      if (list.length > 0) {
+        setCurrentModel((prev) =>
+          prev ? { ...prev, solids: list.length } : prev
+        );
+      }
+    } catch {
+      setSolids([]);
+    }
+  };
+  // SOLIDS-END
   const snapRef = useRef<ApiSnapshot | null>(null);
   const stateRef = useRef({ boundaryConditions, selectedMaterial, simpParams, currentModel });
   stateRef.current = { boundaryConditions, selectedMaterial, simpParams, currentModel };
@@ -181,6 +226,10 @@ export default function App() {
           const snap = (imp as unknown as { snapshot?: ApiSnapshot }).snapshot;
           if (imp.ok && snap) {
             applySnapshotToModel(snap, first.filename, prettyName(first.filename));
+            // NAV-VIEW (reversible): mostrar el STEP real en el viewport.
+            void fetchSurface();
+            // SOLIDS (reversible): detectar cuerpos del STEP.
+            void fetchSolids();
           }
         }
       } catch {
@@ -433,6 +482,10 @@ export default function App() {
           setFeaJobId(null);
           setSimpJobId(null);
           resetOptimizationState();
+          // NAV-VIEW (reversible): mostrar el STEP real en el viewport.
+          void fetchSurface();
+          // SOLIDS (reversible): detectar cuerpos del STEP.
+          void fetchSolids();
         }
       } catch {
         /* se conserva el modelo anterior */
@@ -489,6 +542,10 @@ export default function App() {
     };
     setModels((prev) => [newPreset, ...prev]);
     setCurrentModel(newPreset);
+    // NAV-VIEW (reversible): sin teselado real para subidas locales.
+    setSurface(null);
+    // SOLIDS (reversible): sin cuerpos reales para subidas locales.
+    setSolids([]);
   };
 
   // Undo / Redo helpers
@@ -549,6 +606,8 @@ export default function App() {
             currentModel={currentModel}
             models={models}
             onSelectModel={handleSelectModelReal}
+            // SOLIDS (reversible): cuerpos del STEP, uno por objeto.
+            solids={solids}
             boundaryConditions={boundaryConditions}
             onToggleCondition={handleToggleCondition}
             onEditCondition={setEditingCondition}
@@ -575,6 +634,8 @@ export default function App() {
             onUpdateCoords={setCoords}
             resetViewTrigger={resetViewTrigger}
             selectedViewTrigger={selectedViewTrigger}
+            // NAV-VIEW (reversible): superficie real del STEP.
+            surface={surface}
           />
 
           {/* RIGHT PANEL: Materials, SIMP Parameters, and FEA Results */}

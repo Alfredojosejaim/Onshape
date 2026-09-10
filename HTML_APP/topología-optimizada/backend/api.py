@@ -129,6 +129,12 @@ class Api:
             "studies": len(getattr(doc, "studies", []) or []),
         }
         snap.update(self._model_stats())
+        # SOLIDS (reversible): conteo real de cuerpos del STEP.
+        try:
+            solids = self.getSolids()
+            snap["num_solids"] = len(solids.get("solids", [])) if solids.get("ok") else 0
+        except Exception:  # noqa: BLE001
+            snap["num_solids"] = 0
         return snap
 
     def _submit(self, kind: str, fn, *args, **kwargs) -> str:
@@ -250,6 +256,17 @@ class Api:
                         seen[f] = os.path.join(d, f)
             return {"ok": True, "fixtures": [
                 {"filename": f, "path": p} for f, p in seen.items()]}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    # SOLIDS (reversible): cuerpos del STEP, uno por objeto (list_solids del core).
+    def getSolids(self) -> dict:
+        try:
+            c = self._ctrl
+            if not getattr(c, "model_id", None):
+                return {"ok": True, "solids": []}
+            solids = c.cad.list_solids(c.model_id) or []
+            return {"ok": True, "solids": _clean(solids)}
         except Exception as exc:  # noqa: BLE001
             return _err(exc)
 

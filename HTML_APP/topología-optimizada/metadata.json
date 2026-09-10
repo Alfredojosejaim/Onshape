@@ -1,0 +1,6 @@
+{
+  "name": "Topología Optimizada",
+  "description": "Software de optimización topológica (SIMP) y análisis de elementos finitos (FEA) con viewport 3D interactivo para ingeniería aeroespacial y estructural.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

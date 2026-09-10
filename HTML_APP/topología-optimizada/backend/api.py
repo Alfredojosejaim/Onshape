@@ -71,6 +71,12 @@ class Api:
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="solver")
         self._jobs: dict[str, dict] = {}
         self._lock = threading.Lock()
+        # MULTI (reversible): libreria de archivos importados en la sesion.
+        # El core mantiene UN modelo activo; aqui se acumula el registro
+        # {key: {filename, displayName, path}} y switch re-importa del disco
+        # (el controller limpia downstream solo, como la app de escritorio).
+        self._library: dict[str, dict] = {}
+        self._active_key: str | None = None
 
     # -- utilidades -----------------------------------------------------
     def _model_stats(self) -> dict:
@@ -272,8 +278,68 @@ class Api:
 
     def importStep(self, path: str) -> dict:
         try:
-            res = self._ctrl.import_model(self._resolve_step_path(path))
+            real = self._resolve_step_path(path)
+            res = self._ctrl.import_model(real)
+            key = self._register_library(os.path.basename(real), real)
             return {"ok": True, "result": _clean(res),
+                    "snapshot": self._snapshot(), "key": key,
+                    "library": self._library_view()}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    # MULTI (reversible): registro y cambio de modelo activo.
+    def _register_library(self, filename: str, path: str) -> str:
+        key = f"{os.path.basename(filename)}_{uuid.uuid4().hex[:6]}"
+        self._library[key] = {"key": key, "filename": os.path.basename(filename),
+                              "displayName": filename.replace(".step", "").replace(".stp", "")
+                              .replace("_", " ").replace("-", " ").upper() or key,
+                              "path": path}
+        self._active_key = key
+        return key
+
+    def _library_view(self) -> list:
+        return [{"key": k, "filename": v["filename"],
+                 "displayName": v["displayName"],
+                 "active": (k == self._active_key)}
+                for k, v in self._library.items()]
+
+    def listLibrary(self) -> dict:
+        try:
+            return {"ok": True, "library": self._library_view(),
+                    "activeKey": self._active_key}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    def switchModel(self, key: str) -> dict:
+        """Activa otro archivo de la libreria (re-importa del disco;
+        aguas abajo —malla/estudios— se limpian como en el desktop)."""
+        try:
+            entry = self._library.get(str(key))
+            if entry is None or not os.path.exists(entry["path"]):
+                return {"ok": False, "error": f"modelo desconocido o ausente: {key}"}
+            res = self._ctrl.import_model(entry["path"])
+            self._active_key = str(key)
+            return {"ok": True, "result": _clean(res),
+                    "snapshot": self._snapshot(), "key": str(key),
+                    "library": self._library_view()}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    def removeModel(self, key: str) -> dict:
+        try:
+            key = str(key)
+            if key not in self._library:
+                return {"ok": False, "error": f"modelo desconocido: {key}"}
+            was_active = (key == self._active_key)
+            del self._library[key]
+            if was_active:
+                try:
+                    self._ctrl.close_model()
+                except Exception:  # noqa: BLE001
+                    pass
+                self._active_key = None
+            return {"ok": True, "library": self._library_view(),
+                    "activeKey": self._active_key,
                     "snapshot": self._snapshot()}
         except Exception as exc:  # noqa: BLE001
             return _err(exc)

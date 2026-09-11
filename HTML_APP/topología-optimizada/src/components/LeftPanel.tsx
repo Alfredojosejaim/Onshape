@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
-import { BoundaryCondition, CadModelPreset, SolidInfo } from '../types';
+import { ActiveTool, BoundaryCondition, CadModelPreset, SolidInfo } from '../types';
 // MULTI-VIEW (reversible): clave de cuerpo para ver/ocultar.
 import { bodyKey } from '../lib/faces';
 // UI-CLEAN-START (reversible: quitar import y devolver bloque inline UI-CLEAN-OPROW de abajo)
 import { OperationRow, SolidOpRow } from './OperationRow';
+// TOOLPARAMS-START (reversible: quitar import + tarjeta y restaurar Gmsh desde git)
+import { ToolParamsPanel } from './ToolParamsPanel';
+// TOOLPARAMS-END
 // UI-CLEAN-END
 
 interface LeftPanelProps {
@@ -30,6 +33,16 @@ interface LeftPanelProps {
   onChangeMeshSize: (size: number) => void;
   onRemesh: () => void;
   isRemeshing: boolean;
+  // TOOLPARAMS (reversible): parametros de la herramienta activa + ciclo de
+  // herramienta (Aceptar/Enter). Para volver atras: quitar estas 4 props.
+  activeTool: ActiveTool;
+  onConfirmTool: () => void;
+  onSaveCondition: (condition: BoundaryCondition) => void;
+  onActivateTool: (bc: BoundaryCondition) => void;
+  // MULTI-COND (reversible): destino + crear otra del mismo tipo.
+  targetCondId: string | null;
+  onNewCondition: () => void;
+  onPushCondition: (condition: BoundaryCondition) => void;
 }
 
 export const LeftPanel: React.FC<LeftPanelProps> = ({
@@ -52,6 +65,15 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
   onChangeMeshSize,
   onRemesh,
   isRemeshing,
+  // TOOLPARAMS (reversible)
+  activeTool,
+  onConfirmTool,
+  onSaveCondition,
+  onActivateTool,
+  // MULTI-COND (reversible)
+  targetCondId,
+  onNewCondition,
+  onPushCondition,
 }) => {
   // UI-CLEAN2 (reversible): sin nodo archivo no hay picker local.
   // models/onSelectModel/isModelVisible/onToggleModelVisibility se conservan
@@ -77,7 +99,10 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
         </header>
 
         {/* Tree Nodes List */}
-        <div className="flex flex-col gap-1 py-1 text-[11px] text-text-secondary">
+        {/* TREE-SCROLL (reversible): lista con scroll propio estilo Onshape:
+            el arbol puede crecer sin empujar el panel de herramienta, que
+            queda fijo debajo. Para volver atras: quitar max-h/overflow. */}
+        <div className="flex flex-col gap-1 py-1 text-[11px] text-text-secondary max-h-[34vh] overflow-y-auto pr-0.5">
           {/* MULTI-FLAT-START (reversible): solo cuerpos, sin distincion de
               archivo. Todos los solidos y mallas de todos los modelos
               importados en una lista plana; clic en un cuerpo activa su
@@ -172,6 +197,8 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
                 bc={bc}
                 onToggleCondition={onToggleCondition}
                 onEditCondition={onEditCondition}
+                onActivateTool={onActivateTool}
+                onRenameCondition={(c, name) => onSaveCondition({ ...c, name })}
               />
             ))
           )}
@@ -179,65 +206,27 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
         </div>
       </section>
 
-      {/* Gmsh Meshing Controls Card */}
-      <section className="bg-surface-container-low rounded-lg p-space-sm shadow-md flex flex-col gap-space-xs border border-border-subtle/40">
-        <header className="flex items-center justify-between px-space-xs py-1 bg-surface-elevated/70 rounded text-[11px] font-semibold text-text-primary">
-          <div className="flex items-center gap-1.5">
-            <span className="material-symbols-outlined text-secondary text-[15px]">grid_on</span>
-            <span>Generador de Malla Gmsh</span>
-          </div>
-          <span className="px-1 py-0.2 rounded bg-secondary/15 text-secondary font-mono text-[9px]">Tet4</span>
-        </header>
-
-        <div className="flex flex-col gap-2 p-1 text-[11px]">
-          <div className="flex items-center justify-between">
-            <span className="text-text-muted text-[10px] font-mono">Tamaño Elemento (h):</span>
-            <span className="font-mono text-text-primary font-bold text-[11px]">{meshElementSize.toFixed(1)} mm</span>
-          </div>
-          <input
-            type="range"
-            min="0.8"
-            max="3.5"
-            step="0.1"
-            value={meshElementSize}
-            onChange={(e) => onChangeMeshSize(parseFloat(e.target.value))}
-            className="w-full h-1 bg-surface-elevated rounded-lg appearance-none cursor-pointer accent-secondary"
-          />
-
-          <div className="grid grid-cols-2 gap-1.5 font-mono text-[10px] pt-1">
-            <div className="bg-surface-elevated/40 p-1.5 rounded border border-border-subtle/30">
-              <span className="text-text-muted block text-[9px]">Tetraedros:</span>
-              <span className="text-secondary font-semibold">
-                {/* UI-CLEAN (reversible): 0 sin modelo real */}
-                {currentModel
-                  ? Math.round(currentModel.elementsTet4 * (1.8 / meshElementSize)).toLocaleString()
-                  : '—'}
-              </span>
-            </div>
-            <div className="bg-surface-elevated/40 p-1.5 rounded border border-border-subtle/30">
-              <span className="text-text-muted block text-[9px]">Nodos FEA:</span>
-              <span className="text-text-primary font-semibold">
-                {currentModel
-                  ? Math.round(currentModel.nodes * (1.8 / meshElementSize)).toLocaleString()
-                  : '—'}
-              </span>
-            </div>
-          </div>
-
-          <button
-            id="remesh-btn"
-            type="button"
-            onClick={onRemesh}
-            disabled={isRemeshing}
-            className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded bg-surface-elevated hover:bg-surface-container-high border border-border-subtle hover:border-secondary/40 text-text-primary hover:text-secondary text-[11px] font-medium transition-colors active:scale-95 disabled:opacity-50"
-          >
-            <span className={`material-symbols-outlined text-[15px] ${isRemeshing ? 'animate-spin text-secondary' : ''}`}>
-              refresh
-            </span>
-            <span>{isRemeshing ? 'Generando Malla...' : 'Remallar Dominio CAD'}</span>
-          </button>
-        </div>
-      </section>
+      {/* TOOLPARAMS-START (reversible): parametros de la herramienta activa
+          en el sitio de la tarjeta "Generador de Malla Gmsh" (eliminada: los
+          menus de herramienta viven aqui para dejar libre el viewport).
+          Para volver atras: borrar este bloque y restaurar la tarjeta Gmsh
+          desde git (props meshElementSize/onChangeMeshSize/onRemesh/
+          isRemeshing/currentModel se conservan a proposito). */}
+      <ToolParamsPanel
+        activeTool={activeTool}
+        boundaryConditions={boundaryConditions}
+        onSaveCondition={onSaveCondition}
+        onConfirmTool={onConfirmTool}
+        targetCondId={targetCondId}
+        onNewCondition={onNewCondition}
+        onPushCondition={onPushCondition}
+        currentModel={currentModel}
+        meshElementSize={meshElementSize}
+        onChangeMeshSize={onChangeMeshSize}
+        onRemesh={onRemesh}
+        isRemeshing={isRemeshing}
+      />
+      {/* TOOLPARAMS-END */}
     </aside>
   );
 };

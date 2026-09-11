@@ -200,11 +200,11 @@ export interface RealSurface {
 }
 
 function decodeCleanArray(v: unknown): number[] {
-  if (Array.isArray(v)) return (v as unknown[]).filter((x) => typeof x === 'number') as number[];
+  if (Array.isArray(v)) return (v as unknown[]).filter((x) => typeof x === 'number' && Number.isFinite(x)) as number[];
   if (v && typeof v === 'object') {
     const o = v as { __ndarray__?: boolean; data?: unknown };
     if (o.__ndarray__ && Array.isArray(o.data)) {
-      return (o.data as unknown[]).filter((x) => typeof x === 'number') as number[];
+      return (o.data as unknown[]).filter((x) => typeof x === 'number' && Number.isFinite(x)) as number[];
     }
   }
   return [];
@@ -219,6 +219,16 @@ export function mapMeshPreview(mesh: unknown): RealSurface | null {
   const numTriangles = Math.floor(indices.length / 3);
   if (numVertices < 1 || numTriangles < 1) return null;
   if (positions.length < numVertices * 3 || indices.length < numTriangles * 3) return null;
+  // BLACKSCREEN-GUARD: el backend serializa con NaN/Infinity permitidos y el
+  // diezmado puede dejar indices fuera de rango. Ambas cosas producen
+  // normales NaN o geometria corrupta y la escena se ve negra.
+  for (let i = 0; i < numVertices * 3; i += 1) {
+    if (!Number.isFinite(positions[i])) return null;
+  }
+  for (let i = 0; i < numTriangles * 3; i += 1) {
+    const idx = indices[i];
+    if (!Number.isInteger(idx) || idx < 0 || idx >= numVertices) return null;
+  }
   return {
     positions: positions.slice(0, numVertices * 3),
     indices: indices.slice(0, numTriangles * 3),
@@ -229,6 +239,66 @@ export function mapMeshPreview(mesh: unknown): RealSurface | null {
     ranges: decodeRanges(m.face_triangles),
   };
 }
+
+/** Superficie valida para renderizar? (coordenadas finitas + indices en rango). */
+export function isRenderableSurface(surf: RealSurface | null | undefined): surf is RealSurface {
+  if (!surf || !Array.isArray(surf.positions) || !Array.isArray(surf.indices)) return false;
+  const nv = Math.floor(surf.positions.length / 3);
+  const nt = Math.floor(surf.indices.length / 3);
+  if (nv < 1 || nt < 1 || nv !== surf.numVertices || nt !== surf.numTriangles) return false;
+  for (let i = 0; i < nv * 3; i += 1) {
+    if (!Number.isFinite(surf.positions[i])) return false;
+  }
+  for (let i = 0; i < nt * 3; i += 1) {
+    const idx = surf.indices[i];
+    if (!Number.isInteger(idx) || idx < 0 || idx >= nv) return false;
+  }
+  return true;
+}
+
+// LOCAL-PLACEHOLDER-START (reversible): caja provisional para subidas sin
+// backend (pywebview ausente). Sin teselado real el viewport quedaba vacio
+// (fondo negro) y parecia que "todo se puso negro". Para volver atras:
+// borrar hasta LOCAL-PLACEHOLDER-END + su uso en App.
+/** Caja 100x60x40 centrada en origen como geometria provisional visible. */
+export function placeholderSurface(): RealSurface {
+  const hx = 50;
+  const hy = 30;
+  const hz = 20;
+  const positions = [
+    -hx, -hy, -hz, hx, -hy, -hz, hx, hy, -hz, -hx, hy, -hz,
+    -hx, -hy, hz, hx, -hy, hz, hx, hy, hz, -hx, hy, hz,
+  ];
+  const indices = [
+    0, 1, 2, 0, 2, 3,
+    4, 6, 5, 4, 7, 6,
+    0, 4, 5, 0, 5, 1,
+    2, 6, 7, 2, 7, 3,
+    0, 3, 7, 0, 7, 4,
+    1, 5, 6, 1, 6, 2,
+  ];
+  const numFaces = indices.length / 6; // 2 triangulos por cara de la caja
+  const faces: FaceMeta[] = [];
+  for (let f = 0; f < numFaces; f += 1) {
+    faces.push({
+      face_index: f,
+      id: `face_${f}`,
+      area: null,
+      center: null,
+      normal: null,
+    });
+  }
+  const ranges = faces.map((f) => ({ face_index: f.face_index, start: f.face_index * 2, count: 2 }));
+  return {
+    positions,
+    indices,
+    numVertices: positions.length / 3,
+    numTriangles: indices.length / 3,
+    faces,
+    ranges,
+  };
+}
+// LOCAL-PLACEHOLDER-END
 
 // FACES-START (reversible): decodifica faces/face_triangles del teselado.
 // El backend los envia via _clean (listas de dicts con tipos JSON).

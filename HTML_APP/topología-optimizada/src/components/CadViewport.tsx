@@ -90,11 +90,19 @@ export const CadViewport: React.FC<CadViewportProps> = ({
   // userData: {key, filename, triMap: nº triangulo global por triangulo local}.
   const bodyMeshesRef = useRef<THREE.Mesh[]>([]);
   const highlightRef = useRef<THREE.Mesh | null>(null);
+  // STABILITY-FIX (reversible): firma de los cuerpos encuadrados. El efecto
+  // reconstruye por material/malla/visibilidad sin mover la camara; solo se
+  // reencuadra si cambia el conjunto de cuerpos o el modelo activo.
+  // Para volver atras: borrar ref + bloque FIT-ONCE y restaurar fitToAll().
+  const fitKeysRef = useRef<string>('');
 
   const [isOrbiting, setIsOrbiting] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
   const [isOrthographic, setIsOrthographic] = useState(false);
   const [measurePoint, setMeasurePoint] = useState<string | null>(null);
+  // BLACKSCREEN-FIX: si WebGL no esta disponible, se muestra el motivo en
+  // vez de un viewport negro silencioso.
+  const [webglError, setWebglError] = useState<string | null>(null);
 
   // NAV-VIEW-START (reversible): camara libre estilo CameraController de la
   // predecesora (posicion + target + up; orbita trackball sin bloqueo a ejes,
@@ -149,14 +157,24 @@ export const CadViewport: React.FC<CadViewportProps> = ({
       );
       if (!anyVisible || surf.positions.length < 9) continue;
       for (let i = 0; i + 2 < surf.positions.length; i += 3) {
+        // BLACKSCREEN-GUARD: ignora coordenadas no finitas (NaN/Infinity del
+        // backend) para no contaminar el bounding box y ennegrecer la escena.
+        const x = surf.positions[i];
+        const y = surf.positions[i + 2];
+        const z = -surf.positions[i + 1];
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
         // ORIENT (reversible): misma rotacion Z-up->Y-up que el render.
-        v.set(surf.positions[i], surf.positions[i + 2], -surf.positions[i + 1]);
+        v.set(x, y, z);
         box.expandByPoint(v);
       }
       found = true;
     }
-    if (found) {
+    if (found && !box.isEmpty()) {
       const sphere = box.getBoundingSphere(new THREE.Sphere());
+      if (!Number.isFinite(sphere.center.x) || !Number.isFinite(sphere.center.y) ||
+          !Number.isFinite(sphere.center.z) || !Number.isFinite(sphere.radius)) {
+        return;
+      }
       fitCamera(cameraRef.current, targetRef.current, sphere.center, Math.max(sphere.radius, 1e-6));
     } else {
       targetRef.current.set(0, 0, 0);
@@ -211,7 +229,17 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     cameraRef.current = camera;
 
     // Main Renderer
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
+    // BLACKSCREEN-FIX: si la creacion del contexto WebGL falla (drivers,
+    // WebView2 sin GPU), antes el efecto lanzaba y el canvas quedaba negro.
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[viewport] WebGL no disponible:', msg);
+      setWebglError(msg);
+      return;
+    }
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
@@ -301,26 +329,71 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     if (!modelGroupRef.current) return;
     const modelGroup = modelGroupRef.current;
 
-    // Clear previous geometries
-    while (modelGroup.children.length > 0) {
-      const obj = modelGroup.children[0];
-      modelGroup.remove(obj);
-      if ((obj as THREE.Mesh).geometry) {
-        ((obj as THREE.Mesh).geometry as THREE.BufferGeometry).dispose();
+    const disposeObj = (obj: THREE.Object3D) => {
+      const mesh = obj as THREE.Mesh;
+      if (mesh.geometry) (mesh.geometry as THREE.BufferGeometry).dispose();
+      const mat = (mesh as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+      if (Array.isArray(mat)) mat.forEach((mm) => mm.dispose());
+      else if (mat) mat.dispose();
+    };
+
+    if (!isModelVisible) {
+      // Modelo oculto: vaciado intencional (unico caso que vacia a proposito).
+      while (modelGroup.children.length > 0) {
+        const obj = modelGroup.children[0];
+        modelGroup.remove(obj);
+        disposeObj(obj);
       }
-      if ((obj as THREE.LineSegments).geometry) {
-        ((obj as THREE.LineSegments).geometry as THREE.BufferGeometry).dispose();
+      bodyMeshesRef.current = [];
+      highlightRef.current = null;
+      return;
+    }
+
+    // BLACKSCREEN-GUARD: si hay cuerpos pero NINGUNO es renderizable
+    // (superficie corrupta o aun sin teselado), se conserva la escena
+    // anterior en vez de vaciarla: vaciar dejaba el viewport en negro.
+    if (bodies.length > 0) {
+      const anyRenderable = bodies.some((b) => {
+        const s = surfaces[b.filename];
+        return !!s && s.positions.length >= 9 && s.indices.length >= 3;
+      });
+      if (!anyRenderable) {
+        console.warn('[viewport] superficie no renderizable, se conserva la escena anterior');
+        return;
       }
     }
-    bodyMeshesRef.current = [];
-    highlightRef.current = null;
 
-    if (!isModelVisible) return;
+    // BLACKSCREEN-GUARD: construccion ATOMICA. Antes se vaciaba el grupo y
+    // luego se construia: si algo lanzaba a mitad del loop (un cuerpo con
+    // datos raros), la escena quedaba vacia = viewport negro. Ahora se
+    // construye en un grupo temporal y solo se intercambia si todo salio
+    // bien; ante cualquier error se conserva la escena anterior.
+    const next = new THREE.Group();
+    const nextMeshes: THREE.Mesh[] = [];
+    try {
 
     const baseColor = new THREE.Color(selectedMaterial.color);
     for (const body of bodies) {
       const surf = surfaces[body.filename];
       if (!surf || surf.positions.length < 9) continue;
+      // BLACKSCREEN-GUARD: valida la superficie antes de crear geometria
+      // (indices fuera de rango o NaN => se omite ESE cuerpo, no toda la escena).
+      const nv = Math.floor(surf.positions.length / 3);
+      let valid = true;
+      for (let i = 0; i + 2 < surf.positions.length; i += 3) {
+        if (!Number.isFinite(surf.positions[i]) || !Number.isFinite(surf.positions[i + 1]) ||
+            !Number.isFinite(surf.positions[i + 2])) { valid = false; break; }
+      }
+      if (valid) {
+        for (let i = 0; i < surf.indices.length; i += 1) {
+          const idx = surf.indices[i];
+          if (!Number.isInteger(idx) || idx < 0 || idx >= nv) { valid = false; break; }
+        }
+      }
+      if (!valid) {
+        console.warn(`[viewport] cuerpo omitido por geometria invalida: ${body.key}`);
+        continue;
+      }
       const tris = solidTriangles(body.faceIndices, surf.ranges, surf.numTriangles);
       // triMap: triangulo global por triangulo local (identidad si va entero).
       // Los vertices salen de surf.indices (el teselado no es identidad).
@@ -349,8 +422,8 @@ export const CadViewport: React.FC<CadViewportProps> = ({
       const mesh = new THREE.Mesh(geo, mat);
       mesh.visible = !hiddenBodies[body.key];
       mesh.userData = { key: body.key, filename: body.filename, triMap };
-      modelGroup.add(mesh);
-      bodyMeshesRef.current.push(mesh);
+      next.add(mesh);
+      nextMeshes.push(mesh);
 
       // Fila MALLA del arbol: wireframe del archivo (solo con malla real).
       const meshKey = `${body.filename}::mesh_tet4`;
@@ -363,11 +436,38 @@ export const CadViewport: React.FC<CadViewportProps> = ({
         });
         const wire = new THREE.LineSegments(wireGeo, wireMat);
         wire.visible = mesh.visible;
-        modelGroup.add(wire);
+        next.add(wire);
       }
     }
+    } catch (err) {
+      console.error('[viewport] fallo construyendo cuerpos, se conserva la escena anterior', err);
+      next.traverse((o) => disposeObj(o));
+      return;
+    }
 
-    fitToAll();
+    // Swap: solo ahora se retira la escena anterior (incluye el overlay
+    // naranja viejo, cuya referencia se invalida aqui y no antes).
+    while (modelGroup.children.length > 0) {
+      const obj = modelGroup.children[0];
+      modelGroup.remove(obj);
+      disposeObj(obj);
+    }
+    highlightRef.current = null;
+    while (next.children.length > 0) {
+      modelGroup.add(next.children[0]);
+    }
+    bodyMeshesRef.current = nextMeshes;
+
+    // FIT-ONCE (ver STABILITY-FIX arriba): reencuadrar solo si el conjunto
+    // de cuerpos o el modelo activo cambio (importar/cambiar de pieza).
+    // Cambios de material, malla, seccion o visibilidad reconstruyen sin
+    // tocar la camara: antes el fit incondicional devolvia el zoom y
+    // hacia parpadear la seleccion (el efecto corria hasta por mousemove).
+    const fitSig = `${activeFilename ?? ''}::${bodies.map((b) => b.key).join('|')}`;
+    if (fitSig !== fitKeysRef.current) {
+      fitKeysRef.current = fitSig;
+      fitToAll();
+    }
   }, [surfaces, bodies, activeFilename, hiddenBodies, meshByFile, isModelVisible, selectedMaterial, showMesh, showSection, fitToAll]);
   // MULTI-VIEW-END
 
@@ -757,6 +857,15 @@ export const CadViewport: React.FC<CadViewportProps> = ({
       </div>
 
       {/* Floating Mode Info Badge */}
+      {/* BLACKSCREEN-FIX: mensaje visible si WebGL fallo (antes: negro). */}
+      {webglError && (
+        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 bg-surface-container-lowest/95 p-6 text-center">
+          <span className="material-symbols-outlined text-[36px] text-fea-stress-yield">warning</span>
+          <p className="text-[13px] font-semibold text-text-primary">Vista 3D no disponible (WebGL)</p>
+          <p className="text-[11px] font-mono text-text-muted max-w-md break-all">{webglError}</p>
+          <p className="text-[11px] text-text-secondary">Actualiza los drivers de GPU o el runtime WebView2. El resto de la app sigue funcionando.</p>
+        </div>
+      )}
       {/* UI-CLEAN2-START (reversible): badge MODO eliminado; el selector de
           perfil se movio al stack de camara. Para volver atras: restaurar
           este bloque desde git. */}

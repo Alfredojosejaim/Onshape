@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   ActiveTab,
   ActiveTool,
@@ -29,6 +29,7 @@ const CadViewport = React.lazy(() =>
 );
 import { Footer } from './components/Footer';
 import { Modals } from './components/Modals';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { backend } from './lib/bridge';
 import { useJobPoll } from './lib/jobs';
 // V2-NEW-START (reversible: borrar estas 2 lineas + bloque V2-NEW-ABAJO)
@@ -60,7 +61,7 @@ import { mapSolids } from './lib/realdata';
 import type { SolidInfo } from './types';
 // SOLIDS-END
 // NAV-VIEW-START (reversible: quitar import + estado surface + fetchSurface + prop)
-import { mapMeshPreview, type RealSurface } from './lib/realdata';
+import { mapMeshPreview, placeholderSurface, type RealSurface } from './lib/realdata';
 // NAV-VIEW-END
 
 export default function App() {
@@ -86,7 +87,11 @@ export default function App() {
   // FACES-START (reversible): caras B-Rep seleccionadas por archivo (face_index
   // del core). Al activar modelo se restaura su seleccion, como el arbol.
   const [faceSelByFile, setFaceSelByFile] = useState<Record<string, number[]>>({});
-  const selectedFaces = currentModel ? faceSelByFile[currentModel.filename] ?? [] : [];
+  // STABILITY-FIX: identidad estable para no redisparar el overlay de caras.
+  const selectedFaces = useMemo(
+    () => (currentModel ? faceSelByFile[currentModel.filename] ?? [] : []),
+    [currentModel, faceSelByFile],
+  );
 
   const handleToggleFace = (faceIndex: number) => {
     const file = stateRef.current.currentModel?.filename;
@@ -232,13 +237,30 @@ export default function App() {
   // MULTI-VIEW-START (reversible): ver/ocultar por cuerpo del arbol.
   // Clave bodyKey(filename, solid_id); ausente = visible. Para volver atras:
   // borrar estado + props hiddenBodies/onToggleBodyVisibility.
+  // TDZ-FIX: solidsByFile/meshByFile/solids van ANTES de viewBodies, que los
+  // lee durante el render (flatMap). Declararlos despues lanzaba
+  // "Cannot access 'solidsByFile' before initialization" al importar el
+  // primer modelo (con models=[] el flatMap no se ejecutaba y no se veia).
+  // SOLIDS-START (reversible): cuerpos reales del STEP (uno por objeto).
+  const [solids, setSolids] = useState<SolidInfo[]>([]);
+  // MULTI-START (reversible): arbol acumulativo — solidos y malla por archivo.
+  // El core mantiene UN modelo activo; aqui se cachea lo ya importado para
+  // listar todos los modelos sin re-importar. Clave: filename.
+  const [solidsByFile, setSolidsByFile] = useState<Record<string, SolidInfo[]>>({});
+  const [meshByFile, setMeshByFile] = useState<Record<string, boolean>>({});
+  // MULTI-END
   const [hiddenBodies, setHiddenBodies] = useState<Record<string, boolean>>({});
   const handleToggleBodyVisibility = (key: string) => {
     setHiddenBodies((prev) => ({ ...prev, [key]: !prev[key] }));
   };
   // Cuerpos del viewport unico: un ViewBody por solido con superficie en
   // cache (sin superficie no hay geometria que mostrar).
-  const viewBodies: ViewBody[] = models.flatMap((m) => {
+  // STABILITY-FIX (reversible): useMemo para identidad estable. Antes se
+  // creaba un array nuevo en CADA render (p. ej. cada mousemove via
+  // onUpdateCoords) y el efecto del viewport lo veia como "todo cambio":
+  // reconstruia la escena y hacia fitToAll(), devolviendo el zoom y
+  // parpadeando el resaltado de caras. Para volver atras: quitar useMemo.
+  const viewBodies: ViewBody[] = useMemo(() => models.flatMap((m) => {
     if (!surfaceByFile[m.filename]) return [];
     const solids = solidsByFile[m.filename];
     if (solids && solids.length > 0) {
@@ -255,16 +277,10 @@ export default function App() {
       solidId: 'solid_0',
       faceIndices: null,
     }];
-  });
+  }), [models, surfaceByFile, solidsByFile]);
   // MULTI-VIEW-END
-  // SOLIDS-START (reversible): cuerpos reales del STEP (uno por objeto).
-  const [solids, setSolids] = useState<SolidInfo[]>([]);
-  // MULTI-START (reversible): arbol acumulativo — solidos y malla por archivo.
-  // El core mantiene UN modelo activo; aqui se cachea lo ya importado para
-  // listar todos los modelos sin re-importar. Clave: filename.
-  const [solidsByFile, setSolidsByFile] = useState<Record<string, SolidInfo[]>>({});
-  const [meshByFile, setMeshByFile] = useState<Record<string, boolean>>({});
-  // MULTI-END
+  // (TDZ-FIX: estados solids/solidsByFile/meshByFile movidos arriba de
+  // viewBodies; ver comentario en MULTI-VIEW-START.)
   const fetchSolids = async (filename?: string) => {
     if (!backend.hasBridge()) {
       setSolids([]);
@@ -708,16 +724,13 @@ export default function App() {
     };
     setModels((prev) => [newPreset, ...prev]);
     setCurrentModel(newPreset);
-    // NAV-VIEW (reversible): sin teselado real para subidas locales.
-    setSurfaceByFile((prev) => {
-      const next = { ...prev };
-      delete next[newPreset.filename];
-      return next;
-    });
-    // SOLIDS (reversible): sin cuerpos reales para subidas locales.
-    setSolids([]);
+    // NAV-VIEW (reversible): sin teselado real para subidas locales: caja
+    // provisional para que el viewport muestre algo en vez de quedar negro.
+    setSurfaceByFile((prev) => ({ ...prev, [newPreset.filename]: placeholderSurface() }));
+    // SOLIDS (reversible): un cuerpo provisional para el arbol acumulativo.
+    setSolids([{ solid_id: 'solid_0', index: 0, name: 'solid_0', faces_count: 6, face_indices: [0, 1, 2, 3, 4, 5] }]);
     // MULTI (reversible): el modelo local tambien entra al arbol acumulativo.
-    setSolidsByFile((prev) => ({ ...prev, [newPreset.filename]: [] }));
+    setSolidsByFile((prev) => ({ ...prev, [newPreset.filename]: [{ solid_id: 'solid_0', index: 0, name: 'solid_0', faces_count: 6, face_indices: [0, 1, 2, 3, 4, 5] }] }));
     setMeshByFile((prev) => ({ ...prev, [newPreset.filename]: false }));
     // UI-CLEAN2 (reversible): sin malla real para subidas locales.
     setHasMesh(false);
@@ -800,6 +813,8 @@ export default function App() {
           />
 
           {/* CENTRAL 3D CAD VIEWPORT */}
+          {/* BLACKSCREEN-FIX: el viewport nunca deja la app en negro. */}
+          <ErrorBoundary label="el viewport 3D">
           <React.Suspense
             fallback={
               <div className="flex-1 flex items-center justify-center rounded-lg bg-surface-container-lowest min-h-[580px] text-[11px] font-mono text-text-muted">
@@ -839,6 +854,7 @@ export default function App() {
             }
           />
           </React.Suspense>
+          </ErrorBoundary>
 
           {/* RIGHT PANEL: Materials, SIMP Parameters, and FEA Results */}
           <RightPanel

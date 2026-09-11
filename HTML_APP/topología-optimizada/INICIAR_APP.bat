@@ -62,50 +62,16 @@ if errorlevel 1 (
 echo   OK: pip disponible.
 
 :: ----------------------------------------------------------------------
-:: 3. PAQUETES PYTHON OBLIGATORIOS (core vendorado: QtCore, VTK, calculo)
+:: 3+4. PAQUETES PYTHON (una sola sonda: ~0.5s en vez de ~10s con pip show)
 :: ----------------------------------------------------------------------
 echo.
-echo [3/6] Paquetes Python obligatorios...
-set "PY_MISSING="
-"%PYTHON_CMD%" -c "import webview" >nul 2>nul
-if errorlevel 1 set "PY_MISSING=!PY_MISSING! pywebview"
-"%PYTHON_CMD%" -c "import numpy" >nul 2>nul
-if errorlevel 1 set "PY_MISSING=!PY_MISSING! numpy"
-"%PYTHON_CMD%" -c "import scipy" >nul 2>nul
-if errorlevel 1 set "PY_MISSING=!PY_MISSING! scipy"
-:: Pesados (OCC/VTK/Qt): "pip show" en vez de "import" para chequeo instantaneo.
-"%PYTHON_CMD%" -m pip show PySide6 >nul 2>nul
-if errorlevel 1 set "PY_MISSING=!PY_MISSING! PySide6"
-"%PYTHON_CMD%" -m pip show vtk >nul 2>nul
-if errorlevel 1 set "PY_MISSING=!PY_MISSING! vtk"
-if defined PY_MISSING (
-    echo   [FALTA] Paquetes Python no instalados para %PYTHON_CMD%:!PY_MISSING!
-    echo   INSTALAR - elige una opcion:
-    echo     "%PYTHON_CMD%" -m pip install -r backend\requirements.txt
-    echo     "%PYTHON_CMD%" -m pip install "pywebview^>=4.4" "numpy^>=1.24.0" "scipy^>=1.11.0"
+:: FAST-CHECK (reversible): backend\check_env.py hace todos los chequeos en
+:: un solo proceso stdlib (importlib.metadata, sin importar DLLs pesadas).
+:: Para volver atras: restaurar los bloques antiguos desde git.
+"%PYTHON_CMD%" "%~dp0backend\check_env.py"
+if errorlevel 1 (
     set "MISSING=1"
     goto :report
-)
-echo   OK: pywebview + numpy + scipy + PySide6 + vtk.
-
-:: ----------------------------------------------------------------------
-:: 4. PAQUETES PYTHON OPCIONALES (solo importar STEP / mallar: cadquery, gmsh)
-:: ----------------------------------------------------------------------
-echo.
-echo [4/6] Paquetes Python opcionales (STEP y malla)...
-set "PY_OPT="
-:: OJO: se usa "pip show" y no "import" porque importar cadquery/gmsh tarda
-:: decenas de segundos (librerias OCC) y el chequeo debe ser instantaneo.
-"%PYTHON_CMD%" -m pip show cadquery >nul 2>nul
-if errorlevel 1 set "PY_OPT=!PY_OPT! cadquery"
-"%PYTHON_CMD%" -m pip show gmsh >nul 2>nul
-if errorlevel 1 set "PY_OPT=!PY_OPT! gmsh"
-if defined PY_OPT (
-    echo   [AVISO] No estan:!PY_OPT! - la app abre igual, pero fallara importar STEP o mallar.
-    echo   INSTALAR cuando lo necesites:
-    echo     "%PYTHON_CMD%" -m pip install "cadquery^>=2.3.0" "gmsh^>=4.13.0"
-) else (
-    echo   OK: cadquery + gmsh.
 )
 
 :: ----------------------------------------------------------------------

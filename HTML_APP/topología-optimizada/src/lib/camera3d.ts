@@ -118,6 +118,11 @@ export function fitCamera(
   center: THREE.Vector3,
   radius: number,
 ): void {
+  // BLACKSCREEN-GUARD: centro o radio no finitos (teselado corrupto con
+  // NaN) dejaban la matriz de proyeccion en NaN y TODA la escena en negro,
+  // incluida la rejilla. En ese caso no se toca la camara.
+  if (!Number.isFinite(center.x) || !Number.isFinite(center.y) || !Number.isFinite(center.z)) return;
+  if (!Number.isFinite(radius) || radius <= 0) return;
   const dist = Math.max(radius * 1.2, 1e-6);
   const dir = camera.position.clone().sub(target);
   if (dir.length() < 1e-9) dir.set(1, 1, 1);

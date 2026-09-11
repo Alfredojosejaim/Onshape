@@ -42,12 +42,21 @@ def _clean(obj, _budget=None):
     if _budget is None:
         _budget = [_MAX_MESH_FLOATS]
     if isinstance(obj, np.ndarray):
-        flat = obj.ravel()
-        if flat.size > _budget[0]:
-            step = (flat.size + _budget[0] - 1) // _budget[0]
-            flat = flat[::step]
+        # DECIM-ALIGN (reversible): diezmar por FILAS (vertice/triangulo
+        # completos), nunca en plano. El flat[::step] anterior rompia las
+        # tripletas xyz y a-b-c del teselado y el viewport quedaba en negro
+        # con archivos grandes. Para volver atras: restaurar flat[::step].
+        if obj.size > _budget[0]:
+            step = (obj.size + _budget[0] - 1) // _budget[0]
+            if obj.ndim == 1 and obj.size % 3 == 0:
+                flat = obj.reshape(-1, 3)[::step].ravel()
+            elif obj.ndim == 2:
+                flat = obj[::step].ravel()
+            else:
+                flat = obj.ravel()[::step]
             truncated = True
         else:
+            flat = obj.ravel()
             truncated = False
         _budget[0] -= flat.size
         return {"__ndarray__": True, "shape": list(obj.shape),

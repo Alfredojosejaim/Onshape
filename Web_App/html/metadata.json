@@ -1,6 +1,0 @@
-{
-  "name": "Topología Optimizada",
-  "description": "Suite avanzada de CAD, mallado Gmsh, solver FEA de tensiones y optimización topológica generativa (SIMP).",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}

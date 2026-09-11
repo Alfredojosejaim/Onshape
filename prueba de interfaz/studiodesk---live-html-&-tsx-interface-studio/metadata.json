@@ -1,6 +1,0 @@
-{
-  "name": "StudioDesk - Live HTML & TSX Interface Studio",
-  "description": "Aplicación de escritorio autocontenida para importar, editar y montar en vivo interfaces HTML y TSX con previsualización en tiempo de ejecución.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}

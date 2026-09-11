@@ -373,6 +373,18 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     try {
 
     const baseColor = new THREE.Color(selectedMaterial.color);
+    // MULTI-COLOR (reversible): un tono por cuerpo para que 2+ solidos no se
+    // vean como "uno solo" aunque compartan material. Para volver atras:
+    // usar siempre baseColor / baseColor*0.75.
+    const perFileIdx = new Map<string, number>();
+    const bodyColor = (body: { filename: string }) => {
+      const n = perFileIdx.get(body.filename) ?? 0;
+      perFileIdx.set(body.filename, n + 1);
+      const c = baseColor.clone();
+      if (n > 0) c.offsetHSL((n * 0.09) % 1, 0, n % 2 === 0 ? 0.12 : -0.12);
+      // Activo a pleno color, resto atenuado (comportamiento anterior).
+      return body.filename === activeFilename ? c : c.multiplyScalar(0.75);
+    };
     for (const body of bodies) {
       const surf = surfaces[body.filename];
       if (!surf || surf.positions.length < 9) continue;
@@ -395,6 +407,13 @@ export const CadViewport: React.FC<CadViewportProps> = ({
         continue;
       }
       const tris = solidTriangles(body.faceIndices, surf.ranges, surf.numTriangles);
+      if (!tris && bodies.filter((o) => o.filename === body.filename).length > 1) {
+        console.warn(
+          `[viewport] split por cuerpo no disponible para ${body.key} ` +
+          `(rangos incompletos o sin face_indices): se muestra la pieza completa. ` +
+          `Solidos backend: ${bodies.filter((o) => o.filename === body.filename).length}`,
+        );
+      }
       // triMap: triangulo global por triangulo local (identidad si va entero).
       // Los vertices salen de surf.indices (el teselado no es identidad).
       const useTris = tris ?? Array.from({ length: surf.numTriangles }, (_, k) => k);
@@ -411,7 +430,7 @@ export const CadViewport: React.FC<CadViewportProps> = ({
 
       const isActive = body.filename === activeFilename;
       const mat = new THREE.MeshStandardMaterial({
-        color: isActive ? baseColor : baseColor.clone().multiplyScalar(0.75),
+        color: bodyColor(body),
         metalness: 0.55,
         roughness: 0.4,
         side: THREE.DoubleSide,

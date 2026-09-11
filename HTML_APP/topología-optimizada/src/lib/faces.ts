@@ -106,6 +106,9 @@ export function buildConditionJson(
   modelId?: string | null,
   metas?: FaceMeta[] | null,
   magnitude?: number | null,
+  // LOAD-DIR (reversible): normal de referencia (core reference_plane_normal,
+  // orientacion perpendicular). Por defecto [0,0,1] como antes.
+  referenceNormal?: [number, number, number] | null,
 ): Record<string, unknown> {
   if (tool === 'carga') {
     return {
@@ -113,7 +116,7 @@ export function buildConditionJson(
       name,
       faces: selectionSet('Caras de carga', faceIndices, modelId, metas),
       orientation: 'perpendicular',
-      reference_plane_normal: [0.0, 0.0, 1.0],
+      reference_plane_normal: referenceNormal ?? [0.0, 0.0, 1.0],
       angle_deg: null,
       sense: 'indeterminate',
       magnitude: typeof magnitude === 'number' ? magnitude : null,

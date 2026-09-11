@@ -34,6 +34,10 @@ export interface BoundaryCondition {
   // FACES (reversible): caras B-Rep seleccionadas en el viewport (face_index
   // del core). Para volver atras: borrar + uso en App/CadViewport.
   faceIndices?: number[];
+  // LOAD-DIR (reversible): normal de referencia de la carga (core
+  // LoadCondition.reference_plane_normal, orientacion perpendicular).
+  // Para volver atras: borrar + uso en App/ToolParamsPanel/faces.
+  loadNormal?: [number, number, number];
   active: boolean;
   statusTag?: string;
   colorTag?: string;

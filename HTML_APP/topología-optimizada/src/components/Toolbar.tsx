@@ -156,6 +156,27 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           <span className="material-symbols-outlined text-[15px]">cut</span>
           <span>Sección</span>
         </button>
+
+        <div className="w-px h-4 bg-border-subtle mx-1"></div>
+
+        {/* REMESH-TOOL-START (reversible): remallado como herramienta (abre
+            sus parametros en el panel bajo el arbol). Para volver atras:
+            borrar este bloque. */}
+        <button
+          id="tool-remesh"
+          type="button"
+          onClick={() => onSelectTool('malla')}
+          className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] transition-colors ${
+            activeTool === 'malla'
+              ? 'bg-surface-elevated text-secondary font-medium ring-1 ring-secondary/30'
+              : 'hover:bg-surface-elevated text-text-secondary hover:text-text-primary'
+          }`}
+          title="Remallar dominio CAD (Gmsh Tet4)"
+        >
+          <span className="material-symbols-outlined text-[15px]">refresh</span>
+          <span>Remallar</span>
+        </button>
+        {/* REMESH-TOOL-END */}
       </div>
 
       {/* Undo / Redo */}

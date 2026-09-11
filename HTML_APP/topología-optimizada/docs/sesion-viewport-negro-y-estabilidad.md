@@ -83,3 +83,16 @@ inevitable sin carga diferida (~4.4 s en caliente).
 (nuevo), `src/lib/realdata.ts`, `src/lib/camera3d.ts`, `src/main.tsx`,
 `backend/api.py`, `backend/check_env.py` (nuevo), `INICIAR_APP.bat`,
 `index.html`, `package.json`/`package-lock.json` (solo devDeps `@types/*`).
+
+## PENDIENTE — solver multicarga (frontend listo, backend pendiente)
+
+El frontend ya modela N cargas/fijaciones/... como condiciones separadas
+(`faces_carga`, `faces_carga_2`, ...), cada una con sus caras, vector,
+dirección (`loadNormal` → `reference_plane_normal`) y registro propio en el
+backend vía `createCondition` (mismo id = sobrescribe). Lo que falta es el
+**solve**: `pushBoundaries()` (`App.tsx`) hoy envía UNA sola carga simple
+(`setBoundaries({ bottom_axis, load_dir, magnitude })`, la primera activa) y
+`runFea` no pasa `condition_ids` (el backend sí los acepta:
+`_resolve_conditions`). Aplicarlo más adelante: resolver el conjunto de
+condiciones activas (cargas + elasticidad + regiones) en FEA/SIMP en vez de
+una sola carga.

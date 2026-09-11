@@ -84,31 +84,66 @@ export default function App() {
   // Boundary Conditions
   const [boundaryConditions, setBoundaryConditions] = useState<BoundaryCondition[]>(INITIAL_CONDITIONS);
   const [editingCondition, setEditingCondition] = useState<BoundaryCondition | null>(null);
-  // FACES-START (reversible): caras B-Rep seleccionadas por archivo (face_index
-  // del core). Al activar modelo se restaura su seleccion, como el arbol.
-  const [faceSelByFile, setFaceSelByFile] = useState<Record<string, number[]>>({});
+  // FACES-START (reversible): caras B-Rep seleccionadas por ARCHIVO,
+  // HERRAMIENTA y CONDICION (face_index del core). Cada herramienta tiene su
+  // cubeta y cada condicion aplicada (Carga 1, Carga 2...) la suya: al
+  // cambiar de herramienta/condicion se ven sus caras, no las de otra.
+  // FORMA: { [filename]: { [conditionId]: number[] } } ('seleccionar' usa la
+  // pseudo-condicion 'faces_seleccionar', solo resalta).
+  // MULTI-COND (reversible): varias condiciones del mismo tipo + condicion
+  // destino por herramienta (la que recibe los picks y edita el panel).
+  // Para volver atras: cubeta unica por (archivo,herramienta) + faces_<tool>.
+  const [faceSelByFile, setFaceSelByFile] = useState<Record<string, Record<string, number[]>>>({});
+  const [targetCondByTool, setTargetCondByTool] = useState<
+    Partial<Record<FaceCondTool | 'keepout', string>>
+  >({});
+
+  const toolBaseName = (tool: FaceCondTool | 'keepout'): string =>
+    tool === 'carga' ? 'Carga en caras'
+    : tool === 'fijacion' ? 'Fijación en caras'
+    : tool === 'preservada' ? 'Región preservada' : 'Zona keep-out';
+
+  // Condicion destino de la herramienta activa: la elegida (panel/arbol) si
+  // sigue existiendo, si no la legada faces_<tool> o la primera de su tipo.
+  const activeTargetId = useMemo(() => {
+    if (!currentModel) return null;
+    if (activeTool !== 'carga' && activeTool !== 'fijacion' && activeTool !== 'preservada' && activeTool !== 'keepout') {
+      return 'faces_seleccionar';
+    }
+    const t = targetCondByTool[activeTool];
+    if (t && boundaryConditions.some((c) => c.id === t)) return t;
+    const legacy =
+      boundaryConditions.find((c) => c.id === `faces_${activeTool}`) ??
+      boundaryConditions.find((c) => c.type === activeTool);
+    return legacy?.id ?? null;
+  }, [currentModel, activeTool, boundaryConditions, targetCondByTool]);
   // STABILITY-FIX: identidad estable para no redisparar el overlay de caras.
   const selectedFaces = useMemo(
-    () => (currentModel ? faceSelByFile[currentModel.filename] ?? [] : []),
-    [currentModel, faceSelByFile],
+    () => (currentModel && activeTargetId ? faceSelByFile[currentModel.filename]?.[activeTargetId] ?? [] : []),
+    [currentModel, activeTargetId, faceSelByFile],
   );
 
   const handleToggleFace = (faceIndex: number) => {
     const file = stateRef.current.currentModel?.filename;
     if (!file) return;
-    const prevSel = faceSelByFile[file] ?? [];
-    const next = toggleFace(prevSel, faceIndex);
-    setFaceSelByFile((p) => ({ ...p, [file]: next }));
-    // Asigna la seleccion a la condicion de la herramienta activa
-    // (carga/fijacion/preservada/keepout). Con 'seleccionar' solo resalta.
+    // La condicion destino es duena de su cubeta: picar con otra
+    // herramienta/condicion no toca (ni suma a) la seleccion anterior.
     const tool = stateRef.current.activeTool;
-    if (tool !== 'carga' && tool !== 'fijacion' && tool !== 'preservada' && tool !== 'keepout') return;
-    const bcId = `faces_${tool}`;
+    if (tool !== 'carga' && tool !== 'fijacion' && tool !== 'preservada' && tool !== 'keepout' && tool !== 'seleccionar') return;
+    const condKey = tool === 'seleccionar' ? 'faces_seleccionar' : (activeTargetId ?? `faces_${tool}`);
+    const prevSel = faceSelByFile[file]?.[condKey] ?? [];
+    const next = toggleFace(prevSel, faceIndex);
+    setFaceSelByFile((p) => ({ ...p, [file]: { ...p[file], [condKey]: next } }));
+    // Con 'seleccionar' solo resalta.
+    if (tool === 'seleccionar') return;
+    if (!activeTargetId) setTargetCondByTool((p) => ({ ...p, [tool]: condKey }));
+    const list = stateRef.current.boundaryConditions;
+    const prevCond = list.find((c) => c.id === condKey);
     setBoundaryConditions((prev) => {
-      const i = prev.findIndex((c) => c.id === bcId);
+      const i = prev.findIndex((c) => c.id === condKey);
       const base: BoundaryCondition = prev[i] ?? {
-        id: bcId,
-        name: tool === 'carga' ? 'Carga en caras' : tool === 'fijacion' ? 'Fijación en caras' : tool === 'preservada' ? 'Región preservada' : 'Zona keep-out',
+        id: condKey,
+        name: toolBaseName(tool),
         type: tool,
         details: '',
         faces: 0,
@@ -132,20 +167,72 @@ export default function App() {
     // keepout queda local: en el core la obstruccion referencia CUERPOS, no caras.
     if (backend.hasBridge() && tool !== 'keepout' && next.length > 0) {
       const cur = stateRef.current.currentModel;
-      const mag = stateRef.current.boundaryConditions.find((c) => c.type === 'carga')?.magnitude ?? null;
+      const mag = tool === 'carga'
+        ? (prevCond?.magnitude ?? list.find((c) => c.type === 'carga')?.magnitude ?? null)
+        : null;
       const condJson = buildConditionJson(
         tool as FaceCondTool,
-        tool === 'carga' ? 'Carga en caras' : tool === 'fijacion' ? 'Fijación en caras' : 'Región preservada',
+        prevCond?.name ?? toolBaseName(tool),
         next,
         cur?.filename ?? null,
         surface?.faces ?? undefined,
-        tool === 'carga' ? mag : null,
+        mag,
+        prevCond?.loadNormal ?? null,
       );
-      (condJson as Record<string, unknown>).id = bcId;
+      (condJson as Record<string, unknown>).id = condKey;
       void backend.createCondition(JSON.stringify(condJson)).catch(() => undefined);
     }
   };
   // FACES-END
+
+  // MULTI-COND-START (reversible): "+ Nueva" del panel — otra condicion del
+  // mismo tipo (Carga 2...) con vector/normal heredados si es carga. Pasa a
+  // ser la destino de su herramienta. Para volver atras: borrar + boton.
+  const createFaceCondition = (tool: FaceCondTool | 'keepout') => {
+    const prev = boundaryConditions;
+    const same = prev.filter((c) => c.type === tool);
+    let n = same.length + 1;
+    let id = n <= 1 ? `faces_${tool}` : `faces_${tool}_${n}`;
+    while (prev.some((c) => c.id === id)) {
+      n += 1;
+      id = `faces_${tool}_${n}`;
+    }
+    const src = prev.find((c) => c.id === targetCondByTool[tool]) ?? same[0];
+    const cond: BoundaryCondition = {
+      id,
+      name: n <= 1 ? toolBaseName(tool) : `${toolBaseName(tool)} ${n}`,
+      type: tool,
+      details: facesLabel([]),
+      faces: 0,
+      faceIndices: [],
+      active: false,
+      ...(tool === 'carga'
+        ? { value: src?.value, magnitude: src?.magnitude, loadNormal: src?.loadNormal }
+        : {}),
+    };
+    setBoundaryConditions((p) => (p.some((c) => c.id === cond.id) ? p : [...p, cond]));
+    setTargetCondByTool((p) => ({ ...p, [tool]: id }));
+  };
+  // MULTI-COND-END
+
+  // Reenvia una condicion editada en el panel al backend (vector/normal de
+  // carga). Las caras ya se sincronizan al picar (handleToggleFace).
+  const pushFaceCondition = (cond: BoundaryCondition) => {
+    if (!backend.hasBridge()) return;
+    if (cond.type !== 'carga' && cond.type !== 'fijacion' && cond.type !== 'preservada') return;
+    const cur = stateRef.current.currentModel;
+    const condJson = buildConditionJson(
+      cond.type as FaceCondTool,
+      cond.name,
+      cond.faceIndices ?? [],
+      cur?.filename ?? null,
+      surface?.faces ?? undefined,
+      cond.type === 'carga' ? (cond.magnitude ?? null) : null,
+      cond.loadNormal ?? null,
+    );
+    (condJson as Record<string, unknown>).id = cond.id;
+    void backend.createCondition(JSON.stringify(condJson)).catch(() => undefined);
+  };
 
   // SIMP Topology Optimization Parameters
   const [simpParams, setSimpParams] = useState<SimpParameters>({
@@ -678,6 +765,65 @@ export default function App() {
     );
   };
 
+  // TOOL-NEW-ALWAYS (reversible): cada clic en la barra abre una herramienta
+  // NUEVA del mismo tipo (Carga 1, Carga 2...), nunca modifica la existente.
+  // La existente solo se retoma desde su fila del arbol (clic/doble clic).
+  // Sin modelo no se crea nada (evita condiciones huerfanas): solo se activa.
+  // Para volver atras: devolver onSelectTool={setActiveTool} en el Toolbar.
+  const handleSelectTool = (t: ActiveTool) => {
+    if (
+      currentModel &&
+      (t === 'carga' || t === 'fijacion' || t === 'preservada' || t === 'keepout')
+    ) {
+      createFaceCondition(t);
+    }
+    setActiveTool(t);
+  };
+
+  // TOOL-LIFECYCLE: Aceptar/Enter/Escape cierra la herramienta abierta,
+  // volviendo a 'seleccionar' (cerrada). Ver confirmTool/efecto abajo.
+  const handleSelectTool = (t: ActiveTool) => {
+    if (
+      currentModel &&
+      (t === 'carga' || t === 'fijacion' || t === 'preservada' || t === 'keepout')
+    ) {
+      createFaceCondition(t);
+    }
+    setActiveTool(t);
+  };
+
+  // Reabrir la herramienta de una condicion aplicada (clic/doble clic en su
+  // fila del arbol): activa la herramienta, la marca como destino de picks y
+  // muestra sus parametros en el panel. Cierra el modal si estaba abierto.
+  const activateToolCondition = (bc: BoundaryCondition) => {
+    const t = bc.type;
+    if (t === 'carga' || t === 'fijacion' || t === 'preservada' || t === 'keepout') {
+      setEditingCondition(null);
+      // MULTI-COND: la fila picada pasa a ser la destino de su herramienta.
+      setTargetCondByTool((p) => ({ ...p, [t]: bc.id }));
+      setActiveTool(t);
+    } else {
+      setEditingCondition(bc);
+    }
+  };
+
+  // Enter/Escape confirman la herramienta abierta (como Aceptar del panel).
+  // No interfiere con modales abiertos ni con botones/areas de texto.
+  useEffect(() => {
+    if (activeTool === 'seleccionar') return;
+    const onKey = (e: KeyboardEvent) => {
+      if (showImport || showExport || showHelp || editingCondition) return;
+      if (e.key !== 'Enter' && e.key !== 'Escape') return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'BUTTON' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      e.preventDefault();
+      setActiveTool('seleccionar');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [activeTool, showImport, showExport, showHelp, editingCondition]);
+  // TOOL-LIFECYCLE-END
+
   // Handle custom file upload
   // UPLOAD-STEP (reversible): con bridge, el archivo real se envia al
   // backend (teselado + solidos + viewport reales). Sin bridge, preset
@@ -810,6 +956,19 @@ export default function App() {
             onChangeMeshSize={setMeshElementSize}
             onRemesh={handleRemesh}
             isRemeshing={isRemeshing}
+            // TOOLPARAMS + TOOL-LIFECYCLE + MULTI-COND (reversible)
+            activeTool={activeTool}
+            onConfirmTool={confirmTool}
+            onSaveCondition={handleSaveCondition}
+            onActivateTool={activateToolCondition}
+            targetCondId={activeTargetId}
+            onNewCondition={() => {
+              const t = activeTool;
+              if (t === 'carga' || t === 'fijacion' || t === 'preservada' || t === 'keepout') {
+                createFaceCondition(t);
+              }
+            }}
+            onPushCondition={pushFaceCondition}
           />
 
           {/* CENTRAL 3D CAD VIEWPORT */}

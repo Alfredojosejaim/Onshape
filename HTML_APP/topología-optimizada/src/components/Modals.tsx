@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { BoundaryCondition, CadModelPreset, Material, OptimizationState } from '../types';
 
 interface ModalsProps {
@@ -47,6 +47,19 @@ export const Modals: React.FC<ModalsProps> = ({
   const [loadY, setLoadY] = useState('-4500');
   const [loadZ, setLoadZ] = useState('1200');
   const [exportNotice, setExportNotice] = useState<string | null>(null);
+  // TREE-RENAME (reversible): nombre editable de la condicion (identificar
+  // varias del mismo tipo en el arbol). Para volver atras: quitar campo.
+  const [condName, setCondName] = useState('');
+  useEffect(() => {
+    setCondName(editingCondition?.name ?? '');
+    const v = editingCondition?.value;
+    if (v && v.length === 3) {
+      setLoadX(String(v[0]));
+      setLoadY(String(v[1]));
+      setLoadZ(String(v[2]));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingCondition?.id]);
 
   const handleFileDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -371,6 +384,13 @@ export const Modals: React.FC<ModalsProps> = ({
 
             {editingCondition.type === 'carga' ? (
               <div className="flex flex-col gap-2 font-mono text-[11px]">
+                <span className="text-text-muted">Nombre en el árbol:</span>
+                <input
+                  type="text"
+                  value={condName}
+                  onChange={(e) => setCondName(e.target.value)}
+                  className="bg-surface-elevated border border-border-subtle rounded px-2 py-1 text-text-primary font-sans text-[12px] outline-none focus:border-secondary/60"
+                />
                 <span className="text-text-muted">Componentes del Vector Fuerza [N]:</span>
                 <div className="flex items-center gap-2">
                   <span className="text-fea-stress-critical font-bold">Fx:</span>
@@ -401,8 +421,17 @@ export const Modals: React.FC<ModalsProps> = ({
                 </div>
               </div>
             ) : (
-              <div className="text-[12px] text-text-secondary">
-                Configuración de condición: <strong className="text-text-primary">{editingCondition.details}</strong>
+              <div className="flex flex-col gap-2 text-[12px] text-text-secondary">
+                <span className="font-mono text-[11px] text-text-muted">Nombre en el árbol:</span>
+                <input
+                  type="text"
+                  value={condName}
+                  onChange={(e) => setCondName(e.target.value)}
+                  className="bg-surface-elevated border border-border-subtle rounded px-2 py-1 text-text-primary text-[12px] outline-none focus:border-secondary/60"
+                />
+                <div>
+                  Configuración de condición: <strong className="text-text-primary">{editingCondition.details}</strong>
+                </div>
               </div>
             )}
 
@@ -421,9 +450,17 @@ export const Modals: React.FC<ModalsProps> = ({
                   const mag = Math.sqrt(fx * fx + fy * fy + fz * fz);
                   onSaveCondition({
                     ...editingCondition,
-                    value: [fx, fy, fz],
-                    magnitude: mag,
-                    details: `[${fx}, ${fy}, ${fz}] N`,
+                    // TREE-RENAME: el nombre del arbol se edita aqui.
+                    name: condName.trim() || editingCondition.name,
+                    // Solo carga toca el vector: antes se sobrescribia
+                    // details (caras) tambien en otros tipos al renombrar.
+                    ...(editingCondition.type === 'carga'
+                      ? {
+                          value: [fx, fy, fz] as [number, number, number],
+                          magnitude: mag,
+                          details: `[${fx}, ${fy}, ${fz}] N`,
+                        }
+                      : {}),
                   });
                   onCloseEditCondition();
                 }}

@@ -51,6 +51,34 @@ class StepAdapter(BaseCADAdapter):
             self._shape_cache.clear()
 
     @staticmethod
+    def _coalesce_imported(imported) -> cq.Shape:
+        """Junta TODOS los objetos del STEP en un solo Shape.
+
+        Bug multi-cuerpo: se usaba ``imported.val()`` (solo el PRIMER
+        objeto). Un STEP con 2+ cuerpos raiz perdia el resto y la app
+        mostraba un solo cuerpo. Ahora se combinan todos los ``vals()``
+        en un Compound. Reversible: volver a ``imported.val()``.
+        """
+        try:
+            vals = list(imported.vals())
+        except Exception:
+            vals = []
+        vals = [v for v in vals if v is not None and not v.isNull()]
+        if len(vals) <= 1:
+            shape = imported.val()
+            if shape is None or shape.isNull():
+                raise ValueError("Could not parse valid 3D shape from STEP data")
+            return shape
+        try:
+            return cq.Compound.makeCompound(vals)
+        except Exception:
+            # Fallback: devuelve el primero si el Compound falla
+            shape = imported.val()
+            if shape is None or shape.isNull():
+                raise ValueError("Could not parse valid 3D shape from STEP data")
+            return shape
+
+    @staticmethod
     def _parse_step_bytes(data: bytes) -> cq.Shape:
         """Parse raw STEP byte buffer into a CadQuery/OpenCASCADE Shape."""
         if not data or len(data) == 0:
@@ -60,10 +88,7 @@ class StepAdapter(BaseCADAdapter):
             tmp_path = tmp.name
         try:
             imported = cq.importers.importStep(tmp_path)
-            shape = imported.val()
-            if shape is None or shape.isNull():
-                raise ValueError("Could not parse valid 3D shape from STEP data")
-            return shape
+            return StepAdapter._coalesce_imported(imported)
         finally:
             if os.path.exists(tmp_path):
                 try:
@@ -77,10 +102,7 @@ class StepAdapter(BaseCADAdapter):
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"STEP file not found: {file_path}")
         imported = cq.importers.importStep(file_path)
-        shape = imported.val()
-        if shape is None or shape.isNull():
-            raise ValueError(f"Could not parse valid 3D shape from STEP file: {file_path}")
-        return shape
+        return StepAdapter._coalesce_imported(imported)
 
     def _build_cad_model_from_shape(
         self,

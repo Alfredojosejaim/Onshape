@@ -1,7 +1,7 @@
 """API JS <-> Python para la nueva app (pywebview).
 
-Funcionamiento: Topologia_Optimizada (import por path, solo lectura).
-Integracion grafica: patron Web_App (jobs + snapshot). Sin Qt, sin HTTP.
+Funcionamiento: core vendorado en backend/ (autocontenido); fallback a
+Topologia_Optimizada externa solo en desarrollo. Sin Qt, sin HTTP.
 """
 
 from __future__ import annotations
@@ -16,10 +16,16 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-# Funcionamiento real: Topologia_Optimizada intacto, solo lectura via sys.path.
-_CORE = os.path.abspath(os.path.join(_HERE, "..", "..", "..", "Topologia_Optimizada"))
-if _CORE not in sys.path:
-    sys.path.insert(0, _CORE)
+# SELF-CONTAINED (reversible): el core va vendorado en backend/core (+desktop,
+# adapters, services). backend/ ya esta en sys.path, asi que `import core...`
+# resuelve local sin tocar nada. Solo si falta (desarrollo), se usa la carpeta
+# hermana externa como antes. Ver backend/CORE_VENDORADO.txt.
+if not os.path.isdir(os.path.join(_HERE, "core")):
+    _CORE = os.path.abspath(os.path.join(_HERE, "..", "..", "..", "Topologia_Optimizada"))
+    if _CORE not in sys.path:
+        sys.path.insert(0, _CORE)
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -363,8 +369,10 @@ class Api:
             with open(dest, "wb") as fh:
                 fh.write(raw)
             res = self._ctrl.import_model(dest)
+            key = self._register_library(filename, dest)
             return {"ok": True, "result": _clean(res),
-                    "snapshot": self._snapshot()}
+                    "snapshot": self._snapshot(), "key": key,
+                    "library": self._library_view()}
         except Exception as exc:  # noqa: BLE001
             return _err(exc)
 

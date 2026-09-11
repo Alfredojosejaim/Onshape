@@ -12,11 +12,17 @@ import logging
 import os
 import sys
 
-CORE_ROOT = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "Topologia_Optimizada")
-)
-if CORE_ROOT not in sys.path:
-    sys.path.insert(0, CORE_ROOT)
+# SELF-CONTAINED (reversible): core vendorado en backend/ primero; la carpeta
+# hermana externa solo como fallback de desarrollo. Ver CORE_VENDORADO.txt.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+if not os.path.isdir(os.path.join(_HERE, "core")):
+    CORE_ROOT = os.path.abspath(
+        os.path.join(_HERE, "..", "..", "..", "Topologia_Optimizada")
+    )
+    if CORE_ROOT not in sys.path:
+        sys.path.insert(0, CORE_ROOT)
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")

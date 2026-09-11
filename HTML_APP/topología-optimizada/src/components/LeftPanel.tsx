@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { BoundaryCondition, CadModelPreset, SolidInfo } from '../types';
+// MULTI-VIEW (reversible): clave de cuerpo para ver/ocultar.
+import { bodyKey } from '../lib/faces';
 // UI-CLEAN-START (reversible: quitar import y devolver bloque inline UI-CLEAN-OPROW de abajo)
 import { OperationRow, SolidOpRow } from './OperationRow';
 // UI-CLEAN-END
@@ -9,10 +11,15 @@ interface LeftPanelProps {
   currentModel: CadModelPreset | null;
   models: CadModelPreset[];
   onSelectModel: (model: CadModelPreset) => void;
-  // SOLIDS (reversible): cuerpos del STEP, una operacion por objeto.
-  solids: SolidInfo[];
-  // UI-CLEAN2 (reversible): malla volumetrica real presente.
-  hasMesh: boolean;
+  // MULTI (reversible): arbol acumulativo — un grupo por archivo importado.
+  // solidsByFile/meshByFile cachean lo ya importado (clave: filename).
+  // Para volver atras: restaurar props solids/hasMesh + bloque single-model.
+  solidsByFile: Record<string, SolidInfo[]>;
+  meshByFile: Record<string, boolean>;
+  // MULTI-VIEW (reversible): ver/ocultar por cuerpo. Para volver atras:
+  // quitar props + ojo de las filas.
+  hiddenBodies: Record<string, boolean>;
+  onToggleBodyVisibility: (key: string) => void;
   boundaryConditions: BoundaryCondition[];
   onToggleCondition: (id: string) => void;
   onEditCondition: (condition: BoundaryCondition) => void;
@@ -29,10 +36,12 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
   currentModel,
   models,
   onSelectModel,
-  // SOLIDS (reversible)
-  solids,
-  // UI-CLEAN2 (reversible)
-  hasMesh,
+  // MULTI (reversible)
+  solidsByFile,
+  meshByFile,
+  // MULTI-VIEW (reversible)
+  hiddenBodies,
+  onToggleBodyVisibility,
   boundaryConditions,
   onToggleCondition,
   onEditCondition,
@@ -56,7 +65,7 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
         <header className="flex items-center justify-between px-space-xs py-1 bg-surface-elevated/70 rounded text-[11px] font-semibold text-text-primary">
           <div className="flex items-center gap-1.5">
             <span className="material-symbols-outlined text-secondary text-[15px]">account_tree</span>
-            <span>Árbol de Operaciones CAD</span>
+            <span>Árbol de Operaciones</span>
           </div>
           <button
             onClick={onOpenImport}
@@ -69,15 +78,11 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
 
         {/* Tree Nodes List */}
         <div className="flex flex-col gap-1 py-1 text-[11px] text-text-secondary">
-          {/* SOLIDS-START (reversible): coordenadas fuera del arbol.
-              El bloque "Sist. Coordenado Global" + planos se elimino;
-              para volver atras restaurarlo desde git. */}
-
-          {/* UI-CLEAN2-START (reversible): solo objetos, sin nodo archivo.
-              El bloque del archivo importado (nombre + picker + visibilidad)
-              se elimino: el arbol lista unicamente solidos y malla.
-              Para volver atras: restaurar desde git. */}
-          {currentModel === null ? (
+          {/* MULTI-FLAT-START (reversible): solo cuerpos, sin distincion de
+              archivo. Todos los solidos y mallas de todos los modelos
+              importados en una lista plana; clic en un cuerpo activa su
+              modelo. Para volver atras: restaurar grupos por archivo (git). */}
+          {models.length === 0 ? (
             <div className="px-2 py-2 rounded border border-dashed border-border-subtle/50 text-[11px] text-text-muted text-center">
               Sin modelo —{' '}
               <button onClick={onOpenImport} className="text-secondary hover:underline font-mono">
@@ -85,49 +90,71 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
               </button>
             </div>
           ) : (
-            <>
-          {/* UI-CLEAN2-END (el cierre del fragmento esta mas abajo) */}
-
-          {/* SOLIDS-START (reversible): una operacion por cuerpo del STEP,
-              con la estetica aprobada (SolidOpRow). Sin cuerpos reales y con
-              modelo local: una fila generica. Para volver atras: borrar. */}
-          {currentModel !== null &&
-            (solids.length > 0 ? (
-              solids.map((s) => <SolidOpRow key={s.solid_id} solid={s} />)
-            ) : (
-              <SolidOpRow
-                solid={{
-                  solid_id: 'solid_0',
-                  index: 0,
-                  name: currentModel.displayName,
-                  volume: currentModel.volumeCm3 * 1000,
-                  faces_count: currentModel.faces,
-                  center: null,
-                }}
-              />
-            ))}
-          {/* SOLIDS-END */}
-          {/* UI-CLEAN2-START (reversible): fila Malla cuando hay malla
-              volumetrica real (snapshot has_mesh). Para volver: borrar. */}
-          {currentModel !== null && hasMesh && (
-            <SolidOpRow
-              icon="grid_on"
-              badge="MESH"
-              details={`${currentModel.elementsTet4.toLocaleString()} tets • ${currentModel.nodes.toLocaleString()} nodos`}
-              solid={{
-                solid_id: 'mesh_tet4',
-                index: -1,
-                name: 'Malla Tet4',
-                volume: null,
-                faces_count: currentModel.elementsTet4,
-                center: null,
-              }}
-            />
+            models.flatMap((m) => {
+              const mSolids = solidsByFile[m.filename];
+              const mHasMesh = meshByFile[m.filename] ?? false;
+              const rows = [];
+              if (mSolids !== undefined && mSolids.length > 0) {
+                for (const s of mSolids) {
+                  const key = bodyKey(m.filename, s.solid_id);
+                  rows.push(
+                    <div key={key} onClick={() => onSelectModel(m)}>
+                      <SolidOpRow
+                        solid={s}
+                        visible={!hiddenBodies[key]}
+                        onToggleVisibility={() => onToggleBodyVisibility(key)}
+                        visibilityTitle={`Mostrar / ocultar ${s.name}`}
+                      />
+                    </div>
+                  );
+                }
+              } else {
+                const key = bodyKey(m.filename, 'solid_0');
+                rows.push(
+                  <div key={key} onClick={() => onSelectModel(m)}>
+                    <SolidOpRow
+                      solid={{
+                        solid_id: 'solid_0',
+                        index: 0,
+                        name: m.displayName,
+                        volume: m.volumeCm3 * 1000,
+                        faces_count: m.faces,
+                        center: null,
+                      }}
+                      visible={!hiddenBodies[key]}
+                      onToggleVisibility={() => onToggleBodyVisibility(key)}
+                      visibilityTitle={`Mostrar / ocultar ${m.displayName}`}
+                    />
+                  </div>
+                );
+              }
+              if (mHasMesh) {
+                const key = bodyKey(m.filename, 'mesh_tet4');
+                rows.push(
+                  <div key={key} onClick={() => onSelectModel(m)}>
+                    <SolidOpRow
+                      icon="grid_on"
+                      badge="MESH"
+                      details={`${m.elementsTet4.toLocaleString()} tets • ${m.nodes.toLocaleString()} nodos`}
+                      solid={{
+                        solid_id: 'mesh_tet4',
+                        index: -1,
+                        name: 'Malla Tet4',
+                        volume: null,
+                        faces_count: m.elementsTet4,
+                        center: null,
+                      }}
+                      visible={!hiddenBodies[key]}
+                      onToggleVisibility={() => onToggleBodyVisibility(key)}
+                      visibilityTitle="Mostrar / ocultar malla"
+                    />
+                  </div>
+                );
+              }
+              return rows;
+            })
           )}
-          {/* UI-CLEAN2-END */}
-            </>
-          )}
-          {/* UI-CLEAN2-END (cierre: solo objetos, sin nodo archivo) */}
+          {/* MULTI-FLAT-END */}
 
           {/* Feature Conditions List */}
           {/* UI-CLEAN-OPROW-START (reversible): lista extraida a OperationRow

@@ -15,18 +15,24 @@ set "PYTHON_CMD="
 :: 1. PYTHON 3.10+
 :: ----------------------------------------------------------------------
 echo [1/6] Python...
-if exist "C:\Users\Pets48_2\Music\Github\Onshape\Topologia_Optimizada\.venv\Scripts\python.exe" (
-    set "PYTHON_CMD=C:\Users\Pets48_2\Music\Github\Onshape\Topologia_Optimizada\.venv\Scripts\python.exe"
+:: SELF-CONTAINED: primero el .venv local del proyecto (backend\.venv, .venv),
+:: luego el PATH. Sin rutas de otros PCs.
+if exist "%~dp0backend\.venv\Scripts\python.exe" (
+    set "PYTHON_CMD=%~dp0backend\.venv\Scripts\python.exe"
 ) else (
-    where python >nul 2>nul
-    if not errorlevel 1 set "PYTHON_CMD=python"
+    if exist "%~dp0.venv\Scripts\python.exe" (
+        set "PYTHON_CMD=%~dp0.venv\Scripts\python.exe"
+    ) else (
+        where python >nul 2>nul
+        if not errorlevel 1 set "PYTHON_CMD=python"
+    )
 )
 if not defined PYTHON_CMD (
-    echo   [FALTA] Python 3.10+ no encontrado en PATH ni en el .venv del core.
+    echo   [FALTA] Python 3.10+ no encontrado: ni backend\.venv, ni .venv, ni PATH.
     echo   INSTALAR:
     echo     1. Descarga Python 3.11 64-bit desde https://www.python.org/downloads/
     echo     2. En el instalador marca "Add python.exe to PATH" y reabre esta ventana.
-    echo     Alternativa: crea el .venv del core en Topologia_Optimizada.
+    echo     Opcional aislado: python -m venv backend\.venv ^& backend\.venv\Scripts\pip install -r backend\requirements.txt
     set "MISSING=1"
     goto :report
 )
@@ -56,7 +62,7 @@ if errorlevel 1 (
 echo   OK: pip disponible.
 
 :: ----------------------------------------------------------------------
-:: 3. PAQUETES PYTHON OBLIGATORIOS (pywebview, numpy, scipy)
+:: 3. PAQUETES PYTHON OBLIGATORIOS (core vendorado: QtCore, VTK, calculo)
 :: ----------------------------------------------------------------------
 echo.
 echo [3/6] Paquetes Python obligatorios...
@@ -67,6 +73,11 @@ if errorlevel 1 set "PY_MISSING=!PY_MISSING! pywebview"
 if errorlevel 1 set "PY_MISSING=!PY_MISSING! numpy"
 "%PYTHON_CMD%" -c "import scipy" >nul 2>nul
 if errorlevel 1 set "PY_MISSING=!PY_MISSING! scipy"
+:: Pesados (OCC/VTK/Qt): "pip show" en vez de "import" para chequeo instantaneo.
+"%PYTHON_CMD%" -m pip show PySide6 >nul 2>nul
+if errorlevel 1 set "PY_MISSING=!PY_MISSING! PySide6"
+"%PYTHON_CMD%" -m pip show vtk >nul 2>nul
+if errorlevel 1 set "PY_MISSING=!PY_MISSING! vtk"
 if defined PY_MISSING (
     echo   [FALTA] Paquetes Python no instalados para %PYTHON_CMD%:!PY_MISSING!
     echo   INSTALAR - elige una opcion:
@@ -75,7 +86,7 @@ if defined PY_MISSING (
     set "MISSING=1"
     goto :report
 )
-echo   OK: pywebview + numpy + scipy.
+echo   OK: pywebview + numpy + scipy + PySide6 + vtk.
 
 :: ----------------------------------------------------------------------
 :: 4. PAQUETES PYTHON OPCIONALES (solo importar STEP / mallar: cadquery, gmsh)

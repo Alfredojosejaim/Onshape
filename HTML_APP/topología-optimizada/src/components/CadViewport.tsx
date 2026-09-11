@@ -12,6 +12,19 @@ import {
 } from '../lib/navigation';
 import { backend } from '../lib/bridge';
 import type { RealSurface } from '../lib/realdata';
+// FACES-START (reversible: quitar import + props selectedFaces/onToggleFace/
+// facePickEnabled + refs/efectos marcados FACES)
+// Copia del picking del desktop: raycast -> triangulo -> cara B-Rep via
+// rangos face_triangles (viewport_3d.resolve_pick_entity + scene), toggle
+// como software_viewport y resaltado naranja como highlight.py.
+import { rangesCover, solidTriangles, triangleToFace } from '../lib/faces';
+// MULTI-VIEW-START (reversible: quitar import + props surfaces/bodies/
+// activeFilename/hiddenBodies/meshByFile + efecto multi-cuerpo).
+// Todos los cuerpos importados en un solo viewport, con ver/ocultar por
+// cuerpo (split de la malla por solido via face_indices del core).
+import type { ViewBody } from '../types';
+// MULTI-VIEW-END
+// FACES-END
 // NAV-VIEW-END
 
 interface CadViewportProps {
@@ -27,8 +40,17 @@ interface CadViewportProps {
   onUpdateCoords: (coords: { x: number; y: number; z: number }) => void;
   resetViewTrigger: number;
   selectedViewTrigger: { view: 'iso' | 'top' | 'front' | 'right'; count: number };
-  // NAV-VIEW (reversible): superficie real del STEP (null = escena vacia).
-  surface: RealSurface | null;
+  // MULTI-VIEW (reversible): todas las superficies + cuerpos del viewport
+  // unico. null/vacio = escena vacia. Para volver atras: prop surface unica.
+  surfaces: Record<string, RealSurface>;
+  bodies: ViewBody[];
+  activeFilename: string | null;
+  hiddenBodies: Record<string, boolean>;
+  meshByFile: Record<string, boolean>;
+  // FACES (reversible): caras seleccionadas + picking por cara.
+  selectedFaces: number[];
+  onToggleFace: (faceIndex: number) => void;
+  facePickEnabled: boolean;
 }
 
 export const CadViewport: React.FC<CadViewportProps> = ({
@@ -44,8 +66,16 @@ export const CadViewport: React.FC<CadViewportProps> = ({
   onUpdateCoords,
   resetViewTrigger,
   selectedViewTrigger,
-  // NAV-VIEW (reversible)
-  surface,
+  // MULTI-VIEW (reversible)
+  surfaces,
+  bodies,
+  activeFilename,
+  hiddenBodies,
+  meshByFile,
+  // FACES (reversible)
+  selectedFaces,
+  onToggleFace,
+  facePickEnabled,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -56,6 +86,10 @@ export const CadViewport: React.FC<CadViewportProps> = ({
   const triadSceneRef = useRef<THREE.Scene | null>(null);
   const triadCameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const clipPlaneRef = useRef<THREE.Plane | null>(null);
+  // MULTI-VIEW (reversible): mallas por cuerpo (raycast solo en el activo).
+  // userData: {key, filename, triMap: nº triangulo global por triangulo local}.
+  const bodyMeshesRef = useRef<THREE.Mesh[]>([]);
+  const highlightRef = useRef<THREE.Mesh | null>(null);
 
   const [isOrbiting, setIsOrbiting] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
@@ -101,16 +135,27 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     if (backend.hasBridge()) void backend.setNavProfile(name).catch(() => undefined);
   };
 
-  const fitToSurface = useCallback(() => {
+  // MULTI-VIEW (reversible): encuadra TODAS las superficies visibles del
+  // viewport unico (antes: solo la del modelo activo). Para volver atras:
+  // restaurar fitToSurface de una superficie.
+  const fitToAll = useCallback(() => {
     if (!cameraRef.current) return;
-    if (surface && surface.positions.length >= 9) {
-      const box = new THREE.Box3();
-      const v = new THREE.Vector3();
-      for (let i = 0; i + 2 < surface.positions.length; i += 3) {
+    const box = new THREE.Box3();
+    const v = new THREE.Vector3();
+    let found = false;
+    for (const [filename, surf] of Object.entries(surfaces) as [string, RealSurface][]) {
+      const anyVisible = bodies.some(
+        (b) => b.filename === filename && !hiddenBodies[b.key],
+      );
+      if (!anyVisible || surf.positions.length < 9) continue;
+      for (let i = 0; i + 2 < surf.positions.length; i += 3) {
         // ORIENT (reversible): misma rotacion Z-up->Y-up que el render.
-        v.set(surface.positions[i], surface.positions[i + 2], -surface.positions[i + 1]);
+        v.set(surf.positions[i], surf.positions[i + 2], -surf.positions[i + 1]);
         box.expandByPoint(v);
       }
+      found = true;
+    }
+    if (found) {
       const sphere = box.getBoundingSphere(new THREE.Sphere());
       fitCamera(cameraRef.current, targetRef.current, sphere.center, Math.max(sphere.radius, 1e-6));
     } else {
@@ -119,7 +164,7 @@ export const CadViewport: React.FC<CadViewportProps> = ({
       cameraRef.current.up.set(0, 1, 0);
       cameraRef.current.lookAt(targetRef.current);
     }
-  }, [surface]);
+  }, [surfaces, bodies, hiddenBodies]);
 
   const applyNamedView = useCallback(
     (view: 'iso' | 'top' | 'front' | 'right') => {
@@ -139,10 +184,10 @@ export const CadViewport: React.FC<CadViewportProps> = ({
   // React to reset view trigger
   useEffect(() => {
     if (resetViewTrigger > 0) {
-      if (surface) fitToSurface();
+      if (Object.keys(surfaces).length > 0) fitToAll();
       else applyNamedView('iso');
     }
-  }, [resetViewTrigger, applyNamedView, fitToSurface, surface]);
+  }, [resetViewTrigger, applyNamedView, fitToAll, surfaces]);
   // NAV-VIEW-END
 
   // Setup Three.js Scene and Viewport
@@ -248,9 +293,10 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     };
   }, []);
 
-  // NAV-VIEW-START (reversible): render real del STEP importado.
-  // Teselacion del core (vertices xyz + indices) -> BufferGeometry three.js.
-  // Sin surface: escena vacia. Para volver atras: devolver el stub vacio.
+  // MULTI-VIEW-START (reversible): un mesh por cuerpo de cada archivo en el
+  // viewport unico. Split por solido via face_indices (solidTriangles); sin
+  // split posible, el archivo va entero. userData.triMap: triangulo global
+  // por triangulo local (picking). Para volver atras: efecto single-surface.
   useEffect(() => {
     if (!modelGroupRef.current) return;
     const modelGroup = modelGroupRef.current;
@@ -262,46 +308,117 @@ export const CadViewport: React.FC<CadViewportProps> = ({
       if ((obj as THREE.Mesh).geometry) {
         ((obj as THREE.Mesh).geometry as THREE.BufferGeometry).dispose();
       }
+      if ((obj as THREE.LineSegments).geometry) {
+        ((obj as THREE.LineSegments).geometry as THREE.BufferGeometry).dispose();
+      }
     }
+    bodyMeshesRef.current = [];
+    highlightRef.current = null;
 
-    if (!isModelVisible || !surface) return;
+    if (!isModelVisible) return;
 
-    const positions = new Float32Array(surface.positions);
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geo.setIndex(surface.indices);
-    // ORIENT (reversible): el core CAD es Z-up (como la antecesora, viewUp Z);
-    // three.js es Y-up: rotar -90° en X para ver la pieza en su orientacion.
-    // Para volver atras: quitar esta linea + el mapeo en fitToSurface.
-    geo.rotateX(-Math.PI / 2);
-    geo.computeVertexNormals();
+    const baseColor = new THREE.Color(selectedMaterial.color);
+    for (const body of bodies) {
+      const surf = surfaces[body.filename];
+      if (!surf || surf.positions.length < 9) continue;
+      const tris = solidTriangles(body.faceIndices, surf.ranges, surf.numTriangles);
+      // triMap: triangulo global por triangulo local (identidad si va entero).
+      // Los vertices salen de surf.indices (el teselado no es identidad).
+      const useTris = tris ?? Array.from({ length: surf.numTriangles }, (_, k) => k);
+      const triMap: number[] = useTris;
+      const subIndex: number[] = [];
+      for (const t of useTris) subIndex.push(surf.indices[t * 3], surf.indices[t * 3 + 1], surf.indices[t * 3 + 2]);
+      const positions = new Float32Array(surf.positions);
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geo.setIndex(subIndex);
+      // ORIENT (reversible): el core CAD es Z-up; three.js es Y-up.
+      geo.rotateX(-Math.PI / 2);
+      geo.computeVertexNormals();
 
-    const mat = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(selectedMaterial.color),
-      metalness: 0.55,
-      roughness: 0.4,
-      side: THREE.DoubleSide,
-    });
-    const mesh = new THREE.Mesh(geo, mat);
-    modelGroup.add(mesh);
-
-    if (showMesh) {
-      const wireGeo = new THREE.WireframeGeometry(geo);
-      const wireMat = new THREE.LineBasicMaterial({
-        color: 0x7bd0ff,
-        transparent: true,
-        opacity: 0.35,
+      const isActive = body.filename === activeFilename;
+      const mat = new THREE.MeshStandardMaterial({
+        color: isActive ? baseColor : baseColor.clone().multiplyScalar(0.75),
+        metalness: 0.55,
+        roughness: 0.4,
+        side: THREE.DoubleSide,
       });
-      modelGroup.add(new THREE.LineSegments(wireGeo, wireMat));
+      if (showSection && clipPlaneRef.current) {
+        mat.clippingPlanes = [clipPlaneRef.current];
+      }
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.visible = !hiddenBodies[body.key];
+      mesh.userData = { key: body.key, filename: body.filename, triMap };
+      modelGroup.add(mesh);
+      bodyMeshesRef.current.push(mesh);
+
+      // Fila MALLA del arbol: wireframe del archivo (solo con malla real).
+      const meshKey = `${body.filename}::mesh_tet4`;
+      if (showMesh && meshByFile[body.filename] && !hiddenBodies[meshKey]) {
+        const wireGeo = new THREE.WireframeGeometry(geo);
+        const wireMat = new THREE.LineBasicMaterial({
+          color: 0x7bd0ff,
+          transparent: true,
+          opacity: 0.35,
+        });
+        const wire = new THREE.LineSegments(wireGeo, wireMat);
+        wire.visible = mesh.visible;
+        modelGroup.add(wire);
+      }
     }
 
-    if (showSection && clipPlaneRef.current) {
-      mat.clippingPlanes = [clipPlaneRef.current];
-    }
+    fitToAll();
+  }, [surfaces, bodies, activeFilename, hiddenBodies, meshByFile, isModelVisible, selectedMaterial, showMesh, showSection, fitToAll]);
+  // MULTI-VIEW-END
 
-    fitToSurface();
-  }, [surface, isModelVisible, selectedMaterial, showMesh, showSection, fitToSurface]);
-  // NAV-VIEW-END
+  // FACES-START (reversible): overlay naranja con las caras seleccionadas
+  // del modelo ACTIVO. Para volver atras: borrar el efecto.
+  useEffect(() => {
+    const group = modelGroupRef.current;
+    const activeSurf = activeFilename ? surfaces[activeFilename] : undefined;
+    if (!group || !activeSurf) return;
+    if (highlightRef.current) {
+      group.remove(highlightRef.current);
+      highlightRef.current.geometry.dispose();
+      highlightRef.current = null;
+    }
+    if (selectedFaces.length === 0 || !rangesCover(activeSurf.ranges, activeSurf.numTriangles)) return;
+    const wanted = new Set(selectedFaces);
+    const sub: number[] = [];
+    for (const r of activeSurf.ranges) {
+      if (!wanted.has(r.face_index)) continue;
+      for (let t = r.start; t < r.start + r.count; t += 1) {
+        sub.push(activeSurf.indices[t * 3], activeSurf.indices[t * 3 + 1], activeSurf.indices[t * 3 + 2]);
+      }
+    }
+    if (sub.length === 0) return;
+    const positions = new Float32Array(activeSurf.positions);
+    const hgeo = new THREE.BufferGeometry();
+    hgeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    hgeo.setIndex(sub);
+    hgeo.rotateX(-Math.PI / 2);
+    const hmat = new THREE.MeshBasicMaterial({
+      color: 0xffa500, // naranja del highlight del desktop
+      transparent: true,
+      opacity: 0.55,
+      side: THREE.DoubleSide,
+      depthTest: true,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+    });
+    const overlay = new THREE.Mesh(hgeo, hmat);
+    overlay.raycast = () => undefined; // el overlay no intercepta picks
+    group.add(overlay);
+    highlightRef.current = overlay;
+    return () => {
+      if (highlightRef.current) {
+        group.remove(highlightRef.current);
+        highlightRef.current.geometry.dispose();
+        highlightRef.current = null;
+      }
+    };
+  }, [surfaces, activeFilename, selectedFaces]);
+  // FACES-END
 
   // Handle Mouse / Pointer Events for Orbiting, Panning, and Coordinate Inspection
   // (UI-CLEAN: aqui habia ~200 lineas de geometria demo + glifos + el
@@ -312,6 +429,39 @@ export const CadViewport: React.FC<CadViewportProps> = ({
   // (arriba acerca); doble-clic y f/n/. = fit. Para volver atras: restaurar
   // handlers viejos (ver git).
   const dragState = useRef({ dragging: false, lastX: 0, lastY: 0 });
+  // FACES + MULTI-VIEW (reversible): pick en los cuerpos VISIBLES del modelo
+  // ACTIVO (raycast -> triangulo local -> global via triMap -> cara B-Rep).
+  const downPosRef = useRef<{ x: number; y: number; button: number } | null>(null);
+  const pickFace = useCallback(
+    (clientX: number, clientY: number) => {
+      const container = containerRef.current;
+      const camera = cameraRef.current;
+      const activeSurf = activeFilename ? surfaces[activeFilename] : undefined;
+      if (!container || !camera || !activeSurf) return;
+      if (!rangesCover(activeSurf.ranges, activeSurf.numTriangles)) return;
+      const targets = bodyMeshesRef.current.filter(
+        (m) => m.visible && m.userData.filename === activeFilename,
+      );
+      if (targets.length === 0) return;
+      const rect = container.getBoundingClientRect();
+      const ndc = new THREE.Vector2(
+        ((clientX - rect.left) / rect.width) * 2 - 1,
+        -(((clientY - rect.top) / rect.height) * 2 - 1),
+      );
+      const ray = new THREE.Raycaster();
+      ray.setFromCamera(ndc, camera);
+      const hits = ray.intersectObjects(targets, false);
+      if (hits.length === 0) return; // vacio: conserva la seleccion
+      const hit = hits[0];
+      const triMap = (hit.object.userData.triMap ?? []) as number[];
+      const localTri = hit.faceIndex;
+      if (localTri === undefined || localTri >= triMap.length) return;
+      const face = triangleToFace(triMap[localTri], activeSurf.ranges);
+      if (face === null) return; // hueco sin cara: conserva la seleccion
+      onToggleFace(face);
+    },
+    [surfaces, activeFilename, onToggleFace],
+  );
 
   const resolveDragAction = (button: number, shift: boolean): NavAction => {
     const p = NAV_PROFILES[navProfile];
@@ -327,6 +477,8 @@ export const CadViewport: React.FC<CadViewportProps> = ({
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     e.preventDefault();
     dragState.current = { dragging: true, lastX: e.clientX, lastY: e.clientY };
+    // FACES (reversible): origen del clic para distinguir pick de arrastre.
+    downPosRef.current = { x: e.clientX, y: e.clientY, button: e.button };
     dragActionRef.current = resolveDragAction(e.button, e.shiftKey);
     setIsOrbiting(dragActionRef.current === 'orbit');
     setIsPanning(dragActionRef.current === 'pan');
@@ -359,7 +511,21 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     }
   };
 
-  const handleMouseUp = () => {
+  const handleMouseUp = (e: React.MouseEvent<HTMLDivElement>) => {
+    // FACES-START (reversible): pick por cara con boton izquierdo sin arrastre
+    // (como el click del desktop: resolve_pick_entity). Solo con herramienta
+    // de entidad y rangos completos; clic en vacio/hueco conserva la seleccion.
+    const down = downPosRef.current;
+    downPosRef.current = null;
+    if (
+      down &&
+      down.button === 0 &&
+      facePickEnabled &&
+      Math.hypot(e.clientX - down.x, e.clientY - down.y) < 5
+    ) {
+      pickFace(e.clientX, e.clientY);
+    }
+    // FACES-END
     dragState.current.dragging = false;
     dragActionRef.current = 'none';
     setIsOrbiting(false);
@@ -374,12 +540,12 @@ export const CadViewport: React.FC<CadViewportProps> = ({
   };
 
   const handleDoubleClick = () => {
-    fitToSurface();
+    fitToAll();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const k = e.key.toLowerCase();
-    if (NAV_PROFILES[navProfile].fitKeys.includes(k)) fitToSurface();
+    if (NAV_PROFILES[navProfile].fitKeys.includes(k)) fitToAll();
   };
   // NAV-VIEW-END
 
@@ -493,7 +659,7 @@ export const CadViewport: React.FC<CadViewportProps> = ({
             <span
               onClick={(e) => {
                 e.stopPropagation();
-                fitToSurface();
+                fitToAll();
               }}
               className="hover:text-secondary cursor-pointer"
             >
@@ -505,7 +671,7 @@ export const CadViewport: React.FC<CadViewportProps> = ({
         {/* Camera Tool Floating Stack */}
         <div className="flex flex-col gap-1 bg-surface-elevated/90 backdrop-blur-md p-1 rounded-lg shadow-md border border-border-subtle/50">
           <button
-            onClick={() => fitToSurface()}
+            onClick={() => fitToAll()}
             className="w-7 h-7 flex items-center justify-center rounded hover:bg-surface-container-high text-text-secondary hover:text-text-primary transition-colors"
             title="Ajustar Zoom (Fit)"
             type="button"
@@ -522,8 +688,8 @@ export const CadViewport: React.FC<CadViewportProps> = ({
           </button>
           <button
             onClick={() => {
-              // NAV-VIEW (reversible): centrar = fit a la pieza real.
-              fitToSurface();
+              // MULTI-VIEW (reversible): centrar = fit a todos los cuerpos.
+              fitToAll();
             }}
             className="w-7 h-7 flex items-center justify-center rounded hover:bg-surface-container-high text-text-secondary hover:text-text-primary transition-colors"
             title="Centrar Modelo"
@@ -595,6 +761,19 @@ export const CadViewport: React.FC<CadViewportProps> = ({
           perfil se movio al stack de camara. Para volver atras: restaurar
           este bloque desde git. */}
       <div className="absolute top-space-sm left-space-sm z-20 flex items-center gap-2 pointer-events-none">
+        {/* FACES-START (reversible): estado de la seleccion de caras. */}
+        {facePickEnabled && activeFilename && surfaces[activeFilename] && (
+          <span className="px-2 py-1 rounded-lg bg-surface-elevated/85 backdrop-blur-md border border-border-subtle/40 font-mono text-[10px] text-text-secondary">
+            {(() => {
+              const surf = surfaces[activeFilename as string];
+              if (!rangesCover(surf.ranges, surf.numTriangles)) return 'Caras no disponibles (teselado diezmado)';
+              return selectedFaces.length > 0
+                ? `Caras: ${[...selectedFaces].sort((a, b) => a - b).map((f) => `face_${f}`).join(', ')}`
+                : `Clic en una cara (${surf.faces.length} disponibles)`;
+            })()}
+          </span>
+        )}
+        {/* FACES-END */}
       </div>
       {/* UI-CLEAN2-END */}
     </main>

@@ -9,6 +9,7 @@ import {
   Material,
   OptimizationState,
 } from '../types';
+import type { FaceMeta, FaceRange } from './faces';
 
 const PALETTE = ['#89ceff', '#94a3b8', '#cbd5e1', '#f59e0b', '#7bd0ff'];
 
@@ -171,6 +172,10 @@ export function mapSolids(apiSolids: unknown): SolidInfo[] {
       volume: num(r.volume) ?? null,
       faces_count: Math.round(num(r.faces_count) ?? 0),
       center: Array.isArray(r.center) ? (r.center as [number, number, number]) : null,
+      // MULTI-VIEW (reversible): caras globales del solido para el split.
+      face_indices: Array.isArray(r.face_indices)
+        ? (r.face_indices as unknown[]).map((x) => Math.round(num(x) ?? -1)).filter((x) => x >= 0)
+        : null,
     });
   });
   return out;
@@ -187,6 +192,11 @@ export interface RealSurface {
   indices: number[]; // a b c a b c ...
   numVertices: number;
   numTriangles: number;
+  // FACES (reversible): metadatos B-Rep + rangos triangulo->cara del core
+  // (teselacion: faces=[{face_index,id,area,center,normal}], face_triangles=
+  // [{face_index,start,count}]). Sin ellos no hay picking por cara.
+  faces: FaceMeta[];
+  ranges: FaceRange[];
 }
 
 function decodeCleanArray(v: unknown): number[] {
@@ -214,6 +224,57 @@ export function mapMeshPreview(mesh: unknown): RealSurface | null {
     indices: indices.slice(0, numTriangles * 3),
     numVertices,
     numTriangles,
+    // FACES (reversible): caras B-Rep + rangos para picking (ver faces.ts).
+    faces: decodeFaces(m.faces),
+    ranges: decodeRanges(m.face_triangles),
   };
 }
+
+// FACES-START (reversible): decodifica faces/face_triangles del teselado.
+// El backend los envia via _clean (listas de dicts con tipos JSON).
+function numOrNull(v: unknown): number | null {
+  const n = num(v);
+  return n === undefined ? null : n;
+}
+
+function vec3(v: unknown): [number, number, number] | null {
+  if (!Array.isArray(v) || v.length < 3) return null;
+  const x = num(v[0]);
+  const y = num(v[1]);
+  const z = num(v[2]);
+  return x === undefined || y === undefined || z === undefined ? null : [x, y, z];
+}
+
+function decodeFaces(v: unknown): FaceMeta[] {
+  if (!Array.isArray(v)) return [];
+  const out: FaceMeta[] = [];
+  for (const f of v) {
+    const r = (f ?? {}) as Record<string, unknown>;
+    const idx = num(r.face_index);
+    if (idx === undefined) continue;
+    out.push({
+      face_index: Math.round(idx),
+      id: typeof r.id === 'string' ? r.id : `face_${Math.round(idx)}`,
+      area: numOrNull(r.area),
+      center: vec3(r.center),
+      normal: vec3(r.normal),
+    });
+  }
+  return out;
+}
+
+function decodeRanges(v: unknown): FaceRange[] {
+  if (!Array.isArray(v)) return [];
+  const out: FaceRange[] = [];
+  for (const r0 of v) {
+    const r = (r0 ?? {}) as Record<string, unknown>;
+    const fi = num(r.face_index);
+    const start = num(r.start);
+    const count = num(r.count);
+    if (fi === undefined || start === undefined || count === undefined) continue;
+    out.push({ face_index: Math.round(fi), start: Math.round(start), count: Math.round(count) });
+  }
+  return out;
+}
+// FACES-END
 // NAV-VIEW-END

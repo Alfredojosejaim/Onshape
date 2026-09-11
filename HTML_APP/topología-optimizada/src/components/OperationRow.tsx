@@ -129,6 +129,11 @@ export interface SolidOpRowProps {
   icon?: string;
   badge?: string;
   details?: string;
+  // MULTI-VIEW (reversible): ojo ver/ocultar por cuerpo. Para volver atras:
+  // quitar props + boton.
+  visible?: boolean;
+  onToggleVisibility?: () => void;
+  visibilityTitle?: string;
 }
 
 export const SolidOpRow: React.FC<SolidOpRowProps> = ({
@@ -136,13 +141,16 @@ export const SolidOpRow: React.FC<SolidOpRowProps> = ({
   icon = 'deployed_code',
   badge = 'SOLID',
   details,
+  visible = true,
+  onToggleVisibility,
+  visibilityTitle = 'Mostrar / ocultar cuerpo',
 }) => {
   const volCm3 =
     typeof solid.volume === 'number' && Number.isFinite(solid.volume)
       ? (solid.volume / 1000).toFixed(1)
       : '—';
   return (
-    <div className="flex items-center justify-between px-2 py-1.5 rounded cursor-pointer transition-colors border border-border-subtle/20 bg-surface-container-high/40 hover:bg-surface-elevated">
+    <div className={`flex items-center justify-between px-2 py-1.5 rounded cursor-pointer transition-colors border border-border-subtle/20 bg-surface-container-high/40 hover:bg-surface-elevated ${visible ? '' : 'opacity-50'}`}>
       <div className="flex items-center gap-2">
         <div className="w-5 h-5 rounded flex items-center justify-center bg-secondary/10">
           <span className="material-symbols-outlined text-[14px] text-secondary">
@@ -158,6 +166,22 @@ export const SolidOpRow: React.FC<SolidOpRowProps> = ({
       </div>
 
       <div className="flex items-center gap-1.5">
+        {/* MULTI-VIEW (reversible): ver/ocultar cuerpo en el viewport unico. */}
+        {onToggleVisibility && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleVisibility();
+            }}
+            className={`p-0.5 transition-colors ${visible ? 'text-text-secondary hover:text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}
+            title={visibilityTitle}
+          >
+            <span className="material-symbols-outlined text-[15px]">
+              {visible ? 'visibility' : 'visibility_off'}
+            </span>
+          </button>
+        )}
         <span className="font-mono text-[9px] px-1.5 py-0.5 rounded bg-secondary/15 text-secondary font-semibold">
           {badge}
         </span>

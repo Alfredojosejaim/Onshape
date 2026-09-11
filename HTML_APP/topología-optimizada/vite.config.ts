@@ -79,5 +79,19 @@ export default defineConfig(() => {
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },
+    build: {
+      // CHUNK-SPLIT (reversible): three.js (~600KB) y el resto de vendors
+      // van a chunks separados en vez de un unico bundle de 843KB.
+      // Para volver atras: borrar este bloque build completo.
+      chunkSizeWarningLimit: 1000,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'vendor-three': ['three'],
+            'vendor-react': ['react', 'react-dom'],
+          },
+        },
+      },
+    },
   };
 });

@@ -31,6 +31,9 @@ export interface BoundaryCondition {
   value?: [number, number, number]; // [Fx, Fy, Fz] in N for loads
   magnitude?: number;
   faces: number;
+  // FACES (reversible): caras B-Rep seleccionadas en el viewport (face_index
+  // del core). Para volver atras: borrar + uso en App/CadViewport.
+  faceIndices?: number[];
   active: boolean;
   statusTag?: string;
   colorTag?: string;
@@ -87,4 +90,16 @@ export interface SolidInfo {
   volume?: number | null; // mm3 (core) — puede venir null
   faces_count: number;
   center?: [number, number, number] | null;
+  // MULTI-VIEW (reversible): face_index globales del solido (para separar la
+  // malla por cuerpo). Para volver atras: borrar + uso en realdata/App.
+  face_indices?: number[] | null;
+}
+
+// MULTI-VIEW (reversible): cuerpo visible en el viewport unico.
+// faceIndices null = archivo completo (sin split por solido).
+export interface ViewBody {
+  key: string; // `${filename}::${solid_id}`
+  filename: string;
+  solidId: string;
+  faceIndices: number[] | null;
 }

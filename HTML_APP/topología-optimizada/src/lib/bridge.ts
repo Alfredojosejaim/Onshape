@@ -57,6 +57,11 @@ export const backend = {
     call('importStepBytes', JSON.stringify(params) as never),
   // SOLIDS (reversible): cuerpos del STEP, uno por objeto.
   getSolids: () => call<{ solids: unknown[] }>('getSolids'),
+  // MULTI (reversible): libreria acumulativa de modelos importados.
+  listLibrary: () =>
+    call<{ library: { key: string; filename: string; displayName: string; active: boolean }[]; activeKey: string | null }>('listLibrary'),
+  switchModel: (key: string) => call('switchModel', key as never),
+  removeModel: (key: string) => call('removeModel', key as never),
   listFixtures: () =>
     call<{ fixtures: { filename: string; path: string }[] }>('listFixtures'),
   generateMesh: (params = {}) =>

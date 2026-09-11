@@ -13,6 +13,7 @@ import {
   Material,
   OptimizationState,
   SimpParameters,
+  ViewBody,
 } from './types';import { MATERIALS } from './data/materials';
 import { CAD_PRESETS, INITIAL_CONDITIONS } from './data/models';
 import { Header } from './components/Header';
@@ -20,7 +21,12 @@ import { SecondaryNav } from './components/SecondaryNav';
 import { Toolbar } from './components/Toolbar';
 import { LeftPanel } from './components/LeftPanel';
 import { RightPanel } from './components/RightPanel';
-import { CadViewport } from './components/CadViewport';
+// CHUNK-SPLIT (reversible): el viewport arrastra three.js (~600KB);
+// con lazy() va a un chunk async separado en vez del bundle inicial.
+// Para volver atras: restaurar `import { CadViewport } from './components/CadViewport';`
+const CadViewport = React.lazy(() =>
+  import('./components/CadViewport').then((m) => ({ default: m.CadViewport }))
+);
 import { Footer } from './components/Footer';
 import { Modals } from './components/Modals';
 import { backend } from './lib/bridge';
@@ -38,6 +44,17 @@ import {
   prettyName,
   type ApiSnapshot,
 } from './lib/realdata';
+// FACES-START (reversible: quitar import + estado faceSelByFile + handleToggleFace
+// + prop al viewport). Copia del flujo del desktop: viewport -> CadEntityRef/
+// SelectionSet -> condicion reutilizable (core/conditions.py) via createCondition.
+import {
+  buildConditionJson,
+  bodyKey,
+  facesLabel,
+  toggleFace,
+  type FaceTool as FaceCondTool,
+} from './lib/faces';
+// FACES-END
 // SOLIDS-START (reversible): cuerpos del STEP, uno por objeto.
 import { mapSolids } from './lib/realdata';
 import type { SolidInfo } from './types';
@@ -66,6 +83,64 @@ export default function App() {
   // Boundary Conditions
   const [boundaryConditions, setBoundaryConditions] = useState<BoundaryCondition[]>(INITIAL_CONDITIONS);
   const [editingCondition, setEditingCondition] = useState<BoundaryCondition | null>(null);
+  // FACES-START (reversible): caras B-Rep seleccionadas por archivo (face_index
+  // del core). Al activar modelo se restaura su seleccion, como el arbol.
+  const [faceSelByFile, setFaceSelByFile] = useState<Record<string, number[]>>({});
+  const selectedFaces = currentModel ? faceSelByFile[currentModel.filename] ?? [] : [];
+
+  const handleToggleFace = (faceIndex: number) => {
+    const file = stateRef.current.currentModel?.filename;
+    if (!file) return;
+    const prevSel = faceSelByFile[file] ?? [];
+    const next = toggleFace(prevSel, faceIndex);
+    setFaceSelByFile((p) => ({ ...p, [file]: next }));
+    // Asigna la seleccion a la condicion de la herramienta activa
+    // (carga/fijacion/preservada/keepout). Con 'seleccionar' solo resalta.
+    const tool = stateRef.current.activeTool;
+    if (tool !== 'carga' && tool !== 'fijacion' && tool !== 'preservada' && tool !== 'keepout') return;
+    const bcId = `faces_${tool}`;
+    setBoundaryConditions((prev) => {
+      const i = prev.findIndex((c) => c.id === bcId);
+      const base: BoundaryCondition = prev[i] ?? {
+        id: bcId,
+        name: tool === 'carga' ? 'Carga en caras' : tool === 'fijacion' ? 'Fijación en caras' : tool === 'preservada' ? 'Región preservada' : 'Zona keep-out',
+        type: tool,
+        details: '',
+        faces: 0,
+        active: true,
+      };
+      const updated: BoundaryCondition = {
+        ...base,
+        details: facesLabel(next),
+        faces: next.length,
+        faceIndices: next,
+        active: next.length > 0,
+      };
+      if (i >= 0) {
+        const copy = [...prev];
+        copy[i] = updated;
+        return copy;
+      }
+      return [...prev, updated];
+    });
+    // Condicion reutilizable en el backend (mismo id = sobrescribe, no duplica).
+    // keepout queda local: en el core la obstruccion referencia CUERPOS, no caras.
+    if (backend.hasBridge() && tool !== 'keepout' && next.length > 0) {
+      const cur = stateRef.current.currentModel;
+      const mag = stateRef.current.boundaryConditions.find((c) => c.type === 'carga')?.magnitude ?? null;
+      const condJson = buildConditionJson(
+        tool as FaceCondTool,
+        tool === 'carga' ? 'Carga en caras' : tool === 'fijacion' ? 'Fijación en caras' : 'Región preservada',
+        next,
+        cur?.filename ?? null,
+        surface?.faces ?? undefined,
+        tool === 'carga' ? mag : null,
+      );
+      (condJson as Record<string, unknown>).id = bcId;
+      void backend.createCondition(JSON.stringify(condJson)).catch(() => undefined);
+    }
+  };
+  // FACES-END
 
   // SIMP Topology Optimization Parameters
   const [simpParams, setSimpParams] = useState<SimpParameters>({
@@ -130,11 +205,14 @@ export default function App() {
   // Jobs reales del backend (solo con bridge; sin bridge sigue la simulacion)
   const [feaJobId, setFeaJobId] = useState<string | null>(null);
   const [simpJobId, setSimpJobId] = useState<string | null>(null);
-  // NAV-VIEW-START (reversible): superficie real del STEP para el viewport.
-  const [surface, setSurface] = useState<RealSurface | null>(null);
-  const fetchSurface = async () => {
+  // NAV-VIEW-START (reversible): superficies reales por archivo para el
+  // viewport UNICO (todos los cuerpos a la vez). La teselacion es
+  // determinista por archivo: el cache vale aunque el core cambie de modelo
+  // activo al re-importar. `surface` deriva del modelo actual.
+  const [surfaceByFile, setSurfaceByFile] = useState<Record<string, RealSurface>>({});
+  const surface = currentModel ? surfaceByFile[currentModel.filename] ?? null : null;
+  const fetchSurface = async (filename?: string) => {
     if (!backend.hasBridge()) {
-      setSurface(null);
       return;
     }
     try {
@@ -142,15 +220,52 @@ export default function App() {
         ok: boolean;
         mesh?: unknown;
       };
-      setSurface(r.ok && r.mesh ? mapMeshPreview(r.mesh) : null);
+      const mapped = r.ok && r.mesh ? mapMeshPreview(r.mesh) : null;
+      const key = filename ?? stateRef.current.currentModel?.filename;
+      // MULTI-VIEW (reversible): cache por archivo, todos al viewport.
+      if (key && mapped) setSurfaceByFile((prev) => ({ ...prev, [key]: mapped }));
     } catch {
-      setSurface(null);
+      /* se conserva el cache anterior */
     }
   };
   // NAV-VIEW-END
+  // MULTI-VIEW-START (reversible): ver/ocultar por cuerpo del arbol.
+  // Clave bodyKey(filename, solid_id); ausente = visible. Para volver atras:
+  // borrar estado + props hiddenBodies/onToggleBodyVisibility.
+  const [hiddenBodies, setHiddenBodies] = useState<Record<string, boolean>>({});
+  const handleToggleBodyVisibility = (key: string) => {
+    setHiddenBodies((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+  // Cuerpos del viewport unico: un ViewBody por solido con superficie en
+  // cache (sin superficie no hay geometria que mostrar).
+  const viewBodies: ViewBody[] = models.flatMap((m) => {
+    if (!surfaceByFile[m.filename]) return [];
+    const solids = solidsByFile[m.filename];
+    if (solids && solids.length > 0) {
+      return solids.map((s) => ({
+        key: bodyKey(m.filename, s.solid_id),
+        filename: m.filename,
+        solidId: s.solid_id,
+        faceIndices: s.face_indices ?? null,
+      }));
+    }
+    return [{
+      key: bodyKey(m.filename, 'solid_0'),
+      filename: m.filename,
+      solidId: 'solid_0',
+      faceIndices: null,
+    }];
+  });
+  // MULTI-VIEW-END
   // SOLIDS-START (reversible): cuerpos reales del STEP (uno por objeto).
   const [solids, setSolids] = useState<SolidInfo[]>([]);
-  const fetchSolids = async () => {
+  // MULTI-START (reversible): arbol acumulativo — solidos y malla por archivo.
+  // El core mantiene UN modelo activo; aqui se cachea lo ya importado para
+  // listar todos los modelos sin re-importar. Clave: filename.
+  const [solidsByFile, setSolidsByFile] = useState<Record<string, SolidInfo[]>>({});
+  const [meshByFile, setMeshByFile] = useState<Record<string, boolean>>({});
+  // MULTI-END
+  const fetchSolids = async (filename?: string) => {
     if (!backend.hasBridge()) {
       setSolids([]);
       return;
@@ -159,6 +274,9 @@ export default function App() {
       const r = (await backend.getSolids()) as { ok: boolean; solids?: unknown[] };
       const list = r.ok && Array.isArray(r.solids) ? mapSolids(r.solids) : [];
       setSolids(list);
+      // MULTI (reversible): cache por archivo para el arbol acumulativo.
+      const key = filename ?? stateRef.current.currentModel?.filename;
+      if (key) setSolidsByFile((prev) => ({ ...prev, [key]: list }));
       if (list.length > 0) {
         setCurrentModel((prev) =>
           prev ? { ...prev, solids: list.length } : prev
@@ -173,13 +291,15 @@ export default function App() {
   const [hasMesh, setHasMesh] = useState(false);
   // UI-CLEAN2-END
   const snapRef = useRef<ApiSnapshot | null>(null);
-  const stateRef = useRef({ boundaryConditions, selectedMaterial, simpParams, currentModel });
-  stateRef.current = { boundaryConditions, selectedMaterial, simpParams, currentModel };
+  const stateRef = useRef({ boundaryConditions, selectedMaterial, simpParams, currentModel, activeTool });
+  stateRef.current = { boundaryConditions, selectedMaterial, simpParams, currentModel, activeTool };
 
   const applySnapshotToModel = (snap: ApiSnapshot, filename: string, displayName: string) => {
     snapRef.current = snap;
     // UI-CLEAN2 (reversible): fila Malla solo con malla real.
     setHasMesh(!!snap.has_mesh);
+    // MULTI (reversible): malla por archivo para el arbol acumulativo.
+    setMeshByFile((prev) => ({ ...prev, [filename]: !!snap.has_mesh }));
     const mapped = mapSnapshotToModel(snap, filename, displayName);
     setModels((prev) => {
       const i = prev.findIndex((m) => m.filename === filename);
@@ -232,9 +352,9 @@ export default function App() {
           if (imp.ok && snap) {
             applySnapshotToModel(snap, first.filename, prettyName(first.filename));
             // NAV-VIEW (reversible): mostrar el STEP real en el viewport.
-            void fetchSurface();
+            void fetchSurface(first.filename);
             // SOLIDS (reversible): detectar cuerpos del STEP.
-            void fetchSolids();
+            void fetchSolids(first.filename);
           }
         }
       } catch {
@@ -474,12 +594,18 @@ export default function App() {
   };
 
   // Seleccion de modelo: con bridge importa el STEP real del backend.
+  // MULTI (reversible): cada modelo importado queda en `models` (arbol
+  // acumulativo); seleccionar re-importa del disco y restaura su cache.
   const handleSelectModelReal = (m: CadModelPreset) => {
     if (!backend.hasBridge()) {
       setCurrentModel(m);
       return;
     }
     setCurrentModel(m);
+    // MULTI: restaura cache inmediata mientras re-importa el STEP.
+    const cached = solidsByFile[m.filename];
+    if (cached) setSolids(cached);
+    setHasMesh(meshByFile[m.filename] ?? false);
     void (async () => {
       try {
         const imp = await backend.importStep(m.filename);
@@ -490,15 +616,17 @@ export default function App() {
           setSimpJobId(null);
           resetOptimizationState();
           // NAV-VIEW (reversible): mostrar el STEP real en el viewport.
-          void fetchSurface();
+          void fetchSurface(m.filename);
           // SOLIDS (reversible): detectar cuerpos del STEP.
-          void fetchSolids();
+          void fetchSolids(m.filename);
         }
       } catch {
         /* se conserva el modelo anterior */
       }
     })();
   };
+
+  // MULTI-END (nota: sin boton de baja; el arbol solo lista cuerpos)
 
   const resetOptimizationState = () => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -556,8 +684,8 @@ export default function App() {
               setFeaJobId(null);
               setSimpJobId(null);
               resetOptimizationState();
-              void fetchSurface();
-              void fetchSolids();
+              void fetchSurface(file.name);
+              void fetchSolids(file.name);
             }
           } catch {
             /* se conserva el modelo anterior */
@@ -581,9 +709,16 @@ export default function App() {
     setModels((prev) => [newPreset, ...prev]);
     setCurrentModel(newPreset);
     // NAV-VIEW (reversible): sin teselado real para subidas locales.
-    setSurface(null);
+    setSurfaceByFile((prev) => {
+      const next = { ...prev };
+      delete next[newPreset.filename];
+      return next;
+    });
     // SOLIDS (reversible): sin cuerpos reales para subidas locales.
     setSolids([]);
+    // MULTI (reversible): el modelo local tambien entra al arbol acumulativo.
+    setSolidsByFile((prev) => ({ ...prev, [newPreset.filename]: [] }));
+    setMeshByFile((prev) => ({ ...prev, [newPreset.filename]: false }));
     // UI-CLEAN2 (reversible): sin malla real para subidas locales.
     setHasMesh(false);
   };
@@ -646,10 +781,12 @@ export default function App() {
             currentModel={currentModel}
             models={models}
             onSelectModel={handleSelectModelReal}
-            // SOLIDS (reversible): cuerpos del STEP, uno por objeto.
-            solids={solids}
-            // UI-CLEAN2 (reversible): fila Malla con malla real.
-            hasMesh={hasMesh}
+            // MULTI (reversible): arbol acumulativo por archivo.
+            solidsByFile={solidsByFile}
+            meshByFile={meshByFile}
+            // MULTI-VIEW (reversible): ojo ver/ocultar por cuerpo.
+            hiddenBodies={hiddenBodies}
+            onToggleBodyVisibility={handleToggleBodyVisibility}
             boundaryConditions={boundaryConditions}
             onToggleCondition={handleToggleCondition}
             onEditCondition={setEditingCondition}
@@ -663,6 +800,13 @@ export default function App() {
           />
 
           {/* CENTRAL 3D CAD VIEWPORT */}
+          <React.Suspense
+            fallback={
+              <div className="flex-1 flex items-center justify-center rounded-lg bg-surface-container-lowest min-h-[580px] text-[11px] font-mono text-text-muted">
+                Cargando viewport 3D…
+              </div>
+            }
+          >
           <CadViewport
             activeTab={activeTab}
             activeTool={activeTool}
@@ -676,9 +820,25 @@ export default function App() {
             onUpdateCoords={setCoords}
             resetViewTrigger={resetViewTrigger}
             selectedViewTrigger={selectedViewTrigger}
-            // NAV-VIEW (reversible): superficie real del STEP.
-            surface={surface}
+            // NAV-VIEW (reversible): superficies de todos los archivos.
+            surfaces={surfaceByFile}
+            bodies={viewBodies}
+            activeFilename={currentModel?.filename ?? null}
+            // MULTI-VIEW (reversible): ver/ocultar por cuerpo + malla.
+            hiddenBodies={hiddenBodies}
+            meshByFile={meshByFile}
+            // FACES (reversible): picking + resaltado de caras B-Rep.
+            selectedFaces={selectedFaces}
+            onToggleFace={handleToggleFace}
+            facePickEnabled={
+              activeTool === 'seleccionar' ||
+              activeTool === 'carga' ||
+              activeTool === 'fijacion' ||
+              activeTool === 'preservada' ||
+              activeTool === 'keepout'
+            }
           />
+          </React.Suspense>
 
           {/* RIGHT PANEL: Materials, SIMP Parameters, and FEA Results */}
           <RightPanel

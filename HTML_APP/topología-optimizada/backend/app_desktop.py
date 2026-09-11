@@ -34,7 +34,8 @@ logger = logging.getLogger("webapp.host")
 # objeto en el arbol). Para volver atras: recortar la tupla.
 _METHODS = (
     "getSnapshot", "getMaterials", "setMaterial", "validateProblem",
-    "importStep", "importStepBytes", "listFixtures", "getSolids", "generateMesh",    "generateAdaptiveMesh", "setBoundaries", "runFea", "runFeaIterative",
+    "importStep", "importStepBytes", "listFixtures", "listLibrary",
+    "switchModel", "removeModel", "getSolids", "generateMesh",    "generateAdaptiveMesh", "setBoundaries", "runFea", "runFeaIterative",
     "runOptimization", "runSimpLoop", "runSimpKratosVerified",
     "runGenerativeDesign", "registerReconstruction", "runThermal", "runModal",
     "runCrossCheck", "cadOperation", "validateState",

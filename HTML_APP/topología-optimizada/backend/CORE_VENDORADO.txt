@@ -1,0 +1,18 @@
+CORE VENDORADO (autocontenido)
+==============================
+Carpetas backend/core, backend/desktop, backend/adapters, backend/services
+son una COPIA de Topologia_Optimizada en la fecha indicada abajo. La app las
+usa primero (ver api.py); solo si faltan, usa la carpeta hermana externa.
+
+- Fuente: D:\Documentos\GitHub\Onshape\Topologia_Optimizada
+- Fecha de copia: 2026-09-11
+- Contenido: *.py + *.json (sin __pycache__, sin tests_obsoletos)
+
+Re-sincronizar (PowerShell, desde la raiz del proyecto):
+  $SRC="<ruta>\Topologia_Optimizada"
+  foreach ($d in @("core","desktop","adapters","services")) {
+    Copy-Item -Recurse -Force -Path "$SRC\$d" -Destination "backend\$d"
+  }
+  Get-ChildItem -Recurse -Directory -Include __pycache__,.pytest_cache,.ruff_cache `
+    "backend\core","backend\desktop","backend\adapters","backend\services" |
+    Remove-Item -Recurse -Force

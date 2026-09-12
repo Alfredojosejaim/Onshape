@@ -109,20 +109,12 @@ export const ToolParamsPanel: React.FC<ToolParamsPanelProps> = ({
         {isFaceTool && (
           <div className="flex items-center gap-1.5">
             {/* MULTI-COND: cada instancia es su propia herramienta (se cambia
-                desde el arbol). + Nueva crea otra y salta a ella. */}
+                desde el arbol). Boton + Nueva eliminado a pedido. */}
             <span className="flex-1 min-w-0 truncate text-text-secondary text-[10px] font-mono">
               {toolConds.length > 0
                 ? `${toolConds.length} aplicada${toolConds.length > 1 ? 's' : ''} de este tipo`
                 : 'sin aplicar aún'}
             </span>
-            <button
-              type="button"
-              onClick={onNewCondition}
-              title={`Nueva ${meta.name.toLowerCase()} (otra herramienta del mismo tipo)`}
-              className="px-2 py-1 rounded bg-surface-elevated hover:bg-surface-container-high border border-border-subtle hover:border-secondary/40 text-text-primary hover:text-secondary text-[11px] font-medium transition-colors active:scale-95 whitespace-nowrap"
-            >
-              + Nueva
-            </button>
           </div>
         )}
 
@@ -199,10 +191,10 @@ export const ToolParamsPanel: React.FC<ToolParamsPanelProps> = ({
             <button
               type="button"
               onClick={onConfirmTool}
-              className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded bg-primary-container hover:bg-secondary text-on-primary text-[11px] font-semibold transition-colors active:scale-95"
+              title="Aceptar (Enter)"
+              className="w-full flex items-center justify-center gap-1.5 py-1 rounded bg-primary-container hover:bg-secondary text-on-primary text-[11px] font-semibold transition-colors active:scale-95"
             >
               <span className="material-symbols-outlined text-[15px]">check</span>
-              <span>Aceptar (Enter)</span>
             </button>
           </div>
         )}
@@ -212,10 +204,10 @@ export const ToolParamsPanel: React.FC<ToolParamsPanelProps> = ({
           <button
             type="button"
             onClick={onConfirmTool}
-            className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded bg-primary-container hover:bg-secondary text-on-primary text-[11px] font-semibold transition-colors active:scale-95"
+            title="Aceptar (Enter)"
+            className="w-full flex items-center justify-center gap-1.5 py-1 rounded bg-primary-container hover:bg-secondary text-on-primary text-[11px] font-semibold transition-colors active:scale-95"
           >
             <span className="material-symbols-outlined text-[15px]">check</span>
-            <span>Aceptar (Enter)</span>
           </button>
         )}
       </div>
@@ -360,10 +352,10 @@ function CargaEditor({
       <button
         type="button"
         onClick={confirm}
-        className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded bg-primary-container hover:bg-secondary text-on-primary text-[11px] font-semibold transition-colors active:scale-95"
+        title="Aceptar (Enter)"
+        className="w-full flex items-center justify-center gap-1.5 py-1 rounded bg-primary-container hover:bg-secondary text-on-primary text-[11px] font-semibold transition-colors active:scale-95"
       >
         <span className="material-symbols-outlined text-[15px]">check</span>
-        <span>Aceptar (Enter)</span>
       </button>
     </div>
   );

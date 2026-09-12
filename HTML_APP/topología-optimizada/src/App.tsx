@@ -804,17 +804,30 @@ export default function App() {
     }
   };
 
-  // Enter/Escape confirman la herramienta abierta (como Aceptar del panel).
+  // Enter confirma la herramienta abierta (como Aceptar del panel).
+  // Escape desmarca: con herramienta abierta la cierra; sin herramienta
+  // abierta limpia las caras resaltadas (faces_seleccionar).
   // No interfiere con modales abiertos ni con botones/areas de texto.
   useEffect(() => {
-    if (activeTool === 'seleccionar') return;
     const onKey = (e: KeyboardEvent) => {
       if (showImport || showExport || showHelp || editingCondition) return;
       if (e.key !== 'Enter' && e.key !== 'Escape') return;
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'BUTTON' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.key === 'Enter') {
+        if (activeTool === 'seleccionar') return;
+        e.preventDefault();
+        setActiveTool('seleccionar');
+        return;
+      }
       e.preventDefault();
-      setActiveTool('seleccionar');
+      if (activeTool !== 'seleccionar') {
+        setActiveTool('seleccionar');
+        return;
+      }
+      const file = stateRef.current.currentModel?.filename;
+      if (!file) return;
+      setFaceSelByFile((p) => ({ ...p, [file]: { ...p[file], faces_seleccionar: [] } }));
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

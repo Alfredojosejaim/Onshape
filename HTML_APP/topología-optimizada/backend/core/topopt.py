@@ -408,6 +408,149 @@ class SIMPSolver:
         return xnew
 
     # ------------------------------------------------------------------ #
+    # MMA update (Fase 4 plan.md) — Method of Moving Asymptotes, Svanberg.
+    # Implementación propia en numpy (Kratos 10.4 no expone optimizador
+    # standalone: solo OptResponses + framework completo). Opt-in vía
+    # optimize(optimizer="mma"); el default sigue siendo OC ("oc").
+    # Subproblema separable con 1 restricción (volumen):
+    #   min Σ p0j/(Uj-xj)+q0j/(xj-Lj)  s.t. Σ p1j/(Uj-xj)+q1j/(xj-Lj) ≤ 0,
+    # resuelto en el dual (lam ≥ 0, Newton + bisección acotada).
+    # Solo el subdominio activo participa; fijos se re-pinean igual que OC.
+    # ------------------------------------------------------------------ #
+    _MMA_ASYINIT = 0.5
+    _MMA_ASYINCR = 1.2
+    _MMA_ASYDECR = 0.7
+    _MMA_ALBEFA = 0.1
+
+    def _mma_reset_state(self, x: np.ndarray) -> None:
+        n = self.num_elements
+        self._mma_xold1 = np.copy(x)
+        self._mma_xold2 = np.copy(x)
+        self._mma_low = np.zeros(n)
+        self._mma_upp = np.ones(n)
+        self._mma_iter = 0
+
+    def _mma_update(
+        self,
+        x: np.ndarray,
+        df0: np.ndarray,
+        dv: Optional[np.ndarray],
+        fscale: float,
+    ) -> np.ndarray:
+        """Un paso MMA sobre el subdominio activo.
+
+        Args:
+            x: densidades actuales (n,).
+            df0: gradiente del objetivo (compliance, filtrado) (n,).
+            dv: gradiente de la restricción de volumen (volúmenes) (n,).
+            fscale: escala del objetivo (compliance inicial) para
+                condicionar el dual; > 0.
+        """
+        xmin = self.rho_min
+        xmax = 1.0
+        active = self._active
+        idx = np.nonzero(active)[0]
+        if idx.size == 0:
+            return np.copy(x)
+        if dv is None:
+            dv = self._volumes
+        fs = max(float(fscale), 1e-12)
+
+        xa = x[idx]
+        df0a = np.asarray(df0, dtype=float)[idx] / fs
+        dva = np.asarray(dv, dtype=float)[idx]
+        xa_min = np.full_like(xa, xmin)
+        xa_max = np.full_like(xa, xmax)
+
+        if not hasattr(self, "_mma_low") or self._mma_low is None \
+                or self._mma_low.shape[0] != self.num_elements:
+            self._mma_reset_state(x)
+        self._mma_iter = int(getattr(self, "_mma_iter", 0)) + 1
+        it = self._mma_iter
+        xold1 = self._mma_xold1[idx]
+        xold2 = self._mma_xold2[idx]
+        low = self._mma_low[idx]
+        upp = self._mma_upp[idx]
+
+        # --- Asíntotas móviles (adaptación por oscilación) ---
+        if it < 3:
+            low = xa - self._MMA_ASYINIT * (xa_max - xa_min)
+            upp = xa + self._MMA_ASYINIT * (xa_max - xa_min)
+        else:
+            zzz1 = (xa - xold1) * (xold1 - xold2)
+            factor = np.ones_like(xa)
+            factor[zzz1 > 0] = self._MMA_ASYINCR
+            factor[zzz1 < 0] = self._MMA_ASYDECR
+            low = xa - factor * (xold1 - low)
+            upp = xa + factor * (upp - xold1)
+            span = xa_max - xa_min
+            low = np.minimum(np.maximum(low, xa - 10.0 * span), xa - 0.01 * span)
+            upp = np.maximum(np.minimum(upp, xa + 10.0 * span), xa + 0.01 * span)
+
+        # --- Bounds alfa/beta (asíntotas + move limit implícito) ---
+        alfa = np.maximum(low + self._MMA_ALBEFA * (xa - low), xa_min)
+        beta = np.minimum(upp - self._MMA_ALBEFA * (upp - xa), xa_max)
+
+        # --- Coeficientes del subproblema (objetivo normalizado) ---
+        ux = upp - xa
+        lx = xa - low
+        p0 = ux * ux * np.maximum(df0a, 0.0) + 1e-9
+        q0 = lx * lx * np.maximum(-df0a, 0.0) + 1e-9
+        # Restricción g(x) = V(x)/Vt - 1 ≤ 0, gradiente constante dva/Vt.
+        vt = max(float(self.volfrac * self._vol0_free), 1e-12)
+        dg = dva / vt
+        p1 = ux * ux * np.maximum(dg, 0.0)
+        q1 = lx * lx * np.maximum(-dg, 0.0)
+        # Volumen actual normalizado (constante del subproblema).
+        g0 = float(np.dot(xa, dva) / vt) - 1.0
+
+        def _primal(lam: float):
+            P = p0 + lam * p1
+            Q = q0 + lam * q1
+            sqP = np.sqrt(np.maximum(P, 1e-18))
+            sqQ = np.sqrt(np.maximum(Q, 1e-18))
+            xn = (sqP * low + sqQ * upp) / (sqP + sqQ)
+            xn = np.minimum(np.maximum(xn, alfa), beta)
+            return xn, sqP, sqQ
+
+        def _g_approx(lam: float) -> float:
+            xn, _, _ = _primal(lam)
+            return g0 + float(np.dot(xn - xa, dg))
+
+        # --- Dual: lam ≥ 0 con holgura complementaria ---
+        if _g_approx(0.0) <= 0.0:
+            lam = 0.0
+        else:
+            lo, hi = 0.0, 1.0
+            while _g_approx(hi) > 0.0 and hi < 1e12:
+                hi *= 2.0
+            for _ in range(100):
+                mid = 0.5 * (lo + hi)
+                if _g_approx(mid) > 0.0:
+                    lo = mid
+                else:
+                    hi = mid
+                if hi - lo <= 1e-12 * max(hi, 1.0):
+                    break
+            lam = 0.5 * (lo + hi)
+
+        xnew_a, _, _ = _primal(lam)
+
+        # --- Avanza el estado de asíntotas ---
+        self._mma_xold2[idx] = xold1
+        self._mma_xold1[idx] = xa
+        self._mma_low[idx] = low
+        self._mma_upp[idx] = upp
+
+        xnew = np.copy(x)
+        xnew[idx] = xnew_a
+        if self._preserved is not None:
+            xnew[self._preserved] = 1.0
+        if self._void is not None:
+            xnew[self._void] = xmin
+        return xnew
+
+    # ------------------------------------------------------------------ #
     # Main loop
     # ------------------------------------------------------------------ #
     def optimize(
@@ -415,14 +558,35 @@ class SIMPSolver:
         max_iterations: int = 50,
         tolerance: float = 0.01,
         callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        optimizer: str = "oc",
     ) -> Dict[str, Any]:
+        """Run the SIMP loop.
+
+        Args:
+            optimizer: "oc" (Optimality Criteria, default histórico) o
+                "mma" (Moving Asymptotes propio, Fase 4). Cualquier otro
+                valor lanza TopOptError explícito (sin fallback silencioso
+                a OC).
+        """
+        if optimizer not in ("oc", "mma"):
+            raise TopOptError(
+                f"optimizer={optimizer!r} no soportado (usar 'oc' o 'mma')."
+            )
         x = np.copy(self.x)
         converged = False
         history: List[Dict[str, Any]] = []
+        fscale: Optional[float] = None
+        if optimizer == "mma":
+            self._mma_reset_state(x)
         for it in range(max_iterations):
             compliance, dc = self._compliance_and_sensitivities(x)
             dc_f = self._apply_filter(dc, x)
-            xnew = self._oc_update(x, dc_f, self._volumes)
+            if optimizer == "mma":
+                if fscale is None:
+                    fscale = max(abs(float(compliance)), 1e-12)
+                xnew = self._mma_update(x, dc_f, self._volumes, fscale)
+            else:
+                xnew = self._oc_update(x, dc_f, self._volumes)
 
             change = float(np.max(np.abs(xnew - x)))
             # volume fraction relative to the active, designable subdomain
@@ -507,6 +671,7 @@ class SIMPSolver:
             "load_weights": [float(w) for _, w in cases],
             "per_case_compliance": per_case,
             "engine": "self-contained-simp-numpy",
+            "optimizer": optimizer,
         }
         self.x = x
         return result

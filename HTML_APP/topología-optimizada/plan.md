@@ -123,3 +123,15 @@ Fase 6 (futuro sin código)
 ```
 
 Nota: Fase 3 es realmente paralela a Fase 2 — no hay dependencia técnica entre postproceso nuevo y los bugs de mallado. Si en algún momento querés repartir carga entre dos sesiones de trabajo, esa es la pareja natural para hacerlo en simultáneo.
+
+---
+
+## Bitácora de avance (12-sep-2026)
+
+- **Fase 0 ✅** (`ab95be6`): saneados combos de `properties.py` (solo Compliance mínima + SIMP/OC). ESO/Level-Set/MMA/GCMMA/Steepest sin motor no son elegibles.
+- **Fase 1 ✅** (`ab95be6`): Thermal/Modal en `StudyPanel` desktop (el controller ya los ejecutaba; React ya los tenía vía V2Panel) + `load_case_id`/`load_weight` en UI React de Carga (backend ya agrupaba por metadata).
+- **Fase 2 ✅** (`8499e02`): P1/P2/P4 verificados ya resueltos con malla real (`cono.step`: correspondence deterministic, sin unmapped; halo desde malla). P3 implementado: `problem_to_solver_inputs` rechaza infactibilidad por volumen (KEEP_IN/FROZEN_FACE > volfrac).
+- **Fase 3 ✅** (`e3d431a`): FoS por elemento (`factor_of_safety`, `safety_summary`, campo `safety` en `getSurfaceMesh`, `getSafetySummary`) + `compareStudies`/`study_snapshot`; UI `SafetyCard` + `CompareTable` (reversibles).
+- **Fase 4 (en curso, commit `39c29c3` + `44712e7`)**: Kratos 10.4 no expone MMA standalone → MMA propio numpy en `core/topopt.py` (`optimizer="mma"`, OC default intacto, 30 iters cantilever: MMA 0.7506 vs OC 0.7856, vol exacto). Cableado (a): `controller.run_optimization(optimizer=...)` en ambas ramas + `OptimizerType.MMA`.
+- **NOTA pendiente (decisión tuya)**: (b) `api.runSimpLoop` aceptando `optimizer` + espejo a `vendored/simp.py` (divergió 21 hunks del core, hoy solo-OC); (c) selector MMA en UI (al ser motor real, Fase 0 permite exponerlo — requiere tu aprobación por regla de UI). Sin esto, MMA solo es accesible por API Python (`optimizer="mma"`).
+- **Siguiente fase: Fase 5** (remesh, decimación, reparación avanzada) — no arrancar hasta tu OK sobre la NOTA pendiente.

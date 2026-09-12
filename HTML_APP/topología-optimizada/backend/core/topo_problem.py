@@ -140,7 +140,13 @@ class ObstacleRegion:
 class VolfracMode(Enum):
     """Qué volumen es la base del 100% (decisión P3).
 
-    El solver existente solo implementa ACTIVE_DOMAIN.
+    - ``ACTIVE_DOMAIN`` (único implementado por el SIMPSolver): el
+      ``target_fraction`` se mide sobre el volumen total de la malla.
+      Los elementos KEEP_IN/FROZEN_FACE (fijos a 1.0) cuentan dentro
+      del objetivo; si ellos solos ya lo exceden, el problema es
+      infactible y ``problem_to_solver_inputs`` lo rechaza explícitamente.
+    - ``TOTAL_VOLUME``: reservado (incluiría vacíos/fuera de dominio);
+      hoy se rechaza explícitamente, sin fallback silencioso.
     """
     TOTAL_VOLUME = "total_volume"
     ACTIVE_DOMAIN = "active_domain"
@@ -436,6 +442,40 @@ def problem_to_solver_inputs(
             f"Elementos en KEEP_IN y KEEP_OUT a la vez: "
             f"{sorted(preserved & void)[:10]}... (conjunto infactible)."
         )
+    # P3: infactibilidad explícita por volumen — los elementos fijos a 1.0
+    # (KEEP_IN + FROZEN_FACE) solos ya exceden el objetivo de fracción de
+    # volumen. El OC nunca podría converger; rechazar aquí en vez de
+    # devolver un resultado silenciosamente inválido.
+    if vc.validate_feasibility and preserved:
+        target = float(vc.target_fraction)
+        try:
+            _nodes = np.asarray(mesh.get("nodes"), dtype=float)
+            _elems = np.asarray(mesh.get("elements"), dtype=int)
+            if _nodes.ndim == 2 and _nodes.shape[1] == 3 \
+                    and _elems.ndim == 2 and _elems.shape[1] == 4 \
+                    and len(_elems) > 0:
+                _p = _nodes[_elems]
+                _v0, _v1, _v2, _v3 = _p[:, 0], _p[:, 1], _p[:, 2], _p[:, 3]
+                _vols = np.abs(np.einsum(
+                    "ij,ij->i", _v1 - _v0,
+                    np.cross(_v2 - _v0, _v3 - _v0))) / 6.0
+                _total = float(np.sum(_vols))
+                _keep = float(np.sum(_vols[sorted(preserved)]))
+                _frac = _keep / _total if _total > 0 else 0.0
+            else:
+                raise ValueError("malla sin nodos/elementos Tet4")
+        except (TopOptError, ValueError, TypeError, KeyError, IndexError):
+            # Fallback por conteo cuando la malla no trae geometría
+            # utilizable (nunca silencioso: el criterio es conservador).
+            _n = len(mesh.get("elements") or [])
+            _frac = len(preserved) / _n if _n > 0 else 0.0
+        if _frac > target:
+            raise TopOptError(
+                f"Problema infactible: KEEP_IN/FROZEN_FACE ocupan "
+                f"{_frac:.2%} del volumen con objetivo volfrac={target:.2%} "
+                f"(modo {vc.mode.value}). Reduzca las regiones fijas o suba "
+                f"el objetivo."
+            )
 
     loads_out: List[Dict[str, Any]] = []
     total_w = sum(float(lc.weight) for lc in non_empty)

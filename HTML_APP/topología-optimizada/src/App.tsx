@@ -180,6 +180,8 @@ export default function App() {
         surface?.faces ?? undefined,
         mag,
         prevCond?.loadNormal ?? null,
+        prevCond?.loadCaseId ?? null,
+        prevCond?.loadWeight ?? null,
       );
       (condJson as Record<string, unknown>).id = condKey;
       void backend.createCondition(JSON.stringify(condJson)).catch(() => undefined);
@@ -209,7 +211,7 @@ export default function App() {
       faceIndices: [],
       active: false,
       ...(tool === 'carga'
-        ? { value: src?.value, magnitude: src?.magnitude, loadNormal: src?.loadNormal }
+        ? { value: src?.value, magnitude: src?.magnitude, loadNormal: src?.loadNormal, loadCaseId: src?.loadCaseId, loadWeight: src?.loadWeight }
         : {}),
     };
     setBoundaryConditions((p) => (p.some((c) => c.id === cond.id) ? p : [...p, cond]));
@@ -231,6 +233,8 @@ export default function App() {
       surface?.faces ?? undefined,
       cond.type === 'carga' ? (cond.magnitude ?? null) : null,
       cond.loadNormal ?? null,
+      cond.loadCaseId ?? null,
+      cond.loadWeight ?? null,
     );
     (condJson as Record<string, unknown>).id = cond.id;
     void backend.createCondition(JSON.stringify(condJson)).catch(() => undefined);

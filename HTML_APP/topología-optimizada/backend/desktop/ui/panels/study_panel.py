@@ -29,7 +29,13 @@ from core.conditions import Condition, ConditionManager
 from core.optimization_studies import TopologyOptimizationStudy
 
 class StudyPanel(QDialog):
-    """Modal dialog that produces a configured TopologyOptimizationStudy."""
+    """Modal dialog that produces a configured engineering study.
+
+    Fase 1 (plan.md): expone lo que ya funciona en backend —
+    Topology (SIMP), Thermal (execute_on_mesh) y Modal (execute_on_mesh).
+    El controller ya ejecuta los tres (execute_study); aquí solo se
+    configuran y se devuelven en ``self.study``.
+    """
 
     def __init__(
         self,
@@ -72,6 +78,9 @@ class StudyPanel(QDialog):
 
         self._type = QComboBox()
         self._type.addItem("Topology Optimization (SIMP)", "topology")
+        self._type.addItem("Thermal (estacionario)", "thermal")
+        self._type.addItem("Modal (frecuencias propias)", "modal")
+        self._type.currentIndexChanged.connect(self._on_type_changed)
         form.addRow("Tipo:", self._type)
         root.addLayout(form)
 
@@ -125,6 +134,30 @@ class StudyPanel(QDialog):
         params_group.addRow("Tolerancia:", self._tol)
         root.addLayout(params_group)
 
+        # --- Fase 1: parámetros Modal (solo visibles con tipo modal) ---
+        self._modal_modes = QSpinBox()
+        self._modal_modes.setRange(1, 50)
+        self._modal_modes.setValue(5)
+        self._modal_modes.setToolTip("Cantidad de modos (ModalParameters.mode_count)")
+        params_group.addRow("Modos:", self._modal_modes)
+        self._modal_fmin = QDoubleSpinBox()
+        self._modal_fmin.setRange(0.0, 1.0e6)
+        self._modal_fmin.setValue(0.0)
+        self._modal_fmin.setSpecialValueText("Sin mín")
+        params_group.addRow("Frec. mín (Hz):", self._modal_fmin)
+        self._modal_fmax = QDoubleSpinBox()
+        self._modal_fmax.setRange(0.0, 1.0e6)
+        self._modal_fmax.setValue(0.0)
+        self._modal_fmax.setSpecialValueText("Sin máx")
+        params_group.addRow("Frec. máx (Hz):", self._modal_fmax)
+
+        # --- Fase 1: nota Térmico (usa ThermalBoundary del backend) ---
+        self._thermal_note = QLabel(
+            "Térmico: define las condiciones de temperatura con la "
+            "herramienta de condiciones; el solve usa execute_on_mesh().")
+        self._thermal_note.setWordWrap(True)
+        root.addWidget(self._thermal_note)
+
         # --- Conditions ---
         root.addWidget(QLabel("Condiciones reutilizables (carga / soporte / obstrucción):"))
 
@@ -149,11 +182,27 @@ class StudyPanel(QDialog):
         root.addWidget(self._error)
 
         # Populate the parts list and disable OK if no parts selected.
-        self._refresh_parts_list()
+        self._on_type_changed()
 
     # ------------------------------------------------------------------ #
     # Actions
     # ------------------------------------------------------------------ #
+    def _study_kind(self) -> str:
+        return self._type.currentData() or "topology"
+
+    def _on_type_changed(self) -> None:
+        kind = self._study_kind()
+        is_topo = kind == "topology"
+        is_modal = kind == "modal"
+        is_thermal = kind == "thermal"
+        for w in (self._volfrac, self._max_iter, self._penal,
+                  self._radius, self._tol):
+            w.setEnabled(is_topo)
+        for w in (self._modal_modes, self._modal_fmin, self._modal_fmax):
+            w.setEnabled(is_modal)
+        self._thermal_note.setVisible(is_thermal)
+        self._refresh_parts_list()
+
     def _refresh_parts_list(self) -> None:
         """Rebuild the parts list widget from ``self._parts``."""
         self._parts_list.clear()
@@ -167,7 +216,8 @@ class StudyPanel(QDialog):
             item = QListWidgetItem("(ninguna pieza seleccionada)")
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self._parts_list.addItem(item)
-        self._btn_ok.setEnabled(bool(self._parts))
+        # Fase 1: thermal/modal operan sobre la malla completa, no exigen pieza.
+        self._btn_ok.setEnabled(self._study_kind() != "topology" or bool(self._parts))
 
     def _capture_parts(self) -> None:
         """Capture the solid(s) selected in the viewport (reuses the existing
@@ -197,8 +247,9 @@ class StudyPanel(QDialog):
         self._refresh_parts_list()
 
     def _on_accept(self) -> None:
-        # Validate parts
-        if not self._parts:
+        kind = self._study_kind()
+        # Validate parts (solo topology exige pieza; thermal/modal usan la malla)
+        if kind == "topology" and not self._parts:
             self._error.setText("Seleccione al menos una pieza sólida en el viewport antes de crear el estudio.")
             return
         for ref in self._parts:
@@ -212,6 +263,42 @@ class StudyPanel(QDialog):
         chosen = [self._available[i] for i in range(self._cond_list.count())
                   if self._cond_list.item(i).isSelected()]
         try:
+            if kind == "thermal":
+                from core.cae_studies import ThermalAnalysis
+                study = ThermalAnalysis(name=self._name.text().strip() or "Estudio térmico")
+                study.model_id = self._model_id
+                for cond in chosen:
+                    # ThermalAnalysis no usa condition-ids: se resuelven como
+                    # ThermalBoundary en el pipeline; se guardan los ids en
+                    # metadata para no perder la selección del usuario.
+                    study.metadata.setdefault("condition_ids", []).append(cond.id)
+                if not chosen:
+                    self._error.setText("Seleccione al menos una condición térmica (temperatura/flujo/convección).")
+                    return
+                self.study = study
+                self.accept()
+                return
+            if kind == "modal":
+                from core.cae_studies import ConstraintCase, ModalAnalysis
+                study = ModalAnalysis(
+                    name=self._name.text().strip() or "Estudio modal",
+                    mode_count=int(self._modal_modes.value()))
+                study.model_id = self._model_id
+                fmin = float(self._modal_fmin.value())
+                fmax = float(self._modal_fmax.value())
+                study.modal.frequency_min = fmin if fmin > 0 else None
+                study.modal.frequency_max = fmax if fmax > 0 else None
+                for cond in chosen:
+                    study.constraints.append(ConstraintCase(
+                        name=getattr(cond, "name", str(cond.id)),
+                        constraint_type="fixed",
+                        metadata={"condition_id": cond.id}))
+                if not study.constraints:
+                    self._error.setText("Seleccione al menos una fijación (constraint) para el estudio modal.")
+                    return
+                self.study = study
+                self.accept()
+                return
             study = TopologyOptimizationStudy(name=self._name.text().strip() or "Estudio")
             study.model_id = self._model_id
             study.optimization_params.volume_fraction = float(self._volfrac.value())

@@ -44,15 +44,16 @@ class PropertiesPanel(QWidget):
     forceAdded = Signal(float, float, float, float)   # (magnitude, dx, dy, dz)
     constraintAdded = Signal(str)                      # constraint_type ("fixed"/"pinned"/"roller")
 
+    # Fase 0 (higiene): solo opciones con motor real detrás.
+    # - Objetivo: el solver solo acepta MINIMIZE_COMPLIANCE
+    #   (topo_problem.py::problem_to_solver_inputs rechaza el resto).
+    # - Algoritmo: único optimizador implementado es SIMP/OC
+    #   (OptimizerType.SIMP; ESO/LEVEL_SET/MMA/GCMMA son enum sin motor).
     _OBJECTIVES = [
         "Compliance mínima (SIMP)",
-        "Masa mínima",
-        "Desplazamiento máx. nodal",
     ]
     _ALGORITHMS = [
-        "MMA (Method of Moving Asymptotes)",
-        "GCMMA",
-        "Steepest descent",
+        "SIMP (Optimality Criteria)",
     ]
     _CONSTRAINT_TYPES = [
         ("Fija (Empotramiento)", "fixed"),

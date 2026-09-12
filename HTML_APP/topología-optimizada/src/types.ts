@@ -38,6 +38,12 @@ export interface BoundaryCondition {
   // LoadCondition.reference_plane_normal, orientacion perpendicular).
   // Para volver atras: borrar + uso en App/ToolParamsPanel/faces.
   loadNormal?: [number, number, number];
+  // LOAD-CASE (reversible, Fase 1.3 plan.md): agrupador multicarga +
+  // peso relativo. El backend agrupa por metadata["load_case_id"] y pondera
+  // con metadata["load_weight"] (generative_engine + controller).
+  // Vacío = caso único (__single_...), comportamiento anterior.
+  loadCaseId?: string;
+  loadWeight?: number;
   active: boolean;
   statusTag?: string;
   colorTag?: string;

@@ -109,8 +109,19 @@ export function buildConditionJson(
   // LOAD-DIR (reversible): normal de referencia (core reference_plane_normal,
   // orientacion perpendicular). Por defecto [0,0,1] como antes.
   referenceNormal?: [number, number, number] | null,
+  // LOAD-CASE (reversible, Fase 1.3 plan.md): agrupador multicarga + peso.
+  // El backend agrupa por metadata.load_case_id y pondera con
+  // metadata.load_weight. Vacío = caso único (comportamiento anterior).
+  loadCaseId?: string | null,
+  loadWeight?: number | null,
 ): Record<string, unknown> {
   if (tool === 'carga') {
+    const metadata: Record<string, unknown> = {};
+    const gid = (loadCaseId ?? '').trim();
+    if (gid) metadata.load_case_id = gid;
+    if (typeof loadWeight === 'number' && Number.isFinite(loadWeight) && loadWeight > 0) {
+      metadata.load_weight = loadWeight;
+    }
     return {
       type: 'load',
       name,
@@ -122,7 +133,7 @@ export function buildConditionJson(
       magnitude: typeof magnitude === 'number' ? magnitude : null,
       indeterminate: typeof magnitude !== 'number',
       unit: 'N',
-      metadata: {},
+      metadata,
     };
   }
   if (tool === 'fijacion') {

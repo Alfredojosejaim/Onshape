@@ -250,6 +250,9 @@ function CargaEditor({
   const [fy, setFy] = useState('-4500');
   const [fz, setFz] = useState('1200');
   const [dir, setDir] = useState<LoadDir>('Z');
+  // LOAD-CASE (reversible, Fase 1.3 plan.md): caso de carga + peso.
+  const [caseId, setCaseId] = useState('');
+  const [weight, setWeight] = useState('1');
 
   // Carga los valores guardados al abrir/cambiar de condicion.
   useEffect(() => {
@@ -260,11 +263,14 @@ function CargaEditor({
       setFz(String(v[2]));
     }
     setDir(dirFromNormal(cond?.loadNormal));
+    setCaseId(cond?.loadCaseId ?? '');
+    setWeight(String(cond?.loadWeight ?? 1));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cond?.id]);
 
   const saveAll = (
     sx: string, sy: string, sz: string, d: LoadDir, live: boolean,
+    caseOverride?: string, weightOverride?: string,
   ): BoundaryCondition | null => {
     const nx = parseFloat(sx);
     const ny = parseFloat(sy);
@@ -274,9 +280,12 @@ function CargaEditor({
     const vy = Number.isFinite(ny) ? ny : 0;
     const vz = Number.isFinite(nz) ? nz : 0;
     const mag = Math.hypot(vx, vy, vz);
-    const details = `[${vx}, ${vy}, ${vz}] N · dir ${d}`;
+    const gid = (caseOverride ?? caseId).trim();
+    const wRaw = parseFloat(weightOverride ?? weight);
+    const w = Number.isFinite(wRaw) && wRaw > 0 ? wRaw : 1;
+    const details = `[${vx}, ${vy}, ${vz}] N · dir ${d}${gid ? ` · caso ${gid} ×${w}` : ''}`;
     const updated: BoundaryCondition = cond
-      ? { ...cond, value: [vx, vy, vz], magnitude: mag, details, loadNormal: LOAD_DIRS[d] }
+      ? { ...cond, value: [vx, vy, vz], magnitude: mag, details, loadNormal: LOAD_DIRS[d], loadCaseId: gid || undefined, loadWeight: w }
       : {
           id: 'faces_carga',
           name: 'Carga en caras',
@@ -285,6 +294,8 @@ function CargaEditor({
           value: [vx, vy, vz],
           magnitude: mag,
           loadNormal: LOAD_DIRS[d],
+          loadCaseId: gid || undefined,
+          loadWeight: w,
           faces: 0,
           faceIndices: [],
           active: false,
@@ -348,6 +359,35 @@ function CargaEditor({
       <div className="bg-surface-elevated/40 p-1.5 rounded border border-border-subtle/30">
         <span className="text-text-muted block text-[9px]">Caras asignadas:</span>
         <span className="text-secondary text-[10px] break-all">{facesText(cond)}</span>
+      </div>
+      {/* LOAD-CASE (reversible, Fase 1.3): caso + peso multicarga.
+          Vacío = caso único (comportamiento anterior). */}
+      <div className="flex items-center gap-2">
+        <span className="text-text-muted">Caso:</span>
+        <input
+          type="text"
+          aria-label="Caso de carga"
+          placeholder="vacío = único"
+          value={caseId}
+          onChange={(e) => {
+            setCaseId(e.target.value);
+            saveAll(fx, fy, fz, dir, false, e.target.value, weight);
+          }}
+          className={numCls}
+        />
+        <span className="text-text-muted">Peso:</span>
+        <input
+          type="number"
+          aria-label="Peso del caso de carga"
+          min="0.01"
+          step="0.1"
+          value={weight}
+          onChange={(e) => {
+            setWeight(e.target.value);
+            saveAll(fx, fy, fz, dir, true, caseId, e.target.value);
+          }}
+          className="w-16 bg-surface-elevated border border-border-subtle rounded px-2 py-1 text-text-primary font-mono text-[11px] outline-none focus:border-secondary/60"
+        />
       </div>
       <button
         type="button"

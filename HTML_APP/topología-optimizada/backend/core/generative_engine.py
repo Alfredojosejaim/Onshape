@@ -669,6 +669,7 @@ class GenerativeDesignEngine:
             max_iterations=kwargs.get("max_iterations", 30),
             tolerance=kwargs.get("tolerance", 1e-3),
             callback=progress_cb,
+            optimizer=kwargs.get("optimizer", "oc"),
         )
         result["_consumed_load_conditions"] = len(conditions.get(ConditionType.LOAD, []))
         result["_consumed_elasticity_conditions"] = len(conditions.get(ConditionType.ELASTICITY, []))

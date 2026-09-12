@@ -680,6 +680,7 @@ class PipelineController:
         progress_cb: Optional[Callable[[dict], None]] = None,
         conditions=None,
         halo_radius: Optional[float] = None,
+        optimizer: str = "oc",
     ) -> Dict[str, Any]:
         """Run the self-contained SIMP topology optimisation.
 
@@ -688,9 +689,16 @@ class PipelineController:
         translated into the SIMP forces / fixed DOFs / preserved elements /
         void elements, so the solve *consumes* the pre-created conditions
         instead of the bare ``self.forces`` / ``self.constraints`` arrays.
+
+        ``optimizer`` (Fase 4): "oc" (default histórico) o "mma" (Moving
+        Asymptotes propio, core/topopt.py). Otro valor → PipelineError.
         """
         if self.mesh is None:
             raise PipelineError("No hay malla. Genera la malla primero.")
+        if optimizer not in ("oc", "mma"):
+            raise PipelineError(
+                f"optimizer={optimizer!r} no soportado (usar 'oc' o 'mma')."
+            )
         nodes, elements = self.mesh_nodes, self.mesh_elements
         mat = self.material()
         from core.topopt import SIMPSolver
@@ -717,6 +725,7 @@ class PipelineController:
                 tolerance=tolerance,
                 progress_cb=progress_cb,
                 halo_radius=halo_radius,
+                optimizer=optimizer,
             )
             self.result = g
             self.result_densities = np.asarray(g["densities"], dtype=float)
@@ -754,7 +763,7 @@ class PipelineController:
                 radius=float(halo_radius) if halo_radius > 0 else None,
             )
         try:
-            result = solver.optimize(max_iterations=max_iterations, tolerance=tolerance, callback=progress_cb)
+            result = solver.optimize(max_iterations=max_iterations, tolerance=tolerance, callback=progress_cb, optimizer=optimizer)
         except Exception as exc:
             logger.exception("Optimization failed")
             raise PipelineError(f"Optimización falló: {exc}")

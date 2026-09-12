@@ -115,6 +115,15 @@ export const backend = {
   runSimpLoop: (params = {}) =>
     call<{ jobId: string }>('runSimpLoop', JSON.stringify(params) as never),
   // V2-NEW-END
+  // FASE3-START (reversible): postproceso (FoS + comparativa). Para volver
+  // atrás: borrar hasta FASE3-END + src/components/CompareTable.tsx +
+  // SafetyCard.tsx y su uso en RightPanel.tsx.
+  getSafetySummary: (params = {}) =>
+    call<{ summary: { min_fos: number | null; mean_fos: number | null; count: number; below_threshold: number; threshold: number } }>(
+      'getSafetySummary', JSON.stringify(params) as never),
+  compareStudies: () =>
+    call<{ rows: Record<string, unknown>[]; count: number }>('compareStudies'),
+  // FASE3-END
   getNavProfiles: () =>
     call<{
       profiles: { name: string; display_name: string }[];

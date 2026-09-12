@@ -887,8 +887,9 @@ class Api:
     def getSurfaceMesh(self, params_json: str = "{}") -> dict:
         """Malla de superficie (una porcion de nodos FEA) + campo escalar.
 
-        params: {field: 'none'|'vonmises'|'displacement'|'density'}.
-        Devuelve {positions, indices, values|null, min, max, field, counts}.
+        params: {field: 'none'|'vonmises'|'displacement'|'density'|'safety'}.
+        'safety' (Fase 3.1): FoS nodal = yield / vonMises, mismo pipeline de
+        color que tensión. Devuelve {positions, indices, values|null, min, max, field, counts}.
         Los indices de face_surface_elements apuntan a mesh.nodes, asi los
         valores nodales (von Mises, desplazamientos) mapean directo; las
         densidades SIMP (por elemento) se promedian a nodos.
@@ -937,6 +938,22 @@ class Api:
                 np.add.at(acc, elems.ravel(), np.repeat(dens, 4))
                 np.add.at(cnt, elems.ravel(), 1)
                 values = (acc / np.maximum(cnt, 1))[uniq]
+            elif field == "safety":
+                # Fase 3.1: FoS nodal = yield / vonMises (adimensional).
+                from core.cae_studies import factor_of_safety
+                res = getattr(c, "result", None) or {}
+                nodal = res.get("nodal_von_mises")
+                if nodal is None:
+                    return {"ok": False, "error": "sin resultado FEA"}
+                sy = float(c.material().yield_strength)
+                vm = np.asarray(nodal, dtype=float)[uniq]
+                values = factor_of_safety(vm, sy)
+                # Visualización honesta: FoS>50 (o inf sin tensión) se satura
+                # a 50; tensión inválida (NaN/negativa) se marca 0 (crítica,
+                # nunca "segura" por defecto).
+                values = np.where(np.isfinite(values), np.minimum(values, 50.0), 50.0)
+                bad = ~(np.isfinite(vm) & (vm >= 0))
+                values = np.where(bad, 0.0, values)
             if values is not None:
                 vmin, vmax = float(values.min()), float(values.max())
 
@@ -947,6 +964,61 @@ class Api:
                     "min": vmin, "max": vmax, "field": field,
                     "num_vertices": int(len(uniq)),
                     "num_triangles": int(len(indices))}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    # -- Fase 3 (plan.md): postproceso puro, sin tocar solvers ---------------
+    def getSafetySummary(self, params_json: str = "{}") -> dict:
+        """Resumen FoS del resultado FEA activo: min/mean + conteo bajo umbral.
+
+        params: {threshold: 1.0}. Usa yield del material activo y
+        ``element_von_mises`` (por elemento) si existe, si no nodal.
+        """
+        import numpy as np
+        try:
+            p = json.loads(params_json or "{}")
+            threshold = float(p.get("threshold", 1.0))
+            from core.cae_studies import factor_of_safety, safety_summary
+            c = self._ctrl
+            res = getattr(c, "result", None) or {}
+            vm = res.get("element_von_mises", res.get("nodal_von_mises"))
+            if vm is None:
+                return {"ok": False, "error": "sin resultado FEA"}
+            sy = float(c.material().yield_strength)
+            fos = factor_of_safety(np.asarray(vm, dtype=float), sy)
+            summary = safety_summary(np.asarray(vm, dtype=float), sy,
+                                     threshold=threshold)
+            return {"ok": True, "summary": summary,
+                    "factor_of_safety": _clean(fos)}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    def compareStudies(self, params_json: str = "{}") -> dict:
+        """Tabla comparativa A vs B (vs C...): snapshot por estudio registrado.
+
+        Solo incluye claves con dato real (nunca ceros inventados).
+        """
+        try:
+            from core.cae_studies import study_snapshot
+            c = self._ctrl
+            doc = getattr(c, "document", None)
+            studies = list(getattr(c, "studies", []) or [])
+            results = dict(getattr(doc, "results", {}) or {})
+            rows = []
+            for st in studies:
+                sid = getattr(st, "id", None)
+                res = results.get(sid)
+                if res is None and getattr(st, "result", None) is not None:
+                    res = st.result
+                rows.append(study_snapshot(st, res))
+            # El resultado activo (sin estudio) también cuenta si existe.
+            active = getattr(c, "result", None)
+            if active and not rows:
+                rows.append(study_snapshot(
+                    type("Active", (), {"id": "active", "name": "Resultado activo",
+                                        "study_type": "active", "status": "completed"})(),
+                    active))
+            return {"ok": True, "rows": rows, "count": len(rows)}
         except Exception as exc:  # noqa: BLE001
             return _err(exc)
 

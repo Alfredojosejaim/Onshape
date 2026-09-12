@@ -1,5 +1,10 @@
 import React from 'react';
 import { Material, SimpParameters, OptimizationState, ActiveTab, FeaResults } from '../types';
+// FASE3-START (reversible): FoS + comparativa. Para volver atrás: quitar
+// imports + usos <SafetyCard/> y <CompareTable/>.
+import { SafetyCard } from './SafetyCard';
+import { CompareTable } from './CompareTable';
+// FASE3-END
 
 interface RightPanelProps {
   activeTab: ActiveTab;
@@ -338,6 +343,9 @@ export const RightPanel: React.FC<RightPanelProps> = ({
               </div>
             </div>
 
+            {/* FASE3 (reversible): FoS por elemento + zonas bajo umbral. */}
+            <SafetyCard />
+
             {/* Deformation multiplier slider */}
             <div className="bg-surface-elevated/40 p-2 rounded border border-border-subtle/30 flex flex-col gap-1 font-mono text-[10px]">
               <div className="flex justify-between items-center">
@@ -368,6 +376,8 @@ export const RightPanel: React.FC<RightPanelProps> = ({
           </div>
         </section>
       )}
+      {/* FASE3 (reversible): tabla comparativa A vs B (ambas pestañas). */}
+      <CompareTable />
     </aside>
   );
 };

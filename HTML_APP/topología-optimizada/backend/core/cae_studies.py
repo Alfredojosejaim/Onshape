@@ -495,3 +495,90 @@ class ModalAnalysis(Study):
         # controller's execute_study (which calls solve when a mesh exists).
         # Without a mesh there is nothing to assemble K/M from.
         raise StudyNotImplementedError("Modal (eigen) solver not yet integrated.")
+
+
+# ====================================================================== #
+# Fase 3 (plan.md): postproceso puro — no toca ningún solver.
+# ====================================================================== #
+
+def factor_of_safety(von_mises, yield_strength: float):
+    """FoS por entidad: ``yield_strength / von_mises`` (adimensional).
+
+    Args:
+        von_mises: array-like de tensiones equivalentes [Pa] (por elemento
+            o nodales — la función no distingue, opera por entidad).
+        yield_strength: límite elástico del material [Pa] (> 0).
+
+    Returns:
+        ``np.ndarray`` de FoS; donde ``von_mises <= 0`` el FoS es ``+inf``
+        (sin tensión → sin riesgo), nunca NaN ni silencioso.
+    """
+    import numpy as np
+
+    sy = float(yield_strength)
+    if not np.isfinite(sy) or sy <= 0:
+        raise ValueError(f"yield_strength debe ser finito y > 0, got {yield_strength!r}.")
+    vm = np.asarray(list(von_mises), dtype=float)
+    out = np.full(vm.shape, np.inf, dtype=float)
+    positive = np.isfinite(vm) & (vm > 0)
+    out[positive] = sy / vm[positive]
+    return out
+
+
+def safety_summary(von_mises, yield_strength: float,
+                   threshold: float = 1.0) -> dict:
+    """Resumen de FoS: mínimo + conteo bajo umbral (mapa de zonas críticas).
+
+    Nunca inventa datos: si no hay entidades finitas, ``min_fos`` es None.
+    """
+    import numpy as np
+
+    fos = factor_of_safety(von_mises, yield_strength)
+    finite = fos[np.isfinite(fos)]
+    below = int(np.count_nonzero(fos < float(threshold)))
+    return {
+        "min_fos": float(finite.min()) if finite.size else None,
+        "mean_fos": float(finite.mean()) if finite.size else None,
+        "count": int(fos.size),
+        "below_threshold": below,
+        "threshold": float(threshold),
+    }
+
+
+def study_snapshot(study, result=None) -> dict:
+    """Snapshot comparable de un estudio: {masa, volumen, compliance,
+    desplazamiento máx, FoS mín} — solo las claves con dato real.
+
+    ``result`` puede ser un ``StudyResult`` o un dict plano de resultado;
+    las claves ausentes se omiten (nunca se inventan ceros).
+    """
+    data = {}
+    if result is not None:
+        raw = getattr(result, "data", result)
+        if isinstance(raw, dict):
+            data = raw
+    snap = {
+        "study_id": getattr(study, "id", None),
+        "name": getattr(study, "name", None),
+        "study_type": getattr(getattr(study, "study_type", None), "value",
+                              getattr(study, "study_type", None)),
+        "status": getattr(getattr(study, "status", None), "value",
+                          getattr(study, "status", None)),
+    }
+    for key in ("mass_kg", "volume", "volume_cm3", "final_volume_fraction",
+                "compliance", "final_compliance", "total_strain_energy",
+                "max_displacement", "max_von_mises", "min_fos",
+                "num_nodes", "num_elements", "iterations"):
+        if key in data:
+            try:
+                import numpy as np
+                v = data[key]
+                if isinstance(v, np.ndarray):
+                    v = v.tolist()
+                if isinstance(v, (int, float)):
+                    snap[key] = float(v)
+                else:
+                    snap[key] = v
+            except Exception:
+                continue
+    return snap

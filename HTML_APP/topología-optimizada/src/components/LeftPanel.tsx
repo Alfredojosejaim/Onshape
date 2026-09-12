@@ -81,9 +81,14 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
   // SOLIDS (reversible): planesOpen se fue con las coordenadas.
 
   return (
-    <aside className="w-full xl:w-72 2xl:w-80 flex flex-col gap-space-sm flex-shrink-0 select-none">
+    // ADAPTIVE-FIX (reversible): en desktop la columna es de alto fijo bajo
+    // el header (sticky) y el panel de herramienta va anclado abajo: al abrir
+    // una herramienta el arbol (flex-1) se encoge y el menu crece HACIA ARRIBA
+    // en vez de desbordar por debajo del marco. En movil fluye natural.
+    // Para volver atras: dejar solo "w-full xl:w-72 2xl:w-80 flex flex-col gap-space-sm flex-shrink-0 select-none".
+    <aside className="w-full xl:w-72 2xl:w-80 flex flex-col gap-space-sm flex-shrink-0 min-w-0 select-none xl:sticky xl:top-[154px] xl:h-[calc(100dvh-154px-3rem)] xl:overflow-hidden">
       {/* CAD Feature Tree Card */}
-      <section className="bg-surface-container-low rounded-lg p-space-sm shadow-md flex flex-col gap-space-xs border border-border-subtle/40">
+      <section className="bg-surface-container-low rounded-lg p-space-sm shadow-md flex flex-col gap-space-xs border border-border-subtle/40 xl:flex-1 xl:min-h-0">
         <header className="flex items-center justify-between px-space-xs py-1 bg-surface-elevated/70 rounded text-[11px] font-semibold text-text-primary">
           <div className="flex items-center gap-1.5">
             <span className="material-symbols-outlined text-secondary text-[15px]">account_tree</span>
@@ -101,8 +106,10 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
         {/* Tree Nodes List */}
         {/* TREE-SCROLL (reversible): lista con scroll propio estilo Onshape:
             el arbol puede crecer sin empujar el panel de herramienta, que
-            queda fijo debajo. Para volver atras: quitar max-h/overflow. */}
-        <div className="flex flex-col gap-1 py-1 text-[11px] text-text-secondary max-h-[34vh] overflow-y-auto pr-0.5">
+            queda fijo debajo. En desktop rellena el alto disponible (flex-1);
+            en movil se capa a 30vh. Para volver atras: quitar flex/min-h y
+            restaurar max-h-[34vh]. */}
+        <div className="flex flex-col gap-1 py-1 text-[11px] text-text-secondary overflow-y-auto pr-0.5 max-h-[30vh] xl:max-h-none xl:flex-1 xl:min-h-0">
           {/* MULTI-FLAT-START (reversible): solo cuerpos, sin distincion de
               archivo. Todos los solidos y mallas de todos los modelos
               importados en una lista plana; clic en un cuerpo activa su

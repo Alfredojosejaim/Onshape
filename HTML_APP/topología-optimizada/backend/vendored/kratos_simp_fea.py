@@ -80,6 +80,8 @@ class KratosSimpFEA:
         self._sma = SMA
         self._fixed: List[int] = []
         self._loads_built = False
+        self._load_ids: List[int] = []
+        self._last_F: Optional[np.ndarray] = None
         self.solves = 0
 
     # -- interfaz SIMP -------------------------------------------------
@@ -97,12 +99,35 @@ class KratosSimpFEA:
             self._mp.GetNode(d // 3 + 1).Fix(comp[d % 3])
         self._fixed = sorted(new)
 
+    def _clear_loads(self) -> None:
+        """Elimina las PointLoadCondition del caso anterior (multicarga).
+
+        Kratos ensambla el RHS solo desde Elements/Conditions; sin limpiar,
+        un segundo caso acumularia las cargas del primero. Usa la API
+        oficial RemoveCondition(id) verificada en Kratos 10.4.
+        """
+        for cid in self._load_ids:
+            try:
+                if self._mp.HasCondition(cid):
+                    self._mp.RemoveCondition(cid)
+            except Exception:
+                pass
+        self._load_ids = []
+        self._loads_built = False
+        self._last_F = None
+
     def _build_loads(self, F: np.ndarray) -> None:
+        F = np.asarray(F, dtype=float).ravel()
+        # MULTICARGA: si el vector cambio respecto al caso anterior,
+        # reconstruir las condiciones en vez de reutilizar las viejas.
+        if self._loads_built and self._last_F is not None:
+            if self._last_F.shape == F.shape and np.array_equal(self._last_F, F):
+                return
+            self._clear_loads()
         if self._loads_built:
             return
         Kratos = self._Kratos
         props = self._props[0]
-        F = np.asarray(F, dtype=float).ravel()
         for n in range(self.num_nodes):
             f = F[3 * n:3 * n + 3]
             if not np.any(f != 0.0):
@@ -112,7 +137,9 @@ class KratosSimpFEA:
                 "PointLoadCondition3D1N", nid, [nid], props)
             cond.SetValue(self._sma.POINT_LOAD,
                           [float(f[0]), float(f[1]), float(f[2])])
+            self._load_ids.append(nid)
         self._loads_built = True
+        self._last_F = F.copy()
 
     def apply_bc_and_solve(
         self,

@@ -73,7 +73,11 @@ export const ToolParamsPanel: React.FC<ToolParamsPanelProps> = ({
     : null;
 
   return (
-    <section className="bg-surface-container-low rounded-lg p-space-sm shadow-md flex flex-col gap-space-xs border border-border-subtle/40">
+    // TOOL-FIXED (reversible): menu anclado abajo de la columna (mt-auto) con
+    // cuerpo de alto capado + scroll interno: al abrir una herramienta crece
+    // HACIA ARRIBA hacia el arbol en vez de esconderse bajo el marco.
+    // Para volver atras: quitar mt-auto/flex-shrink-0 y el max-h del cuerpo.
+    <section className="bg-surface-container-low rounded-lg p-space-sm shadow-md flex flex-col gap-space-xs border border-border-subtle/40 flex-shrink-0 min-w-0 xl:mt-auto">
       <header className="flex items-center justify-between px-space-xs py-1 bg-surface-elevated/70 rounded text-[11px] font-semibold text-text-primary">
         <div className="flex items-center gap-1.5 min-w-0">
           <span className={`material-symbols-outlined text-[15px] ${meta.cls}`}>{meta.icon}</span>
@@ -148,7 +152,7 @@ export const ToolParamsPanel: React.FC<ToolParamsPanelProps> = ({
             Gmsh, ahora como herramienta (se abre con Remallar en la barra).
             Para volver atras: borrar este bloque + props. */}
         {activeTool === 'malla' && (
-          <div className="flex flex-col gap-2 p-1 text-[11px]">
+      <div className="flex flex-col gap-2 p-1 text-[11px] min-h-0 overflow-y-auto max-h-[42dvh] xl:max-h-[38dvh]">
             <div className="flex items-center justify-between">
               <span className="text-text-muted text-[10px] font-mono">Tamaño Elemento (h):</span>
               <span className="font-mono text-text-primary font-bold text-[11px]">{meshElementSize.toFixed(1)} mm</span>

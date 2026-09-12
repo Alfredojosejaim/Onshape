@@ -21,6 +21,8 @@ import { SecondaryNav } from './components/SecondaryNav';
 import { Toolbar } from './components/Toolbar';
 import { LeftPanel } from './components/LeftPanel';
 import { RightPanel } from './components/RightPanel';
+// EXT-RAIL (reversible: borrar import + uso para volver atras).
+import { ExtensionsRail } from './components/ExtensionsRail';
 // CHUNK-SPLIT (reversible): el viewport arrastra three.js (~600KB);
 // con lazy() va a un chunk async separado en vez del bundle inicial.
 // Para volver atras: restaurar `import { CadViewport } from './components/CadViewport';`
@@ -769,7 +771,8 @@ export default function App() {
   // NUEVA del mismo tipo (Carga 1, Carga 2...), nunca modifica la existente.
   // La existente solo se retoma desde su fila del arbol (clic/doble clic).
   // Sin modelo no se crea nada (evita condiciones huerfanas): solo se activa.
-  // Para volver atras: devolver onSelectTool={setActiveTool} en el Toolbar.
+  // El Toolbar usa este handler (no setActiveTool directo).
+  // Para volver atras: pasar onSelectTool={setActiveTool} en el Toolbar.
   const handleSelectTool = (t: ActiveTool) => {
     if (
       currentModel &&
@@ -782,14 +785,8 @@ export default function App() {
 
   // TOOL-LIFECYCLE: Aceptar/Enter/Escape cierra la herramienta abierta,
   // volviendo a 'seleccionar' (cerrada). Ver confirmTool/efecto abajo.
-  const handleSelectTool = (t: ActiveTool) => {
-    if (
-      currentModel &&
-      (t === 'carga' || t === 'fijacion' || t === 'preservada' || t === 'keepout')
-    ) {
-      createFaceCondition(t);
-    }
-    setActiveTool(t);
+  const confirmTool = () => {
+    setActiveTool('seleccionar');
   };
 
   // Reabrir la herramienta de una condicion aplicada (clic/doble clic en su
@@ -922,7 +919,7 @@ export default function App() {
         {/* 3. CAD TOOLBAR */}
         <Toolbar
           activeTool={activeTool}
-          onSelectTool={setActiveTool}
+          onSelectTool={handleSelectTool}
           showMesh={showMesh}
           onToggleMesh={() => setShowMesh((m) => !m)}
           showSection={showSection}
@@ -934,7 +931,10 @@ export default function App() {
 
       {/* 4. MAIN ENGINEERING STAGE */}
       <div className="pt-[146px] pb-7 flex-1 w-full flex flex-col bg-viewport-bg">
-        <div className="w-full flex-1 flex flex-col xl:flex-row gap-space-sm p-space-sm bg-viewport-bg min-h-[calc(100vh-8.5rem)]">
+        <div className="w-full flex-1 flex flex-col xl:flex-row gap-space-sm p-space-sm bg-viewport-bg min-h-[calc(100dvh-8.5rem)]">
+          {/* EXT-RAIL (reversible): riel delgado entre el marco y el arbol.
+              Borrar esta linea para volver atras. */}
+          <ExtensionsRail />
           {/* LEFT PANEL: CAD Tree & Gmsh Mesher */}
           <LeftPanel
             currentModel={currentModel}
@@ -976,7 +976,7 @@ export default function App() {
           <ErrorBoundary label="el viewport 3D">
           <React.Suspense
             fallback={
-              <div className="flex-1 flex items-center justify-center rounded-lg bg-surface-container-lowest min-h-[580px] text-[11px] font-mono text-text-muted">
+              <div className="flex-1 flex items-center justify-center rounded-lg bg-surface-container-lowest min-h-[52dvh] xl:min-h-[580px] text-[11px] font-mono text-text-muted">
                 Cargando viewport 3D…
               </div>
             }

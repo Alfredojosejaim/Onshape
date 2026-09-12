@@ -417,6 +417,79 @@ class GenerativeDesignEngine:
         except Exception:  # pragma: no cover - defensive OCP/geometry errors
             return False
 
+    def _force_vector_for_load(self, load, raise_on_unmapped_face=True):
+        """Vector de fuerza de UNA LoadCondition (un caso de carga).
+
+        Devuelve ``(vec, node_idx, unsupported_flag)``. Extrae la logica de
+        distribucion de ``_map_conditions_to_problem`` para reutilizarla en
+        el camino multicarga sin duplicar fisica.
+        """
+        from core.boundary import nodal_area_weights
+        nodes = self.mesh_nodes
+        vec = direction_vector(load)
+        mag = float(load.magnitude if load.magnitude is not None else 1000.0)
+        idx = self._node_indices_for_load(load)
+        if not idx and load.faces.entities and raise_on_unmapped_face:
+            return None, [], "load"
+        if not idx:
+            axis = int(np.argmax(np.abs(vec)))
+            coord = nodes[:, axis].max() if vec[axis] > 0 else nodes[:, axis].min()
+            tol = 1e-3 * float(np.ptp(nodes[:, axis]))
+            idx = [i for i in range(nodes.shape[0])
+                   if abs(float(nodes[i, axis]) - coord) <= tol]
+        single = np.zeros(nodes.shape[0] * 3)
+        face_tris = self._face_triangles_for_load(load, node_indices=idx)
+        if is_pressure_unit(getattr(load, "unit", "N")):
+            from core.boundary import surface_area_mm2, pressure_to_total_force_N
+            area = surface_area_mm2(nodes, face_tris)
+            if area <= 0.0:
+                if raise_on_unmapped_face:
+                    return None, [], "load(pressure: sin área)"
+                return single, idx, None
+            mag = pressure_to_total_force_N(mag, load.unit, area)
+        if face_tris:
+            weights = nodal_area_weights(nodes, face_tris, idx)
+            for ni in idx:
+                single[ni * 3: ni * 3 + 3] += vec * (mag * weights.get(ni, 1.0 / max(len(idx), 1)))
+        else:
+            for ni in idx:
+                single[ni * 3: ni * 3 + 3] += vec * (mag / max(len(idx), 1))
+        return single, idx, None
+
+    def _map_conditions_to_load_cases(self, conditions, raise_on_unmapped_face=True):
+        """MULTICARGA: una entrada por LoadCondition (o grupo load_case_id).
+
+        Agrupa por ``load.metadata["load_case_id"]`` cuando existe (varias
+        cargas fisicas en el mismo caso se suman); si no, cada condicion es
+        su propio caso. Peso por caso desde ``metadata["load_weight"]``
+        (default 1.0). Devuelve ``(cases, weights, unsupported)`` con cases
+        como lista de vectores de fuerza.
+        """
+        loads = conditions.get(ConditionType.LOAD, [])
+        grouped: Dict[str, np.ndarray] = {}
+        group_weight: Dict[str, float] = {}
+        order: List[str] = []
+        unsupported = []
+        for n, load in enumerate(loads):
+            if not isinstance(load, LoadCondition):
+                continue
+            meta = getattr(load, "metadata", None) or {}
+            gid = str(meta.get("load_case_id", f"__single_{n}_{load.id}"))
+            w = float(meta.get("load_weight", 1.0))
+            single, _idx, uns = self._force_vector_for_load(load, raise_on_unmapped_face)
+            if uns:
+                unsupported.append(uns)
+                continue
+            if gid not in grouped:
+                grouped[gid] = single
+                group_weight[gid] = w
+                order.append(gid)
+            else:
+                grouped[gid] = grouped[gid] + single
+        cases = [grouped[g] for g in order]
+        weights = [group_weight[g] for g in order]
+        return cases, weights, sorted(set(unsupported))
+
     def _map_conditions_to_problem(self, conditions, raise_on_unmapped_face=True):
         """Translate reusable conditions into a quasi-static FE problem.
 
@@ -552,6 +625,16 @@ class GenerativeDesignEngine:
 
         forces, fixed_dofs, preserved, void, unsupported = \
             self._map_conditions_to_problem(conditions, raise_on_unmapped_face=False)
+        # MULTICARGA: casos separados (misma fisica que el vector sumado).
+        cases, weights, unsupported_cases = \
+            self._map_conditions_to_load_cases(conditions, raise_on_unmapped_face=False)
+        for u in unsupported_cases:
+            if u not in unsupported:
+                unsupported.append(u)
+        if not cases:
+            # Sin casos (p.ej. todo unsupported en modo permisivo): vector nulo
+            # unico para no romper el contrato del solver.
+            cases, weights = [forces], [1.0]
 
         solver = SIMPSolver(
             nodes=nodes,
@@ -562,7 +645,7 @@ class GenerativeDesignEngine:
             penalization=kwargs.get("penalization", 3.0),
             filter_radius=kwargs.get("filter_radius", 1.5),
         )
-        solver.set_load(forces)
+        solver.set_loads(cases, weights)
         if fixed_dofs:
             solver.set_fixed_dofs(np.asarray(fixed_dofs, dtype=int))
         if preserved.size:

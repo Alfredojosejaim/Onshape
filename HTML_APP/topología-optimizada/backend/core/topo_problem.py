@@ -31,6 +31,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
+import numpy as np
+
 from core.topopt import TopOptError
 
 
@@ -371,11 +373,18 @@ def problem_to_solver_inputs(
         )
 
     non_empty = [lc for lc in problem.load_cases if lc.loads]
-    if len(non_empty) > 1 or any(abs(lc.weight - 1.0) > 1e-12 for lc in non_empty):
-        raise TopOptError(
-            "Multi-load ponderado no soportado por el SIMPSolver "
-            "single-load (Fase 3)."
-        )
+    if not non_empty:
+        raise TopOptError("Sin load_cases con cargas (validar antes).")
+    # MULTICARGA (Fase 2): N casos con pesos normalizados a suma 1.
+    # c(rho) = sum_i w_i * c_i. Pesos <= 0 o no finitos -> error explicito.
+    for lc in non_empty:
+        if not np.isfinite(lc.weight) or lc.weight < 0:
+            raise TopOptError(
+                f"LoadCase '{lc.id}': weight={lc.weight!r} invalido "
+                f"(debe ser finito y >= 0)."
+            )
+    if sum(lc.weight for lc in non_empty) <= 0:
+        raise TopOptError("Al menos un LoadCase debe tener weight > 0.")
     for lc in non_empty:
         for ld in lc.loads:
             if ld.type not in (LoadType.SURFACE_FORCE, LoadType.SURFACE_PRESSURE,
@@ -429,11 +438,15 @@ def problem_to_solver_inputs(
         )
 
     loads_out: List[Dict[str, Any]] = []
+    total_w = sum(float(lc.weight) for lc in non_empty)
     for lc in non_empty:
+        w_norm = float(lc.weight) / total_w
         for ld in lc.loads:
             res = resolve(ld.target, mesh)
             loads_out.append({
                 "id": ld.id,
+                "load_case_id": lc.id,
+                "weight": w_norm,
                 "type": ld.type.value,
                 "node_indices": res["node_indices"],
                 "vector": ld.vector,

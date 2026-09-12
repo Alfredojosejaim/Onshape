@@ -86,6 +86,14 @@ export const CadViewport: React.FC<CadViewportProps> = ({
   const triadSceneRef = useRef<THREE.Scene | null>(null);
   const triadCameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const clipPlaneRef = useRef<THREE.Plane | null>(null);
+  // PLANES-VIS (reversible): refs a los 4 planos en el 0 absoluto para
+  // ver/ocultar uno por uno o todos. Para volver atras: borrar ref + estado
+  // + efecto + panel.
+  const planesRef = useRef<{
+    xy: THREE.GridHelper | null;
+    xz: THREE.GridHelper | null;
+    yz: THREE.GridHelper | null;
+  }>({ xy: null, xz: null, yz: null });
   // MULTI-VIEW (reversible): mallas por cuerpo (raycast solo en el activo).
   // userData: {key, filename, triMap: nº triangulo global por triangulo local}.
   const bodyMeshesRef = useRef<THREE.Mesh[]>([]);
@@ -100,6 +108,8 @@ export const CadViewport: React.FC<CadViewportProps> = ({
   const [isPanning, setIsPanning] = useState(false);
   const [isOrthographic, setIsOrthographic] = useState(false);
   const [measurePoint, setMeasurePoint] = useState<string | null>(null);
+  // PLANES-VIS (reversible): visibilidad por plano + todos.
+  const [visiblePlanes, setVisiblePlanes] = useState({ xy: true, xz: true, yz: true });
   // BLACKSCREEN-FIX: si WebGL no esta disponible, se muestra el motivo en
   // vez de un viewport negro silencioso.
   const [webglError, setWebglError] = useState<string | null>(null);
@@ -221,7 +231,9 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     sceneRef.current = scene;
 
     // Clipping plane for section view
-    const clipPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 10);
+    // ZERO-PLANES (reversible): corte en el 0 absoluto (z=0). Antes constant=10
+    // (plano en z=10). Para volver atras: constant 10.
+    const clipPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0);
     clipPlaneRef.current = clipPlane;
 
     // Main Camera
@@ -248,18 +260,34 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     rendererRef.current = renderer;
     container.appendChild(renderer.domElement);
 
-    // Subtle Perspective Ground Grid
-    const gridHelper = new THREE.GridHelper(260, 26, 0x2e3646, 0x181b24);
-    gridHelper.position.y = -35;
-    scene.add(gridHelper);
-
-    // Coordinate Planes visualizers
+    // GRID-REMOVED (reversible): rejilla de proyecto eliminada — los 3
+    // planos ya aportan el estilo rejilla en el 0. Para volver atras:
+    // restaurar el bloque GridHelper(260, 26) en y=0.
+    // Coordinate Planes visualizers (los 3 en el 0 absoluto: XY z=0, XZ y=0,
+    // YZ x=0). ZERO-PLANES: antes solo existia el XY. Para volver atras:
+    // borrar planeXZ y planeYZ.
     const planeXY = new THREE.GridHelper(120, 12, 0xef4444, 0x272a33);
     planeXY.rotation.x = Math.PI / 2;
     planeXY.position.set(0, 0, 0);
     (planeXY.material as THREE.Material).opacity = 0.15;
     (planeXY.material as THREE.Material).transparent = true;
     scene.add(planeXY);
+    planesRef.current.xy = planeXY;
+
+    const planeXZ = new THREE.GridHelper(120, 12, 0x10b981, 0x272a33);
+    planeXZ.position.set(0, 0, 0);
+    (planeXZ.material as THREE.Material).opacity = 0.15;
+    (planeXZ.material as THREE.Material).transparent = true;
+    scene.add(planeXZ);
+    planesRef.current.xz = planeXZ;
+
+    const planeYZ = new THREE.GridHelper(120, 12, 0x7bd0ff, 0x272a33);
+    planeYZ.rotation.z = Math.PI / 2;
+    planeYZ.position.set(0, 0, 0);
+    (planeYZ.material as THREE.Material).opacity = 0.15;
+    (planeYZ.material as THREE.Material).transparent = true;
+    scene.add(planeYZ);
+    planesRef.current.yz = planeYZ;
 
     // Studio Lighting
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
@@ -320,6 +348,22 @@ export const CadViewport: React.FC<CadViewportProps> = ({
       renderer.dispose();
     };
   }, []);
+
+  // PLANES-VIS (reversible): aplica la visibilidad a los 3 planos del 0.
+  useEffect(() => {
+    const p = planesRef.current;
+    if (p.xy) p.xy.visible = visiblePlanes.xy;
+    if (p.xz) p.xz.visible = visiblePlanes.xz;
+    if (p.yz) p.yz.visible = visiblePlanes.yz;
+  }, [visiblePlanes]);
+
+  const togglePlane = (key: keyof typeof visiblePlanes) =>
+    setVisiblePlanes((p) => ({ ...p, [key]: !p[key] }));
+  const toggleAllPlanes = () =>
+    setVisiblePlanes((p) => {
+      const anyVisible = p.xy || p.xz || p.yz;
+      return { ...p, xy: !anyVisible, xz: !anyVisible, yz: !anyVisible };
+    });
 
   // MULTI-VIEW-START (reversible): un mesh por cuerpo de cada archivo en el
   // viewport unico. Split por solido via face_indices (solidTriangles); sin
@@ -681,7 +725,7 @@ export const CadViewport: React.FC<CadViewportProps> = ({
       tabIndex={0}
       // NAV-VIEW (reversible): el clic derecho puede orbitar segun perfil.
       onContextMenu={(e) => e.preventDefault()}
-      className="flex-1 flex flex-col relative rounded-lg bg-surface-container-lowest overflow-hidden shadow-2xl min-h-[580px] cursor-crosshair select-none"
+      className="flex-1 min-w-0 flex flex-col relative rounded-lg bg-surface-container-lowest overflow-hidden shadow-2xl min-h-[52dvh] xl:min-h-[580px] cursor-crosshair select-none"
     >
       {/* ViewCube Gizmo (Top Right Floating) */}
       <aside className="absolute top-space-sm right-space-sm z-20 flex flex-col items-end gap-space-xs pointer-events-auto">
@@ -784,68 +828,66 @@ export const CadViewport: React.FC<CadViewportProps> = ({
             >
               FIT
             </span>
+            {/* PLANES-VIS (reversible): el selector de perfil vivia en la
+                barra de acciones eliminada; se conserva aqui. Para volver
+                atras: borrar este select. */}
+            <select
+              aria-label="Perfil de navegación"
+              title="Perfil de navegación"
+              value={navProfile}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (isNavProfileName(v)) changeNavProfile(v);
+              }}
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+              className="bg-transparent hover:text-secondary cursor-pointer text-[9px] font-mono outline-none [&>option]:bg-surface-elevated"
+            >
+              {(Object.keys(NAV_PROFILES) as NavProfileName[]).map((n) => (
+                <option key={n} value={n} title={NAV_PROFILES[n].displayName}>
+                  {NAV_PROFILES[n].displayName.slice(0, 2).toUpperCase()}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 
-        {/* Camera Tool Floating Stack */}
-        <div className="flex flex-col gap-1 bg-surface-elevated/90 backdrop-blur-md p-1 rounded-lg shadow-md border border-border-subtle/50">
+        {/* PLANES-VIS-START (reversible): ver/ocultar planos del 0 absoluto,
+            uno por uno y todos. Reemplaza la barra de acciones de camara
+            (Fit/orbita/centrar/ortho). Para volver atras: restaurar el bloque
+            "Camera Tool Floating Stack" desde git. */}
+        <div className="flex flex-col items-stretch gap-0.5 bg-surface-elevated/90 backdrop-blur-md p-1.5 rounded-lg shadow-md border border-border-subtle/50">
+          <span className="px-1 text-center text-[9px] font-mono font-semibold text-text-muted">PLANOS</span>
+          {(
+            [
+              ['xy', 'XY', '#ef4444'],
+              ['xz', 'XZ', '#10b981'],
+              ['yz', 'YZ', '#7bd0ff'],
+            ] as ['xy' | 'xz' | 'yz', string, string][]
+          ).map(([key, label, color]) => (
+            <button
+              key={key}
+              onClick={() => togglePlane(key)}
+              title={`Ver / ocultar plano ${label}`}
+              type="button"
+              className="px-1.5 py-0.5 rounded text-[11px] font-mono font-bold transition-colors hover:bg-surface-container-high"
+              style={{ color, opacity: visiblePlanes[key] ? 1 : 0.3 }}
+            >
+              {label}
+            </button>
+          ))}
           <button
-            onClick={() => fitToAll()}
-            className="w-7 h-7 flex items-center justify-center rounded hover:bg-surface-container-high text-text-secondary hover:text-text-primary transition-colors"
-            title="Ajustar Zoom (Fit)"
+            onClick={toggleAllPlanes}
+            title="Ver / ocultar todos los planos"
             type="button"
+            className="flex items-center justify-center px-1 py-0.5 rounded text-secondary hover:bg-surface-container-high transition-colors"
           >
-            <span className="material-symbols-outlined text-[16px]">center_focus_strong</span>
+            <span className="material-symbols-outlined text-[14px]">
+              {visiblePlanes.xy || visiblePlanes.xz || visiblePlanes.yz ? 'hide_source' : 'select_all'}
+            </span>
           </button>
-          <button
-            onClick={() => applyNamedView('iso')}
-            className="w-7 h-7 flex items-center justify-center rounded hover:bg-surface-container-high text-text-secondary hover:text-text-primary transition-colors"
-            title="Rotar Órbita CAD"
-            type="button"
-          >
-            <span className="material-symbols-outlined text-[16px]">3d_rotation</span>
-          </button>
-          <button
-            onClick={() => {
-              // MULTI-VIEW (reversible): centrar = fit a todos los cuerpos.
-              fitToAll();
-            }}
-            className="w-7 h-7 flex items-center justify-center rounded hover:bg-surface-container-high text-text-secondary hover:text-text-primary transition-colors"
-            title="Centrar Modelo"
-            type="button"
-          >
-            <span className="material-symbols-outlined text-[16px]">pan_tool</span>
-          </button>
-          <button
-            onClick={() => setIsOrthographic(!isOrthographic)}
-            className={`w-7 h-7 flex items-center justify-center rounded hover:bg-surface-container-high transition-colors ${
-              isOrthographic ? 'text-secondary' : 'text-text-secondary hover:text-text-primary'
-            }`}
-            title="Cambiar a Proyección Ortográfica"
-            type="button"
-          >
-            <span className="material-symbols-outlined text-[16px]">aspect_ratio</span>
-          </button>
-          {/* UI-CLEAN2 (reversible): selector de perfil (antes en el badge MODO).
-              Persiste en backend + localStorage. Para volver atras: borrar. */}
-          <select
-            aria-label="Perfil de navegación"
-            title="Perfil de navegación"
-            value={navProfile}
-            onChange={(e) => {
-              const v = e.target.value;
-              if (isNavProfileName(v)) changeNavProfile(v);
-            }}
-            onMouseDown={(e) => e.stopPropagation()}
-            className="w-7 h-7 rounded bg-transparent hover:bg-surface-container-high text-text-secondary hover:text-text-primary transition-colors text-[9px] font-mono outline-none cursor-pointer [&>option]:bg-surface-elevated"
-          >
-            {(Object.keys(NAV_PROFILES) as NavProfileName[]).map((n) => (
-              <option key={n} value={n} title={NAV_PROFILES[n].displayName}>
-                {NAV_PROFILES[n].displayName.slice(0, 2).toUpperCase()}
-              </option>
-            ))}
-          </select>
         </div>
+        {/* PLANES-VIS-END */}
       </aside>
 
       {/* Triad Gizmo (Bottom-Left Viewport) */}

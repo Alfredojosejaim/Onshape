@@ -70,6 +70,7 @@ class SIMPSolver:
             self.x = np.full(self.num_elements, min(volfrac, 1.0))
 
         self._forces: Optional[np.ndarray] = None
+        self._load_cases: Optional[List[Tuple[np.ndarray, float]]] = None
         self._fixed_dofs: Optional[np.ndarray] = None
         self._volumes = self._element_volumes()
         self._vol0 = float(self._volumes.sum())
@@ -150,6 +151,46 @@ class SIMPSolver:
         if f.shape[0] != self.fea.num_dofs:
             raise TopOptError("force length must equal the mesh DOF count")
         self._forces = f
+        # Compat: caso unico con peso 1.
+        self._load_cases = [(f, 1.0)]
+
+    def set_loads(
+        self,
+        forces: List[np.ndarray],
+        weights: Optional[List[float]] = None,
+    ) -> None:
+        """MULTICARGA: N casos evaluados simultaneamente.
+
+        Objetivo ponderado (estandar SIMP multicarga):
+            c(rho) = sum_i w_i * u_i^T K(rho) u_i,
+            dc/de  = sum_i w_i * dc_i/de,
+        con K(rho)·u_i = F_i por caso. Kratos (KratosSimpFEA) resuelve
+        cada caso con su propio RHS secuencialmente; el motor local hace
+        lo mismo. Pesos normalizados a suma 1 (si todos son 0 -> error).
+        """
+        if not forces:
+            raise TopOptError("set_loads() requires at least one force vector")
+        n = len(forces)
+        if weights is None:
+            weights = [1.0] * n
+        if len(weights) != n:
+            raise TopOptError("forces and weights length mismatch")
+        w = [float(x) for x in weights]
+        if any(not np.isfinite(x) or x < 0 for x in w):
+            raise TopOptError("load weights must be finite and >= 0")
+        if sum(w) <= 0:
+            raise TopOptError("at least one load weight must be > 0")
+        total = sum(w)
+        w = [x / total for x in w]
+        cases = []
+        for f in forces:
+            fv = np.asarray(f, dtype=float).ravel()
+            if fv.shape[0] != self.fea.num_dofs:
+                raise TopOptError("force length must equal the mesh DOF count")
+            cases.append(fv)
+        self._load_cases = list(zip(cases, w))
+        # _forces conserva la suma ponderada (solo informativo / compat).
+        self._forces = sum(fv * wi for fv, wi in self._load_cases)
 
     def set_fixed_dofs(self, fixed_dofs: np.ndarray) -> None:
         self._fixed_dofs = np.sort(np.asarray(fixed_dofs, dtype=np.int64))
@@ -206,24 +247,40 @@ class SIMPSolver:
         self.set_preserved_elements(halo)
 
     def _solve(self, x: np.ndarray) -> np.ndarray:
+        # Compat single-load: primer caso (peso aplicado en sensibilidades).
         if self._forces is None:
-            raise TopOptError("load vector not set; call set_load() first")
+            raise TopOptError("load vector not set; call set_load()/set_loads() first")
+        cases = getattr(self, "_load_cases", None)
+        F = cases[0][0] if cases else self._forces
         fixed = self._fixed_dofs if self._fixed_dofs is not None else np.array([], dtype=np.int64)
         weights = np.power(x, self.penalization)
-        u = self.fea.apply_bc_and_solve(self._forces, fixed, densities=weights)
+        u = self.fea.apply_bc_and_solve(F, fixed, densities=weights)
         return u
 
+    def _solve_all(self, x: np.ndarray) -> List[np.ndarray]:
+        """Resuelve K(rho)·u_i = F_i para cada caso de carga."""
+        cases = getattr(self, "_load_cases", None)
+        if not cases:
+            raise TopOptError("load vector not set; call set_load()/set_loads() first")
+        fixed = self._fixed_dofs if self._fixed_dofs is not None else np.array([], dtype=np.int64)
+        weights = np.power(x, self.penalization)
+        return [self.fea.apply_bc_and_solve(F, fixed, densities=weights) for F, _ in cases]
+
     def _compliance_and_sensitivities(self, x: np.ndarray) -> Tuple[float, np.ndarray]:
-        u = self._solve(x)
+        cases = getattr(self, "_load_cases", None) or []
+        if not cases:
+            raise TopOptError("load vector not set; call set_load()/set_loads() first")
+        us = self._solve_all(x)
         compliance = 0.0
         dc = np.zeros(self.num_elements)
-        for e in range(self.num_elements):
-            dm = self.dof_map[e]
-            ue = u[dm]
-            ke = self.fea.element_stiffness(e)
-            ukeu = ue @ ke @ ue
-            compliance += float(ukeu) * (x[e] ** self.penalization)
-            dc[e] = float(-self.penalization * (x[e] ** (self.penalization - 1)) * ukeu)
+        for (F, w), u in zip(cases, us):
+            for e in range(self.num_elements):
+                dm = self.dof_map[e]
+                ue = u[dm]
+                ke = self.fea.element_stiffness(e)
+                ukeu = ue @ ke @ ue
+                compliance += float(w * ukeu) * (x[e] ** self.penalization)
+                dc[e] += float(w * -self.penalization * (x[e] ** (self.penalization - 1)) * ukeu)
         return compliance, dc
 
     def _oc_update(
@@ -309,17 +366,31 @@ class SIMPSolver:
                 converged = True
                 break
 
-        final_u = self._solve(x)
+        final_us = self._solve_all(x)
+        final_u = final_us[0]
         weight = np.power(x, self.penalization)
         ke_term = np.zeros(self.num_elements)
         compliance_final = 0.0
+        cases = getattr(self, "_load_cases", None) or []
+        per_case = []
+        for (F, w), uu in zip(cases, final_us):
+            cc = 0.0
+            for e in range(self.num_elements):
+                dm = self.dof_map[e]
+                ue = uu[dm]
+                ke = self.fea.element_stiffness(e)
+                ukeu = float(ue @ ke @ ue) * weight[e]
+                cc += ukeu
+            per_case.append({"weight": float(w), "compliance": float(cc)})
+            compliance_final += float(w) * float(cc)
+        # ke_term / VM del caso dominante (mayor peso; desempate: primero).
+        dom = max(range(len(final_us)), key=lambda i: cases[i][1]) if final_us else 0
+        final_u = final_us[dom]
         for e in range(self.num_elements):
             dm = self.dof_map[e]
             ue = final_u[dm]
             ke = self.fea.element_stiffness(e)
-            ukeu = ue @ ke @ ue
-            compliance_final += float(ukeu) * weight[e]
-            ke_term[e] = float(ukeu)
+            ke_term[e] = float(ue @ ke @ ue)
 
         nodal_vm = self._nodal_vm(final_u)
         max_disp = float(np.max(np.abs(final_u))) if final_u.size else 0.0
@@ -349,6 +420,9 @@ class SIMPSolver:
             "nodal_von_mises": nodal_vm.tolist(),
             "penalization": float(self.penalization),
             "filter_radius": float(self.filter_radius),
+            "num_load_cases": len(cases),
+            "load_weights": [float(w) for _, w in cases],
+            "per_case_compliance": per_case,
             # VENDORED-CHANGE: etiqueta segun el motor inyectado.
             "engine": getattr(self.fea, "engine_tag", "self-contained-simp-numpy"),
         }

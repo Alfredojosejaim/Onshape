@@ -826,7 +826,13 @@ class Api:
             penalization=float(simp_kwargs.get("penalization", 3.0)),
             filter_radius=float(simp_kwargs.get("filter_radius", 1.5)),
             fea_solver=fea_solver)
-        solver.set_load(force)
+        # MULTICARGA: casos separados (Kratos reconstruye su RHS por caso).
+        cases, weights = c._load_case_vectors(
+            np.asarray(nodes), int(np.asarray(nodes).shape[0] * 3))
+        if len(cases) > 1:
+            solver.set_loads(cases, weights)
+        else:
+            solver.set_load(force)
         solver.set_fixed_dofs(fixed)
         if halo_radius is not None and (c._load_nodes or c._bot_nodes):
             solver.protect_elements_near_nodes(

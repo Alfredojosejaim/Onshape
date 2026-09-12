@@ -332,6 +332,77 @@ class PipelineController:
                 fixed_dofs.extend([ni * 3, ni * 3 + 1, ni * 3 + 2])
         return np.sort(np.unique(np.asarray(fixed_dofs, dtype=int)))
 
+    def _load_case_vectors(self, nodes: np.ndarray, num_dofs: int):
+        """MULTICARGA legacy: un vector por entrada de ``self.forces``.
+
+        Agrupa por ``load_case_id`` cuando existe (se suman en un caso);
+        peso por caso desde ``weight`` (default 1.0). Devuelve
+        ``(cases, weights)`` con vectores de longitud num_dofs.
+        """
+        from core.boundary import BoundaryConditionMapper, resolve_face_index
+        from core.selection import NodeSelectionEngine
+
+        shape = self.cad.get_model_shape(self.model_id) if self.model_id else None
+        grouped: dict = {}
+        group_weight: dict = {}
+        order: list = []
+        for n, ld in enumerate(self.forces):
+            mag = float(ld.get("magnitude", 0))
+            direction = [float(ld.get("direction_x", 0)), float(ld.get("direction_y", 0)), float(ld.get("direction_z", 0))]
+            norm = np.linalg.norm(direction)
+            if norm == 0 or mag == 0:
+                continue
+            direction = np.array(direction) / norm
+            fvec = direction * mag
+            mapped_nodes = []
+            selection = ld.get("selection")
+            if selection:
+                tol = ld.get("tolerance")
+                mapped_nodes = NodeSelectionEngine.select_nodes(
+                    nodes, selection, cad_shape=shape,
+                    default_tolerance=float(tol) if tol is not None else None,
+                )
+            else:
+                face_id = ld.get("application_face_id")
+                face_index = resolve_face_index(str(face_id)) if face_id else None
+                if shape is not None and face_index is not None:
+                    sample = nodes[:: max(1, len(nodes) // 500)]
+                    bbox = sample.max(axis=0) - sample.min(axis=0)
+                    char_length = max(float(np.linalg.norm(bbox) / max(1.0, len(nodes) ** (1.0 / 3.0))), 1e-9)
+                    mapped = BoundaryConditionMapper.map_faces_to_nodes(
+                        shape, nodes.tolist(), face_indices=[face_index], tolerance=1.5 * char_length
+                    )
+                    if mapped and mapped[0].node_indices:
+                        mapped_nodes = mapped[0].node_indices
+            if not mapped_nodes and not selection:
+                logger.warning(
+                    "LEGACY loads: load (mag=%s) mapped to no mesh node; "
+                    "applying to max-coordinate nodes explicitly (fallback, "
+                    "not a CAD-face mapping). Migrate to ConditionManager.",
+                    mag,
+                )
+                axis = int(np.argmax(np.abs(direction)))
+                coord = float(nodes[:, axis].max())
+                mapped_nodes = [
+                    i for i in range(nodes.shape[0])
+                    if abs(float(nodes[i, axis]) - coord) <= 1e-6 * max(1.0, np.ptp(nodes[:, axis]))
+                ]
+            if not mapped_nodes:
+                continue
+            uniq = list(dict.fromkeys(mapped_nodes))
+            single = np.zeros(num_dofs)
+            for ni in uniq:
+                single[ni * 3: ni * 3 + 3] += np.array(fvec) / max(len(uniq), 1)
+            gid = str(ld.get("load_case_id", f"__single_{n}"))
+            w = float(ld.get("weight", 1.0))
+            if gid not in grouped:
+                grouped[gid] = single
+                group_weight[gid] = w
+                order.append(gid)
+            else:
+                grouped[gid] = grouped[gid] + single
+        return [grouped[g] for g in order], [group_weight[g] for g in order]
+
     def _apply_loads(self, nodes: np.ndarray, num_dofs: int) -> np.ndarray:
         """Assemble the legacy force vector from ``self.forces`` flat dicts.
 
@@ -670,7 +741,12 @@ class PipelineController:
             penalization=penalization,
             filter_radius=filter_radius,
         )
-        solver.set_load(force)
+        # MULTICARGA: casos separados en vez del vector sumado.
+        cases, weights = self._load_case_vectors(nodes, int(nodes.shape[0] * 3))
+        if len(cases) > 1:
+            solver.set_loads(cases, weights)
+        else:
+            solver.set_load(force)
         solver.set_fixed_dofs(fixed)
         if halo_radius is not None and (self._load_nodes or self._bot_nodes):
             solver.protect_elements_near_nodes(

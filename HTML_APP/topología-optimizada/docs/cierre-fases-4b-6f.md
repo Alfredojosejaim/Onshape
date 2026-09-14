@@ -136,3 +136,21 @@ rechazo explícito antes que fallback silencioso.
   (5) parada en pausa/nuevo run/malla/import/cierre/reset (`_stop_animation_and_modal`;
   caché modal validado por stamp de malla).
 - Tests `backend/tests/test_fase45d_ui.py` 7/7 (16/16 total con regresión).
+
+## 13. Fase 6 — GCMMA Svanberg 2002 (14-sep-2026, solo núcleo)
+
+- `core/topopt.py::_gcmma_update`: aproximaciones convexas separables
+  conservadoras por función (p/q con ρ + r que iguala en xa), dual por
+  bisección (mismo que MMA), iteración interna con update ρ (3.9) y chequeo
+  en objetivo + restricción (volumen exacto, compliance con 1 solve extra;
+  gradientes no se recalculan). Cap 5 internas con bandera explícita
+  (`gcmma_inner_capped`, `gcmma_inner_iters` en resultado e historial).
+- `vendored/simp.py` NO tocado (congelado Fase 4.5b): `optimizer="gcmma"`
+  ahí y en `api.runSimpLoop` falla explícito. Wiring: controller,
+  `api.runOptimization`, `generative_engine` (`OptimizerType.GCMMA`),
+  combo desktop.
+- Benchmark barra Kuhn 24 tets, 10 iters: OC=202.6, MMA=124.2, GCMMA=138.5
+  (vol exacto, mejora vs iter 1). OC/MMA bit-idénticos pre/post cambio.
+- Nota honesta: el certificador interno rara vez cierra en ≤5 internas en
+  compliance SIMP (gap ~×0.5/interna); el optimizador igual converge bien y
+  la bandera lo declara. Costo: ~1 solve extra por interna.

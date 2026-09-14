@@ -485,9 +485,9 @@ class Api:
             p = json.loads(params_json or "{}")
             conds = self._resolve_conditions(p.get("condition_ids"))
             optimizer = str(p.get("optimizer", "oc")).lower()
-            if optimizer not in ("oc", "mma", "eso", "level_set"):
+            if optimizer not in ("oc", "mma", "gcmma", "eso", "level_set"):
                 return {"ok": False,
-                        "error": f"optimizer={optimizer!r} no soportado (usar 'oc', 'mma', 'eso' o 'level_set')"}
+                        "error": f"optimizer={optimizer!r} no soportado (usar 'oc', 'mma', 'gcmma', 'eso' o 'level_set')"}
             eso_criterion = str(p.get("eso_criterion", "compliance")).lower()
             if eso_criterion not in ("compliance", "stress"):
                 return {"ok": False,
@@ -1050,6 +1050,10 @@ class Api:
             if optimizer not in ("oc", "mma", "eso", "level_set"):
                 return {"ok": False,
                         "error": f"optimizer={optimizer!r} no soportado (usar 'oc', 'mma', 'eso' o 'level_set')"}
+            if optimizer == "gcmma":
+                return {"ok": False,
+                        "error": "optimizer='gcmma' solo en núcleo (runOptimization): "
+                                 "el path vendored está congelado (Fase 4.5b)."}
             eso_criterion = str(p.get("eso_criterion", "compliance")).lower()
             if eso_criterion not in ("compliance", "stress"):
                 return {"ok": False,

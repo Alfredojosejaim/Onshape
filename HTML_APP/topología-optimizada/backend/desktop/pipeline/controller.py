@@ -771,8 +771,9 @@ class PipelineController:
         void elements, so the solve *consumes* the pre-created conditions
         instead of the bare ``self.forces`` / ``self.constraints`` arrays.
 
-        ``optimizer`` (Fase 4/6a/6f): "oc" (default histórico), "mma", "eso"
-        o "level_set" (HJ). Otro valor → PipelineError.
+        ``optimizer`` (Fase 4/6a/6f/6): "oc" (default histórico), "mma",
+        "gcmma" (Svanberg 2002, solo núcleo), "eso" o "level_set" (HJ).
+        Otro valor → PipelineError.
 
         ``thermal_temperatures`` (Fase 6d, one-way): campo nodal [K] que
         genera cargas de dilatación sumadas a las mecánicas. Requiere α
@@ -780,9 +781,9 @@ class PipelineController:
         """
         if self.mesh is None:
             raise PipelineError("No hay malla. Genera la malla primero.")
-        if optimizer not in ("oc", "mma", "eso", "level_set"):
+        if optimizer not in ("oc", "mma", "gcmma", "eso", "level_set"):
             raise PipelineError(
-                f"optimizer={optimizer!r} no soportado (usar 'oc', 'mma', 'eso' o 'level_set')."
+                f"optimizer={optimizer!r} no soportado (usar 'oc', 'mma', 'gcmma', 'eso' o 'level_set')."
             )
         if eso_criterion not in ("compliance", "stress"):
             raise PipelineError(

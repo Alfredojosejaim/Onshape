@@ -32,8 +32,10 @@ class OptimizerType(str, Enum):
     # Fase 4: MMA propio implementado en core/topopt.py
     # (optimizer="mma"). Fase 6a: ESO hard-kill implementado
     # (optimizer="eso"). Fase 6f: Level-Set HJ implementado
-    # (optimizer="level_set").
+    # (optimizer="level_set"). Fase 6: GCMMA Svanberg 2002
+    # (optimizer="gcmma", solo núcleo).
     MMA = "mma"
+    GCMMA = "gcmma"
 
 
 @dataclass

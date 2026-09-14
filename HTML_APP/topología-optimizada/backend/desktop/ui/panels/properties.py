@@ -47,14 +47,16 @@ class PropertiesPanel(QWidget):
     # Fase 0 (higiene): solo opciones con motor real detrás.
     # - Objetivo: el solver solo acepta MINIMIZE_COMPLIANCE
     #   (topo_problem.py::problem_to_solver_inputs rechaza el resto).
-    # - Algoritmo: OC (SIMP), MMA propio (Fase 4), ESO hard-kill
-    #   (Fase 6a) y Level-Set HJ (Fase 6f). GCMMA sigue sin motor.
+    # - Algoritmo: OC (SIMP), MMA propio (Fase 4), GCMMA Svanberg 2002
+    #   (Fase 6, solo núcleo), ESO hard-kill (Fase 6a) y Level-Set HJ
+    #   (Fase 6f).
     _OBJECTIVES = [
         "Compliance mínima (SIMP)",
     ]
     _ALGORITHMS = [
         "SIMP (Optimality Criteria)",
         "MMA (Moving Asymptotes)",
+        "GCMMA (Globally Convergent MMA)",
         "ESO (Evolutionary)",
         "Level-Set",
     ]
@@ -356,7 +358,9 @@ class PropertiesPanel(QWidget):
     # ------------------------------------------------------------------ #
     def _on_run(self):
         algo_text = self._algorithm.currentText().upper()
-        if "MMA" in algo_text:
+        if "GCMMA" in algo_text:
+            optimizer = "gcmma"
+        elif "MMA" in algo_text:
             optimizer = "mma"
         elif "ESO" in algo_text:
             optimizer = "eso"

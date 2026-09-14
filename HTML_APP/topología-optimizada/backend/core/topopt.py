@@ -644,6 +644,232 @@ class SIMPSolver:
         return xnew
 
     # ------------------------------------------------------------------ #
+    # GCMMA update (Fase 6 - plan.md) — Svanberg 2002, CCSA/GCMMA.
+    # Solo core/topopt.py (vendored congelado, Fase 4.5b): pedir
+    # optimizer="gcmma" por el path vendored falla explícito.
+    #
+    # Aproximaciones convexas separables CONSERVADORAS por función:
+    #   f~_i(x) = r_i + Σ_j p_ij/(U_j-x_j) + q_ij/(x_j-L_j),
+    #   p_ij = (U_j-xa_j)²·(1.001·∂⁺ + 0.001·∂⁻ + ρ_i·span_j),
+    #   q_ij = (xa_j-L_j)²·(0.001·∂⁺ + 1.001·∂⁻ + ρ_i·span_j),
+    #   r_i  = f_i(xa) − Σ_j(...|xa)   (iguala valor en xa).
+    # Iteración externa: asíntotas como MMA + ρ init
+    #   ρ_i = max(ρmin, 0.1·mean_j(|∂f_i|·span_j)).
+    # Iteración interna (ν): resuelve el subproblema (mismo dual que MMA);
+    # si f_i(x̂) > f~_i(x̂) en objetivo o restricción, ρ crece vía
+    #   δ_i = (f_i(x̂)−f~_i(x̂))/d(x̂),  ρ ← min(1.1·(ρ+δ), 10·ρ),
+    #   d(x) = Σ_j (U_j−L_j)(x_j−xa_j)²/[(U_j−x_j)(x_j−L_j)·span_j],
+    # y se re-resuelve (gradientes NO se recalculan: xa no cambió).
+    # Cap de internas con bandera explícita en historial (nunca silencioso).
+    # ------------------------------------------------------------------ #
+    _GCMMA_RHOMIN = 1e-6
+    # Iteración interna = 1 solve FEA extra c/u: cap modesto. Si se agota,
+    # se acepta el último candidato con bandera explícita (sin garantía
+    # de conservadurismo en esa externa, como MMA clásico).
+    _GCMMA_MAX_INNER = 5
+
+    def _gcmma_reset_state(self, x: np.ndarray) -> None:
+        n = self.num_elements
+        self._gcmma_xold1 = np.copy(x)
+        self._gcmma_xold2 = np.copy(x)
+        self._gcmma_low = np.zeros(n)
+        self._gcmma_upp = np.ones(n)
+        self._gcmma_iter = 0
+
+    def _gcmma_update(
+        self,
+        x: np.ndarray,
+        df0: np.ndarray,
+        dv: Optional[np.ndarray],
+        fscale: float,
+        f0: float,
+    ) -> Tuple[np.ndarray, int]:
+        """Un paso GCMMA externo (+ internas). Devuelve (xnew, n_inner).
+
+        Args:
+            x: densidades actuales (n,).
+            df0: gradiente del objetivo (compliance, filtrado) (n,).
+            dv: gradiente de la restricción de volumen (volúmenes) (n,).
+            fscale: escala del objetivo (> 0); el chequeo de conservadurismo
+                se hace en espacio normalizado (equivalente).
+            f0: compliance VERDADERO en x (del solve externo, sin re-solve).
+        """
+        xmin = self.rho_min
+        xmax = 1.0
+        active = self._active
+        idx = np.nonzero(active)[0]
+        if idx.size == 0:
+            return np.copy(x), 0
+        if dv is None:
+            dv = self._volumes
+        fs = max(float(fscale), 1e-12)
+
+        xa = x[idx]
+        df0a = np.asarray(df0, dtype=float)[idx] / fs
+        dva = np.asarray(dv, dtype=float)[idx]
+        f0a = float(f0) / fs
+        xa_min = np.full_like(xa, xmin)
+        xa_max = np.full_like(xa, xmax)
+        span = xa_max - xa_min
+
+        if not hasattr(self, "_gcmma_low") or self._gcmma_low is None \
+                or self._gcmma_low.shape[0] != self.num_elements:
+            self._gcmma_reset_state(x)
+        self._gcmma_iter = int(getattr(self, "_gcmma_iter", 0)) + 1
+        it = self._gcmma_iter
+        xold1 = self._gcmma_xold1[idx]
+        xold2 = self._gcmma_xold2[idx]
+        low = self._gcmma_low[idx]
+        upp = self._gcmma_upp[idx]
+
+        # --- Asíntotas móviles (misma regla que MMA) ---
+        if it < 3:
+            low = xa - self._MMA_ASYINIT * (xa_max - xa_min)
+            upp = xa + self._MMA_ASYINIT * (xa_max - xa_min)
+        else:
+            zzz1 = (xa - xold1) * (xold1 - xold2)
+            factor = np.ones_like(xa)
+            factor[zzz1 > 0] = self._MMA_ASYINCR
+            factor[zzz1 < 0] = self._MMA_ASYDECR
+            low = xa - factor * (xold1 - low)
+            upp = xa + factor * (upp - xold1)
+            span_b = xa_max - xa_min
+            low = np.minimum(np.maximum(low, xa - 10.0 * span_b), xa - 0.01 * span_b)
+            upp = np.maximum(np.minimum(upp, xa + 10.0 * span_b), xa + 0.01 * span_b)
+
+        alfa = np.maximum(low + self._MMA_ALBEFA * (xa - low), xa_min)
+        beta = np.minimum(upp - self._MMA_ALBEFA * (upp - xa), xa_max)
+
+        # --- Restricción g(x) = V(x)/Vt − 1 ≤ 0 (lineal en x) ---
+        vt = max(float(self.volfrac * self._vol0_free), 1e-12)
+        dg = dva / vt
+        g0 = float(np.dot(xa, dva) / vt) - 1.0
+
+        df0_pos = np.maximum(df0a, 0.0)
+        df0_neg = np.maximum(-df0a, 0.0)
+        dg_pos = np.maximum(dg, 0.0)
+        dg_neg = np.maximum(-dg, 0.0)
+        ux = upp - xa
+        lx = xa - low
+
+        def _pq(df_pos, df_neg, rho):
+            p = ux * ux * (1.001 * df_pos + 0.001 * df_neg + rho * span)
+            q = lx * lx * (0.001 * df_pos + 1.001 * df_neg + rho * span)
+            return p, q
+
+        def _solve_dual(p0, q0, r0, p1, q1, r1):
+            """Subproblema: min f~0 s.t. f~1 ≤ 0 (bisección en λ ≥ 0)."""
+            def _primal(lam: float):
+                P = p0 + lam * p1
+                Q = q0 + lam * q1
+                sqP = np.sqrt(np.maximum(P, 1e-18))
+                sqQ = np.sqrt(np.maximum(Q, 1e-18))
+                xn = (sqP * low + sqQ * upp) / (sqP + sqQ)
+                return np.minimum(np.maximum(xn, alfa), beta)
+
+            def _g1(lam: float) -> float:
+                xn = _primal(lam)
+                return float(r1 + np.sum(p1 / np.maximum(upp - xn, 1e-18)
+                                         + q1 / np.maximum(xn - low, 1e-18)))
+
+            if _g1(0.0) <= 0.0:
+                return _primal(0.0)
+            lo, hi = 0.0, 1.0
+            while _g1(hi) > 0.0 and hi < 1e12:
+                hi *= 2.0
+            for _ in range(100):
+                mid = 0.5 * (lo + hi)
+                if _g1(mid) > 0.0:
+                    lo = mid
+                else:
+                    hi = mid
+                if hi - lo <= 1e-12 * max(hi, 1.0):
+                    break
+            return _primal(0.5 * (lo + hi))
+
+        def _f0_tilde(xn, p0, q0, r0) -> float:
+            return float(r0 + np.sum(p0 / np.maximum(upp - xn, 1e-18)
+                                     + q0 / np.maximum(xn - low, 1e-18)))
+
+        # --- ρ init (3.6): max(ρmin, 0.1·mean(|∂f|·span)) por función ---
+        rho0 = max(self._GCMMA_RHOMIN,
+                   0.1 * float(np.mean(np.abs(df0a) * span)))
+        rho1 = max(self._GCMMA_RHOMIN,
+                   0.1 * float(np.mean(np.abs(dg) * span)))
+
+        n_inner = 0
+        inner_capped = False
+        x_hat = xa
+        for _ in range(self._GCMMA_MAX_INNER + 1):
+            p0, q0 = _pq(df0_pos, df0_neg, rho0)
+            p1, q1 = _pq(dg_pos, dg_neg, rho1)
+            r0 = f0a - float(np.sum(p0 / np.maximum(ux, 1e-18)
+                                    + q0 / np.maximum(lx, 1e-18)))
+            r1 = g0 - float(np.sum(p1 / np.maximum(ux, 1e-18)
+                                   + q1 / np.maximum(lx, 1e-18)))
+            x_hat = _solve_dual(p0, q0, r0, p1, q1, r1)
+            # Chequeo de conservadurismo en AMBAS funciones.
+            f1_hat = float(np.dot(x_hat, dva) / vt) - 1.0  # exacto (lineal)
+            viol0 = viol1 = False
+            d0 = d1 = 0.0
+            f0t = _f0_tilde(x_hat, p0, q0, r0)
+            g1t = r1 + float(np.sum(p1 / np.maximum(upp - x_hat, 1e-18)
+                                    + q1 / np.maximum(x_hat - low, 1e-18)))
+            if f1_hat > g1t + 1e-12:
+                viol1 = True
+                d1 = float(np.sum((upp - low) * (x_hat - xa) ** 2
+                                  / (np.maximum(upp - x_hat, 1e-18)
+                                     * np.maximum(x_hat - low, 1e-18)
+                                     * np.maximum(span, 1e-18))))
+            # Compliance verdadera en el candidato (1 solve extra; los
+            # gradientes NO se recalculan: xa no cambió).
+            x_cand = np.copy(x)
+            x_cand[idx] = x_hat
+            if self._preserved is not None:
+                x_cand[self._preserved] = 1.0
+            if self._void is not None:
+                x_cand[self._void] = xmin
+            c_new, _ = self._compliance_and_sensitivities(x_cand)
+            f0_hat = float(c_new) / fs
+            if f0_hat > f0t + 1e-9 * max(abs(f0t), 1.0):
+                viol0 = True
+                d0 = float(np.sum((upp - low) * (x_hat - xa) ** 2
+                                  / (np.maximum(upp - x_hat, 1e-18)
+                                     * np.maximum(x_hat - low, 1e-18)
+                                     * np.maximum(span, 1e-18))))
+            if not (viol0 or viol1):
+                break
+            n_inner += 1
+            if n_inner > self._GCMMA_MAX_INNER:
+                inner_capped = True
+                break
+            # Update ρ (3.9): solo donde hubo violación y d > 0.
+            if viol0 and d0 > 1e-18:
+                delta0 = (f0_hat - f0t) / d0
+                if delta0 > 0:
+                    rho0 = min(1.1 * (rho0 + delta0), 10.0 * rho0)
+            if viol1 and d1 > 1e-18:
+                delta1 = (f1_hat - g1t) / d1
+                if delta1 > 0:
+                    rho1 = min(1.1 * (rho1 + delta1), 10.0 * rho1)
+
+        # --- Avanza el estado de asíntotas ---
+        self._gcmma_xold2[idx] = xold1
+        self._gcmma_xold1[idx] = xa
+        self._gcmma_low[idx] = low
+        self._gcmma_upp[idx] = upp
+
+        xnew = np.copy(x)
+        xnew[idx] = x_hat
+        if self._preserved is not None:
+            xnew[self._preserved] = 1.0
+        if self._void is not None:
+            xnew[self._void] = xmin
+        if inner_capped:
+            self._gcmma_capped = True
+        return xnew, n_inner
+
+    # ------------------------------------------------------------------ #
     # Main loop
     # ------------------------------------------------------------------ #
     def optimize(
@@ -661,7 +887,9 @@ class SIMPSolver:
 
         Args:
             optimizer: "oc" (Optimality Criteria, default histórico),
-                "mma" (Moving Asymptotes propio, Fase 4), "eso"
+                "mma" (Moving Asymptotes propio, Fase 4),
+                "gcmma" (GCMMA Svanberg 2002, Fase 6: aproximaciones
+                conservadoras + iteración interna, SOLO núcleo), "eso"
                 (Evolutionary hard-kill, Fase 6a) o "level_set"
                 (frontera implícita HJ, Fase 6f). Cualquier otro valor
                 lanza TopOptError explícito (sin fallback silencioso a OC).
@@ -674,9 +902,9 @@ class SIMPSolver:
             ls_hole_period: cada cuántas iteraciones redistanciar +
                 nuclear (solo "level_set").
         """
-        if optimizer not in ("oc", "mma", "eso", "level_set"):
+        if optimizer not in ("oc", "mma", "gcmma", "eso", "level_set"):
             raise TopOptError(
-                f"optimizer={optimizer!r} no soportado (usar 'oc', 'mma', 'eso' o 'level_set')."
+                f"optimizer={optimizer!r} no soportado (usar 'oc', 'mma', 'gcmma', 'eso' o 'level_set')."
             )
         if optimizer == "eso":
             return self._eso_optimize(
@@ -700,13 +928,22 @@ class SIMPSolver:
         fscale: Optional[float] = None
         if optimizer == "mma":
             self._mma_reset_state(x)
+        if optimizer == "gcmma":
+            self._gcmma_reset_state(x)
+            self._gcmma_capped = False
         for it in range(max_iterations):
             compliance, dc = self._compliance_and_sensitivities(x)
             dc_f = self._apply_filter(dc, x)
+            inner_iters = 0
             if optimizer == "mma":
                 if fscale is None:
                     fscale = max(abs(float(compliance)), 1e-12)
                 xnew = self._mma_update(x, dc_f, self._volumes, fscale)
+            elif optimizer == "gcmma":
+                if fscale is None:
+                    fscale = max(abs(float(compliance)), 1e-12)
+                xnew, inner_iters = self._gcmma_update(
+                    x, dc_f, self._volumes, fscale, float(compliance))
             else:
                 xnew = self._oc_update(x, dc_f, self._volumes)
             xnew = self._mirror_average(xnew)
@@ -715,14 +952,15 @@ class SIMPSolver:
             # volume fraction relative to the active, designable subdomain
             vol_frac = float(np.dot(xnew[self._active], self._volumes[self._active]) / max(self._vol0_free, 1e-12))
 
-            history.append(
-                {
+            entry: Dict[str, Any] = {
                     "iteration": it + 1,
                     "compliance": float(compliance),
                     "volume_fraction": vol_frac,
                     "max_change": change,
                 }
-            )
+            if optimizer == "gcmma":
+                entry["inner_iters"] = int(inner_iters)
+            history.append(entry)
             if callback:
                 callback(
                     {
@@ -816,6 +1054,9 @@ class SIMPSolver:
             "engine": "self-contained-simp-numpy",
             "optimizer": optimizer,
         }
+        if optimizer == "gcmma":
+            result["gcmma_inner_iters"] = [int(h.get("inner_iters", 0)) for h in history]
+            result["gcmma_inner_capped"] = bool(getattr(self, "_gcmma_capped", False))
         self.x = x
         return result
 

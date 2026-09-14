@@ -730,13 +730,13 @@ def run_generative_design(
     # filter radius, tolerance) are honoured instead of fixed defaults.
     p = study.optimization_params
     _opt = str(getattr(getattr(p, "optimizer", None), "value", "simp")).lower()
-    # Mapeo honesto OptimizerType -> solver (Fase 6a/6f): sin coerción
-    # silenciosa; GCMMA sigue sin motor y falla explícito.
-    _opt_map = {"simp": "oc", "oc": "oc", "mma": "mma", "eso": "eso",
-                "level_set": "level_set"}
+    # Mapeo honesto OptimizerType -> solver (Fase 6a/6f/6): sin coerción
+    # silenciosa; GCMMA implementado en core (Fase 6).
+    _opt_map = {"simp": "oc", "oc": "oc", "mma": "mma", "gcmma": "gcmma",
+                "eso": "eso", "level_set": "level_set"}
     if _opt not in _opt_map:
         raise ValueError(
-            f"optimizer={_opt!r} sin motor implementado (usar 'simp', 'mma', 'eso' o 'level_set')."
+            f"optimizer={_opt!r} sin motor implementado (usar 'simp', 'mma', 'gcmma', 'eso' o 'level_set')."
         )
     solve_kwargs = dict(
         volume_fraction=p.volume_fraction,

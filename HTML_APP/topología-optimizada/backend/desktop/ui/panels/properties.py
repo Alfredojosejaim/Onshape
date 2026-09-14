@@ -129,6 +129,44 @@ class PropertiesPanel(QWidget):
         ])
         col.addWidget(self._eso_criterion)
 
+        # Fase 4.5d: parámetros finos antes fijos en defaults.
+        col.addWidget(_field_label("Tasa evolutiva ESO (ER)"))
+        self._evolutionary_rate = QDoubleSpinBox()
+        self._evolutionary_rate.setRange(0.001, 0.5)
+        self._evolutionary_rate.setDecimals(3)
+        self._evolutionary_rate.setSingleStep(0.01)
+        self._evolutionary_rate.setValue(0.02)
+        col.addWidget(self._evolutionary_rate)
+
+        col.addWidget(_field_label("CFL Level-Set"))
+        self._ls_cfl = QDoubleSpinBox()
+        self._ls_cfl.setRange(0.01, 1.0)
+        self._ls_cfl.setDecimals(2)
+        self._ls_cfl.setSingleStep(0.05)
+        self._ls_cfl.setValue(0.5)
+        col.addWidget(self._ls_cfl)
+
+        col.addWidget(_field_label("Periodo redistancing Level-Set"))
+        self._ls_hole_period = QSpinBox()
+        self._ls_hole_period.setRange(1, 50)
+        self._ls_hole_period.setValue(3)
+        col.addWidget(self._ls_hole_period)
+
+        # Fase 4.5d.3: plano de simetría opcional (eje + valor).
+        self._sym_enable = QCheckBox("Forzar simetría del diseño")
+        self._sym_enable.setChecked(False)
+        col.addWidget(self._sym_enable)
+        col.addWidget(_field_label("Eje del plano de simetría"))
+        self._sym_axis = QComboBox()
+        self._sym_axis.addItems(["x", "y", "z"])
+        col.addWidget(self._sym_axis)
+        col.addWidget(_field_label("Coordenada del plano (mm)"))
+        self._sym_value = QDoubleSpinBox()
+        self._sym_value.setRange(-1.0e6, 1.0e6)
+        self._sym_value.setDecimals(3)
+        self._sym_value.setValue(0.0)
+        col.addWidget(self._sym_value)
+
         col.addWidget(_field_label("Penalización SIMP (p)"))
         self._penalization = QDoubleSpinBox()
         self._penalization.setRange(1.0, 6.0)
@@ -299,6 +337,13 @@ class PropertiesPanel(QWidget):
             "material": self._material.currentText(),
             "optimizer": optimizer,
             "eso_criterion": eso_criterion,
+            "evolutionary_rate": self._evolutionary_rate.value(),
+            "ls_cfl": self._ls_cfl.value(),
+            "ls_hole_period": self._ls_hole_period.value(),
+            "symmetry_planes": (
+                [[self._sym_axis.currentText(), self._sym_value.value()]]
+                if self._sym_enable.isChecked() else None
+            ),
         }
         self.runOptimization.emit(params)
 

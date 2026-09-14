@@ -434,6 +434,10 @@ class MainWindow(QMainWindow):
             "material": self.properties.material_name(),
             "optimizer": "oc",
             "eso_criterion": "compliance",
+            "evolutionary_rate": 0.02,
+            "ls_cfl": 0.5,
+            "ls_hole_period": 3,
+            "symmetry_planes": None,
         })
 
     def _on_run_optimization(self, params: dict) -> None:
@@ -469,6 +473,10 @@ class MainWindow(QMainWindow):
                 progress_cb=progress_cb,
                 optimizer=str(params.get("optimizer", "oc")).lower(),
                 eso_criterion=str(params.get("eso_criterion", "compliance")).lower(),
+                evolutionary_rate=float(params.get("evolutionary_rate", 0.02)),
+                ls_cfl=float(params.get("ls_cfl", 0.5)),
+                ls_hole_period=int(params.get("ls_hole_period", 3)),
+                symmetry_planes=params.get("symmetry_planes"),
             ),
             on_done=self._on_optimization_done,
             on_error=lambda e: self._on_error("Optimización", e),

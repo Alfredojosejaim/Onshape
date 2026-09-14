@@ -497,6 +497,22 @@ class Api:
                 err = _check_symmetry_planes(sym)
                 if err:
                     return {"ok": False, "error": err}
+            try:
+                evolutionary_rate = float(p.get("evolutionary_rate", 0.02))
+                ls_cfl = float(p.get("ls_cfl", 0.5))
+                ls_hole_period = int(p.get("ls_hole_period", 3))
+            except (TypeError, ValueError):
+                return {"ok": False,
+                        "error": "evolutionary_rate/ls_cfl deben ser float y ls_hole_period int"}
+            if not 0.0 < evolutionary_rate < 1.0:
+                return {"ok": False,
+                        "error": f"evolutionary_rate={evolutionary_rate!r} fuera de rango (0, 1)."}
+            if not 0.0 < ls_cfl <= 1.0:
+                return {"ok": False,
+                        "error": f"ls_cfl={ls_cfl!r} fuera de rango (0, 1]."}
+            if ls_hole_period < 1:
+                return {"ok": False,
+                        "error": f"ls_hole_period={ls_hole_period!r} debe ser >= 1."}
             kwargs = dict(
                 volume_fraction=float(p.get("volume_fraction", 0.3)),
                 max_iterations=int(p.get("max_iterations", 30)),
@@ -504,7 +520,10 @@ class Api:
                 filter_radius=float(p.get("filter_radius", 1.5)),
                 tolerance=float(p.get("tolerance", 1e-3)),
                 optimizer=optimizer,
-                eso_criterion=eso_criterion)
+                eso_criterion=eso_criterion,
+                evolutionary_rate=evolutionary_rate,
+                ls_cfl=ls_cfl,
+                ls_hole_period=ls_hole_period)
             if sym is not None:
                 kwargs["symmetry_planes"] = [[s[0], float(s[1])] for s in sym]
             terr, tkwargs = _check_thermal_params(p)
@@ -1006,7 +1025,10 @@ class Api:
                 max_iterations=int(simp_kwargs.get("max_iterations", 30)),
                 tolerance=float(simp_kwargs.get("tolerance", 1e-3)),
                 optimizer=optimizer,
-                eso_criterion=eso_criterion)
+                eso_criterion=eso_criterion,
+                evolutionary_rate=float(simp_kwargs.get("evolutionary_rate", 0.02)),
+                ls_cfl=float(simp_kwargs.get("ls_cfl", 0.5)),
+                ls_hole_period=int(simp_kwargs.get("ls_hole_period", 3)))
         except Exception as exc:
             from desktop.pipeline.controller import PipelineError
             raise PipelineError(f"Optimizacion ({engine}) fallo: {exc}")
@@ -1032,8 +1054,18 @@ class Api:
             kwargs = {k: p.get(k) for k in (
                 "volume_fraction", "max_iterations", "penalization",
                 "filter_radius", "tolerance", "symmetry_planes",
+                "evolutionary_rate", "ls_cfl", "ls_hole_period",
                 "thermal_temperatures", "thermal_alpha",
                 "thermal_reference_temperature") if p.get(k) is not None}
+            if "evolutionary_rate" in kwargs and not 0.0 < float(kwargs["evolutionary_rate"]) < 1.0:
+                return {"ok": False,
+                        "error": f"evolutionary_rate={kwargs['evolutionary_rate']!r} fuera de rango (0, 1)."}
+            if "ls_cfl" in kwargs and not 0.0 < float(kwargs["ls_cfl"]) <= 1.0:
+                return {"ok": False,
+                        "error": f"ls_cfl={kwargs['ls_cfl']!r} fuera de rango (0, 1]."}
+            if "ls_hole_period" in kwargs and int(kwargs["ls_hole_period"]) < 1:
+                return {"ok": False,
+                        "error": f"ls_hole_period={kwargs['ls_hole_period']!r} debe ser >= 1."}
             if "symmetry_planes" in kwargs:
                 err = _check_symmetry_planes(kwargs["symmetry_planes"])
                 if err:

@@ -708,6 +708,9 @@ class PipelineController:
         halo_radius: Optional[float] = None,
         optimizer: str = "oc",
         eso_criterion: str = "compliance",
+        evolutionary_rate: float = 0.02,
+        ls_cfl: float = 0.5,
+        ls_hole_period: int = 3,
         symmetry_planes=None,
         thermal_temperatures=None,
         thermal_alpha: Optional[float] = None,
@@ -738,6 +741,13 @@ class PipelineController:
             raise PipelineError(
                 f"eso_criterion={eso_criterion!r} no soportado (usar 'compliance' o 'stress')."
             )
+        if not 0.0 < float(evolutionary_rate) < 1.0:
+            raise PipelineError(
+                f"evolutionary_rate={evolutionary_rate!r} fuera de rango (0, 1).")
+        if not 0.0 < float(ls_cfl) <= 1.0:
+            raise PipelineError(f"ls_cfl={ls_cfl!r} fuera de rango (0, 1].")
+        if int(ls_hole_period) < 1:
+            raise PipelineError(f"ls_hole_period={ls_hole_period!r} debe ser >= 1.")
         nodes, elements = self.mesh_nodes, self.mesh_elements
         mat = self.material()
         from core.topopt import SIMPSolver
@@ -766,6 +776,9 @@ class PipelineController:
                 halo_radius=halo_radius,
                 optimizer=optimizer,
                 eso_criterion=eso_criterion,
+                evolutionary_rate=evolutionary_rate,
+                ls_cfl=ls_cfl,
+                ls_hole_period=ls_hole_period,
                 symmetry_planes=symmetry_planes,
                 thermal_temperatures=thermal_temperatures,
                 thermal_alpha=thermal_alpha,
@@ -819,7 +832,7 @@ class PipelineController:
             except Exception as exc:
                 raise PipelineError(f"symmetry_planes inválido: {exc}")
         try:
-            result = solver.optimize(max_iterations=max_iterations, tolerance=tolerance, callback=progress_cb, optimizer=optimizer, eso_criterion=eso_criterion)
+            result = solver.optimize(max_iterations=max_iterations, tolerance=tolerance, callback=progress_cb, optimizer=optimizer, eso_criterion=eso_criterion, evolutionary_rate=evolutionary_rate, ls_cfl=ls_cfl, ls_hole_period=ls_hole_period)
         except Exception as exc:
             logger.exception("Optimization failed")
             raise PipelineError(f"Optimización falló: {exc}")

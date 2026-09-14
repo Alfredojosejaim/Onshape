@@ -697,6 +697,9 @@ class GenerativeDesignEngine:
             callback=progress_cb,
             optimizer=kwargs.get("optimizer", "oc"),
             eso_criterion=kwargs.get("eso_criterion", "compliance"),
+            evolutionary_rate=kwargs.get("evolutionary_rate", 0.02),
+            ls_cfl=kwargs.get("ls_cfl", 0.5),
+            ls_hole_period=kwargs.get("ls_hole_period", 3),
         )
         result["_consumed_load_conditions"] = len(conditions.get(ConditionType.LOAD, []))
         result["_consumed_elasticity_conditions"] = len(conditions.get(ConditionType.ELASTICITY, []))

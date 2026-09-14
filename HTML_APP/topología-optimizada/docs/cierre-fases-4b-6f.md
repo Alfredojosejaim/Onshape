@@ -97,5 +97,19 @@ rechazo explícito antes que fallback silencioso.
 4. **Coerción silenciosa eliminada**: `generative_engine` mapeaba todo lo no-MMA
    a OC; ahora `level_set` sin motor falla explícito.
 5. `src/App.tsx`: el duplicado `handleSelectTool` que rompía `npm run build`
-   se eliminó; el archivo quedó idéntico a HEAD (venía de un cambio sin
-   commitear de otra sesión).
+    se eliminó; el archivo quedó idéntico a HEAD (venía de un cambio sin
+    commitear de otra sesión).
+
+## 11. Fase 4.5 — auditoría scope-creep (14-sep-2026)
+
+- **4.5a**: `load_case_id`/`load_weight` ya en UI React (`faces.ts`,
+  `ToolParamsPanel`, `App`); desktop sin campo (gap registrado).
+- **4.5b**: `vendored/simp.py` DESCONGELADO (opción 2 de la auditoría);
+  paridad core↔vendored obligatoria — ver `AGENTS.md`.
+- **4.5c**: `backend/tests/test_fase45_regresion.py`, 9/9 (simetría+paridad,
+  térmico, ESO compliance/stress, level-set, animación).
+- **4.5d**: `evolutionary_rate`/`ls_cfl`/`ls_hole_period` + plano de simetría
+  en desktop → controller → engine/API (fail-loud por capa). Diferidos:
+  toggle térmico (requiere estudio térmico resuelto) y botón animar-modo
+  (requiere plumbing modal→panel).
+- **0.5**: confirm-gate anclado a fases de `plan.md` (ver `AGENTS.md`).

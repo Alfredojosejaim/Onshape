@@ -865,6 +865,13 @@ class PipelineController:
                 thermal_temperatures=thermal_temperatures,
                 thermal_alpha=thermal_alpha,
                 thermal_reference_temperature=thermal_reference_temperature,
+                min_thickness=min_thickness,
+                overhang_constraint=overhang_constraint,
+                build_direction=build_direction,
+                overhang_angle_deg=overhang_angle_deg,
+                overhang_penalty=overhang_penalty,
+                objective=objective,
+                compliance_limit=compliance_limit,
             )
             self.result = g
             self.result_densities = np.asarray(g["densities"], dtype=float)

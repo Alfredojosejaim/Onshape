@@ -609,21 +609,40 @@ export default function App() {
             setHasMesh(!!snap.has_mesh);
           }
         } catch {
-          /* se mantiene el aviso de abajo */
+          /* se intenta generar abajo */
         }
       }
-      // OPT-PREFLIGHT (reversible): con bridge, validar ANTES de marcar
-      // isRunning (antes quedaba en "Pausar" sin correr nada y sin mensaje).
+      // OPT-AUTO (reversible): sin malla se genera sola (mismo flujo que
+      // Remallar) y se sigue sin pedir clics. Solo fallos reales avisan.
       if (!snapRef.current?.has_mesh) {
-        setOptNotice({
-          text: 'Sin malla volumétrica: lo que ves es la superficie CAD, no la malla FEM. Genérala para poder optimizar.',
-          actionLabel: 'Generar malla ahora',
-          onAction: () => {
-            setOptNotice(null);
-            handleRemesh();
-          },
-        });
-        return;
+        setIsRemeshing(true);
+        try {
+          const r = await backend.generateMesh({ target_element_size: meshElementSize });
+          const snap = (r as unknown as { snapshot?: ApiSnapshot }).snapshot;
+          if (r.ok && snap) {
+            const cur = stateRef.current.currentModel;
+            if (cur) applySnapshotToModel(snap, cur.filename, cur.displayName);
+            setHasMesh(!!snap.has_mesh);
+            setFeaJobId(null);
+          } else {
+            setOptNotice({
+              text: typeof (r as { error?: unknown }).error === 'string'
+                ? `No se pudo generar la malla automáticamente: ${String((r as { error?: unknown }).error)}`
+                : 'No se pudo generar la malla automáticamente.',
+            });
+            return;
+          }
+        } catch {
+          setOptNotice({ text: 'No se pudo generar la malla automáticamente (backend).' });
+          return;
+        } finally {
+          setIsRemeshing(false);
+          setShowMesh(true);
+        }
+        if (!snapRef.current?.has_mesh) {
+          setOptNotice({ text: 'La malla no quedó registrada: el modelo puede ser solo superficie (la volumétrica Tet4 requiere sólido STEP).' });
+          return;
+        }
       }
       if (simpJobId) return;
       const bcs = stateRef.current.boundaryConditions;

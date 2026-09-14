@@ -1,4 +1,4 @@
-export type ActiveTab = 'optimizacion' | 'analizis';
+export type ActiveTab = 'optimizacion' | 'analizis' | 'malla';
 
 export type ActiveTool =
   | 'seleccionar'

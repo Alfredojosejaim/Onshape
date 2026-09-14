@@ -108,7 +108,7 @@ export const Modals: React.FC<ModalsProps> = ({
             <div className="flex items-center justify-between border-b border-border-subtle/50 pb-3">
               <div className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-secondary text-[22px]">upload_file</span>
-                <h3 className="font-semibold text-[16px]">Importar Geometría CAD (STEP / STL / IGES)</h3>
+                <h3 className="font-semibold text-[16px]">Importar Geometría (STEP / STL / OBJ / PLY / 3MF)</h3>
               </div>
               <button
                 onClick={onCloseImport}
@@ -128,7 +128,7 @@ export const Modals: React.FC<ModalsProps> = ({
               <input
                 id="cad-file-input"
                 type="file"
-                accept=".step,.stp,.iges,.igs,.stl,.brep,.vtk"
+                accept=".step,.stp,.stl,.obj,.ply,.3mf,.iges,.igs,.brep"
                 className="hidden"
                 onChange={handleFileInput}
               />
@@ -137,7 +137,7 @@ export const Modals: React.FC<ModalsProps> = ({
                 Arrastra tu archivo CAD aquí o haz clic para examinar
               </p>
               <p className="text-[11px] font-mono text-text-muted">
-                Formatos soportados: STEP (.stp, .step), IGES, STL (binario/ASCII), Gmsh (.msh)
+                Formatos soportados: STEP (.step), malla (.stl, .obj, .ply, .3mf). Archivos grandes por partes.
               </p>
             </div>
 

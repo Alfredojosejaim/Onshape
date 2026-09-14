@@ -40,6 +40,22 @@ export const SecondaryNav: React.FC<SecondaryNavProps> = ({ activeTab, onChangeT
         </span>
         Analizis
       </button>
+
+      <button
+        id="tab-malla"
+        type="button"
+        onClick={() => onChangeTab('malla')}
+        className={`h-full flex items-center px-space-md border-b-2 text-body-sm font-medium transition-colors ${
+          activeTab === 'malla'
+            ? 'border-primary-container text-secondary font-semibold bg-surface-panel/40'
+            : 'border-transparent text-text-secondary hover:text-on-surface'
+        }`}
+      >
+        <span className="material-symbols-outlined text-[15px] mr-1.5 opacity-80">
+          grid_on
+        </span>
+        Malla
+      </button>
     </nav>
   );
 };

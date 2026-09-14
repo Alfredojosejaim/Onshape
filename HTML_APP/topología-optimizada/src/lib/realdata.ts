@@ -66,6 +66,9 @@ export interface ApiSnapshot {
   num_elements?: number;
   num_solids?: number; // SOLIDS (reversible): cuerpos reales del STEP
   volume_cm3?: number;
+  // MALLA-IMPORT (reversible): modelo MESH (STL/OBJ/PLY/3MF, sin B-Rep).
+  is_mesh?: boolean;
+  mesh_format?: string | null;
 }
 
 /** Snapshot real -> preset de modelo para el arbol (sin inventar cifras). */

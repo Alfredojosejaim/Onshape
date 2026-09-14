@@ -20,6 +20,7 @@ class SourceType(str, Enum):
     STEP = "step"
     IGES = "iges"
     BREP = "brep"
+    MESH = "mesh"  # MALLA-IMPORT (reversible): STL/OBJ/PLY/3MF sin B-Rep
     UPLOAD = "upload"
     SYNTHETIC = "synthetic"
 

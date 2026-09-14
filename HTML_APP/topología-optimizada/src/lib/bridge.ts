@@ -124,6 +124,26 @@ export const backend = {
   compareStudies: () =>
     call<{ rows: Record<string, unknown>[]; count: number }>('compareStudies'),
   // FASE3-END
+  // MALLA-TOOLS-START (reversible): diagnostico + reparacion de mallas
+  // importadas (STL/OBJ/PLY/3MF). Para volver atras: borrar hasta
+  // MALLA-TOOLS-END + metodos Api + whitelist.
+  meshQualityReport: (params = {}) =>
+    call<{ report: Record<string, unknown> }>('meshQualityReport', JSON.stringify(params) as never),
+  repairMesh: (params = {}) =>
+    call('repairMesh', JSON.stringify(params) as never),
+  smoothMesh: (params = {}) =>
+    call('smoothMesh', JSON.stringify(params) as never),
+  decimateMesh: (params = {}) =>
+    call('decimateMesh', JSON.stringify(params) as never),
+  remeshMesh: (params = {}) =>
+    call('remeshMesh', JSON.stringify(params) as never),
+  // MALLA-TOOLS-END
+  // UPLOAD-CHUNKED-START (reversible): archivos grandes por partes.
+  beginUpload: (filename: string) =>
+    call<{ upload_id: string }>('beginUpload', JSON.stringify({ filename }) as never),
+  uploadChunk: (params: { upload_id: string; base64: string; last: boolean }) =>
+    call('uploadChunk', JSON.stringify(params) as never),
+  // UPLOAD-CHUNKED-END
   getNavProfiles: () =>
     call<{
       profiles: { name: string; display_name: string }[];

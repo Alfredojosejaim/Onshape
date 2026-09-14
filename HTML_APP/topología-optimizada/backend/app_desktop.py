@@ -42,6 +42,8 @@ _METHODS = (
     "createCondition", "listConditions", "clearConditions",
     "getLicense", "pollJob", "getMeshPreview", "getSurfaceMesh",
     "getSafetySummary", "compareStudies",
+    "meshQualityReport", "repairMesh", "smoothMesh", "decimateMesh", "remeshMesh",
+    "beginUpload", "uploadChunk",
     "exportStep", "getNavProfiles", "setNavProfile",
 )
 

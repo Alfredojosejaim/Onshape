@@ -5,6 +5,9 @@ import { Material, SimpParameters, OptimizationState, ActiveTab, FeaResults } fr
 import { SafetyCard } from './SafetyCard';
 import { CompareTable } from './CompareTable';
 // FASE3-END
+// MALLA-TOOLS-START (reversible): panel de mallas importadas.
+import { MeshToolsPanel } from './MeshToolsPanel';
+// MALLA-TOOLS-END
 
 interface RightPanelProps {
   activeTab: ActiveTab;
@@ -21,6 +24,17 @@ interface RightPanelProps {
   deformationScale: number;
   onChangeDeformationScale: (scale: number) => void;
   onExportReport: () => void;
+  // MALLA-TOOLS (reversible): modelo MESH activo + refresh tras operar.
+  isMeshModel?: boolean;
+  meshFormat?: string | null;
+  onMeshChanged?: () => void;
+  // Malla volumetrica (misma estetica que ToolParamsPanel).
+  volSize?: number;
+  onVolSize?: (v: number) => void;
+  onVolRemesh?: () => void;
+  isRemeshing?: boolean;
+  estTets?: string;
+  estNodes?: string;
 }
 
 export const RightPanel: React.FC<RightPanelProps> = ({
@@ -38,6 +52,15 @@ export const RightPanel: React.FC<RightPanelProps> = ({
   deformationScale,
   onChangeDeformationScale,
   onExportReport,
+  isMeshModel,
+  meshFormat,
+  onMeshChanged,
+  volSize,
+  onVolSize,
+  onVolRemesh,
+  isRemeshing,
+  estTets,
+  estNodes,
 }) => {
   return (
     <aside className="w-full xl:w-80 2xl:w-88 flex flex-col gap-space-sm flex-shrink-0 select-none">
@@ -279,6 +302,19 @@ export const RightPanel: React.FC<RightPanelProps> = ({
             </div>
           </div>
         </section>
+      ) : activeTab === 'malla' ? (
+        /* MALLA-TOOLS (reversible): pestana Malla — superficie + volumetrica. */
+        <MeshToolsPanel
+          isMeshModel={!!isMeshModel}
+          meshFormat={meshFormat ?? null}
+          onChanged={onMeshChanged ?? (() => undefined)}
+          volSize={volSize ?? 1.8}
+          onVolSize={onVolSize ?? (() => undefined)}
+          onVolRemesh={onVolRemesh ?? (() => undefined)}
+          isRemeshing={!!isRemeshing}
+          estTets={estTets ?? '—'}
+          estNodes={estNodes ?? '—'}
+        />
       ) : (
         /* Analysis Mode Panel: Finite Element Analysis (FEA) Metrics */
         <section className="bg-surface-container-low rounded-lg p-space-sm shadow-md flex flex-col gap-space-sm border border-border-subtle/50">

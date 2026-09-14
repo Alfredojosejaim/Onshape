@@ -134,6 +134,33 @@ class PipelineController:
 
         return {"name": model.name, "model": model, "tessellation": tess}
 
+    # MALLA-IMPORT (reversible): STL/OBJ/PLY/3MF (malla, sin B-Rep OCC).
+    # La teselacion ES la malla importada (o su preview diezmado); las
+    # herramientas de reparacion/remallado operan sobre la full-res en
+    # CADService._mesh_cache. Para volver atras: quitar este metodo.
+    def import_mesh_model(self, path: str) -> Dict[str, Any]:
+        if not path or not os.path.exists(path):
+            raise PipelineError(f"Archivo no encontrado: {path}")
+        self.close_model()
+        model = self.cad.import_mesh_from_file(path)
+        self.model_id = model.id
+        self.model_name = model.name
+        tess = model.tessellation.to_dict() if model.tessellation else {}
+        mismatch = (not tess or "vertices" not in tess or not tess.get("vertices")
+                    or "indices" not in tess or not tess.get("indices"))
+        if mismatch:
+            raise PipelineError("Tesselación falló (malla sin triángulos)")
+        tess["success"] = True
+        self.current_tessellation = tess
+        import_feature = Feature.import_mesh(
+            filename=os.path.basename(path),
+            model_id=model.id,
+        )
+        self.feature_history.append(import_feature)
+        self.document.set_model(model)
+        self.document.add_feature(import_feature)
+        return {"name": model.name, "model": model, "tessellation": tess}
+
     def close_model(self) -> Optional[str]:
         """Cerrar modelo: evict CAD caches + reset all downstream/UI state.
 

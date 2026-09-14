@@ -404,6 +404,12 @@ export default function App() {
   // UI-CLEAN2-START (reversible): malla volumetrica real presente.
   const [hasMesh, setHasMesh] = useState(false);
   // UI-CLEAN2-END
+  // MALLA-IMPORT-START (reversible): modelo MESH (STL/OBJ/PLY/3MF, sin
+  // B-Rep) -> panel de herramientas de malla. Para volver atras: quitar
+  // estado + set en applySnapshotToModel + props RightPanel.
+  const [isMeshModel, setIsMeshModel] = useState(false);
+  const [meshFormat, setMeshFormat] = useState<string | null>(null);
+  // MALLA-IMPORT-END
   const snapRef = useRef<ApiSnapshot | null>(null);
   const stateRef = useRef({ boundaryConditions, selectedMaterial, simpParams, currentModel, activeTool });
   stateRef.current = { boundaryConditions, selectedMaterial, simpParams, currentModel, activeTool };
@@ -412,6 +418,9 @@ export default function App() {
     snapRef.current = snap;
     // UI-CLEAN2 (reversible): fila Malla solo con malla real.
     setHasMesh(!!snap.has_mesh);
+    // MALLA-IMPORT (reversible): marca modelo MESH para el panel.
+    setIsMeshModel(!!snap.is_mesh);
+    setMeshFormat(snap.mesh_format ?? null);
     // MULTI (reversible): malla por archivo para el arbol acumulativo.
     setMeshByFile((prev) => ({ ...prev, [filename]: !!snap.has_mesh }));
     const mapped = mapSnapshotToModel(snap, filename, displayName);
@@ -856,37 +865,95 @@ export default function App() {
   }, [activeTool, showImport, showExport, showHelp, editingCondition]);
   // TOOL-LIFECYCLE-END
 
+  // MALLA-TOOLS (reversible): tras operar (repair/smooth/decimate/remesh)
+  // refresca superficie + solidos + snapshot (volumen/area cambian).
+  const refreshMeshView = () => {
+    const m = currentModel;
+    if (!m || !backend.hasBridge()) return;
+    void (async () => {
+      try {
+        const s = (await backend.getSnapshot()) as { ok: boolean; snapshot?: ApiSnapshot };
+        if (s.ok && s.snapshot) applySnapshotToModel(s.snapshot, m.filename, m.displayName);
+      } catch {
+        /* se conserva la vista anterior */
+      }
+      void fetchSurface(m.filename);
+      void fetchSolids(m.filename);
+    })();
+  };
+
   // Handle custom file upload
   // UPLOAD-STEP (reversible): con bridge, el archivo real se envia al
   // backend (teselado + solidos + viewport reales). Sin bridge, preset
   // local como antes. Para volver atras: dejar solo el preset local.
+  // UPLOAD-CHUNKED (reversible, MALLA-C): >8 MB por partes de 4 MB
+  // (beginUpload/uploadChunk) para no cargar cientos de MB en un base64.
+  const CHUNKED_THRESHOLD = 8 * 1024 * 1024;
+  const UPLOAD_SLICE = 4 * 1024 * 1024;
+  const blobToBase64 = (blob: Blob): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => {
+        const s = String(r.result ?? '');
+        resolve(s.includes(',') ? s.split(',')[1] : s);
+      };
+      r.onerror = () => reject(r.error);
+      r.readAsDataURL(blob);
+    });
+  const applyImportResult = (
+    imp: { ok: boolean; snapshot?: ApiSnapshot },
+    filename: string,
+  ) => {
+    const snap = imp.snapshot;
+    if (imp.ok && snap) {
+      applySnapshotToModel(snap, filename, prettyName(filename));
+      setFeaJobId(null);
+      setSimpJobId(null);
+      resetOptimizationState();
+      void fetchSurface(filename);
+      void fetchSolids(filename);
+    }
+  };
+  const uploadFileChunked = async (file: File) => {
+    const beg = (await backend.beginUpload(file.name)) as {
+      ok: boolean; upload_id?: string; error?: unknown;
+    };
+    if (!beg.ok || !beg.upload_id) throw new Error(String(beg.error ?? 'beginUpload falló'));
+    const total = file.size;
+    let offset = 0;
+    let last: { ok: boolean; snapshot?: ApiSnapshot } = { ok: false };
+    while (offset < total) {
+      const end = Math.min(offset + UPLOAD_SLICE, total);
+      const base64 = await blobToBase64(file.slice(offset, end));
+      const r = (await backend.uploadChunk({
+        upload_id: beg.upload_id,
+        base64,
+        last: end >= total,
+      })) as { ok: boolean; snapshot?: ApiSnapshot; received?: number; error?: unknown };
+      if (!r.ok) throw new Error(String(r.error ?? 'uploadChunk falló'));
+      if (end >= total) last = r;
+      offset = end;
+    }
+    return last;
+  };
   const handleCustomFileUpload = (file: File) => {
     if (backend.hasBridge()) {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const dataUrl = String(reader.result ?? '');
-        const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
-        void (async () => {
-          try {
-            const imp = (await backend.importStepBytes({
-              filename: file.name,
-              base64,
-            })) as { ok: boolean; snapshot?: ApiSnapshot; error?: unknown };
-            const snap = imp.snapshot;
-            if (imp.ok && snap) {
-              applySnapshotToModel(snap, file.name, prettyName(file.name));
-              setFeaJobId(null);
-              setSimpJobId(null);
-              resetOptimizationState();
-              void fetchSurface(file.name);
-              void fetchSolids(file.name);
-            }
-          } catch {
-            /* se conserva el modelo anterior */
+      void (async () => {
+        try {
+          if (file.size > CHUNKED_THRESHOLD) {
+            applyImportResult(await uploadFileChunked(file), file.name);
+            return;
           }
-        })();
-      };
-      reader.readAsDataURL(file);
+          const base64 = await blobToBase64(file);
+          const imp = (await backend.importStepBytes({
+            filename: file.name,
+            base64,
+          })) as { ok: boolean; snapshot?: ApiSnapshot; error?: unknown };
+          applyImportResult(imp, file.name);
+        } catch {
+          /* se conserva el modelo anterior */
+        }
+      })();
       return;
     }
     const newPreset: CadModelPreset = {
@@ -1066,6 +1133,15 @@ export default function App() {
             deformationScale={deformationScale}
             onChangeDeformationScale={setDeformationScale}
             onExportReport={() => setShowExport(true)}
+            isMeshModel={isMeshModel}
+            meshFormat={meshFormat}
+            onMeshChanged={refreshMeshView}
+            volSize={meshElementSize}
+            onVolSize={setMeshElementSize}
+            onVolRemesh={handleRemesh}
+            isRemeshing={isRemeshing}
+            estTets={currentModel ? Math.round(currentModel.elementsTet4 * (1.8 / meshElementSize)).toLocaleString() : '—'}
+            estNodes={currentModel ? Math.round(currentModel.nodes * (1.8 / meshElementSize)).toLocaleString() : '—'}
           />
         </div>
       </div>

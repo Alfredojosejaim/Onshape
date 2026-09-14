@@ -44,6 +44,7 @@ class FeatureStatus(str, Enum):
 
 class FeatureType(str, Enum):
     IMPORT_STEP = "import_step"
+    IMPORT_MESH = "import_mesh"  # MALLA-IMPORT (reversible): STL/OBJ/PLY/3MF
     BOOLEAN = "boolean"
     TRANSFORM = "transform"
     MIRROR = "mirror"
@@ -86,6 +87,17 @@ class Feature:
         return cls(
             name=f"Import {filename}",
             feature_type=FeatureType.IMPORT_STEP,
+            parameters={"filename": filename, **kw},
+            result_model_id=model_id,
+            status=FeatureStatus.EXECUTED,
+        )
+
+    @classmethod
+    def import_mesh(cls, filename: str, model_id: Optional[str] = None, **kw: Any) -> "Feature":
+        """MALLA-IMPORT (reversible): STL/OBJ/PLY/3MF (malla, sin B-Rep)."""
+        return cls(
+            name=f"Import malla {filename}",
+            feature_type=FeatureType.IMPORT_MESH,
             parameters={"filename": filename, **kw},
             result_model_id=model_id,
             status=FeatureStatus.EXECUTED,

@@ -212,6 +212,19 @@ class Api:
             snap["num_solids"] = len(solids.get("solids", [])) if solids.get("ok") else 0
         except Exception:  # noqa: BLE001
             snap["num_solids"] = 0
+        # MALLA-IMPORT (reversible): marca modelos MESH para la UI
+        # (herramientas de malla solo en importados STL/OBJ/PLY/3MF).
+        try:
+            model = c.cad.get_model(getattr(c, "model_id", None))
+            src = getattr(getattr(model, "source", None), "source_type", None)
+            is_mesh = bool(model is not None
+                           and getattr(src, "value", src) == "mesh")
+            snap["is_mesh"] = is_mesh
+            snap["mesh_format"] = (model.metadata.get("mesh_format")
+                                   if model is not None and is_mesh else None)
+        except Exception:  # noqa: BLE001
+            snap["is_mesh"] = False
+            snap["mesh_format"] = None
         return snap
 
     def _submit(self, kind: str, fn, *args, **kwargs) -> str:
@@ -329,7 +342,8 @@ class Api:
                 if not os.path.isdir(d):
                     continue
                 for f in sorted(os.listdir(d)):
-                    if f.lower().endswith((".step", ".stp")) and f not in seen:
+                    if f.lower().endswith((".step", ".stp", ".stl", ".obj",
+                                           ".ply", ".3mf")) and f not in seen:
                         seen[f] = os.path.join(d, f)
             return {"ok": True, "fixtures": [
                 {"filename": f, "path": p} for f, p in seen.items()]}
@@ -350,7 +364,12 @@ class Api:
     def importStep(self, path: str) -> dict:
         try:
             real = self._resolve_step_path(path)
-            res = self._ctrl.import_model(real)
+            # MALLA-IMPORT (reversible): por extension en disco (el lector
+            # valida contenido y falla explicito si no es malla real).
+            if real.lower().endswith((".stl", ".obj", ".ply", ".3mf")):
+                res = self._ctrl.import_mesh_model(real)
+            else:
+                res = self._ctrl.import_model(real)
             key = self._register_library(os.path.basename(real), real)
             return {"ok": True, "result": _clean(res),
                     "snapshot": self._snapshot(), "key": key,
@@ -361,9 +380,11 @@ class Api:
     # MULTI (reversible): registro y cambio de modelo activo.
     def _register_library(self, filename: str, path: str) -> str:
         key = f"{os.path.basename(filename)}_{uuid.uuid4().hex[:6]}"
+        base = os.path.basename(filename)
+        for ext in (".step", ".stp", ".stl", ".obj", ".ply", ".3mf"):
+            base = base[: -len(ext)] if base.lower().endswith(ext) else base
         self._library[key] = {"key": key, "filename": os.path.basename(filename),
-                              "displayName": filename.replace(".step", "").replace(".stp", "")
-                              .replace("_", " ").replace("-", " ").upper() or key,
+                              "displayName": base.replace("_", " ").replace("-", " ").upper() or key,
                               "path": path}
         self._active_key = key
         return key
@@ -388,7 +409,11 @@ class Api:
             entry = self._library.get(str(key))
             if entry is None or not os.path.exists(entry["path"]):
                 return {"ok": False, "error": f"modelo desconocido o ausente: {key}"}
-            res = self._ctrl.import_model(entry["path"])
+            # MALLA-IMPORT (reversible): re-importa por tipo de archivo.
+            if str(entry["path"]).lower().endswith((".stl", ".obj", ".ply", ".3mf")):
+                res = self._ctrl.import_mesh_model(entry["path"])
+            else:
+                res = self._ctrl.import_model(entry["path"])
             self._active_key = str(key)
             return {"ok": True, "result": _clean(res),
                     "snapshot": self._snapshot(), "key": str(key),
@@ -415,18 +440,101 @@ class Api:
         except Exception as exc:  # noqa: BLE001
             return _err(exc)
 
-    # UPLOAD-STEP (reversible): importar un archivo local real enviado desde
-    # el frontend (drag&drop). Se guarda en backend/uploads y se importa como
-    # cualquier STEP: teselado + solidos + viewport reales.
-    def importStepBytes(self, params_json: str = "{}") -> dict:
+    # UPLOAD-CHUNKED (reversible, MALLA-C): archivos grandes (1M+ tris)
+    # por partes para no cargar cientos de MB en un solo base64 del
+    # webview. beginUpload -> uploadChunk* -> ultimo chunk importa
+    # (STEP o malla por contenido, mismos limites que importStepBytes).
+    def beginUpload(self, params_json: str = "{}") -> dict:
+        try:
+            p = json.loads(params_json or "{}")
+            filename = os.path.basename(str(p.get("filename", "upload.bin")))
+            if not filename:
+                return {"ok": False, "error": "filename requerido"}
+            upload_id = f"{uuid.uuid4().hex}"
+            updir = os.path.join(_HERE, "uploads")
+            os.makedirs(updir, exist_ok=True)
+            part = os.path.join(updir, f".part-{upload_id}.bin")
+            with open(part, "wb"):
+                pass
+            self._uploads = getattr(self, "_uploads", {})
+            self._uploads[upload_id] = {"filename": filename, "path": part,
+                                        "size": 0}
+            return {"ok": True, "upload_id": upload_id, "filename": filename}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    def uploadChunk(self, params_json: str = "{}") -> dict:
         import base64
         try:
             p = json.loads(params_json or "{}")
-            filename = os.path.basename(str(p.get("filename", "upload.step")))
-            if not filename.lower().endswith((".step", ".stp")):
-                filename += ".step"
+            upload_id = str(p.get("upload_id", ""))
+            registry = getattr(self, "_uploads", {})
+            entry = registry.get(upload_id)
+            if entry is None or not os.path.exists(entry["path"]):
+                return {"ok": False, "error": f"upload desconocido: {upload_id}"}
             raw = base64.b64decode(str(p.get("base64", "")))
-            if len(raw) > 50 * 1024 * 1024:
+            entry["size"] += len(raw)
+            if entry["size"] > self._MESH_UPLOAD_MAX_BYTES:
+                try:
+                    os.unlink(entry["path"])
+                except OSError:
+                    pass
+                del registry[upload_id]
+                return {"ok": False, "error": "malla mayor a 512 MB"}
+            with open(entry["path"], "ab") as fh:
+                fh.write(raw)
+            if not bool(p.get("last", False)):
+                return {"ok": True, "upload_id": upload_id,
+                        "received": entry["size"]}
+            # Ultimo chunk: importa desde el .part y limpia.
+            filename = entry["filename"]
+            with open(entry["path"], "rb") as fh:
+                data = fh.read()
+            try:
+                os.unlink(entry["path"])
+            except OSError:
+                pass
+            del registry[upload_id]
+            # Reusa el path unico (deteccion por contenido + limites).
+            return self._import_upload_bytes(filename, data)
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    # UPLOAD-STEP (reversible): importar un archivo local real enviado desde
+    # el frontend (drag&drop). Se guarda en backend/uploads y se importa como
+    # cualquier STEP: teselado + solidos + viewport reales.
+    # MALLA-IMPORT (reversible): STL/OBJ/PLY/3MF se detectan por CONTENIDO
+    # (core.mesh_io) y entran por controller.import_mesh_model (malla sin
+    # B-Rep; la conversion a solido la hace el usuario con herramientas).
+    # Limite 512 MB para mallas (1M tris STL binario ~= 50 MB); STEP 50 MB.
+    _MESH_UPLOAD_MAX_BYTES = 512 * 1024 * 1024
+    _STEP_UPLOAD_MAX_BYTES = 50 * 1024 * 1024
+
+    def _import_upload_bytes(self, filename: str, raw: bytes) -> dict:
+        """Nucleo comun de importStepBytes/uploadChunk (bytes ya en disco)."""
+        try:
+            from core.mesh_io import detect_mesh_format, MESH_FORMATS
+            fmt = detect_mesh_format(raw, filename)
+            if fmt in MESH_FORMATS:
+                if len(raw) > self._MESH_UPLOAD_MAX_BYTES:
+                    return {"ok": False, "error": "malla mayor a 512 MB"}
+                if not filename.lower().endswith((".stl", ".obj", ".ply", ".3mf")):
+                    filename += ".stl"
+                updir = os.path.join(_HERE, "uploads")
+                os.makedirs(updir, exist_ok=True)
+                dest = os.path.join(updir, filename)
+                with open(dest, "wb") as fh:
+                    fh.write(raw)
+                res = self._ctrl.import_mesh_model(dest)
+                key = self._register_library(filename, dest)
+                return {"ok": True, "result": _clean(res),
+                        "snapshot": self._snapshot(), "key": key,
+                        "library": self._library_view()}
+            if not filename.lower().endswith((".step", ".stp")):
+                return {"ok": False,
+                        "error": f"formato no soportado (detectado: {fmt!r}). "
+                                 f"Usar STEP (.step/.stp) o malla (.stl/.obj/.ply/.3mf)"}
+            if len(raw) > self._STEP_UPLOAD_MAX_BYTES:
                 return {"ok": False, "error": "archivo mayor a 50 MB"}
             updir = os.path.join(_HERE, "uploads")
             os.makedirs(updir, exist_ok=True)
@@ -438,6 +546,16 @@ class Api:
             return {"ok": True, "result": _clean(res),
                     "snapshot": self._snapshot(), "key": key,
                     "library": self._library_view()}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    def importStepBytes(self, params_json: str = "{}") -> dict:
+        import base64
+        try:
+            p = json.loads(params_json or "{}")
+            filename = os.path.basename(str(p.get("filename", "upload.step")))
+            raw = base64.b64decode(str(p.get("base64", "")))
+            return self._import_upload_bytes(filename, raw)
         except Exception as exc:  # noqa: BLE001
             return _err(exc)
 
@@ -1244,6 +1362,174 @@ class Api:
                 overhang_angle_deg=float(p.get("overhang_angle_deg", 45.0)),
                 threshold=float(p.get("threshold", 0.5)))
             return {"ok": True, "report": _clean(rep)}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    # -- MALLA-TOOLS: diagnostico + reparacion de mallas importadas --------
+    # Operan sobre la full-res de modelos MESH (STL/OBJ/PLY/3MF). Nunca
+    # tocan solvers ni B-Rep; cada op refresca preview/volumen/snapshot.
+    def _mesh_active_surface(self):
+        """(model_id, V, T) del modelo activo o (None, error)."""
+        import numpy as np
+        c = self._ctrl
+        model_id = getattr(c, "model_id", None)
+        if not model_id:
+            return None, "sin modelo activo"
+        surf = c.cad.get_mesh_surface(model_id)
+        if surf is None:
+            return None, ("sin malla editable: solo modelos MESH importados "
+                          "(STL/OBJ/PLY/3MF) admiten herramientas de malla")
+        return (model_id, np.asarray(surf[0]), np.asarray(surf[1])), None
+
+    def _mesh_refresh(self, model_id: str) -> None:
+        """Sincroniza current_tessellation tras una herramienta de malla."""
+        c = self._ctrl
+        model = c.cad.get_model(model_id)
+        if model is not None and model.tessellation is not None:
+            tess = model.tessellation.to_dict()
+            tess["success"] = True
+            c.current_tessellation = tess
+
+    def meshQualityReport(self, params_json: str = "{}") -> dict:
+        """Diagnostico de la malla activa (no modifica nada).
+
+        params: {check_self_intersections: false}. Devuelve conteos,
+        degenerados, non-manifold, loops de borde, volumen y area.
+        """
+        try:
+            p = json.loads(params_json or "{}")
+            from core.cad_reconstruction import (
+                mesh_quality_report, count_self_intersections)
+            from core.mesh_io import mesh_area, mesh_signed_volume
+            got, err = self._mesh_active_surface()
+            if err:
+                return {"ok": False, "error": err}
+            model_id, verts, tris = got
+            rep = dict(mesh_quality_report(verts, tris))
+            rep["volume"] = abs(float(mesh_signed_volume(verts, tris)))
+            rep["area"] = float(mesh_area(verts, tris))
+            if bool(p.get("check_self_intersections", False)):
+                rep["self_intersections"] = count_self_intersections(verts, tris)
+            return {"ok": True, "report": _clean(rep)}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    def repairMesh(self, params_json: str = "{}") -> dict:
+        """Suelda duplicados + quita degenerados/huerfanos (no ambiguo).
+
+        params: {weld_tolerance_decimals: 9}. Non-manifold y
+        self-intersections solo se reportan (nunca fix silencioso).
+        """
+        try:
+            p = json.loads(params_json or "{}")
+            from core.cad_reconstruction import repair_mesh
+            got, err = self._mesh_active_surface()
+            if err:
+                return {"ok": False, "error": err}
+            model_id, verts, tris = got
+            decimals = int(p.get("weld_tolerance_decimals", 9))
+            if decimals < 0 or decimals > 12:
+                return {"ok": False,
+                        "error": f"weld_tolerance_decimals={decimals} fuera de [0, 12]"}
+            v2, t2, stats = repair_mesh(verts, tris,
+                                        weld_tolerance_decimals=decimals)
+            info = self._ctrl.cad.update_mesh_surface(model_id, v2, t2, op="repair")
+            self._mesh_refresh(model_id)
+            return {"ok": True, "stats": _clean(stats),
+                    "mesh": _clean(info), "snapshot": self._snapshot()}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    def smoothMesh(self, params_json: str = "{}") -> dict:
+        """Suavizado laplaciano con borde fijo (como MeshLab).
+
+        params: {iterations: 3, alpha: 0.5}.
+        """
+        try:
+            p = json.loads(params_json or "{}")
+            from core.cad_reconstruction import smooth_surface_mesh
+            got, err = self._mesh_active_surface()
+            if err:
+                return {"ok": False, "error": err}
+            model_id, verts, tris = got
+            iters = int(p.get("iterations", 3))
+            alpha = float(p.get("alpha", 0.5))
+            if not 1 <= iters <= 100:
+                return {"ok": False,
+                        "error": f"iterations={iters} fuera de [1, 100]"}
+            if not 0.0 < alpha <= 1.0:
+                return {"ok": False,
+                        "error": f"alpha={alpha} fuera de (0, 1]"}
+            v2, t2 = smooth_surface_mesh(verts, tris, iterations=iters,
+                                         alpha=alpha)
+            info = self._ctrl.cad.update_mesh_surface(model_id, v2, t2, op="smooth")
+            self._mesh_refresh(model_id)
+            return {"ok": True, "stats": {"iterations": iters, "alpha": alpha},
+                    "mesh": _clean(info), "snapshot": self._snapshot()}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    def decimateMesh(self, params_json: str = "{}") -> dict:
+        """Reduce triangulos por clustering (como MeshLab).
+
+        params: {target_fraction: 0.5} o {target_triangles: N}.
+        Nunca hace upsampling.
+        """
+        try:
+            p = json.loads(params_json or "{}")
+            from core.cad_reconstruction import decimate_mesh
+            got, err = self._mesh_active_surface()
+            if err:
+                return {"ok": False, "error": err}
+            model_id, verts, tris = got
+            if p.get("target_triangles") is not None:
+                want = int(p.get("target_triangles"))
+                if want <= 0:
+                    return {"ok": False,
+                            "error": f"target_triangles={want} debe ser > 0"}
+                fraction = min(1.0, want / max(1, int(tris.shape[0])))
+            else:
+                fraction = float(p.get("target_fraction", 0.5))
+            v2, t2, stats = decimate_mesh(verts, tris, target_fraction=fraction)
+            if t2.size == 0:
+                return {"ok": False,
+                        "error": "decimate eliminaria toda la malla "
+                                 "(malla demasiado chica para esa fraccion); "
+                                 "se conserva la anterior"}
+            info = self._ctrl.cad.update_mesh_surface(model_id, v2, t2, op="decimate")
+            self._mesh_refresh(model_id)
+            return {"ok": True, "stats": _clean(stats),
+                    "mesh": _clean(info), "snapshot": self._snapshot()}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    def remeshMesh(self, params_json: str = "{}") -> dict:
+        """Remallado isotropico (split/collapse/flip + repair final).
+
+        params: {target_length: L, iterations: 3}. L en mm (> 0).
+        """
+        try:
+            p = json.loads(params_json or "{}")
+            from core.cad_reconstruction import uniform_remesh
+            got, err = self._mesh_active_surface()
+            if err:
+                return {"ok": False, "error": err}
+            model_id, verts, tris = got
+            if p.get("target_length") is None:
+                return {"ok": False,
+                        "error": "target_length requerido (mm, > 0)"}
+            length = float(p.get("target_length"))
+            iters = int(p.get("iterations", 3))
+            if not length > 0:
+                return {"ok": False,
+                        "error": f"target_length={length} debe ser > 0"}
+            v2, t2, stats = uniform_remesh(verts, tris,
+                                           target_length=length,
+                                           iterations=iters)
+            info = self._ctrl.cad.update_mesh_surface(model_id, v2, t2, op="remesh")
+            self._mesh_refresh(model_id)
+            return {"ok": True, "stats": _clean(stats),
+                    "mesh": _clean(info), "snapshot": self._snapshot()}
         except Exception as exc:  # noqa: BLE001
             return _err(exc)
 

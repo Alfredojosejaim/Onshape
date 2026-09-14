@@ -14,6 +14,7 @@ from core.geometry import GeometryEngine
 from core.meshing import GmshTet4Mesher, ProvisionalTet4Mesher, MeshResult
 from core.boundary import BoundaryConditionMapper
 from core.models import CADModel, SourceType, SourceReference
+from core.models import BoundingBox3D, CADSolid, TessellatedMesh, Unit
 from core.commands import (
     BooleanOperation,
     PatternType,
@@ -32,6 +33,11 @@ class CADService:
         self.gmsh_mesher = GmshTet4Mesher()
         self.provisional_mesher = ProvisionalTet4Mesher()
         self._model_cache: Dict[str, tuple[CADModel, cq.Shape]] = {}
+        # MALLA-IMPORT (reversible): malla full-res numpy por modelo MESH
+        # (el preview de TessellatedMesh puede ir diezmado; las
+        # herramientas quality/repair/smooth/decimate/remesh operan sobre
+        # esta copia completa). Para volver atras: quitar + get_mesh_surface.
+        self._mesh_cache: Dict[str, tuple[Any, Any]] = {}
 
     def import_step_from_bytes(
         self,
@@ -96,6 +102,162 @@ class CADService:
         if model_id in self._model_cache:
             return self._model_cache[model_id][1]
         return None
+
+    # ------------------------------------------------ MALLA-IMPORT ------- #
+    # STL/OBJ/PLY/3MF: sin B-Rep (sin OCC). Un unico solido "solid_0" cuya
+    # teselacion ES la malla importada; volumen por divergencia (0 si
+    # abierta). La malla full-res queda en _mesh_cache para las
+    # herramientas; el preview se diezma coherentemente si es enorme.
+    MESH_PREVIEW_MAX_TRIANGLES = 100_000
+
+    def import_mesh_from_bytes(
+        self,
+        mesh_data: bytes,
+        filename: str = "malla.stl",
+        model_name: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> CADModel:
+        """Importa una malla STL/OBJ/PLY/3MF como modelo MESH (sin B-Rep)."""
+        from core.mesh_io import (  # import local: evita ciclos con core.*
+            coherent_stride_preview,
+            mesh_area,
+            mesh_signed_volume,
+            read_mesh,
+        )
+        parsed = read_mesh(mesh_data, filename)
+        verts = parsed["vertices"]
+        tris = parsed["triangles"]
+        model_id = str(uuid.uuid4())
+        name = model_name or os.path.splitext(os.path.basename(filename))[0]
+        lo = verts.min(axis=0)
+        hi = verts.max(axis=0)
+        bbox = BoundingBox3D(float(lo[0]), float(hi[0]),
+                             float(lo[1]), float(hi[1]),
+                             float(lo[2]), float(hi[2]))
+        vol = mesh_signed_volume(verts, tris)
+        area = mesh_area(verts, tris)
+        # Abierta o degenerada -> volumen 0 explicito (no se inventa solido).
+        volume = abs(float(vol)) if abs(float(vol)) > 1e-12 else 0.0
+        solid = CADSolid(id="solid_0", name=name, volume=volume,
+                         bbox=bbox, faces=[],
+                         metadata={"mesh_format": parsed["format"],
+                                   "open_volume_zero": volume == 0.0})
+        preview_v, preview_t = coherent_stride_preview(
+            verts, tris, self.MESH_PREVIEW_MAX_TRIANGLES)
+        tess = TessellatedMesh(
+            vertices=[float(x) for x in preview_v.ravel()],
+            indices=[int(x) for x in preview_t.ravel()],
+            num_vertices=int(preview_v.shape[0]),
+            num_triangles=int(preview_t.shape[0]),
+            faces_metadata=[],
+            bbox=bbox,
+        )
+        meta = dict(metadata or {})
+        meta.update({"filename": os.path.basename(filename),
+                     "mesh_format": parsed["format"],
+                     "unit_scale_mm": parsed["unit_scale_mm"],
+                     "preview_decimated": bool(tris.shape[0] > preview_t.shape[0]),
+                     "full_triangles": int(tris.shape[0])})
+        cad_model = CADModel(
+            id=model_id, name=name, units=Unit.MILLIMETER,
+            solids=[solid], faces=[], bbox=bbox,
+            total_volume=volume, total_area=float(area),
+            source=SourceReference(source_type=SourceType.MESH,
+                                   filename=os.path.basename(filename),
+                                   metadata=meta),
+            tessellation=tess, metadata=meta,
+        )
+        self._model_cache[model_id] = (cad_model, None)
+        self._mesh_cache[model_id] = (verts, tris)
+        logger.info("Imported MESH model: %s (ID: %s, %s, %d tris%s)", name,
+                    model_id, parsed["format"], int(tris.shape[0]),
+                    " preview diezmado" if meta["preview_decimated"] else "")
+        return cad_model
+
+    def import_mesh_from_file(
+        self,
+        file_path: str,
+        model_name: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> CADModel:
+        """Importa una malla STL/OBJ/PLY/3MF desde disco."""
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Malla no encontrada: {file_path}")
+        with open(file_path, "rb") as f:
+            mesh_data = f.read()
+        file_metadata = metadata or {}
+        file_metadata["filename"] = os.path.basename(file_path)
+        file_metadata["path"] = file_path
+        return self.import_mesh_from_bytes(
+            mesh_data,
+            filename=os.path.basename(file_path),
+            model_name=model_name or os.path.splitext(os.path.basename(file_path))[0],
+            metadata=file_metadata,
+        )
+
+    def get_mesh_surface(self, model_id: str) -> Optional[tuple[Any, Any]]:
+        """Malla full-res (vertices, triangulos) numpy de un modelo MESH."""
+        return self._mesh_cache.get(model_id)
+
+    def update_mesh_surface(self, model_id: str, vertices: Any,
+                            triangles: Any, op: str = "mesh_op") -> Dict[str, Any]:
+        """Reemplaza la malla full-res y refresca preview/volumen/area.
+
+        Usado por las herramientas quality/repair/smooth/decimate/remesh.
+        Falla explicito si el modelo no es MESH o la malla queda vacia.
+        """
+        import numpy as _np
+        from core.mesh_io import (  # import local: evita ciclos con core.*
+            coherent_stride_preview,
+            mesh_area,
+            mesh_signed_volume,
+        )
+        from core.models import BoundingBox3D as _BB
+        surf = self._mesh_cache.get(model_id)
+        if surf is None:
+            raise ValueError("sin malla full-res: solo modelos MESH "
+                             "(STL/OBJ/PLY/3MF importados) admiten "
+                             "herramientas de malla")
+        verts = _np.ascontiguousarray(_np.asarray(vertices, dtype=float))
+        tris = _np.ascontiguousarray(_np.asarray(triangles, dtype=int))
+        if verts.ndim != 2 or verts.shape[1] != 3 or tris.size == 0:
+            raise ValueError(f"{op} dejo la malla vacia: operacion rechazada, "
+                             f"se conserva la anterior")
+        if bool((tris < 0).any() | (tris >= verts.shape[0]).any()):
+            raise ValueError(f"{op} produjo indices fuera de rango")
+        self._mesh_cache[model_id] = (verts, tris)
+        lo = verts.min(axis=0)
+        hi = verts.max(axis=0)
+        bbox = _BB(float(lo[0]), float(hi[0]),
+                   float(lo[1]), float(hi[1]),
+                   float(lo[2]), float(hi[2]))
+        volume = abs(float(mesh_signed_volume(verts, tris)))
+        area = float(mesh_area(verts, tris))
+        cad_model = self.get_model(model_id)
+        if cad_model is not None:
+            preview_v, preview_t = coherent_stride_preview(
+                verts, tris, self.MESH_PREVIEW_MAX_TRIANGLES)
+            from core.models import TessellatedMesh as _TM
+            cad_model.tessellation = _TM(
+                vertices=[float(x) for x in preview_v.ravel()],
+                indices=[int(x) for x in preview_t.ravel()],
+                num_vertices=int(preview_v.shape[0]),
+                num_triangles=int(preview_t.shape[0]),
+                faces_metadata=[], bbox=bbox)
+            cad_model.bbox = bbox
+            cad_model.total_volume = volume
+            cad_model.total_area = area
+            if cad_model.solids:
+                cad_model.solids[0].volume = volume
+                cad_model.solids[0].bbox = bbox
+            cad_model.metadata["last_mesh_op"] = op
+            cad_model.metadata["full_triangles"] = int(tris.shape[0])
+        logger.info("Mesh %s en %s: %d tris (vol=%.3g, area=%.3g)",
+                    op, model_id, int(tris.shape[0]), volume, area)
+        return {"model_id": model_id, "op": op,
+                "triangles": int(tris.shape[0]),
+                "vertices": int(verts.shape[0]),
+                "volume": volume, "area": area}
 
     def tessellate_model(
         self,
@@ -322,9 +484,33 @@ class CADService:
         # (teselado) de cada solido, por identidad topologica OCC (IsSame),
         # igual que _split_solids. El viewport web separa la malla por cuerpo
         # para ver/ocultar individual. Para volver atras: quitar el bloque.
+        #
+        # MALLA-IMPORT (reversible): sin shape OCC -> se sirve el/los solido(s)
+        # declarado(s) en el CADModel cacheado (mesh: un unico solid_0).
         shape = self.get_model_shape(model_id)
         if shape is None:
-            return []
+            cad_model = self.get_model(model_id)
+            if cad_model is None:
+                return []
+            out = []
+            for idx, s in enumerate(cad_model.solids):
+                try:
+                    bb = s.bbox
+                    center = [(bb.xmin + bb.xmax) / 2.0,
+                              (bb.ymin + bb.ymax) / 2.0,
+                              (bb.zmin + bb.zmax) / 2.0]
+                except Exception:
+                    center = None
+                out.append({
+                    "solid_id": s.id,
+                    "index": idx,
+                    "volume": s.volume,
+                    "faces_count": len(s.faces),
+                    "center": center,
+                    "name": s.name,
+                    "face_indices": [],
+                })
+            return out
         try:
             global_faces = list(shape.Faces())
         except Exception:
@@ -906,12 +1092,14 @@ class CADService:
             if model_id in self._model_cache:
                 del self._model_cache[model_id]
                 logger.info("Cleared cache for model %s", model_id)
+            self._mesh_cache.pop(model_id, None)  # MALLA-IMPORT
             try:
                 self.step_adapter.clear_shape(model_id)
             except Exception:
                 pass
         else:
             self._model_cache.clear()
+            self._mesh_cache.clear()  # MALLA-IMPORT
             try:
                 self.step_adapter.clear_shape(None)
             except Exception:
@@ -931,6 +1119,7 @@ class CADService:
                 pass
             return None
         self._model_cache.pop(target, None)
+        self._mesh_cache.pop(target, None)  # MALLA-IMPORT
         try:
             self.step_adapter.clear_shape(target)
         except Exception:

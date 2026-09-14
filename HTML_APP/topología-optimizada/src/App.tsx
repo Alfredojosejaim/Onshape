@@ -11,6 +11,8 @@ import {
   CadModelPreset,
   FeaResults,
   Material,
+  MeshOpResult,
+  MeshToolAction,
   OptimizationState,
   SimpParameters,
   ViewBody,
@@ -499,6 +501,11 @@ export default function App() {
   // FEA real al entrar a la pestana de analisis (usa el control existente).
   const handleTabChange = (tab: ActiveTab) => {
     setActiveTab(tab);
+    // MALLA-TOOLS (reversible): al entrar a Malla, herramienta de malla por
+    // defecto (si la activa no es de malla).
+    if (tab === 'malla' && !activeTool.startsWith('malla-') && activeTool !== 'malla') {
+      setActiveTool('malla-diagnosticar');
+    }
     if (tab !== 'analizis' || !backend.hasBridge() || feaJobId) return;
     if (!snapRef.current?.has_mesh) return;
     void (async () => {
@@ -882,6 +889,58 @@ export default function App() {
     })();
   };
 
+  // MALLA-TOOLS-START (reversible): resultado publicado por las
+  // herramientas de malla (solo lectura en panel derecho) + accion en
+  // curso. Para volver atras: quitar estado + handleMeshTool + props.
+  const [meshResult, setMeshResult] = useState<MeshOpResult>({
+    report: null, op: null, stats: null, error: null,
+  });
+  const [meshBusy, setMeshBusy] = useState<string | null>(null);
+
+  const handleMeshTool = (action: MeshToolAction, params: Record<string, number>) => {
+    if (!backend.hasBridge() || meshBusy) return;
+    setMeshBusy(action);
+    setMeshResult((prev) => ({ ...prev, error: null }));
+    void (async () => {
+      try {
+        if (action === 'diagnosticar') {
+          const r = (await backend.meshQualityReport(params)) as {
+            ok: boolean; report?: Record<string, unknown>; error?: unknown;
+          };
+          if (!r.ok) setMeshResult((prev) => ({ ...prev, error: String(r.error ?? 'falló') }));
+          else setMeshResult({ report: r.report ?? null, op: 'diagnosticar', stats: null, error: null });
+          return;
+        }
+        const calls: Record<Exclude<MeshToolAction, 'diagnosticar'>, () => Promise<unknown>> = {
+          reparar: () => backend.repairMesh(params),
+          suavizar: () => backend.smoothMesh(params),
+          reducir: () => backend.decimateMesh(params),
+          remallar: () => backend.remeshMesh(params),
+        };
+        const r = (await calls[action]()) as {
+          ok: boolean; stats?: Record<string, unknown>; error?: unknown;
+        };
+        if (!r.ok) {
+          setMeshResult((prev) => ({ ...prev, op: action, error: String(r.error ?? 'falló') }));
+          return;
+        }
+        const q = (await backend.meshQualityReport({})) as {
+          ok: boolean; report?: Record<string, unknown>;
+        };
+        setMeshResult({
+          report: q.ok ? (q.report ?? null) : null,
+          op: action, stats: r.stats ?? null, error: null,
+        });
+        refreshMeshView();
+      } catch (e) {
+        setMeshResult((prev) => ({ ...prev, op: action, error: String(e) }));
+      } finally {
+        setMeshBusy(null);
+      }
+    })();
+  };
+  // MALLA-TOOLS-END
+
   // Handle custom file upload
   // UPLOAD-STEP (reversible): con bridge, el archivo real se envia al
   // backend (teselado + solidos + viewport reales). Sin bridge, preset
@@ -1020,6 +1079,7 @@ export default function App() {
         <SecondaryNav activeTab={activeTab} onChangeTab={handleTabChange} />
         {/* 3. CAD TOOLBAR */}
         <Toolbar
+          activeTab={activeTab}
           activeTool={activeTool}
           onSelectTool={handleSelectTool}
           showMesh={showMesh}
@@ -1071,6 +1131,8 @@ export default function App() {
               }
             }}
             onPushCondition={pushFaceCondition}
+            onMeshTool={handleMeshTool}
+            meshBusy={meshBusy}
           />
 
           {/* CENTRAL 3D CAD VIEWPORT */}
@@ -1135,13 +1197,7 @@ export default function App() {
             onExportReport={() => setShowExport(true)}
             isMeshModel={isMeshModel}
             meshFormat={meshFormat}
-            onMeshChanged={refreshMeshView}
-            volSize={meshElementSize}
-            onVolSize={setMeshElementSize}
-            onVolRemesh={handleRemesh}
-            isRemeshing={isRemeshing}
-            estTets={currentModel ? Math.round(currentModel.elementsTet4 * (1.8 / meshElementSize)).toLocaleString() : '—'}
-            estNodes={currentModel ? Math.round(currentModel.nodes * (1.8 / meshElementSize)).toLocaleString() : '—'}
+            meshResult={meshResult}
           />
         </div>
       </div>

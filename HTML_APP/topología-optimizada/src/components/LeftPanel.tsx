@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ActiveTool, BoundaryCondition, CadModelPreset, SolidInfo } from '../types';
+import { ActiveTool, BoundaryCondition, CadModelPreset, MeshToolAction, SolidInfo } from '../types';
 // MULTI-VIEW (reversible): clave de cuerpo para ver/ocultar.
 import { bodyKey } from '../lib/faces';
 // UI-CLEAN-START (reversible: quitar import y devolver bloque inline UI-CLEAN-OPROW de abajo)
@@ -43,6 +43,9 @@ interface LeftPanelProps {
   targetCondId: string | null;
   onNewCondition: () => void;
   onPushCondition: (condition: BoundaryCondition) => void;
+  // MALLA-TOOLS (reversible): ejecuta herramienta de malla + busy.
+  onMeshTool: (action: MeshToolAction, params: Record<string, number>) => void;
+  meshBusy: string | null;
 }
 
 export const LeftPanel: React.FC<LeftPanelProps> = ({
@@ -74,6 +77,9 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
   targetCondId,
   onNewCondition,
   onPushCondition,
+  // MALLA-TOOLS (reversible)
+  onMeshTool,
+  meshBusy,
 }) => {
   // UI-CLEAN2 (reversible): sin nodo archivo no hay picker local.
   // models/onSelectModel/isModelVisible/onToggleModelVisibility se conservan
@@ -232,6 +238,8 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
         onChangeMeshSize={onChangeMeshSize}
         onRemesh={onRemesh}
         isRemeshing={isRemeshing}
+        onMeshTool={onMeshTool}
+        meshBusy={meshBusy}
       />
       {/* TOOLPARAMS-END */}
     </aside>

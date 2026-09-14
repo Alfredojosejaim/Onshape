@@ -8,7 +8,32 @@ export type ActiveTool =
   | 'preservada'
   | 'keepout'
   | 'malla'
-  | 'seccion';
+  | 'seccion'
+  // MALLA-TOOLS (reversible): herramientas de la pestana Malla (barra propia,
+// parametros en ToolParamsPanel, resultados en RightPanel). Para volver
+// atras: quitar + ramas en Toolbar/ToolParamsPanel.
+  | 'malla-diagnosticar'
+  | 'malla-reparar'
+  | 'malla-suavizar'
+  | 'malla-reducir'
+  | 'malla-remallar'
+  | 'malla-volumetrica';
+
+// Accion de herramienta de malla -> metodo del backend.
+export type MeshToolAction =
+  | 'diagnosticar'
+  | 'reparar'
+  | 'suavizar'
+  | 'reducir'
+  | 'remallar';
+
+// Resultado publicado por las herramientas de malla (solo lectura en UI).
+export interface MeshOpResult {
+  report: Record<string, unknown> | null;
+  op: string | null;
+  stats: Record<string, unknown> | null;
+  error: string | null;
+}
 
 export interface Material {
   id: string;

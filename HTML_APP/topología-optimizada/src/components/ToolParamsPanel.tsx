@@ -4,7 +4,7 @@
 // deja libre el viewport para picar caras. Para volver atras: borrar este
 // archivo + su uso en LeftPanel.tsx y restaurar la tarjeta Gmsh desde git.
 import React, { useEffect, useState } from 'react';
-import { ActiveTool, BoundaryCondition, CadModelPreset } from '../types';
+import { ActiveTool, BoundaryCondition, CadModelPreset, MeshToolAction } from '../types';
 
 interface ToolParamsPanelProps {
   activeTool: ActiveTool;
@@ -26,6 +26,11 @@ interface ToolParamsPanelProps {
   onChangeMeshSize: (size: number) => void;
   onRemesh: () => void;
   isRemeshing: boolean;
+  // MALLA-TOOLS (reversible): ejecuta herramienta de malla (App llama al
+  // backend y publica el resultado en el panel derecho). meshBusy = accion
+  // en curso (deshabilita Aplicar). Para volver atras: quitar + ramas malla-*.
+  onMeshTool: (action: MeshToolAction, params: Record<string, number>) => void;
+  meshBusy: string | null;
 }
 
 const TOOL_META: Record<ActiveTool, { name: string; icon: string; cls: string }> = {
@@ -37,6 +42,12 @@ const TOOL_META: Record<ActiveTool, { name: string; icon: string; cls: string }>
   keepout: { name: 'Keep-out', icon: 'block', cls: 'text-fea-stress-critical' },
   malla: { name: 'Malla', icon: 'grid_on', cls: 'text-secondary' },
   seccion: { name: 'Sección', icon: 'cut', cls: 'text-secondary' },
+  'malla-diagnosticar': { name: 'Diagnosticar', icon: 'troubleshoot', cls: 'text-secondary' },
+  'malla-reparar': { name: 'Reparar', icon: 'healing', cls: 'text-secondary' },
+  'malla-suavizar': { name: 'Suavizar', icon: 'waves', cls: 'text-secondary' },
+  'malla-reducir': { name: 'Reducir', icon: 'compress', cls: 'text-secondary' },
+  'malla-remallar': { name: 'Remallar', icon: 'autorenew', cls: 'text-secondary' },
+  'malla-volumetrica': { name: 'Volumétrica', icon: 'box', cls: 'text-secondary' },
 };
 
 function facesText(cond: BoundaryCondition | null): string {
@@ -58,6 +69,8 @@ export const ToolParamsPanel: React.FC<ToolParamsPanelProps> = ({
   onChangeMeshSize,
   onRemesh,
   isRemeshing,
+  onMeshTool,
+  meshBusy,
 }) => {
   const meta = TOOL_META[activeTool];
   const isFaceTool =
@@ -143,8 +156,7 @@ export const ToolParamsPanel: React.FC<ToolParamsPanelProps> = ({
         {/* REMESH-TOOL-START (reversible): parametros de la antigua tarjeta
             Gmsh, ahora como herramienta (se abre con Remallar en la barra).
             Para volver atras: borrar este bloque + props. */}
-        {activeTool === 'malla' && (
-      <div className="flex flex-col gap-2 p-1 text-[11px] min-h-0 overflow-y-auto max-h-[42dvh] xl:max-h-[38dvh]">
+        {(activeTool === 'malla' || activeTool === 'malla-volumetrica') && (      <div className="flex flex-col gap-2 p-1 text-[11px] min-h-0 overflow-y-auto max-h-[42dvh] xl:max-h-[38dvh]">
             <div className="flex items-center justify-between">
               <span className="text-text-muted text-[10px] font-mono">Tamaño Elemento (h):</span>
               <span className="font-mono text-text-primary font-bold text-[11px]">{meshElementSize.toFixed(1)} mm</span>
@@ -200,6 +212,45 @@ export const ToolParamsPanel: React.FC<ToolParamsPanelProps> = ({
         )}
         {/* REMESH-TOOL-END */}
 
+        {/* MALLA-TOOLS-START (reversible): parametros de superficie (el
+            resultado se publica en el panel derecho). Para volver atras:
+            borrar hasta MALLA-TOOLS-END + props onMeshTool/meshBusy. */}
+        {activeTool === 'malla-diagnosticar' && (
+          <div className="flex flex-col gap-2 p-1 text-[11px]">
+            <p className="text-text-muted text-[11px] leading-relaxed">
+              Detecta degenerados, non-manifold y bordes abiertos. No modifica nada.
+            </p>
+            <MeshApply label="Diagnosticar malla" busy={meshBusy === 'diagnosticar'}
+              onClick={() => onMeshTool('diagnosticar', {})} />
+          </div>
+        )}
+
+        {activeTool === 'malla-reparar' && (
+          <div className="flex flex-col gap-2 p-1 text-[11px]">
+            <p className="text-text-muted text-[11px] leading-relaxed">
+              Suelda duplicados y quita degenerados/huérfanos. Lo ambiguo solo se reporta.
+            </p>
+            <MeshApply label="Reparar (soldar + limpiar)" busy={meshBusy === 'reparar'}
+              onClick={() => onMeshTool('reparar', {})} />
+          </div>
+        )}
+
+        {activeTool === 'malla-suavizar' && (
+          <MeshSmoothParams busy={meshBusy === 'suavizar'}
+            onApply={(p) => onMeshTool('suavizar', p)} />
+        )}
+
+        {activeTool === 'malla-reducir' && (
+          <MeshDecimateParams busy={meshBusy === 'reducir'}
+            onApply={(p) => onMeshTool('reducir', p)} />
+        )}
+
+        {activeTool === 'malla-remallar' && (
+          <MeshRemeshParams busy={meshBusy === 'remallar'}
+            onApply={(p) => onMeshTool('remallar', p)} />
+        )}
+        {/* MALLA-TOOLS-END */}
+
         {activeTool !== 'seleccionar' && activeTool !== 'carga' && activeTool !== 'malla' && (
           <button
             type="button"
@@ -215,8 +266,79 @@ export const ToolParamsPanel: React.FC<ToolParamsPanelProps> = ({
   );
 };
 
-// Editor del vector + direccion de carga (antes en el modal de edicion;
-// movido aqui para no tapar el viewport). Guarda en vivo sobre la condicion
+// MALLA-TOOLS (reversible): controles de parametros de superficie.
+// Misma estetica que el bloque volumetrico. Para volver atras: borrar.
+function MeshApply({ label, busy, onClick }: { label: string; busy: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={busy}
+      className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded bg-primary-container hover:bg-secondary text-on-primary text-[11px] font-semibold transition-colors active:scale-95 disabled:opacity-50"
+    >
+      <span className="material-symbols-outlined text-[15px]">check</span>
+      <span>{busy ? 'Ejecutando…' : label}</span>
+    </button>
+  );
+}
+
+function MeshSmoothParams({ busy, onApply }: { busy: boolean; onApply: (p: Record<string, number>) => void }) {
+  const [iters, setIters] = useState(3);
+  const [alpha, setAlpha] = useState(0.5);
+  return (
+    <div className="flex flex-col gap-2 p-1 text-[11px]">
+      <div className="flex items-center justify-between font-mono text-[11px]">
+        <span className="text-text-muted text-[10px]">Iteraciones:</span>
+        <input type="number" min={1} max={100} step={1} value={iters}
+          onChange={(e) => setIters(Math.max(1, parseInt(e.target.value || '1', 10)))}
+          className="w-20 bg-surface-container-lowest rounded px-2 py-1 text-text-primary font-mono" />
+      </div>
+      <div className="flex items-center justify-between font-mono text-[11px]">
+        <span className="text-text-muted text-[10px]">Alpha (0-1]:</span>
+        <input type="number" min={0.05} max={1} step={0.05} value={alpha}
+          onChange={(e) => setAlpha(Math.min(1, Math.max(0.05, parseFloat(e.target.value || '0.5'))))}
+          className="w-20 bg-surface-container-lowest rounded px-2 py-1 text-text-primary font-mono" />
+      </div>
+      <MeshApply label="Aplicar suavizado" busy={busy}
+        onClick={() => onApply({ iterations: iters, alpha })} />
+    </div>
+  );
+}
+
+function MeshDecimateParams({ busy, onApply }: { busy: boolean; onApply: (p: Record<string, number>) => void }) {
+  const [frac, setFrac] = useState(0.5);
+  return (
+    <div className="flex flex-col gap-2 p-1 text-[11px]">
+      <div className="flex items-center justify-between font-mono text-[11px]">
+        <span className="text-text-muted text-[10px]">Fracción objetivo:</span>
+        <span className="text-secondary font-bold">{Math.round(frac * 100)}%</span>
+      </div>
+      <input type="range" min={0.05} max={1} step={0.05} value={frac}
+        onChange={(e) => setFrac(parseFloat(e.target.value))}
+        className="w-full h-1 bg-surface-elevated rounded-lg appearance-none cursor-pointer accent-secondary" />
+      <MeshApply label="Aplicar reducción" busy={busy}
+        onClick={() => onApply({ target_fraction: frac })} />
+    </div>
+  );
+}
+
+function MeshRemeshParams({ busy, onApply }: { busy: boolean; onApply: (p: Record<string, number>) => void }) {
+  const [len, setLen] = useState(1.0);
+  return (
+    <div className="flex flex-col gap-2 p-1 text-[11px]">
+      <div className="flex items-center justify-between font-mono text-[11px]">
+        <span className="text-text-muted text-[10px]">Longitud objetivo (mm):</span>
+        <input type="number" min={0.01} step={0.1} value={len}
+          onChange={(e) => setLen(Math.max(0.01, parseFloat(e.target.value || '1')))}
+          className="w-24 bg-surface-container-lowest rounded px-2 py-1 text-text-primary font-mono" />
+      </div>
+      <MeshApply label="Aplicar remallado" busy={busy}
+        onClick={() => onApply({ target_length: len, iterations: 3 })} />
+    </div>
+  );
+}
+
+// Editor del vector + direccion de carga (antes en el modal de edicion;// movido aqui para no tapar el viewport). Guarda en vivo sobre la condicion
 // destino (la crea si aun no existe: queda inactiva hasta picar caras) y
 // reenvia al backend via onPushCondition.
 // LOAD-DIR (reversible): direccion = normal de referencia del core

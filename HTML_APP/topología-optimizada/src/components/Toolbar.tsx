@@ -1,7 +1,8 @@
 import React from 'react';
-import { ActiveTool } from '../types';
+import { ActiveTab, ActiveTool } from '../types';
 
 interface ToolbarProps {
+  activeTab: ActiveTab;
   activeTool: ActiveTool;
   onSelectTool: (tool: ActiveTool) => void;
   showMesh: boolean;
@@ -12,7 +13,21 @@ interface ToolbarProps {
   onRedo: () => void;
 }
 
+// MALLA-TOOLS (reversible): la pestana Malla tiene barra propia (cada
+// herramienta abre sus parametros en ToolParamsPanel). Misma estetica,
+// mismo patron activo/inactivo. Para volver atras: quitar activeTab +
+// bloque malla.
+const MESH_TOOLS: { tool: ActiveTool; icon: string; label: string; title: string }[] = [
+  { tool: 'malla-diagnosticar', icon: 'troubleshoot', label: 'Diagnosticar', title: 'Diagnosticar malla (degenerados, non-manifold, bordes)' },
+  { tool: 'malla-reparar', icon: 'healing', label: 'Reparar', title: 'Reparar malla (soldar + limpiar degenerados)' },
+  { tool: 'malla-suavizar', icon: 'waves', label: 'Suavizar', title: 'Suavizado laplaciano con borde fijo' },
+  { tool: 'malla-reducir', icon: 'compress', label: 'Reducir', title: 'Reducir triangulos (como MeshLab)' },
+  { tool: 'malla-remallar', icon: 'autorenew', label: 'Remallar', title: 'Remallado isotropico de superficie' },
+  { tool: 'malla-volumetrica', icon: 'box', label: 'Volumétrica', title: 'Malla volumetrica Gmsh Tet4 (requiere STEP)' },
+];
+
 export const Toolbar: React.FC<ToolbarProps> = ({
+  activeTab,
   activeTool,
   onSelectTool,
   showMesh,
@@ -25,6 +40,28 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   return (
     <div className="h-9 px-space-md bg-surface-container-low border-b border-border-subtle flex items-center justify-between overflow-x-auto select-none">
       <div className="flex items-center gap-1">
+        {activeTab === 'malla' ? (
+          <>
+            {MESH_TOOLS.map((t) => (
+              <button
+                key={t.tool}
+                id={`tool-${t.tool}`}
+                type="button"
+                onClick={() => onSelectTool(t.tool)}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] transition-colors shadow-sm ${
+                  activeTool === t.tool
+                    ? 'bg-surface-elevated text-secondary font-medium ring-1 ring-secondary/30'
+                    : 'hover:bg-surface-elevated text-text-secondary hover:text-text-primary'
+                }`}
+                title={t.title}
+              >
+                <span className="material-symbols-outlined text-[15px]">{t.icon}</span>
+                <span>{t.label}</span>
+              </button>
+            ))}
+          </>
+        ) : (
+          <>
         {/* Seleccionar */}
         <button
           id="tool-select"
@@ -177,6 +214,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           <span>Remallar</span>
         </button>
         {/* REMESH-TOOL-END */}
+          </>
+        )}
       </div>
 
       {/* Undo / Redo */}

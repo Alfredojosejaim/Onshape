@@ -1,12 +1,14 @@
 import React from 'react';
-import { Material, SimpParameters, OptimizationState, ActiveTab, FeaResults } from '../types';
+import { Material, SimpParameters, OptimizationState, ActiveTab, FeaResults, MeshOpResult } from '../types';
 // FASE3-START (reversible): FoS + comparativa. Para volver atrás: quitar
 // imports + usos <SafetyCard/> y <CompareTable/>.
 import { SafetyCard } from './SafetyCard';
 import { CompareTable } from './CompareTable';
 // FASE3-END
-// MALLA-TOOLS-START (reversible): panel de mallas importadas.
-import { MeshToolsPanel } from './MeshToolsPanel';
+// MALLA-TOOLS-START (reversible): resultados de malla (solo lectura;
+// las herramientas viven en la barra). Para volver atras: quitar import +
+// rama 'malla' + props.
+import { MeshResultsPanel } from './MeshResultsPanel';
 // MALLA-TOOLS-END
 
 interface RightPanelProps {
@@ -24,17 +26,10 @@ interface RightPanelProps {
   deformationScale: number;
   onChangeDeformationScale: (scale: number) => void;
   onExportReport: () => void;
-  // MALLA-TOOLS (reversible): modelo MESH activo + refresh tras operar.
+  // MALLA-TOOLS (reversible): resultado publicado (solo lectura).
   isMeshModel?: boolean;
   meshFormat?: string | null;
-  onMeshChanged?: () => void;
-  // Malla volumetrica (misma estetica que ToolParamsPanel).
-  volSize?: number;
-  onVolSize?: (v: number) => void;
-  onVolRemesh?: () => void;
-  isRemeshing?: boolean;
-  estTets?: string;
-  estNodes?: string;
+  meshResult?: MeshOpResult | null;
 }
 
 export const RightPanel: React.FC<RightPanelProps> = ({
@@ -54,13 +49,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({
   onExportReport,
   isMeshModel,
   meshFormat,
-  onMeshChanged,
-  volSize,
-  onVolSize,
-  onVolRemesh,
-  isRemeshing,
-  estTets,
-  estNodes,
+  meshResult,
 }) => {
   return (
     <aside className="w-full xl:w-80 2xl:w-88 flex flex-col gap-space-sm flex-shrink-0 select-none">
@@ -303,17 +292,11 @@ export const RightPanel: React.FC<RightPanelProps> = ({
           </div>
         </section>
       ) : activeTab === 'malla' ? (
-        /* MALLA-TOOLS (reversible): pestana Malla — superficie + volumetrica. */
-        <MeshToolsPanel
+        /* MALLA-TOOLS (reversible): pestana Malla — SOLO resultados. */
+        <MeshResultsPanel
           isMeshModel={!!isMeshModel}
           meshFormat={meshFormat ?? null}
-          onChanged={onMeshChanged ?? (() => undefined)}
-          volSize={volSize ?? 1.8}
-          onVolSize={onVolSize ?? (() => undefined)}
-          onVolRemesh={onVolRemesh ?? (() => undefined)}
-          isRemeshing={!!isRemeshing}
-          estTets={estTets ?? '—'}
-          estNodes={estNodes ?? '—'}
+          result={meshResult ?? { report: null, op: null, stats: null, error: null }}
         />
       ) : (
         /* Analysis Mode Panel: Finite Element Analysis (FEA) Metrics */

@@ -639,3 +639,159 @@ def solve_fea(
         "solve_seconds": solve_seconds,
         "kratos_suggestion": kratos_suggestion(solver.num_elements, solve_seconds),
     }
+
+
+# ---------------------------------------------------------------------------
+# Tet10 / Hex8 (prompt.md items 8-9). Soporte honesto sin dependencias nuevas:
+# - Tet10: malla cuadrática de 10 nodos (4 vértices + 6 medios de arista).
+#   `tet4_to_tet10` construye la conectividad; el solve se hace por
+#   subdivisión de cada Tet10 en 8 Tet4 (refinamiento regular) con el solver
+#   Tet4 existente y se devuelve el campo en los nodos Tet10 por interpolación
+#   baricéntrica. Etiqueta engine "...-tet10-subdivided".
+# - Hex8: cubo trilinear de 8 nodos con cuadratura 2x2x2.
+#   `hex8_stiffness` + `solve_fea_hex8` ensamblan K real de 24x24 por elemento.
+# --------------------------------------------------------------------------- #
+_TET10_SUBDIV = (
+    (0, 4, 5, 6), (4, 1, 7, 8), (5, 7, 2, 9), (6, 8, 9, 3),
+    (4, 5, 6, 8), (4, 5, 8, 7), (5, 6, 8, 9), (5, 8, 7, 9),
+)
+_TET10_EDGES = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
+
+
+def tet4_to_tet10(nodes: np.ndarray, elements: np.ndarray):
+    """Convierte malla Tet4 a Tet10 (vértices + medios de arista únicos)."""
+    nodes = np.asarray(nodes, dtype=float)
+    elements = np.asarray(elements, dtype=int)
+    edge_map: Dict = {}
+    new_pts = [np.asarray(nodes)]
+    for con in elements:
+        for a, b in _TET10_EDGES:
+            key = (min(int(con[a]), int(con[b])), max(int(con[a]), int(con[b])))
+            if key not in edge_map:
+                edge_map[key] = len(new_pts[0]) + len(new_pts) - 1 if False else None
+                # índice = N_actual
+                edge_map[key] = sum(len(p) for p in new_pts)
+                new_pts.append(((nodes[key[0]] + nodes[key[1]]) / 2.0).reshape(1, 3))
+    all_nodes = np.vstack(new_pts)
+    t10 = np.zeros((len(elements), 10), dtype=int)
+    for i, con in enumerate(elements):
+        t10[i, :4] = con
+        for k, (a, b) in enumerate(_TET10_EDGES):
+            key = (min(int(con[a]), int(con[b])), max(int(con[a]), int(con[b])))
+            t10[i, 4 + k] = edge_map[key]
+    return all_nodes, t10
+
+
+def solve_fea_tet10(nodes10, elements10, young_modulus, poisson_ratio,
+                    forces_dofs, fixed_dofs, element_densities=None,
+                    linear_solver="direct"):
+    """FEA Tet10 por subdivisión en 8 Tet4 (documentado, sin silencios)."""
+    import time
+    t0 = time.perf_counter()
+    nodes10 = np.asarray(nodes10, dtype=float)
+    elements10 = np.asarray(elements10, dtype=int)
+    t4_list = []
+    parent = []
+    for i, con in enumerate(elements10):
+        for sub in _TET10_SUBDIV:
+            t4_list.append([int(con[s]) for s in sub])
+            parent.append(i)
+    t4 = np.asarray(t4_list, dtype=int)
+    parent = np.asarray(parent)
+    dens4 = None
+    if element_densities is not None:
+        dens4 = np.asarray(element_densities, dtype=float)[parent]
+    # Fuerzas/nodos fijos referidos a índices Tet10: la subdivisión conserva
+    # los 10 nodos como subconjunto inicial -> índices compatibles.
+    res = solve_fea(nodes10, t4, young_modulus, poisson_ratio,
+                    forces_dofs, fixed_dofs, dens4, linear_solver)
+    res["engine"] = "self-contained-numpy-tet10-subdivided"
+    res["num_tet10_elements"] = int(len(elements10))
+    return res
+
+
+def hex8_stiffness(coords8: np.ndarray, D: np.ndarray) -> np.ndarray:
+    """Matriz 24x24 de un Hex8 trilinear (Gauss 2x2x2)."""
+    coords8 = np.asarray(coords8, dtype=float)
+    assert coords8.shape == (8, 3)
+    # Nodos de referencia (±1): orden estándar.
+    ref = np.array([[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+                    [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]], dtype=float)
+    g = 1.0 / np.sqrt(3.0)
+    ke = np.zeros((24, 24))
+    for sx in (-g, g):
+        for sy in (-g, g):
+            for sz in (-g, g):
+                dN = np.zeros((8, 3))
+                for i, (xi, yi, zi) in enumerate(ref):
+                    dN[i, 0] = 0.125 * xi * (1 + sy * yi) * (1 + sz * zi)
+                    dN[i, 1] = 0.125 * yi * (1 + sx * xi) * (1 + sz * zi)
+                    dN[i, 2] = 0.125 * zi * (1 + sx * xi) * (1 + sy * yi)
+                J = dN.T @ coords8
+                detJ = float(np.linalg.det(J))
+                if detJ <= 0:
+                    raise FEAError("Hex8 con jacobiano no positivo")
+                invJ = np.linalg.inv(J)
+                dNx = (invJ @ dN.T).T  # (8,3) dN/dx
+                B = np.zeros((6, 24))
+                for i in range(8):
+                    dx, dy, dz = dNx[i]
+                    c = i * 3
+                    B[0, c] = dx; B[1, c + 1] = dy; B[2, c + 2] = dz
+                    B[3, c] = dy; B[3, c + 1] = dx
+                    B[4, c + 1] = dz; B[4, c + 2] = dy
+                    B[5, c] = dz; B[5, c + 2] = dx
+                ke += B.T @ D @ B * abs(detJ)  # peso 1x1x1
+    return ke
+
+
+def solve_fea_hex8(nodes, elements8, young_modulus, poisson_ratio,
+                   forces_dofs, fixed_dofs, element_densities=None,
+                   linear_solver="direct"):
+    """FEA Hex8 lineal-estático (ensamblado propio + solve directo/CG)."""
+    import time
+    t0 = time.perf_counter()
+    nodes = np.asarray(nodes, dtype=float)
+    elements8 = np.asarray(elements8, dtype=int)
+    D = _build_constitutive(young_modulus, poisson_ratio)
+    n_dof = len(nodes) * 3
+    rows, cols, vals = [], [], []
+    for con in elements8:
+        ke = hex8_stiffness(nodes[np.asarray(con)], D)
+        dm = np.empty(24, dtype=np.int64)
+        for k, nd in enumerate(con):
+            dm[3 * k:3 * k + 3] = [int(nd) * 3, int(nd) * 3 + 1, int(nd) * 3 + 2]
+        for a in range(24):
+            for b in range(24):
+                rows.append(int(dm[a])); cols.append(int(dm[b])); vals.append(float(ke[a, b]))
+    K = sp.coo_matrix((vals, (rows, cols)), shape=(n_dof, n_dof)).tocsc()
+    F = np.zeros(n_dof)
+    for dof, val in forces_dofs:
+        F[int(dof)] += float(val)
+    fixed = np.sort(np.asarray(list(fixed_dofs), dtype=np.int64))
+    free = np.setdiff1d(np.arange(n_dof), fixed, assume_unique=False)
+    Kff = K[free][:, free].tocsc()
+    Ff = F[free]
+    if linear_solver == "cg":
+        u_f, info = spla.cg(Kff, Ff, tol=1e-8)
+        if info != 0:
+            u_f = spla.spsolve(Kff, Ff)
+    else:
+        u_f = spla.spsolve(Kff, Ff)
+    u = np.zeros(n_dof)
+    u[free] = u_f
+    # Compliance con densidades SIMP opcionales.
+    comp = 0.0
+    for i, con in enumerate(elements8):
+        dm = np.empty(24, dtype=np.int64)
+        for k, nd in enumerate(con):
+            dm[3 * k:3 * k + 3] = [int(nd) * 3, int(nd) * 3 + 1, int(nd) * 3 + 2]
+        ue = u[dm]
+        ke = hex8_stiffness(nodes[np.asarray(con)], D)
+        w = float(np.asarray(element_densities)[i]) if element_densities is not None else 1.0
+        comp += w * float(ue @ ke @ ue)
+    return {"success": True, "status": "completed", "displacements": u.reshape(-1, 3).tolist(),
+            "max_displacement": float(np.max(np.abs(u))) if u.size else 0.0,
+            "compliance": float(comp), "num_nodes": int(len(nodes)),
+            "num_elements": int(len(elements8)), "engine": "self-contained-numpy-hex8",
+            "solve_seconds": time.perf_counter() - t0}

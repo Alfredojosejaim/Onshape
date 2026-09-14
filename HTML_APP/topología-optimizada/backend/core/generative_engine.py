@@ -700,6 +700,13 @@ class GenerativeDesignEngine:
             evolutionary_rate=kwargs.get("evolutionary_rate", 0.02),
             ls_cfl=kwargs.get("ls_cfl", 0.5),
             ls_hole_period=kwargs.get("ls_hole_period", 3),
+            min_thickness=kwargs.get("min_thickness", None),
+            overhang_constraint=kwargs.get("overhang_constraint", False),
+            build_direction=kwargs.get("build_direction", (0.0, 0.0, 1.0)),
+            overhang_angle_deg=kwargs.get("overhang_angle_deg", 45.0),
+            overhang_penalty=kwargs.get("overhang_penalty", 0.5),
+            objective=kwargs.get("objective", "min_compliance"),
+            compliance_limit=kwargs.get("compliance_limit", None),
         )
         result["_consumed_load_conditions"] = len(conditions.get(ConditionType.LOAD, []))
         result["_consumed_elasticity_conditions"] = len(conditions.get(ConditionType.ELASTICITY, []))

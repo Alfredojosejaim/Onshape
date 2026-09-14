@@ -365,10 +365,12 @@ def problem_to_solver_inputs(
             "stress/displacement constraints no soportadas por el "
             "SIMPSolver OC (Fase 3)."
         )
-    if problem.objective.type != ObjectiveType.MINIMIZE_COMPLIANCE:
+    if problem.objective.type == ObjectiveType.MINIMIZE_VOLUME_SUBJECT_TO_COMPLIANCE:
+        if problem.objective.max_compliance is None or float(problem.objective.max_compliance) <= 0:
+            raise TopOptError("MINIMIZE_VOLUME requiere objective.max_compliance > 0.")
+    elif problem.objective.type != ObjectiveType.MINIMIZE_COMPLIANCE:
         raise TopOptError(
-            f"Objective.{problem.objective.type.name} no soportado "
-            f"(solo MINIMIZE_COMPLIANCE)."
+            f"Objective.{problem.objective.type.name} no soportado."
         )
     if problem.filter_settings.use_heaviside_projection:
         raise TopOptError("Heaviside projection no soportada (Fase 3).")

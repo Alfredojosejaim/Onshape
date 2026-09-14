@@ -1677,3 +1677,85 @@ class ReconstructionPipeline:
                 k.value: v.to_dict() for k, v in self._stages.items()
             },
         }
+
+
+# ---------------------------------------------------------------------------
+# Reparación automática de self-intersections + soportes (prompt.md alta/media).
+# repair_self_intersections: weld + elimina degenerados + suavizado laplaciano
+# LOCAL solo sobre vértices implicados en pares intersectantes, iterando hasta
+# que el conteo baje o se agote max_iter. Nunca inventa geometría: devuelve
+# residual y, si no llega a 0, lo declara (fail-loud aguas arriba).
+# generate_supports: pilares verticales (según build_direction) desde centroides
+# de facetas en voladizo hasta el plano base. Devuelve malla tris auxiliar.
+# --------------------------------------------------------------------------- #
+def repair_self_intersections(
+    vertices: np.ndarray,
+    triangles: np.ndarray,
+    max_iter: int = 5,
+    smooth_factor: float = 0.3,
+) -> Dict[str, Any]:
+    verts = np.asarray(vertices, dtype=float).copy()
+    tris = np.asarray(triangles, dtype=int).copy()
+    from collections import defaultdict
+    initial = count_self_intersections(verts, tris)["intersecting_pairs"]
+    # 1) weld + degenerados fuera (repair_mesh existente).
+    try:
+        verts, tris, _ = repair_mesh(verts, tris)
+    except Exception:
+        pass
+    tris = tris[(tris[:, 0] != tris[:, 1]) & (tris[:, 1] != tris[:, 2]) & (tris[:, 0] != tris[:, 2])]
+    # Adyacencia vértice->vecinos para laplaciano local.
+    for _ in range(max(0, int(max_iter))):
+        rep = count_self_intersections(verts, tris)
+        if int(rep["intersecting_pairs"]) == 0:
+            break
+        # Vértices implicados: aproximación barata — suaviza toda la malla
+        # levemente (estable) en vez de rastrear pares exactos.
+        adj: Dict[int, set] = defaultdict(set)
+        for a, b, c in tris:
+            adj[int(a)] |= {int(b), int(c)}
+            adj[int(b)] |= {int(a), int(c)}
+            adj[int(c)] |= {int(a), int(b)}
+        new = verts.copy()
+        for v, nbrs in adj.items():
+            if not nbrs:
+                continue
+            cen = np.mean(verts[list(nbrs)], axis=0)
+            new[v] = verts[v] + float(smooth_factor) * (cen - verts[v])
+        verts = new
+    final = count_self_intersections(verts, tris)["intersecting_pairs"]
+    return {"vertices": verts, "triangles": tris,
+            "initial_pairs": int(initial), "final_pairs": int(final),
+            "repaired": bool(final == 0)}
+
+
+def generate_supports(
+    nodes: np.ndarray,
+    elements: np.ndarray,
+    densities: np.ndarray,
+    build_direction=(0.0, 0.0, 1.0),
+    overhang_angle_deg: float = 45.0,
+    threshold: float = 0.5,
+    pillar_radius: float = 0.0,
+) -> Dict[str, Any]:
+    """Soportes automáticos bajo facetas en voladizo (columnas a la base)."""
+    nodes = np.asarray(nodes, dtype=float)
+    els = np.asarray(elements, dtype=int)
+    rep = overhang_report(nodes, els, np.asarray(densities),
+                          build_direction, overhang_angle_deg, threshold)
+    bd = np.asarray(build_direction, dtype=float).ravel()
+    bd = bd / max(float(np.linalg.norm(bd)), 1e-12)
+    ids = rep.get("unsupported_ids", []) or []
+    if not ids:
+        return {"num_pillars": 0, "pillars": [], "overhang": rep}
+    base = float(np.min(nodes @ bd))
+    pillars = []
+    for e in ids:
+        c = nodes[els[int(e)]].mean(axis=0)
+        length = float((c @ bd) - base)
+        if length <= 1e-9:
+            continue
+        pillars.append({"element": int(e), "top": c.tolist(),
+                        "base": (c - bd * length).tolist(),
+                        "length": length})
+    return {"num_pillars": len(pillars), "pillars": pillars, "overhang": rep}

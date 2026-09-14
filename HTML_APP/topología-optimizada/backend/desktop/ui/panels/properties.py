@@ -192,6 +192,33 @@ class PropertiesPanel(QWidget):
         self._iterations.setValue(50)
         col.addWidget(self._iterations)
 
+        # Fabricación activa + objetivo (prompt.md alta/alcance, con aprobación).
+        self._min_thickness_enable = QCheckBox("Espesor mínimo explícito (mm)")
+        self._min_thickness_enable.setChecked(False)
+        col.addWidget(self._min_thickness_enable)
+        self._min_thickness = QDoubleSpinBox()
+        self._min_thickness.setRange(0.01, 100.0)
+        self._min_thickness.setDecimals(2)
+        self._min_thickness.setValue(0.6)
+        col.addWidget(self._min_thickness)
+        self._overhang_enable = QCheckBox("Restricción activa de overhang")
+        self._overhang_enable.setChecked(False)
+        col.addWidget(self._overhang_enable)
+        col.addWidget(_field_label("Ángulo overhang (° desde vertical)"))
+        self._overhang_angle = QDoubleSpinBox()
+        self._overhang_angle.setRange(1.0, 89.0)
+        self._overhang_angle.setValue(45.0)
+        col.addWidget(self._overhang_angle)
+        self._objective_minvol = QCheckBox("Minimizar volumen sujeto a compliance")
+        self._objective_minvol.setChecked(False)
+        col.addWidget(self._objective_minvol)
+        col.addWidget(_field_label("Límite de compliance"))
+        self._compliance_limit = QDoubleSpinBox()
+        self._compliance_limit.setRange(0.001, 1.0e12)
+        self._compliance_limit.setDecimals(3)
+        self._compliance_limit.setValue(1000.0)
+        col.addWidget(self._compliance_limit)
+
         self._btn_mesh = QPushButton("📐 Generar Malla FEM")
         self._btn_mesh.setEnabled(False)
         self._btn_fea = QPushButton("⚡ Análisis FEM")
@@ -386,6 +413,14 @@ class PropertiesPanel(QWidget):
                 [[self._sym_axis.currentText(), self._sym_value.value()]]
                 if self._sym_enable.isChecked() else None
             ),
+            "min_thickness": (self._min_thickness.value()
+                              if self._min_thickness_enable.isChecked() else None),
+            "overhang_constraint": self._overhang_enable.isChecked(),
+            "overhang_angle_deg": self._overhang_angle.value(),
+            "objective": ("min_volume" if self._objective_minvol.isChecked()
+                          else "min_compliance"),
+            "compliance_limit": (self._compliance_limit.value()
+                                 if self._objective_minvol.isChecked() else None),
         }
         self.runOptimization.emit(params)
 

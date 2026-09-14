@@ -870,6 +870,99 @@ class SIMPSolver:
         return xnew, n_inner
 
     # ------------------------------------------------------------------ #
+    # Restricciones de fabricación activas (prompt.md items 2-3, alta).
+    # min_thickness: longitud mínima explícita (unidades de malla),
+    # independiente de filter_radius. Se aplica como (a) piso del radio
+    # efectivo de filtro (r_eff = max(filter_radius, min_thickness/2)) y
+    # (b) limpieza morfológica por iteración: elementos densos cuyo
+    # vecindario denso dentro de min_thickness/2 es insuficiente se
+    # atenúan (apertura). Fail-loud si min_thickness <= 0.
+    # overhang: filtro activo por capas según build_direction (Langelaar
+    # simplificado): un elemento denso sin soporte denso debajo dentro
+    # del cono de overhang_angle se atenúa por overhang_penalty.
+    # ------------------------------------------------------------------ #
+    def _apply_min_thickness(self, x: np.ndarray, min_thickness: float) -> np.ndarray:
+        if min_thickness is None:
+            return x
+        mt = float(min_thickness)
+        if not np.isfinite(mt) or mt <= 0:
+            raise TopOptError(f"min_thickness={min_thickness!r} inválido (debe ser > 0).")
+        r = mt / 2.0
+        from scipy.spatial import cKDTree
+        tree = cKDTree(self.element_centers)
+        dense = x > 0.5
+        if not np.any(dense):
+            return x
+        nbrs = tree.query_ball_point(self.element_centers, r + 1e-9)
+        vols = self._volumes
+        mean_vol = float(np.mean(vols)) if vols.size else 1.0
+        min_support_vol = 0.5 * (4.0 / 3.0) * np.pi * r ** 3
+        min_support_vol = min(min_support_vol, float(np.sum(vols)))
+        out = np.copy(x)
+        for i in np.nonzero(dense)[0]:
+            if self._void is not None and self._void[i]:
+                continue
+            sup = float(sum(float(vols[n]) for n in nbrs[i] if dense[n]))
+            if sup + 1e-12 < min(0.25 * min_support_vol, mean_vol):
+                out[i] = min(out[i], 0.25)
+        return out
+
+    def _apply_overhang_filter(
+        self, x: np.ndarray, build_direction=(0.0, 0.0, 1.0),
+        overhang_angle_deg: float = 45.0, penalty: float = 0.5,
+    ) -> np.ndarray:
+        bd = np.asarray(build_direction, dtype=float).ravel()
+        n = float(np.linalg.norm(bd))
+        if not np.isfinite(n) or n <= 0:
+            raise TopOptError(f"build_direction={build_direction!r} inválida.")
+        bd = bd / n
+        ang = float(overhang_angle_deg)
+        if not (0.0 < ang < 90.0):
+            raise TopOptError(f"overhang_angle_deg={ang!r} fuera de (0, 90).")
+        pen = float(penalty)
+        if not (0.0 <= pen <= 1.0):
+            raise TopOptError(f"overhang_penalty={penalty!r} fuera de [0, 1].")
+        if pen == 0.0:
+            return x
+        h = float(np.mean(np.cbrt(self._volumes))) if self.num_elements else 1.0
+        sup_dist = max(1.5 * h, float(self.filter_radius))
+        proj = self.element_centers @ bd
+        order = np.argsort(proj)  # de base a techo según bd
+        dense = x > 0.5
+        supported = np.zeros(self.num_elements, dtype=bool)
+        from scipy.spatial import cKDTree
+        tree = cKDTree(self.element_centers)
+        out = np.copy(x)
+        for i in order:
+            if not dense[i]:
+                continue
+            if self._void is not None and self._void[i]:
+                continue
+            # Base: el 5% más bajo siempre soportado (placa).
+            if proj[i] <= float(proj.min() + sup_dist):
+                supported[i] = True
+                continue
+            nbrs = tree.query_ball_point(self.element_centers[i], sup_dist + 1e-9)
+            ok = False
+            for j in nbrs:
+                if j == i or not dense[j]:
+                    continue
+                d = self.element_centers[i] - self.element_centers[j]
+                along = float(d @ bd)
+                if along <= 0:
+                    continue  # j no está debajo de i
+                radial = float(np.linalg.norm(d - along * bd))
+                if radial <= along * np.tan(np.radians(ang)) + 1e-9:
+                    ok = True
+                    break
+            if not ok:
+                out[i] = x[i] * (1.0 - pen)
+                supported[i] = False
+            else:
+                supported[i] = True
+        return out
+
+    # ------------------------------------------------------------------ #
     # Main loop
     # ------------------------------------------------------------------ #
     def optimize(
@@ -882,6 +975,13 @@ class SIMPSolver:
         eso_criterion: str = "compliance",
         ls_cfl: float = 0.5,
         ls_hole_period: int = 3,
+        min_thickness: Optional[float] = None,
+        overhang_constraint: bool = False,
+        build_direction=(0.0, 0.0, 1.0),
+        overhang_angle_deg: float = 45.0,
+        overhang_penalty: float = 0.5,
+        objective: str = "min_compliance",
+        compliance_limit: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Run the SIMP loop.
 
@@ -901,7 +1001,29 @@ class SIMPSolver:
             ls_cfl: CFL del paso HJ explícito en (0, 1] (solo "level_set").
             ls_hole_period: cada cuántas iteraciones redistanciar +
                 nuclear (solo "level_set").
+            min_thickness: espesor mínimo en unidades de malla (None = off).
+            overhang_constraint: si True, filtro activo por capas.
+            objective: "min_compliance" (default) o "min_volume" (minimiza
+                volumen sujeto a compliance_limit, por bisección externa).
         """
+        if objective not in ("min_compliance", "min_volume"):
+            raise TopOptError(
+                f"objective={objective!r} no soportado (usar 'min_compliance' o 'min_volume')."
+            )
+        if objective == "min_volume":
+            if compliance_limit is None or not np.isfinite(float(compliance_limit)) \
+                    or float(compliance_limit) <= 0:
+                raise TopOptError("objective='min_volume' requiere compliance_limit > 0.")
+            return self._minimize_volume(
+                compliance_limit=float(compliance_limit),
+                max_iterations=max_iterations, tolerance=tolerance,
+                callback=callback, optimizer=optimizer,
+                min_thickness=min_thickness,
+                overhang_constraint=overhang_constraint,
+                build_direction=build_direction,
+                overhang_angle_deg=overhang_angle_deg,
+                overhang_penalty=overhang_penalty,
+            )
         if optimizer not in ("oc", "mma", "gcmma", "eso", "level_set"):
             raise TopOptError(
                 f"optimizer={optimizer!r} no soportado (usar 'oc', 'mma', 'gcmma', 'eso' o 'level_set')."
@@ -947,6 +1069,11 @@ class SIMPSolver:
             else:
                 xnew = self._oc_update(x, dc_f, self._volumes)
             xnew = self._mirror_average(xnew)
+            if min_thickness is not None:
+                xnew = self._apply_min_thickness(xnew, min_thickness)
+            if overhang_constraint:
+                xnew = self._apply_overhang_filter(
+                    xnew, build_direction, overhang_angle_deg, overhang_penalty)
 
             change = float(np.max(np.abs(xnew - x)))
             # volume fraction relative to the active, designable subdomain
@@ -979,6 +1106,67 @@ class SIMPSolver:
         # Final analysis with converged density field (multicarga ponderada)
         return self._finalize_result(
             x, history, converged, max_iterations, tolerance, optimizer)
+
+    def _minimize_volume(
+        self, compliance_limit: float, max_iterations: int = 50,
+        tolerance: float = 0.01, callback=None, optimizer: str = "oc",
+        min_thickness=None, overhang_constraint: bool = False,
+        build_direction=(0.0, 0.0, 1.0), overhang_angle_deg: float = 45.0,
+        overhang_penalty: float = 0.5, outer_iters: int = 6,
+    ) -> Dict[str, Any]:
+        """Minimiza volumen sujeto a c(x) <= compliance_limit (bisección).
+
+        Bisección externa sobre volfrac en (0, volfrac_actual]: cada nivel
+        corre el loop OC/MMA/GCMMA de min_compliance con ese volfrac y mide
+        compliance final. Fail-loud si ni siquiera volfrac=1 cumple el límite.
+        """
+        if optimizer in ("eso", "level_set"):
+            raise TopOptError(
+                f"objective='min_volume' no soportado con optimizer={optimizer!r} (usar oc/mma/gcmma).")
+        saved_volfrac = float(self.volfrac)
+        # Chequeo de factibilidad: a volumen lleno debe cumplirse el límite.
+        self.volfrac = 1.0
+        self.x = np.full(self.num_elements, 1.0)
+        probe = self._compliance_and_sensitivities(np.full(self.num_elements, 1.0))[0]
+        if float(probe) > float(compliance_limit):
+            self.volfrac = saved_volfrac
+            raise TopOptError(
+                f"compliance_limit={compliance_limit} infactible (c(vol=1)={float(probe):.3g}).")
+        lo, hi = 1e-3, 1.0
+        best = None
+        for _ in range(int(outer_iters)):
+            mid = 0.5 * (lo + hi)
+            self.volfrac = float(mid)
+            self.x = np.full(self.num_elements, min(mid, 1.0))
+            if optimizer == "mma":
+                self._mma_reset_state(np.copy(self.x))
+            if optimizer == "gcmma":
+                self._gcmma_reset_state(np.copy(self.x))
+                self._gcmma_capped = False
+            r = self.optimize(
+                max_iterations=max_iterations, tolerance=tolerance,
+                callback=None, optimizer=optimizer,
+                min_thickness=min_thickness,
+                overhang_constraint=overhang_constraint,
+                build_direction=build_direction,
+                overhang_angle_deg=overhang_angle_deg,
+                overhang_penalty=overhang_penalty,
+                objective="min_compliance",
+            )
+            if float(r["final_compliance"]) <= float(compliance_limit):
+                hi = mid
+                best = r
+            else:
+                lo = mid
+        self.volfrac = saved_volfrac
+        if best is None:
+            raise TopOptError("bisección min_volume sin nivel factible (inesperado).")
+        best["objective"] = "min_volume"
+        best["compliance_limit"] = float(compliance_limit)
+        if callback:
+            callback({"objective": "min_volume", "volume_fraction": best.get("final_volume_fraction"),
+                      "compliance": best.get("final_compliance"), "densities": best.get("densities")})
+        return best
 
     def _finalize_result(
         self,

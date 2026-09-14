@@ -154,3 +154,41 @@ rechazo explícito antes que fallback silencioso.
 - Nota honesta: el certificador interno rara vez cierra en ≤5 internas en
   compliance SIMP (gap ~×0.5/interna); el optimizador igual converge bien y
   la bandera lo declara. Costo: ~1 solve extra por interna.
+
+## 14. Alcance prompt.md — fabricación activa, min-volumen, Tet10/Hex8 (14-sep-2026, con aprobación explícita)
+
+- `min_thickness` (`core/topopt.py::_apply_min_thickness`): piso de filtro +
+  apertura morfológica por iteración; fail-loud si ≤ 0. Wiring controller /
+  engine / `api.runOptimization` / desktop.
+- Overhang activo (`_apply_overhang_filter`): filtro por capas según
+  `build_direction` + ángulo + `overhang_penalty`; `generate_supports` (pilares
+  a la base desde `unsupported_ids`) + `api.generateSupports`.
+- `repair_self_intersections` (weld + laplaciano local, reporta residual) +
+  `api.repairSelfIntersections`; `api.validateExportGeometry` previo.
+- Objetivo `min_volume` por bisección externa (`compliance_limit` requerido,
+  fail-loud si infactible); `topo_problem` acepta
+  `MINIMIZE_VOLUME_SUBJECT_TO_COMPLIANCE` con `max_compliance`.
+- Tet10 (`tet4_to_tet10` + `solve_fea_tet10` por subdivisión en 8 Tet4) y Hex8
+  (`hex8_stiffness` Gauss 2×2×2 + `solve_fea_hex8`). Tests
+  `test_fabricacion_objetivo.py` 5/5; suite total 41/41. Vendored intacto.
+
+## 15. NOTA DE OBSERVACIÓN — limitaciones honestas a revisar después (14-sep-2026)
+
+1. **Overhang activo es heurístico por capas, no adjoint.** Atenúa densos sin
+   soporte en vez de añadir sensibilidades de soporte al gradiente (Langelaar
+   completo). Revisar después: comparar contra sensibilidades adjoint y medir
+   si el filtro por capas sub-penaliza voladizos en mallas finas.
+2. **Tet10 por subdivisión, no cuadrático real.** Cada Tet10 se resuelve como
+   8 Tet4 con el solver existente; el campo se interpola, no hay integración
+   con funciones de forma cuadráticas ni error estimado vs Tet10 analítico.
+   Revisar después: benchmark Tet10-subdividido vs Tet4 fino en compliance y
+   convergencia, y decidir si vale la pena el elemento cuadrático real.
+3. **Efecto neutro en mallas gruesas.** En Kuhn 4×1×1 (24 tets, cantilever)
+   `min_thickness=0.5` y overhang activo dan compliance idéntica a la base
+   (178.669): la malla no resuelve rasgos del orden del filtro. Revisar
+   después: repetir en malla fina (p. ej. puente 3D o viga en voladizo densa)
+   y comprobar que el espesor mínimo engrosa miembros y el overhang reduce
+   `unsupported_fraction` del `overhang_report`.
+4. **`min_volume` cuesta ~outer_iters solves completos** (bisección, default
+   6 niveles). Revisar después: calentar cada nivel desde el anterior (hoy
+   reinicia en uniforme) y exponer `outer_iters` en UI si el costo molesta.

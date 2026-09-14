@@ -789,6 +789,13 @@ class PipelineController:
         thermal_temperatures=None,
         thermal_alpha: Optional[float] = None,
         thermal_reference_temperature: float = 293.15,
+        min_thickness=None,
+        overhang_constraint: bool = False,
+        build_direction=(0.0, 0.0, 1.0),
+        overhang_angle_deg: float = 45.0,
+        overhang_penalty: float = 0.5,
+        objective: str = "min_compliance",
+        compliance_limit=None,
     ) -> Dict[str, Any]:
         """Run the self-contained SIMP topology optimisation.
 
@@ -907,7 +914,7 @@ class PipelineController:
             except Exception as exc:
                 raise PipelineError(f"symmetry_planes inválido: {exc}")
         try:
-            result = solver.optimize(max_iterations=max_iterations, tolerance=tolerance, callback=progress_cb, optimizer=optimizer, eso_criterion=eso_criterion, evolutionary_rate=evolutionary_rate, ls_cfl=ls_cfl, ls_hole_period=ls_hole_period)
+            result = solver.optimize(max_iterations=max_iterations, tolerance=tolerance, callback=progress_cb, optimizer=optimizer, eso_criterion=eso_criterion, evolutionary_rate=evolutionary_rate, ls_cfl=ls_cfl, ls_hole_period=ls_hole_period, min_thickness=min_thickness, overhang_constraint=overhang_constraint, build_direction=build_direction, overhang_angle_deg=overhang_angle_deg, overhang_penalty=overhang_penalty, objective=objective, compliance_limit=compliance_limit)
         except Exception as exc:
             logger.exception("Optimization failed")
             raise PipelineError(f"Optimización falló: {exc}")

@@ -641,7 +641,21 @@ class Api:
                 eso_criterion=eso_criterion,
                 evolutionary_rate=evolutionary_rate,
                 ls_cfl=ls_cfl,
-                ls_hole_period=ls_hole_period)
+                ls_hole_period=ls_hole_period,
+                overhang_constraint=bool(p.get("overhang_constraint", False)),
+                build_direction=tuple(p.get("build_direction", (0.0, 0.0, 1.0))),
+                overhang_angle_deg=float(p.get("overhang_angle_deg", 45.0)),
+                overhang_penalty=float(p.get("overhang_penalty", 0.5)),
+                objective=str(p.get("objective", "min_compliance")).lower(),
+                compliance_limit=p.get("compliance_limit", None),
+                min_thickness=p.get("min_thickness", None))
+            if kwargs["min_thickness"] is not None:
+                kwargs["min_thickness"] = float(kwargs["min_thickness"])
+            if kwargs["compliance_limit"] is not None:
+                kwargs["compliance_limit"] = float(kwargs["compliance_limit"])
+            if kwargs["objective"] not in ("min_compliance", "min_volume"):
+                return {"ok": False,
+                        "error": f"objective={kwargs['objective']!r} no soportado (min_compliance|min_volume)"}
             if sym is not None:
                 kwargs["symmetry_planes"] = [[s[0], float(s[1])] for s in sym]
             terr, tkwargs = _check_thermal_params(p)
@@ -1566,5 +1580,121 @@ class Api:
         try:
             res = self._ctrl.cad.export_step(self._ctrl.model_id, path)
             return {"ok": True, "result": _clean(res)}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    def validateExportGeometry(self, params_json: str = "{}") -> dict:
+        """Validación de la geometría resultante antes de exportar (Fase 5+6c).
+
+        Usa solo herramientas ya cerradas en plan.md: `mesh_quality_report`
+        + `count_self_intersections` (Fase 5b, solo reporta) + `overhang_report`
+        (Fase 6c, diagnóstico). No repara nada silenciosamente: si la malla de
+        superficie no existe o la calidad es degenerada, falla explícito con
+        diagnóstico orientado al usuario (categoría 15 del prompt).
+        params: {overhang_angle_deg: 45, build_direction: [x,y,z]}.
+        """
+        import numpy as np
+        try:
+            p = json.loads(params_json or "{}")
+            c = self._ctrl
+            mesh = getattr(c, "mesh", None)
+            if not mesh:
+                return {"ok": False, "error": "sin malla: generar malla antes de validar/exportar"}
+            nodes = np.asarray(mesh["nodes"], dtype=float)
+            fse = mesh.get("face_surface_elements") or {}
+            tris = [t for lst in fse.values() for t in lst]
+            if not tris:
+                return {"ok": False, "error": "malla sin superficie extraíble: revisar mallado"}
+            tris = np.asarray(tris, dtype=int)
+            from core.cad_reconstruction import (
+                mesh_quality_report, count_self_intersections, overhang_report,
+            )
+            quality = mesh_quality_report(nodes, tris)
+            self_int = count_self_intersections(nodes, tris)
+            # Overhang (Fase 6c) requiere densidades volumétricas; si no hay
+            # resultado SIMP se reporta como no evaluado, nunca inventado.
+            dens = getattr(c, "result_densities", None)
+            overhang = {"evaluated": False, "reason": "sin resultado SIMP"}
+            if dens is not None:
+                try:
+                    ove = getattr(c, "result", None) or {}
+                    elems = np.asarray(mesh.get("elements", []))
+                    if elems.size:
+                        overhang = overhang_report(
+                            nodes, elems, np.asarray(dens, dtype=float),
+                            build_direction=tuple(p.get("build_direction", (0.0, 0.0, 1.0))),
+                            overhang_angle_deg=float(p.get("overhang_angle_deg", 45.0)),
+                        )
+                        overhang["evaluated"] = True
+                except Exception as exc_o:  # noqa: BLE001
+                    overhang = {"evaluated": False, "reason": str(exc_o)}
+            deg = int(quality.get("degenerate_triangles", 0))
+            valid = deg == 0 and int(self_int.get("intersecting_pairs", 0)) == 0
+            errors = []
+            if deg:
+                errors.append(f"{deg} caras degeneradas: remallar antes de exportar")
+            if int(self_int.get("intersecting_pairs", 0)):
+                errors.append("self-intersections detectadas (solo diagnóstico Fase 5b): reparar manualmente antes de exportar")
+            return {"ok": True, "valid": valid, "errors": errors,
+                    "quality": _clean(quality),
+                    "self_intersections": _clean(self_int),
+                    "overhang": _clean(overhang)}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    def repairSelfIntersections(self, params_json: str = "{}") -> dict:
+        """Reparación automática de self-intersections (prompt.md alta).
+
+        Detecta -> repara (weld + laplaciano local) -> valida. Devuelve
+        residual; si final_pairs > 0 lo declara (no silencioso).
+        """
+        import numpy as np
+        try:
+            p = json.loads(params_json or "{}")
+            c = self._ctrl
+            mesh = getattr(c, "mesh", None)
+            if not mesh:
+                return {"ok": False, "error": "sin malla: generar malla primero"}
+            nodes = np.asarray(mesh["nodes"], dtype=float)
+            fse = mesh.get("face_surface_elements") or {}
+            tris = [t for lst in fse.values() for t in lst]
+            if not tris:
+                return {"ok": False, "error": "malla sin superficie"}
+            tris = np.asarray(tris, dtype=int)
+            from core.cad_reconstruction import repair_self_intersections
+            rep = repair_self_intersections(
+                nodes, tris, max_iter=int(p.get("max_iter", 5)),
+                smooth_factor=float(p.get("smooth_factor", 0.3)))
+            return {"ok": True, "initial_pairs": rep["initial_pairs"],
+                    "final_pairs": rep["final_pairs"], "repaired": rep["repaired"],
+                    "num_vertices": int(np.asarray(rep["vertices"]).shape[0]),
+                    "num_triangles": int(np.asarray(rep["triangles"]).shape[0])}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    def generateSupports(self, params_json: str = "{}") -> dict:
+        """Soportes automáticos bajo voladizos (prompt.md media)."""
+        import numpy as np
+        try:
+            p = json.loads(params_json or "{}")
+            c = self._ctrl
+            mesh = getattr(c, "mesh", None)
+            if not mesh:
+                return {"ok": False, "error": "sin malla: generar malla primero"}
+            dens = getattr(c, "result_densities", None)
+            if dens is None:
+                return {"ok": False, "error": "sin resultado SIMP: optimizar primero"}
+            nodes = np.asarray(mesh["nodes"], dtype=float)
+            elems = np.asarray(mesh.get("elements", []), dtype=int)
+            if not elems.size:
+                return {"ok": False, "error": "malla sin elementos volumétricos"}
+            from core.cad_reconstruction import generate_supports
+            rep = generate_supports(
+                nodes, elems, np.asarray(dens, dtype=float),
+                build_direction=tuple(p.get("build_direction", (0.0, 0.0, 1.0))),
+                overhang_angle_deg=float(p.get("overhang_angle_deg", 45.0)))
+            return {"ok": True, "num_pillars": rep["num_pillars"],
+                    "pillars": _clean(rep["pillars"]),
+                    "overhang": _clean(rep["overhang"])}
         except Exception as exc:  # noqa: BLE001
             return _err(exc)

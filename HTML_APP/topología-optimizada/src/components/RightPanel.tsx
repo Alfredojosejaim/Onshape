@@ -52,9 +52,14 @@ export const RightPanel: React.FC<RightPanelProps> = ({
   meshResult,
 }) => {
   return (
-    <aside className="w-full xl:w-80 2xl:w-88 flex flex-col gap-space-sm flex-shrink-0 select-none">
-      {/* Material Library Card */}
-      <section className="bg-surface-container-low rounded-lg p-space-sm shadow-md flex flex-col gap-space-xs border border-border-subtle/40">
+    <aside className="w-full xl:w-80 2xl:w-88 flex flex-col gap-2 flex-shrink-0 min-w-0 select-none xl:sticky xl:top-[154px] xl:max-h-[calc(100dvh-154px-3rem)] xl:overflow-y-auto xl:[&>*]:shrink-0">
+      {/* RIGHT-ADAPTIVE (reversible): mismo anclaje que LeftPanel (sticky +
+          alto capado a 100dvh con margen inferior 3rem = misma distancia al
+          borde que el rail de herramientas) + scroll interno en pantallas
+          cortas; hijos sin shrink para que desplace en vez de comprimir.
+          Para volver atras: aside "w-full xl:w-80 2xl:w-88 flex flex-col gap-space-sm flex-shrink-0 select-none". */}
+      {/* Material Library Card (compacta: p-2/gap-1.5/filas py-0.5) */}
+      <section className="bg-surface-container-low rounded-lg p-2 shadow-md flex flex-col gap-1.5 border border-border-subtle/40">
         <header className="flex items-center justify-between px-space-xs py-1 bg-surface-elevated/70 rounded text-[11px] font-semibold text-text-primary">
           <div className="flex items-center gap-1.5">
             <span className="material-symbols-outlined text-secondary text-[15px]">science</span>
@@ -90,23 +95,23 @@ export const RightPanel: React.FC<RightPanelProps> = ({
 
         {/* Constitutive Law Table */}
         <div className="flex flex-col gap-1 pt-1 font-mono text-[11px]">
-          <div className="flex items-center justify-between py-1 px-2 bg-surface-elevated/50 rounded">
+          <div className="flex items-center justify-between py-0.5 px-2 bg-surface-elevated/50 rounded">
             <span className="text-text-muted text-[11px]">Módulo Young (E):</span>
             <span className="text-text-primary font-bold">{selectedMaterial.youngModulus.toFixed(1)} GPa</span>
           </div>
-          <div className="flex items-center justify-between py-1 px-2 bg-surface-elevated/50 rounded">
+          <div className="flex items-center justify-between py-0.5 px-2 bg-surface-elevated/50 rounded">
             <span className="text-text-muted text-[11px]">Coef. Poisson (ν):</span>
             <span className="text-text-primary font-bold">{selectedMaterial.poissonRatio.toFixed(2)}</span>
           </div>
-          <div className="flex items-center justify-between py-1 px-2 bg-surface-elevated/50 rounded">
+          <div className="flex items-center justify-between py-0.5 px-2 bg-surface-elevated/50 rounded">
             <span className="text-text-muted text-[11px]">Límite Elástico (σ_y):</span>
             <span className="text-fea-stress-yield font-bold">{selectedMaterial.yieldStrength.toFixed(1)} MPa</span>
           </div>
-          <div className="flex items-center justify-between py-1 px-2 bg-surface-elevated/50 rounded">
+          <div className="flex items-center justify-between py-0.5 px-2 bg-surface-elevated/50 rounded">
             <span className="text-text-muted text-[11px]">Densidad (ρ):</span>
             <span className="text-text-primary font-bold">{selectedMaterial.density.toFixed(2)} g/cm³</span>
           </div>
-          <div className="flex items-center justify-between py-1 px-2 bg-surface-elevated/50 rounded">
+          <div className="flex items-center justify-between py-0.5 px-2 bg-surface-elevated/50 rounded">
             <span className="text-text-muted text-[11px]">Resistencia Tracción:</span>
             <span className="text-text-primary font-bold">
               {selectedMaterial.tensileStrength !== undefined
@@ -119,8 +124,8 @@ export const RightPanel: React.FC<RightPanelProps> = ({
 
       {/* Tab Conditional: Optimization Parameters or FEA Results */}
       {activeTab === 'optimizacion' ? (
-        /* CAE Study Metrics & SIMP Optimization Parameters */
-        <section className="bg-surface-container-low rounded-lg p-space-sm shadow-md flex flex-col gap-space-sm border border-border-subtle/50">
+        /* CAE Study Metrics & SIMP Optimization Parameters (compacto p-2) */
+        <section className="bg-surface-container-low rounded-lg p-2 shadow-md flex flex-col gap-2 border border-border-subtle/50">
           <header className="flex items-center justify-between px-space-xs py-1 bg-surface-elevated rounded border border-border-subtle/40">
             <div className="flex items-center gap-1.5">
               <span className="material-symbols-outlined text-secondary text-[16px]">tune</span>
@@ -299,8 +304,8 @@ export const RightPanel: React.FC<RightPanelProps> = ({
           result={meshResult ?? { report: null, op: null, stats: null, error: null }}
         />
       ) : (
-        /* Analysis Mode Panel: Finite Element Analysis (FEA) Metrics */
-        <section className="bg-surface-container-low rounded-lg p-space-sm shadow-md flex flex-col gap-space-sm border border-border-subtle/50">
+        /* Analysis Mode Panel: Finite Element Analysis (FEA) Metrics (compacto p-2) */
+        <section className="bg-surface-container-low rounded-lg p-2 shadow-md flex flex-col gap-2 border border-border-subtle/50">
           <header className="flex items-center justify-between px-space-xs py-1 bg-surface-elevated rounded border border-border-subtle/40">
             <div className="flex items-center gap-1.5">
               <span className="material-symbols-outlined text-secondary text-[16px]">analytics</span>

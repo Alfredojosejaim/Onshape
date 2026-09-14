@@ -549,10 +549,25 @@ export default function App() {
       const st = stateRef.current;
       // UI-CLEAN (reversible): guard sin modelo.
       const baseMass = ((st.currentModel?.volumeCm3 ?? 0) * st.selectedMaterial.density) / 1000;
-      return mapSimpResult(result, prev, parseFloat(baseMass.toFixed(2))) ?? { ...prev, isRunning: false };
+      // JOB-NULL (reversible): si el resultado no mapea, avisar en vez de
+      // parar en silencio.
+      const mapped = mapSimpResult(result, prev, parseFloat(baseMass.toFixed(2)));
+      if (!mapped) {
+        setOptNotice({ text: 'El cálculo terminó pero sin resultados utilizables (revisa malla y condiciones).' });
+      }
+      return mapped ?? { ...prev, isRunning: false };
     });
     setSimpJobId(null);
   });
+
+  // JOB-PROGRESS (reversible): iteración en vivo desde el poll (el backend
+  // actualiza progress por iteración; antes solo se veía al final).
+  useEffect(() => {
+    if (simpJobId && simpPoll.progress !== null && simpPoll.progress > 0) {
+      const it = Math.max(1, Math.round(simpPoll.progress * (stateRef.current.simpParams.maxIterations || 1)));
+      setOptimizationState((prev) => (prev.isRunning ? { ...prev, currentIteration: it } : prev));
+    }
+  }, [simpPoll.progress, simpJobId]);
 
   // Si un job real falla, se libera para reintentar (sin tocar la UI).
   useEffect(() => {
@@ -622,6 +637,11 @@ export default function App() {
           if (r.ok && snap) {
             const cur = stateRef.current.currentModel;
             if (cur) applySnapshotToModel(snap, cur.filename, cur.displayName);
+            else {
+              // Sin modelo en el estado (flujo fixture): igual refrescar.
+              snapRef.current = snap;
+              setHasMesh(!!snap.has_mesh);
+            }
             setHasMesh(!!snap.has_mesh);
             setFeaJobId(null);
           } else {

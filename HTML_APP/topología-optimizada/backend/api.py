@@ -667,7 +667,30 @@ class Api:
             halo = p.get("halo_radius")
             if halo is not None:
                 kwargs["halo_radius"] = float(halo)
+            # JOB-PROGRESS (reversible): el callback de progreso del solver
+            # actualiza el job (antes progress quedaba en 0 hasta done y la
+            # UI parecia muerta durante los 100 iters). Para volver atras:
+            # quitar holder/_prog y el kwarg progress_cb.
+            total = max(int(kwargs["max_iterations"]), 1)
+            holder: dict = {}
+            api_ref = self
+
+            def _prog(info) -> None:
+                try:
+                    jid_in = holder.get("jid")
+                    it = int((info or {}).get("iteration", 0))
+                    if not jid_in or it <= 0:
+                        return
+                    with api_ref._lock:
+                        j = api_ref._jobs.get(jid_in)
+                        if j is not None and j.get("state") == "running":
+                            j["progress"] = max(0.0, min(1.0, it / total))
+                except Exception:  # noqa: BLE001
+                    pass
+
+            kwargs["progress_cb"] = _prog
             jid = self._submit("simp", self._ctrl.run_optimization, **kwargs)
+            holder["jid"] = jid
             return {"ok": True, "jobId": jid}
         except Exception as exc:  # noqa: BLE001
             return _err(exc)
@@ -744,9 +767,27 @@ class Api:
                 physical_groups=(c.mesh.get("physical_groups") or None),
             )
             step_path = p.get("step_path")
+            total_g = max(int(p.get("max_iterations", 30)), 1)
+            holder_g: dict = {}
+            api_ref_g = self
+
+            def _prog_g(info) -> None:
+                try:
+                    jid_in = holder_g.get("jid")
+                    it = int((info or {}).get("iteration", 0))
+                    if not jid_in or it <= 0:
+                        return
+                    with api_ref_g._lock:
+                        j = api_ref_g._jobs.get(jid_in)
+                        if j is not None and j.get("state") == "running":
+                            j["progress"] = max(0.0, min(1.0, it / total_g))
+                except Exception:  # noqa: BLE001
+                    pass
+
             jid = self._submit("generative", run_generative_design,
                                study, c.conditions, engine,
-                               step_path=step_path)
+                               progress_cb=_prog_g, step_path=step_path)
+            holder_g["jid"] = jid
             return {"ok": True, "jobId": jid}
         except Exception as exc:  # noqa: BLE001
             return _err(exc)

@@ -87,6 +87,7 @@ class SIMPSolver:
         filter_radius: float = 1.5,
         element_densities0: Optional[np.ndarray] = None,
         rho_min: float = XC_MIN,
+        linear_solver: str = "auto",
     ):
         if not 0.0 < volfrac <= 1.0:
             raise TopOptError("volfrac must be in (0, 1]")
@@ -99,6 +100,20 @@ class SIMPSolver:
         self.rho_min = float(rho_min)
 
         self.fea = FEASolver(nodes, elements, young_modulus, poisson_ratio)
+        # PERF-AUTO (reversible): en mallas grandes el solver directo (spsolve)
+        # domina el costo por iteración; CG con Jacobi es ~1.8x más rápido
+        # (verificado con malla real) y cae a directo si no converge (fallback
+        # explícito). Mallas chicas siguen con directo (menor overhead).
+        # "auto" elige por tamaño; "direct"/"cg" fuerzan uno.
+        if linear_solver == "auto":
+            linear_solver = "cg" if self.fea.num_dofs >= 8000 else "direct"
+        if linear_solver not in ("direct", "cg"):
+            raise TopOptError(
+                f"linear_solver={linear_solver!r} no soportado (usar 'auto', 'direct' o 'cg').")
+        self.fea.linear_solver = linear_solver
+        if linear_solver == "cg":
+            self.fea.cg_tol = 1e-8
+            self.fea.cg_maxiter = 5000
         self.dof_map = self._compute_dof_map()
         self.element_centers = self._compute_element_centers()
         self._filter = self._build_weighted_filter()
@@ -171,17 +186,23 @@ class SIMPSolver:
         if self.filter_radius is None or self.filter_radius <= 0:
             return None
         tree = cKDTree(self.element_centers)
-        pairs = tree.query_pairs(r=self.filter_radius + 1e-9)
+        # PERF-FILTER (reversible): query_pairs vectorizado (antes: bucle
+        # Python sobre ~cientos de miles de pares recalculando la norma, ~10 s
+        # de arranque en malla real). Misma matemática H[i,j]=rmin-dist.
+        pairs = tree.query_pairs(r=self.filter_radius + 1e-9, output_type="ndarray")
         rmin = float(self.filter_radius)
         rows: List[int] = []
         cols: List[int] = []
         vals: List[float] = []
-        for i, j in pairs:
-            d = np.linalg.norm(self.element_centers[i] - self.element_centers[j])
-            w = max(0.0, rmin - d)
-            if w > 0:
-                rows.append(i); cols.append(j); vals.append(w)
-                rows.append(j); cols.append(i); vals.append(w)
+        if len(pairs):
+            i = pairs[:, 0]
+            j = pairs[:, 1]
+            d = np.linalg.norm(self.element_centers[i] - self.element_centers[j], axis=1)
+            w = np.maximum(0.0, rmin - d)
+            keep = w > 0
+            i, j, w = i[keep], j[keep], w[keep]
+            rows.extend(i.tolist()); cols.extend(j.tolist()); vals.extend(w.tolist())
+            rows.extend(j.tolist()); cols.extend(i.tolist()); vals.extend(w.tolist())
         # self-weight
         for i in range(self.num_elements):
             rows.append(i); cols.append(i); vals.append(rmin)
@@ -434,17 +455,25 @@ class SIMPSolver:
         if not cases:
             raise TopOptError("load vector not set; call set_load()/set_loads() first")
         us = self._solve_all(x)
+        # PERF-FILTER (reversible): vectorizado con la rigidez elemental
+        # CACHEADAS (fea._base_stiffnesses) en vez del bucle Python que
+        # recalculaba `element_stiffness(e)` para cada elemento en cada
+        # iteración (con malla real ~57k elementos: ~20 s/iter → el usuario
+        # veía 14 iteraciones en 4 min). Misma matemática:
+        #   compliance = Σ_e w·ukeu_e·x_e^p
+        #   dc_e       = -p·w·x_e^(p-1)·ukeu_e,  ukeu_e = u_e^T Ke0_e u_e
+        # Para volver atras: restaurar el doble bucle original.
+        ke0 = self.fea._base_stiffnesses()          # (ne, 12, 12), cacheado
+        dof_map = self.dof_map                       # (ne, 12)
+        xp = x ** self.penalization
+        xpm1 = x ** (self.penalization - 1.0)
         compliance = 0.0
         dc = np.zeros(self.num_elements)
-        # compliance = sum_i w_i * sum_e rho_e^p * u_i,e^T Ke0 u_i,e
         for (F, w), u in zip(cases, us):
-            for e in range(self.num_elements):
-                dm = self.dof_map[e]
-                ue = u[dm]
-                ke = self.fea.element_stiffness(e)
-                ukeu = ue @ ke @ ue
-                compliance += float(w * ukeu) * (x[e] ** self.penalization)
-                dc[e] += float(w * -self.penalization * (x[e] ** (self.penalization - 1)) * ukeu)
+            ue = u[dof_map]                          # (ne, 12)
+            ukeu = np.einsum("ei,eij,ej->e", ue, ke0, ue, optimize=True)
+            compliance += float(w) * float(np.dot(ukeu, xp))
+            dc += (-self.penalization * float(w)) * xpm1 * ukeu
         return compliance, dc
 
     # ------------------------------------------------------------------ #

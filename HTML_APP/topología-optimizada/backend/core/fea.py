@@ -164,6 +164,13 @@ class FEASolver:
         # SIMP reassembles K every iteration with new densities; caching ke0
         # avoids recomputing the (expensive) strain-displacement B matrices.
         self._ke0: Optional[np.ndarray] = None
+        # PERF-ASM (reversible): patrón de ensamblado (I, J, dof_map) cacheado.
+        # Antes se reconstruía con un bucle Python sobre TODOS los elementos en
+        # cada ensamblado (una vez por iteración SIMP), lo que dominaba el
+        # costo en mallas reales. El patrón no depende de las densidades.
+        self._dof_map: Optional[np.ndarray] = None
+        self._I: Optional[np.ndarray] = None
+        self._J: Optional[np.ndarray] = None
 
     # ------------------------------------------------------------------ #
     # Element stiffness matrix computation
@@ -189,6 +196,25 @@ class FEASolver:
             self._ke0 = ke0
         return self._ke0
 
+    def _assembly_pattern(self):
+        """Return (I, J, dof_map) for the COO assembly, cached.
+
+        The connectivity (hence the sparsity pattern) is fixed; only the data
+        (``ke0 * density``) changes between SIMP iterations. Rebuilding it with
+        a Python loop every iteration dominated the runtime on real meshes.
+        """
+        if self._I is None:
+            base = self.elements * 3
+            dof_map = np.empty((self.num_elements, 12), dtype=np.int64)
+            dof_map[:, 0::3] = base
+            dof_map[:, 1::3] = base + 1
+            dof_map[:, 2::3] = base + 2
+            # ii = dm[:, None] (row repeated 12x); jj = dm[None, :] (tiled).
+            self._dof_map = dof_map
+            self._I = np.repeat(dof_map, 12, axis=1).ravel()
+            self._J = np.tile(dof_map, (1, 12)).ravel()
+        return self._I, self._J, self._dof_map
+
     # ------------------------------------------------------------------ #
     # Global assembly
     # ------------------------------------------------------------------ #
@@ -211,33 +237,13 @@ class FEASolver:
             if weights.shape[0] != self.num_elements:
                 raise FEAError("densities length must equal the number of elements")
 
-        dof_map = np.empty((self.num_elements, 12), dtype=np.int64)
-        for i, con in enumerate(self.elements):
-            base = con * 3
-            dof_map[i] = np.array(
-                [
-                    base[0], base[0] + 1, base[0] + 2,
-                    base[1], base[1] + 1, base[1] + 2,
-                    base[2], base[2] + 1, base[2] + 2,
-                    base[3], base[3] + 1, base[3] + 2,
-                ],
-                dtype=np.int64,
-            )
-        self._dof_map = dof_map
-
-        ii = np.zeros((self.num_elements, 12, 12), dtype=np.int64)
-        jj = np.zeros((self.num_elements, 12, 12), dtype=np.int64)
-        data = np.zeros((self.num_elements, 12, 12))
+        # PERF-ASM (reversible): patrón cacheado (I, J, dof_map); solo cambia
+        # V = ke0·weights entre iteraciones. Antes se reconstruía el patrón con
+        # un bucle Python por elemento en cada ensamblado. Para volver atras:
+        # restaurar el bucle que llenaba dof_map/ii/jj.
+        I, J, dof_map = self._assembly_pattern()
         ke0 = self._base_stiffnesses()
-        for e in range(self.num_elements):
-            data[e] = ke0[e] * weights[e]
-            dm = dof_map[e]
-            ii[e] = dm[:, None]
-            jj[e] = dm[None, :]
-
-        I = ii.ravel()
-        J = jj.ravel()
-        V = data.ravel()
+        V = (ke0 * weights[:, None, None]).ravel()
         K = sp.csc_matrix((V, (I, J)), shape=(n, n))
         # Symmetrize to remove tiny numerical asymmetry
         K = (K + K.T) * 0.5
@@ -333,9 +339,18 @@ class FEASolver:
             def _cb(_):
                 iters[0] += 1
 
+            # PERF-CG (reversible): precondicionador Jacobi (diagonal). El CG
+            # sin precondicionar apenas mejoraba al solver directo en mallas
+            # reales; el Jacobi recorta bastante las iteraciones. Para volver
+            # atras: quitar M (queda CG puro).
+            diag = Kff.diagonal()
+            diag = np.where(np.abs(diag) > 1e-30, diag, 1.0)
+            M = spla.LinearOperator(Kff.shape,
+                                    matvec=lambda v: v / diag)
+
             u_free, info = spla.cg(
                 Kff, Ff, rtol=self.cg_tol, maxiter=self.cg_maxiter,
-                callback=_cb,
+                M=M, callback=_cb,
             )
             self.cg_iterations = iters[0]
             if info == 0:

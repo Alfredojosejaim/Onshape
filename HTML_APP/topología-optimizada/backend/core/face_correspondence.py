@@ -113,15 +113,70 @@ def _shape_face_signatures(shape: cq.Shape) -> List[FaceSignature]:
     return signatures
 
 
+def _mesh_surface_triangles(gmsh, tag: int, mesh_nodes: dict) -> Tuple[float, Tuple[float, float, float]]:
+    """Area + area-weighted centroid of the 2D mesh on Gmsh surface *tag*.
+
+    Raises (caller falls back to UV grid) when the surface has no 2D
+    elements yet. Triangles (type 2) count fully; quads (type 3) split
+    into two triangles. Returns ``(0.0, ...)``-free values only on
+    success: area <= 0 raises.
+    """
+    etypes, _etags, enodes = gmsh.model.mesh.getElements(2, tag)
+    area = 0.0
+    cx = cy = cz = 0.0
+    found = False
+    for et, en in zip(etypes, enodes):
+        en = [int(x) for x in en]
+        tris = []
+        if et == 2 and len(en) % 3 == 0:
+            tris = [en[k:k + 3] for k in range(0, len(en), 3)]
+        elif et == 3 and len(en) % 4 == 0:
+            for k in range(0, len(en), 4):
+                q = en[k:k + 4]
+                tris.append([q[0], q[1], q[2]])
+                tris.append([q[0], q[2], q[3]])
+        for t in tris:
+            try:
+                p0, p1, p2 = (np.array(mesh_nodes[t[0]]),
+                              np.array(mesh_nodes[t[1]]),
+                              np.array(mesh_nodes[t[2]]))
+            except KeyError:
+                continue
+            a = 0.5 * float(np.linalg.norm(np.cross(p1 - p0, p2 - p0)))
+            if a <= 0:
+                continue
+            area += a
+            cx += a * float((p0[0] + p1[0] + p2[0]) / 3.0)
+            cy += a * float((p0[1] + p1[1] + p2[1]) / 3.0)
+            cz += a * float((p0[2] + p1[2] + p2[2]) / 3.0)
+            found = True
+    if not found or area <= 0:
+        raise ValueError(f"surface {tag}: no 2D mesh elements")
+    return area, (cx / area, cy / area, cz / area)
+
+
 def _gmsh_surface_signatures(gmsh, samples: int = 20) -> List[Tuple[int, FaceSignature]]:
     """Build the geometric signature of every Gmsh surface (dim=2).
 
-    ``getCenterOfMass`` / ``getMassProperties`` return zeros on unmeshed
-    geometry, so the centroid, area and normal are computed **numerically** by
-    sampling the parametric (u, v) domain of each surface and mapping the grid
-    to 3D with ``gmsh.model.getValue``. This is robust and works before meshing.
+    Area and centroid are measured on the **2D surface mesh** when one
+    exists (trim-aware: holes/pockets count correctly). The legacy UV-grid
+    sampling ignores trimming (it integrates the untrimmed parametric
+    rectangle), which overestimates trimmed faces massively and trips the
+    E1 total-area guard with equal face counts. When no 2D mesh exists
+    the UV grid is used as fallback (documented, degraded).
+    Normal comes from ``getNormal`` at the UV-domain center in both paths;
+    the in-plane extent descriptor always uses the UV grid.
     """
     out: List[Tuple[int, FaceSignature]] = []
+    # Node coordinates once (for mesh-based area/centroid).
+    try:
+        _ntags, _ncoords, _ = gmsh.model.mesh.getNodes()
+        mesh_nodes = {
+            int(t): (float(_ncoords[3 * i]), float(_ncoords[3 * i + 1]), float(_ncoords[3 * i + 2]))
+            for i, t in enumerate(_ntags)
+        }
+    except Exception:
+        mesh_nodes = {}
     for dim, tag in gmsh.model.getEntities(2):
         if dim != 2:
             continue
@@ -219,6 +274,17 @@ def _gmsh_surface_signatures(gmsh, samples: int = 20) -> List[Tuple[int, FaceSig
             else:
                 normal = (0.0, 0.0, 1.0)
 
+        # Trim-aware override: when a 2D surface mesh exists for this tag,
+        # area + centroid come from its real triangles (holes/pockets
+        # counted correctly). UV-grid values above are kept as fallback.
+        if mesh_nodes:
+            try:
+                _et, _en = _mesh_surface_triangles(gmsh, tag, mesh_nodes)
+                if _et > 0:
+                    area, center = _et, _en
+            except Exception:
+                pass
+
         if n_valid >= 4 and valid_ratio >= min_valid_ratio:
             extent = _pca_in_plane_extent(
                 grid[valid], np.array(center), np.array(normal))
@@ -256,6 +322,17 @@ def build_face_correspondence(
     Returns:
         ``{cad_face_index: gmsh_surface_tag}``.
     """
+    # Trim-aware areas need the 2D surface mesh (UV sampling integrates
+    # the untrimmed parametric rectangle and overestimates faces with
+    # holes/pockets). generate(2) is reused later by generate(3); if it
+    # fails, signatures fall back to the UV grid (documented, degraded).
+    try:
+        gmsh.model.mesh.generate(2)
+    except Exception as exc:
+        logger.warning(
+            "generate(2) previo a firmas fallo (%s); areas por UV (degradado).",
+            exc,
+        )
     cad_sigs = _shape_face_signatures(shape)
     gmsh_sigs = _gmsh_surface_signatures(gmsh)
 

@@ -626,7 +626,10 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     }
     if (!Number.isFinite(mnx + mxx)) return;
     const diag = Math.hypot(mxx - mnx, mxy - mny, mxz - mnz) || 1;
-    const len = diag * 0.12;
+    // Flecha grande y separada: cuerpo ~20% de la diagonal + hueco ~8%
+    // entre la punta y la cara para que no se pegue a la superficie.
+    const len = diag * 0.2;
+    const gap = diag * 0.08;
     const sub = new THREE.Group();
     // ORIENT: misma conversion CAD Z-up -> three Y-up que las mallas.
     sub.rotateX(-Math.PI / 2);
@@ -653,8 +656,10 @@ export const CadViewport: React.FC<CadViewportProps> = ({
         }
         if (n === 0) continue;
         const centroid = new THREE.Vector3(cx / n, cy / n, cz / n);
-        const origin = centroid.clone().addScaledVector(dir, -len);
-        const arrow = new THREE.ArrowHelper(dir, origin, len, 0xff4438, len * 0.35, len * 0.2);
+        // Punta separada de la cara (gap) y origen mas atras: la flecha
+        // flota sobre la superficie en vez de nacer pegada a ella.
+        const origin = centroid.clone().addScaledVector(dir, -(gap + len));
+        const arrow = new THREE.ArrowHelper(dir, origin, len, 0xff4438, len * 0.45, len * 0.28);
         arrow.traverse((o) => {
           o.raycast = () => undefined; // no intercepta picks
         });

@@ -126,6 +126,11 @@ class LoadCondition(Condition):
     indeterminate: bool = True
     unit: str = "N"
     metadata: Dict[str, Any] = field(default_factory=dict)
+    # Dirección explícita (unitario, sentido ya aplicado por el emisor,
+    # p. ej. la UI web paramétrica ⊥/∥ + plano + ángulo + sentido).
+    # Cuando es válida tiene prioridad sobre orientation/normal/angle
+    # (ver generative_engine.direction_vector). None = modelo clásico.
+    direction: Optional[Tuple[float, float, float]] = None
 
     @property
     def condition_type(self) -> ConditionType:
@@ -148,10 +153,19 @@ class LoadCondition(Condition):
             "indeterminate": bool(self.indeterminate),
             "unit": self.unit,
             "metadata": self.metadata,
+            "direction": ([float(v) for v in self.direction]
+                          if self.direction is not None else None),
         }
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "LoadCondition":
+        _dir = d.get("direction", None)
+        direction = None
+        if _dir is not None:
+            try:
+                direction = (float(_dir[0]), float(_dir[1]), float(_dir[2]))
+            except (TypeError, ValueError, IndexError):
+                raise ValueError(f"direction={_dir!r} inválida (3 componentes numéricas).")
         return cls(
             id=d.get("id", str(uuid.uuid4())),
             name=d.get("name", "Carga"),
@@ -164,6 +178,7 @@ class LoadCondition(Condition):
             indeterminate=bool(d.get("indeterminate", True)),
             unit=d.get("unit", "N"),
             metadata=d.get("metadata", {}),
+            direction=direction,
         )
 
 

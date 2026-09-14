@@ -228,6 +228,12 @@ export default function App() {
     if (!backend.hasBridge()) return;
     if (cond.type !== 'carga' && cond.type !== 'fijacion' && cond.type !== 'preservada') return;
     const cur = stateRef.current.currentModel;
+    // LOAD-DIR2 (reversible): vector unitario final (sentido aplicado).
+    let dirVec: [number, number, number] | null = null;
+    if (cond.type === 'carga' && cond.value) {
+      const m = Math.hypot(cond.value[0], cond.value[1], cond.value[2]);
+      if (m > 0) dirVec = [cond.value[0] / m, cond.value[1] / m, cond.value[2] / m];
+    }
     const condJson = buildConditionJson(
       cond.type as FaceCondTool,
       cond.name,
@@ -238,9 +244,31 @@ export default function App() {
       cond.loadNormal ?? null,
       cond.loadCaseId ?? null,
       cond.loadWeight ?? null,
+      cond.loadMode ?? null,
+      cond.loadPlane ?? null,
+      cond.loadAngleDeg ?? null,
+      cond.loadSense ?? null,
+      dirVec,
     );
     (condJson as Record<string, unknown>).id = cond.id;
-    void backend.createCondition(JSON.stringify(condJson)).catch(() => undefined);
+    return backend.createCondition(JSON.stringify(condJson)).catch(() => undefined);
+  };
+
+  // COND-SYNC (reversible): re-envía al backend todas las condiciones
+  // activas con caras (sobrescribe por id) y devuelve sus ids para
+  // condition_ids. Sin esto la generativa corría sin condiciones.
+  const syncConditionsForRun = async (): Promise<string[]> => {
+    if (!backend.hasBridge()) return [];
+    const actives = stateRef.current.boundaryConditions.filter(
+      (c) => (c.type === 'carga' || c.type === 'fijacion' || c.type === 'preservada') &&
+        (c.faceIndices?.length ?? 0) > 0,
+    );
+    const ids: string[] = [];
+    for (const c of actives) {
+      const r = (await pushFaceCondition(c)) as unknown as { ok?: boolean; id?: string };
+      if (r && r.ok !== false) ids.push(c.id);
+    }
+    return ids;
   };
 
   // SIMP Topology Optimization Parameters
@@ -320,6 +348,8 @@ export default function App() {
   // Jobs reales del backend (solo con bridge; sin bridge sigue la simulacion)
   const [feaJobId, setFeaJobId] = useState<string | null>(null);
   const [simpJobId, setSimpJobId] = useState<string | null>(null);
+  // GEN-SHOW (reversible): jobId generativo pendiente de registro.
+  const genJobRef = useRef<string | null>(null);
   // NAV-VIEW-START (reversible): superficies reales por archivo para el
   // viewport UNICO (todos los cuerpos a la vez). La teselacion es
   // determinista por archivo: el cache vale aunque el core cambie de modelo
@@ -557,7 +587,34 @@ export default function App() {
       }
       return mapped ?? { ...prev, isRunning: false };
     });
+    // GEN-SHOW (reversible): tras un job generativo, registrar la
+    // reconstrucción como modelo activo para que la pieza cambie en el
+    // viewport (antes el resultado quedaba solo en números).
+    const gj = genJobRef.current;
+    genJobRef.current = null;
     setSimpJobId(null);
+    if (gj) {
+      void (async () => {
+        try {
+          const rr = (await backend.registerReconstruction(gj)) as unknown as {
+            ok: boolean; registered?: { model_id?: string; model_name?: string };
+            snapshot?: ApiSnapshot; error?: string;
+          };
+          const reg = rr.ok ? rr.registered : undefined;
+          if (reg && (reg.model_id || reg.model_name) && rr.snapshot) {
+            const nm = reg.model_name || 'Pieza generada';
+            applySnapshotToModel(rr.snapshot, nm, nm);
+            void fetchSurface(nm);
+            void fetchSolids(nm);
+            setOptNotice({ text: `Diseño generativo listo: "${nm}" cargada como modelo activo.` });
+          } else {
+            setOptNotice({ text: 'Generativa calculada, pero sin geometría registrable (mira compliance/volumen).' });
+          }
+        } catch {
+          setOptNotice({ text: 'Generativa calculada, pero falló el registro de la geometría.' });
+        }
+      })();
+    }
   });
 
   // JOB-PROGRESS (reversible): iteración en vivo desde el poll (el backend
@@ -680,6 +737,17 @@ export default function App() {
       isPaused: false,
       totalIterations: stateRef.current.simpParams.maxIterations,
     }));
+      // COND-SYNC (reversible): condiciones reales al backend (la
+      // generativa las necesita por id; la estructural las usa si existen
+      // y si no cae al legacy de setBoundaries).
+      let condIds: string[] = [];
+      try {
+        condIds = await syncConditionsForRun();
+      } catch {
+        setOptimizationState((prev) => ({ ...prev, isRunning: false }));
+        setOptNotice({ text: 'No se pudieron sincronizar las condiciones con el backend.' });
+        return;
+      }
       await pushBoundaries();
       const st = stateRef.current;
       try {
@@ -688,6 +756,7 @@ export default function App() {
         const r = st.optType === 'generativa'
           ? await backend.runGenerativeDesign({
               scenario: 'A',
+              condition_ids: condIds,
               volume_fraction: st.simpParams.volfrac,
               max_iterations: st.simpParams.maxIterations,
               penalization: st.simpParams.penalization,
@@ -695,6 +764,7 @@ export default function App() {
               convergence_tolerance: st.simpParams.tolerance,
             })
           : await backend.runOptimization({
+              condition_ids: condIds.length > 0 ? condIds : undefined,
               volume_fraction: st.simpParams.volfrac,
               max_iterations: st.simpParams.maxIterations,
               penalization: st.simpParams.penalization,
@@ -703,6 +773,9 @@ export default function App() {
             });
         if (r.ok && r.jobId) {
           setSimpJobId(r.jobId);
+          // GEN-SHOW (reversible): marcar jobs generativos para registrar
+          // su geometría al terminar.
+          genJobRef.current = st.optType === 'generativa' ? r.jobId : null;
         } else {
           setOptimizationState((prev) => ({ ...prev, isRunning: false }));
           setOptNotice({

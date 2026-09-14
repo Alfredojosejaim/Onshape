@@ -137,7 +137,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({
               <span className="font-semibold text-[12px] text-text-primary">Parámetros de Optimización</span>
             </div>
             <span className="px-1.5 py-0.5 rounded bg-secondary/10 border border-secondary/30 text-secondary font-mono text-[10px] font-semibold tracking-wider">
-              SIMP
+              {optType === 'estructural' ? 'SIMP' : 'GEN-A'}
             </span>
           </header>
 

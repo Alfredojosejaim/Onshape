@@ -131,6 +131,10 @@ export interface CadModelPreset {
   volumeCm3: number;
   elementsTet4: number;
   nodes: number;
+  // MULTI-KEY (reversible): clave de la librería del backend para re-activar
+  // el modelo exacto (switchModel) sin re-importar por nombre de archivo
+  // (que falla si el archivo no está en las carpetas de fixtures).
+  key?: string;
 }
 
 // SOLIDS (reversible): cuerpo del STEP segun core list_solids.

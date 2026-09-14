@@ -456,7 +456,7 @@ export default function App() {
   const stateRef = useRef({ boundaryConditions, selectedMaterial, simpParams, currentModel, activeTool, optType });
   stateRef.current = { boundaryConditions, selectedMaterial, simpParams, currentModel, activeTool, optType };
 
-  const applySnapshotToModel = (snap: ApiSnapshot, filename: string, displayName: string) => {
+  const applySnapshotToModel = (snap: ApiSnapshot, filename: string, displayName: string, key?: string) => {
     snapRef.current = snap;
     // UI-CLEAN2 (reversible): fila Malla solo con malla real.
     setHasMesh(!!snap.has_mesh);
@@ -466,11 +466,13 @@ export default function App() {
     // MULTI (reversible): malla por archivo para el arbol acumulativo.
     setMeshByFile((prev) => ({ ...prev, [filename]: !!snap.has_mesh }));
     const mapped = mapSnapshotToModel(snap, filename, displayName);
+    // MULTI-KEY (reversible): conservar la clave de librería del backend.
+    if (key) mapped.key = key;
     setModels((prev) => {
       const i = prev.findIndex((m) => m.filename === filename);
       if (i >= 0) {
         const next = [...prev];
-        next[i] = mapped;
+        next[i] = { ...mapped, key: key ?? prev[i].key };
         return next;
       }
       return [mapped, ...prev];
@@ -510,17 +512,13 @@ export default function App() {
             elementsTet4: 0,
             nodes: 0,
           }));
+          // STARTUP-NOIMPORT (reversible): antes se auto-importaba el primer
+          // fixture (cono.step) en cada arranque, pisando el modelo que el
+          // usuario tuviera cargado y haciendo que los estudios corrieran
+          // sobre geometría que no era la de la app. Ahora solo se listan los
+          // fixtures; el usuario elige cuál importar (o sube el suyo). Para
+          // volver atras: re-importar fx.fixtures[0] con backend.importStep.
           setModels(skeletons);
-          const first = fx.fixtures[0];
-          const imp = await backend.importStep(first.filename);
-          const snap = (imp as unknown as { snapshot?: ApiSnapshot }).snapshot;
-          if (imp.ok && snap) {
-            applySnapshotToModel(snap, first.filename, prettyName(first.filename));
-            // NAV-VIEW (reversible): mostrar el STEP real en el viewport.
-            void fetchSurface(first.filename);
-            // SOLIDS (reversible): detectar cuerpos del STEP.
-            void fetchSolids(first.filename);
-          }
         }
       } catch {
         /* fallback local */
@@ -940,10 +938,16 @@ export default function App() {
     setHasMesh(meshByFile[m.filename] ?? false);
     void (async () => {
       try {
-        const imp = await backend.importStep(m.filename);
+        // MULTI-KEY (reversible): si el modelo tiene clave de librería, activar
+        // ese mismo modelo con switchModel (ruta real en disco). Antes se
+        // re-importaba por `filename`, que falla para archivos subidos (no
+        // están en las carpetas de fixtures) y dejaba el modelo equivocado.
+        const imp = m.key
+          ? await backend.switchModel(m.key)
+          : await backend.importStep(m.filename);
         const snap = (imp as unknown as { snapshot?: ApiSnapshot }).snapshot;
         if (imp.ok && snap) {
-          applySnapshotToModel(snap, m.filename, m.displayName);
+          applySnapshotToModel(snap, m.filename, m.displayName, m.key);
           setFeaJobId(null);
           setSimpJobId(null);
           resetOptimizationState();
@@ -1149,12 +1153,13 @@ export default function App() {
       r.readAsDataURL(blob);
     });
   const applyImportResult = (
-    imp: { ok: boolean; snapshot?: ApiSnapshot },
+    imp: { ok: boolean; snapshot?: ApiSnapshot; key?: string },
     filename: string,
   ) => {
     const snap = imp.snapshot;
     if (imp.ok && snap) {
-      applySnapshotToModel(snap, filename, prettyName(filename));
+      // MULTI-KEY (reversible): guardar la clave de librería del backend.
+      applySnapshotToModel(snap, filename, prettyName(filename), imp.key);
       setFeaJobId(null);
       setSimpJobId(null);
       resetOptimizationState();
@@ -1169,7 +1174,7 @@ export default function App() {
     if (!beg.ok || !beg.upload_id) throw new Error(String(beg.error ?? 'beginUpload falló'));
     const total = file.size;
     let offset = 0;
-    let last: { ok: boolean; snapshot?: ApiSnapshot } = { ok: false };
+    let last: { ok: boolean; snapshot?: ApiSnapshot; key?: string } = { ok: false };
     while (offset < total) {
       const end = Math.min(offset + UPLOAD_SLICE, total);
       const base64 = await blobToBase64(file.slice(offset, end));
@@ -1177,7 +1182,7 @@ export default function App() {
         upload_id: beg.upload_id,
         base64,
         last: end >= total,
-      })) as { ok: boolean; snapshot?: ApiSnapshot; received?: number; error?: unknown };
+      })) as { ok: boolean; snapshot?: ApiSnapshot; key?: string; received?: number; error?: unknown };
       if (!r.ok) throw new Error(String(r.error ?? 'uploadChunk falló'));
       if (end >= total) last = r;
       offset = end;
@@ -1196,7 +1201,7 @@ export default function App() {
           const imp = (await backend.importStepBytes({
             filename: file.name,
             base64,
-          })) as { ok: boolean; snapshot?: ApiSnapshot; error?: unknown };
+          })) as { ok: boolean; snapshot?: ApiSnapshot; key?: string; error?: unknown };
           applyImportResult(imp, file.name);
         } catch {
           /* se conserva el modelo anterior */

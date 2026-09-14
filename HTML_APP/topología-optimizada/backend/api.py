@@ -771,6 +771,17 @@ class Api:
                 face_surface_elements=(c.mesh.get("face_surface_elements") or None),
                 physical_groups=(c.mesh.get("physical_groups") or None),
             )
+            # GEN-LEGACY (reversible): sin condiciones reutilizables, pasar las
+            # BC clásicas del controller (las que fija setBoundaries) para que
+            # la generativa no corra con carga cero (no-op silencioso). Si el
+            # usuario tampoco fijó BC, se dejan en None y run_generative_design
+            # falla explícito (nunca un heurístico silencioso). Para volver
+            # atras: quitar este bloque y los kwargs de _submit.
+            legacy_force = None
+            legacy_fixed_dofs = None
+            if not study.conditions and (
+                    getattr(c, "forces", None) and getattr(c, "constraints", None)):
+                _nodes, _elems, legacy_force, legacy_fixed_dofs = c.build_problem()
             step_path = p.get("step_path")
             total_g = max(int(p.get("max_iterations", 30)), 1)
             holder_g: dict = {}
@@ -791,7 +802,9 @@ class Api:
 
             jid = self._submit("generative", run_generative_design,
                                study, c.conditions, engine,
-                               progress_cb=_prog_g, step_path=step_path)
+                               progress_cb=_prog_g, step_path=step_path,
+                               legacy_force=legacy_force,
+                               legacy_fixed_dofs=legacy_fixed_dofs)
             holder_g["jid"] = jid
             return {"ok": True, "jobId": jid}
         except Exception as exc:  # noqa: BLE001

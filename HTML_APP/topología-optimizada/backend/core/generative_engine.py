@@ -639,9 +639,22 @@ class GenerativeDesignEngine:
         for u in unsupported_cases:
             if u not in unsupported:
                 unsupported.append(u)
+        # GEN-LEGACY (reversible): si no llego ninguna condicion de carga/soporte
+        # (p. ej. la UI solo mando las BC legacy por setBoundaries), usar esas
+        # BC en vez de resolver con carga cero (que producia un no-op silencioso:
+        # el job terminaba "bien" pero sin cambiar nada). Mismo contrato que
+        # controller.run_optimization en su rama legacy. Para volver atras:
+        # quitar legacy_force/legacy_fixed_dofs y volver al vector nulo.
+        legacy_force = kwargs.get("legacy_force")
+        legacy_fixed = kwargs.get("legacy_fixed_dofs")
+        if legacy_force is not None and not any(
+                float(np.linalg.norm(np.asarray(c, dtype=float))) > 0.0 for c in cases):
+            cases, weights = [np.asarray(legacy_force, dtype=float)], [1.0]
+        if legacy_fixed is not None and not fixed_dofs:
+            fixed_dofs = [int(d) for d in np.asarray(legacy_fixed, dtype=int).ravel()]
         if not cases:
             # Sin casos (p.ej. todo unsupported en modo permisivo): vector nulo
-            # unico para no romper el contrato del solver.
+            # único para no romper el contrato del solver.
             cases, weights = [forces], [1.0]
         # Fase 6d: acoplamiento térmico one-way (misma actuación simultánea:
         # el vector térmico se suma a cada caso mecánico).
@@ -733,12 +746,29 @@ def run_generative_design(
     engine: GenerativeDesignEngine,
     progress_cb: Optional[Callable[[dict], None]] = None,
     step_path: Optional[str] = None,
+    legacy_force: Optional[np.ndarray] = None,
+    legacy_fixed_dofs: Optional[np.ndarray] = None,
 ) -> Dict[str, Any]:
     """High-level entry: run the generative design pipeline (A or B).
 
     Returns a dict with the SIMP result plus the B-Rep reconstruction.
+    ``legacy_force``/``legacy_fixed_dofs`` (GEN-LEGACY) permiten correr sin
+    condiciones reutilizables usando las BC clásicas del controller.
     """
     conditions = consume_conditions(condition_manager, study.conditions)
+
+    # GEN-NOCOND (reversible): fail-loud en vez de no-op silencioso. Si no hay
+    # condiciones reutilizables NI BC legacy, el solver correria con carga cero
+    # y devolveria un resultado vacio que la UI mostraba como "no hizo nada".
+    # Para volver atras: quitar este bloque.
+    has_reusable = any(conditions.get(t) for t in
+                       (ConditionType.LOAD, ConditionType.ELASTICITY))
+    if not has_reusable and legacy_force is None:
+        raise ValueError(
+            "Diseño generativo sin condiciones: no hay cargas ni fijaciones "
+            "reutilizables (condition_ids) ni BC clásicas. Cargá/sincronizá las "
+            "condiciones del estudio antes de ejecutar (fail-loud, sin no-op)."
+        )
 
     # Pass the study's optimisation parameters into the SIMP solve so the
     # user-configured settings (volume fraction, iterations, penalization,
@@ -762,21 +792,28 @@ def run_generative_design(
         progress_cb=progress_cb,
         halo_radius=None,  # Solver computes from actual mesh element size
         optimizer=_opt_map[_opt],
+        legacy_force=legacy_force,
+        legacy_fixed_dofs=legacy_fixed_dofs,
     )
 
     if study.scenario == "A":
         # Mesh is the imported model mesh (set on the engine).
         result = engine.solve_simp(conditions, **solve_kwargs)
     elif study.scenario == "B":
-        if engine.mesh_nodes is None:
-            # Build the bridge mesh ourselves.
-            bridge = generate_bridge_mesh(
-                study.connection_targets,
-                resolution=study.design_space.resolution,
-                model_nodes=engine.mesh_nodes,
-            )
-            engine.mesh_nodes = bridge.nodes
-            engine.mesh_elements = bridge.elements
+        # GEN-B (reversible): el escenario B genera el espacio de diseño entre
+        # las piezas objetivo; la malla base del modelo NO es la malla puente.
+        # Antes se comprobaba `engine.mesh_nodes is None` (siempre False porque
+        # el controller inyecta la malla), así que la puente nunca se construía
+        # y B optimizaba la pieza A en silencio. Para volver atras: restaurar
+        # el `if engine.mesh_nodes is None`.
+        model_nodes = engine.mesh_nodes
+        bridge = generate_bridge_mesh(
+            study.connection_targets,
+            resolution=study.design_space.resolution,
+            model_nodes=model_nodes,
+        )
+        engine.mesh_nodes = bridge.nodes
+        engine.mesh_elements = bridge.elements
         result = engine.solve_simp(conditions, **solve_kwargs)
     else:  # pragma: no cover
         raise ValueError(f"Unsupported scenario '{study.scenario}'")

@@ -56,7 +56,8 @@ def test_tet10_conversion_and_hex8():
     assert r["compliance"] > 0
 
 
-def test_repair_and_supports():    from core.cad_reconstruction import repair_self_intersections, generate_supports
+def test_repair_and_supports():
+    from core.cad_reconstruction import repair_self_intersections, generate_supports
     sv = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], float)
     st = np.array([[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]])
     rep = repair_self_intersections(sv, st)

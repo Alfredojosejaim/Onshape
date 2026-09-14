@@ -277,7 +277,9 @@ export default function App() {
     penalization: 3.0,
     filterRadius: 2.5,
     tolerance: 0.001,
-    maxIterations: 100,
+    // PERF-DEFAULT (reversible): 100 iteraciones era un default caro (con
+    // malla fina, minutos). 50 alcanza la convergencia típica de SIMP.
+    maxIterations: 50,
   });
   // OPT-TYPE (reversible): estructural (SIMP) vs generativa (escenario A).
   const [optType, setOptType] = useState<OptimizationType>('estructural');
@@ -324,7 +326,7 @@ export default function App() {
   // Viewport & Mesh toggles
   const [showMesh, setShowMesh] = useState(false);
   const [showSection, setShowSection] = useState(false);
-  const [meshElementSize, setMeshElementSize] = useState(1.8);
+  const [meshElementSize, setMeshElementSize] = useState(2.5);
   const [isRemeshing, setIsRemeshing] = useState(false);
   const [deformationScale, setDeformationScale] = useState(1);
   const [coords, setCoords] = useState({ x: 124.5, y: 45.2, z: 0.0 });

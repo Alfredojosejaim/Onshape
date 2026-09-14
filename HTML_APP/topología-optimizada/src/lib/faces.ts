@@ -114,6 +114,14 @@ export function buildConditionJson(
   // metadata.load_weight. Vacío = caso único (comportamiento anterior).
   loadCaseId?: string | null,
   loadWeight?: number | null,
+  // LOAD-DIR2 (reversible): dirección paramétrica exacta de la UI
+  // (modo ⊥/∥ + plano + ángulo + sentido) + vector unitario final.
+  // El backend prioriza `direction` (conditions.py/direction_vector).
+  loadMode?: 'perpendicular' | 'paralelo' | null,
+  loadPlane?: 'xy' | 'xz' | 'yz' | null,
+  loadAngleDeg?: number | null,
+  loadSense?: 1 | -1 | null,
+  loadDirection?: [number, number, number] | null,
 ): Record<string, unknown> {
   if (tool === 'carga') {
     const metadata: Record<string, unknown> = {};
@@ -122,17 +130,21 @@ export function buildConditionJson(
     if (typeof loadWeight === 'number' && Number.isFinite(loadWeight) && loadWeight > 0) {
       metadata.load_weight = loadWeight;
     }
+    const ang = typeof loadAngleDeg === 'number' && Number.isFinite(loadAngleDeg) ? loadAngleDeg : 0;
+    const se = loadSense === -1 ? 'negative' : loadSense === 1 ? 'positive' : 'indeterminate';
+    const orientation = loadMode === 'paralelo' ? 'parallel' : ang !== 0 ? 'angle' : 'perpendicular';
     return {
       type: 'load',
       name,
       faces: selectionSet('Caras de carga', faceIndices, modelId, metas),
-      orientation: 'perpendicular',
+      orientation,
       reference_plane_normal: referenceNormal ?? [0.0, 0.0, 1.0],
-      angle_deg: null,
-      sense: 'indeterminate',
+      angle_deg: ang !== 0 ? ang : null,
+      sense: se,
       magnitude: typeof magnitude === 'number' ? magnitude : null,
       indeterminate: typeof magnitude !== 'number',
       unit: 'N',
+      direction: loadDirection ?? null,
       metadata,
     };
   }

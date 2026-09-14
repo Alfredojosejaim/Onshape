@@ -98,6 +98,9 @@ export const CadViewport: React.FC<CadViewportProps> = ({
   // userData: {key, filename, triMap: nº triangulo global por triangulo local}.
   const bodyMeshesRef = useRef<THREE.Mesh[]>([]);
   const highlightRef = useRef<THREE.Mesh | null>(null);
+  // LOAD-ARROWS (reversible): flechas cono en la escena con la direccion de
+  // cada carga activa (una por cara, hasta 24 por condicion). Para volver
+  // atras: borrar ref + efecto.
   // STABILITY-FIX (reversible): firma de los cuerpos encuadrados. El efecto
   // reconstruye por material/malla/visibilidad sin mover la camara; solo se
   // reencuadra si cambia el conjunto de cuerpos o el modelo activo.
@@ -582,6 +585,97 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     };
   }, [surfaces, activeFilename, selectedFaces]);
   // FACES-END
+
+  // LOAD-ARROWS-START (reversible): flechas de carga (vastago + cono) sobre
+  // cada cara con carga activa, orientadas segun el vector de la condicion.
+  // Se actualizan en vivo al picar caras o editar direccion/magnitud en el
+  // panel (boundaryConditions). Viven en la escena (no en modelGroup) para
+  // sobrevivir a reconstrucciones. Para volver atras: borrar este efecto.
+  const arrowsRef = useRef<THREE.Group | null>(null);
+  useEffect(() => {
+    const scene = sceneRef.current;
+    const activeSurf = activeFilename ? surfaces[activeFilename] : undefined;
+    if (arrowsRef.current && scene) {
+      scene.remove(arrowsRef.current);
+      arrowsRef.current.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (m.geometry) m.geometry.dispose();
+        const mat = (m as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+        if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+        else if (mat) mat.dispose();
+      });
+      arrowsRef.current = null;
+    }
+    if (!scene || !activeSurf) return;
+    if (!rangesCover(activeSurf.ranges, activeSurf.numTriangles)) return;
+    const loads = boundaryConditions.filter(
+      (c) => c.type === 'carga' && (c.faceIndices?.length ?? 0) > 0 && c.value &&
+        Number.isFinite(c.value[0] + c.value[1] + c.value[2]) &&
+        Math.hypot(c.value[0], c.value[1], c.value[2]) > 0,
+    );
+    if (loads.length === 0) return;
+    // Longitud de flecha ~12% de la diagonal del modelo (coords CAD).
+    const pos = activeSurf.positions;
+    let mnx = Infinity, mny = Infinity, mnz = Infinity;
+    let mxx = -Infinity, mxy = -Infinity, mxz = -Infinity;
+    for (let i = 0; i + 2 < pos.length; i += 3) {
+      const x = pos[i], y = pos[i + 1], z = pos[i + 2];
+      if (!Number.isFinite(x + y + z)) continue;
+      if (x < mnx) mnx = x; if (y < mny) mny = y; if (z < mnz) mnz = z;
+      if (x > mxx) mxx = x; if (y > mxy) mxy = y; if (z > mxz) mxz = z;
+    }
+    if (!Number.isFinite(mnx + mxx)) return;
+    const diag = Math.hypot(mxx - mnx, mxy - mny, mxz - mnz) || 1;
+    const len = diag * 0.12;
+    const sub = new THREE.Group();
+    // ORIENT: misma conversion CAD Z-up -> three Y-up que las mallas.
+    sub.rotateX(-Math.PI / 2);
+    const rangeByFace = new Map<number, { start: number; count: number }>();
+    for (const r of activeSurf.ranges) rangeByFace.set(r.face_index, r);
+    for (const cond of loads) {
+      const v = cond.value as [number, number, number];
+      const m = Math.hypot(v[0], v[1], v[2]);
+      const dir = new THREE.Vector3(v[0] / m, v[1] / m, v[2] / m);
+      const faces = (cond.faceIndices ?? []).filter((f) => rangeByFace.has(f));
+      // Tope anti-saturacion: submuestreo uniforme si hay muchas caras.
+      const stride = Math.max(1, Math.ceil(faces.length / 24));
+      for (let k = 0; k < faces.length; k += stride) {
+        const r = rangeByFace.get(faces[k]);
+        if (!r) continue;
+        let cx = 0, cy = 0, cz = 0, n = 0;
+        for (let t = r.start; t < r.start + r.count; t += 1) {
+          for (let j = 0; j < 3; j += 1) {
+            const vi = activeSurf.indices[t * 3 + j] * 3;
+            const x = pos[vi], y = pos[vi + 1], z = pos[vi + 2];
+            if (!Number.isFinite(x + y + z)) continue;
+            cx += x; cy += y; cz += z; n += 1;
+          }
+        }
+        if (n === 0) continue;
+        const centroid = new THREE.Vector3(cx / n, cy / n, cz / n);
+        const origin = centroid.clone().addScaledVector(dir, -len);
+        const arrow = new THREE.ArrowHelper(dir, origin, len, 0xff4438, len * 0.35, len * 0.2);
+        arrow.traverse((o) => {
+          o.raycast = () => undefined; // no intercepta picks
+        });
+        sub.add(arrow);
+      }
+    }
+    if (sub.children.length === 0) return;
+    scene.add(sub);
+    arrowsRef.current = sub;
+    return () => {
+      if (arrowsRef.current && scene) {
+        scene.remove(arrowsRef.current);
+        arrowsRef.current.traverse((o) => {
+          const m = o as THREE.Mesh;
+          if (m.geometry) m.geometry.dispose();
+        });
+        arrowsRef.current = null;
+      }
+    };
+  }, [surfaces, activeFilename, boundaryConditions]);
+  // LOAD-ARROWS-END
 
   // Handle Mouse / Pointer Events for Orbiting, Panning, and Coordinate Inspection
   // (UI-CLEAN: aqui habia ~200 lineas de geometria demo + glifos + el

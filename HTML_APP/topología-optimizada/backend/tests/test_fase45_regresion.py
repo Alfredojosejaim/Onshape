@@ -50,13 +50,14 @@ def test_symmetry_pairs_and_validation():
         s.set_symmetry_planes([(0, float("nan"))])
 
 
-def test_symmetry_vendored_parity():
+def test_symmetry_vendored_rejects():
+    """Fase 4.5b (revertir): vendored congelado, sin simetría (fail-loud)."""
     from vendored.simp import SIMPSolver as VendoredSIMP
-    kw = dict(nodes=NODES, elements=ELEMENTS, young_modulus=E, poisson_ratio=NU)
-    a, b = SIMPSolver(volfrac=0.5, filter_radius=0.5, **kw), VendoredSIMP(**kw)
-    a.set_symmetry_planes([("x", 0.5)])
-    b.set_symmetry_planes([("x", 0.5)])
-    assert np.array_equal(a._sym_pairs, b._sym_pairs)
+    b = VendoredSIMP(nodes=NODES, elements=ELEMENTS, young_modulus=E,
+                     poisson_ratio=NU)
+    assert not hasattr(b, "set_symmetry_planes")
+    assert not hasattr(b, "_mirror_average")
+    assert not hasattr(b, "_mirror_min")
 
 
 # 2. Térmico — ΔT uniforme ⇒ resultante auto-equilibrada ≈ 0.

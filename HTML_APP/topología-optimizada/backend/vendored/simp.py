@@ -223,61 +223,10 @@ class SIMPSolver:
         self._void = mask
         self._finalize_active()
 
-    # ------------------------------------------------------------------ #
-    # Manufacturing constraint: planos de simetría (Fase 6c, espejo).
-    # ------------------------------------------------------------------ #
-    def set_symmetry_planes(self, planes) -> None:
-        if not planes:
-            self._sym_pairs = None
-            return
-        parsed = []
-        for p in planes:
-            try:
-                ax, val = p
-            except (TypeError, ValueError):
-                raise TopOptError(
-                    f"plano de simetría inválido {p!r}: usar (eje, valor).")
-            if isinstance(ax, str):
-                ax = {"x": 0, "y": 1, "z": 2}.get(ax.lower(), -1)
-            if ax not in (0, 1, 2) or not np.isfinite(float(val)):
-                raise TopOptError(
-                    f"plano de simetría inválido {p!r}: eje 0/1/2 o x/y/z y valor finito.")
-            parsed.append((int(ax), float(val)))
-        from scipy.spatial import cKDTree
-
-        centers = np.asarray(self.element_centers, dtype=float)
-        mirrored = centers.copy()
-        for ax, val in parsed:
-            mirrored[:, ax] = 2.0 * val - mirrored[:, ax]
-        tree = cKDTree(centers)
-        dist, idx = tree.query(mirrored, k=1)
-        h = float(np.mean(self._volumes) ** (1.0 / 3.0)) if self.num_elements else 1.0
-        pairs = np.arange(self.num_elements)
-        n_paired = 0
-        for i in range(self.num_elements):
-            if dist[i] <= 0.25 * h:
-                pairs[i] = int(idx[i])
-                n_paired += 1
-        self._sym_pairs = pairs
-        self._sym_paired_count = int(n_paired)
-
-    def _mirror_average(self, v: np.ndarray) -> np.ndarray:
-        if getattr(self, "_sym_pairs", None) is None:
-            return v
-        return 0.5 * (np.asarray(v, dtype=float) + np.asarray(v, dtype=float)[self._sym_pairs])
-
-    def _mirror_min(self, x: np.ndarray, xmin: float) -> np.ndarray:
-        if getattr(self, "_sym_pairs", None) is None:
-            return x
-        out = np.asarray(x, dtype=float).copy()
-        mirror = out[self._sym_pairs]
-        out[(out <= 0.5 * (1.0 + xmin)) | (mirror <= 0.5 * (1.0 + xmin))] = xmin
-        if self._preserved is not None:
-            out[self._preserved] = 1.0
-        if self._void is not None:
-            out[self._void] = xmin
-        return out
-
+    # NOTA Fase 4.5b (decisión explícita): este archivo vuelve a estar
+    # CONGELADO. La simetría (set_symmetry_planes + espejo) vive SOLO en
+    # core/topopt.py. Si se piden symmetry_planes por este path, api._simp_loop
+    # falla explícito en vez de ignorarlo en silencio.
     def protect_elements_near_nodes(
         self,
         node_indices,
@@ -564,7 +513,6 @@ class SIMPSolver:
                 xnew = self._mma_update(x, dc_f, self._volumes, fscale)
             else:
                 xnew = self._oc_update(x, dc_f, self._volumes)
-            xnew = self._mirror_average(xnew)
 
             change = float(np.max(np.abs(xnew - x)))
             vol_frac = float(np.dot(xnew[self._active], self._volumes[self._active]) / max(self._vol0_free, 1e-12))
@@ -738,7 +686,6 @@ class SIMPSolver:
             if alpha_prev is not None:
                 alpha = 0.5 * (alpha + alpha_prev)
             alpha_prev = alpha
-            alpha = self._mirror_average(alpha)
             vol_now = float(np.dot(x[active], self._volumes[active]))
             solid = active & (~preserved) & (x > 0.5)
             removed_vol = 0.0
@@ -756,7 +703,6 @@ class SIMPSolver:
                     n_removed += 1
             else:
                 xnew = np.copy(x)
-            xnew = self._mirror_min(xnew, xmin)
             change = float(n_removed / max(int(np.sum(active)), 1))
             vol_frac = float(np.dot(xnew[active], self._volumes[active]) / max(self._vol0_free, 1e-12))
             history.append(

@@ -1061,12 +1061,20 @@ class MainWindow(QMainWindow):
         mag = self.properties.force_magnitude()
         dx, dy, dz = self.properties.force_direction()
         fsel = self.properties.force_selection()
+        gid = self.properties.load_case_id()
+        weight = self.properties.load_weight()
         if not self.controller.forces:
             self.controller.forces = [{"magnitude": mag, "direction_x": dx,
-                                       "direction_y": dy, "direction_z": dz}]
+                                       "direction_y": dy, "direction_z": dz,
+                                       "weight": float(weight)}]
         else:
             self.controller.forces[0].update({"magnitude": mag, "direction_x": dx,
-                                              "direction_y": dy, "direction_z": dz})
+                                              "direction_y": dy, "direction_z": dz,
+                                              "weight": float(weight)})
+        if gid:
+            self.controller.forces[0]["load_case_id"] = gid
+        else:
+            self.controller.forces[0].pop("load_case_id", None)
         if fsel:
             self.controller.forces[0]["selection"] = fsel
         else:
@@ -1078,16 +1086,24 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
     # "Agregar Fuerza" / "Agregar Restricción" from the Properties panel
     # ------------------------------------------------------------------ #
-    def _on_add_force(self, magnitude: float, dx: float, dy: float, dz: float) -> None:
+    def _on_add_force(self, magnitude: float, dx: float, dy: float, dz: float,
+                        load_case_id: str = "", weight: float = 1.0) -> None:
         """Persist a force configured in the Properties panel into the shared
-        boundary state consumed by FEA / SIMP."""
+        boundary state consumed by FEA / SIMP (incl. multicarga Fase 4.5a)."""
         if not self.controller.forces:
             self.controller.forces = [{}]
-        self.controller.forces[0].update({
-            "magnitude": magnitude, "direction_x": dx, "direction_y": dy, "direction_z": dz,
-        })
+        entry = {
+            "magnitude": magnitude, "direction_x": dx, "direction_y": dy,
+            "direction_z": dz, "weight": float(weight),
+        }
+        if str(load_case_id or "").strip():
+            entry["load_case_id"] = str(load_case_id).strip()
+        else:
+            self.controller.forces[0].pop("load_case_id", None)
+        self.controller.forces[0].update(entry)
+        case = f" caso '{load_case_id}'×{weight:g}" if "load_case_id" in entry else ""
         self.statusBar().showMessage(
-            f"Fuerza registrada: {magnitude:g} N en ({dx:g}, {dy:g}, {dz:g})")
+            f"Fuerza registrada: {magnitude:g} N en ({dx:g}, {dy:g}, {dz:g}){case}")
 
     def _on_add_constraint(self, constraint_type: str) -> None:
         """Persist a constraint configured in the Properties panel into the

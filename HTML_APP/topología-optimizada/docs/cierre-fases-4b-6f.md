@@ -104,9 +104,12 @@ rechazo explícito antes que fallback silencioso.
 
 - **4.5a**: `load_case_id`/`load_weight` ya en UI React (`faces.ts`,
   `ToolParamsPanel`, `App`); desktop sin campo (gap registrado).
-- **4.5b**: `vendored/simp.py` DESCONGELADO (opción 2 de la auditoría);
-  paridad core↔vendored obligatoria — ver `AGENTS.md`.
-- **4.5c**: `backend/tests/test_fase45_regresion.py`, 9/9 (simetría+paridad,
+- **4.5b (decisión EXPLÍCITA, revertir)**: `vendored/simp.py` vuelve a
+  CONGELADO — `set_symmetry_planes()` + espejo eliminados; simetría solo en
+  `core/topopt.py`; `api._simp_loop` falla explícito — ver `AGENTS.md`.
+  (2da ronda 14-sep: 4.5a también cerrado en desktop — campo ID + peso en
+  Cargas → `controller.forces`.)
+- **4.5c**: `backend/tests/test_fase45_regresion.py`, 9/9 (simetría+rechazo vendored,
   térmico, ESO compliance/stress, level-set, animación).
 - **4.5d**: `evolutionary_rate`/`ls_cfl`/`ls_hole_period` + plano de simetría
   en desktop → controller → engine/API (fail-loud por capa). Diferidos:

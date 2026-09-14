@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QComboBox, QDoubleSpinBox, QSpinBox,
-    QPushButton, QSlider, QCheckBox, QProgressBar, QScrollArea,
+    QPushButton, QSlider, QCheckBox, QProgressBar, QScrollArea, QLineEdit,
 )
 from PySide6.QtCore import Qt, Signal
 
@@ -41,7 +41,7 @@ class PropertiesPanel(QWidget):
     runOptimization = Signal(dict)   # {volume_fraction, max_iterations, penalization, filter_radius,...}
     runFEA = Signal()
     generateMesh = Signal(float)
-    forceAdded = Signal(float, float, float, float)   # (magnitude, dx, dy, dz)
+    forceAdded = Signal(float, float, float, float, str, float)   # (magnitude, dx, dy, dz, load_case_id, weight)
     constraintAdded = Signal(str)                      # constraint_type ("fixed"/"pinned"/"roller")
 
     # Fase 0 (higiene): solo opciones con motor real detrás.
@@ -240,6 +240,20 @@ class PropertiesPanel(QWidget):
         self._force_dz.setValue(0.0)
         col.addWidget(self._force_dz)
 
+        # Fase 4.5a: agrupador multicarga + peso (controller._load_case_vectors
+        # agrupa por "load_case_id" y pondera con "weight"; vacío = caso único).
+        col.addWidget(_field_label("Caso de carga (ID, opcional)"))
+        self._load_case_id = QLineEdit()
+        self._load_case_id.setPlaceholderText("p.ej. flexion (vacío = caso único)")
+        col.addWidget(self._load_case_id)
+        col.addWidget(_field_label("Peso del caso"))
+        self._load_weight = QDoubleSpinBox()
+        self._load_weight.setRange(0.01, 100.0)
+        self._load_weight.setDecimals(3)
+        self._load_weight.setSingleStep(0.1)
+        self._load_weight.setValue(1.0)
+        col.addWidget(self._load_weight)
+
         self._btn_add_force = QPushButton("+ Agregar Fuerza")
         col.addWidget(self._btn_add_force)
 
@@ -350,13 +364,16 @@ class PropertiesPanel(QWidget):
     def _on_add_force(self) -> None:
         # Persist the configured force into the shared boundary state used by
         # FEA / SIMP: emit the values so MainWindow stores them in the
-        # controller (force magnitude + direction). This is not a visual-only
-        # no-op: the force genuinely registers for the next analysis run.
+        # controller (force magnitude + direction + load case). This is not
+        # a visual-only no-op: the force genuinely registers for the next
+        # analysis run.
         self.forceAdded.emit(
             self._force_mag.value(),
             self._force_dx.value(),
             self._force_dy.value(),
             self._force_dz.value(),
+            self.load_case_id(),
+            self.load_weight(),
         )
 
     def _on_add_constraint(self) -> None:
@@ -477,6 +494,14 @@ normal ({', '.join(f'{v:+.3f}' for v in payload.get('normal', []))}) ·
 
     def force_direction(self) -> list[float]:
         return [self._force_dx.value(), self._force_dy.value(), self._force_dz.value()]
+
+    def load_case_id(self) -> str:
+        """Agrupador multicarga (Fase 4.5a); "" = caso único."""
+        return self._load_case_id.text().strip()
+
+    def load_weight(self) -> float:
+        """Peso relativo del caso de carga (Fase 4.5a)."""
+        return self._load_weight.value()
 
     def constraint_type(self) -> str:
         return self._CONSTRAINT_TYPES[self._constraint.currentIndex()][1]

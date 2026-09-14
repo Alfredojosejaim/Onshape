@@ -1020,7 +1020,10 @@ class Api:
                 radius=float(halo_radius) if halo_radius > 0 else None)
         try:
             if simp_kwargs.get("symmetry_planes") is not None:
-                solver.set_symmetry_planes(simp_kwargs.get("symmetry_planes"))
+                from desktop.pipeline.controller import PipelineError
+                raise PipelineError(
+                    "symmetry_planes no soportado en el path vendored "
+                    "(congelado, Fase 4.5b): usar el motor local (core).")
             result = solver.optimize(
                 max_iterations=int(simp_kwargs.get("max_iterations", 30)),
                 tolerance=float(simp_kwargs.get("tolerance", 1e-3)),

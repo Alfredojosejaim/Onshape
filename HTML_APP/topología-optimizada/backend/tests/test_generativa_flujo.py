@@ -113,3 +113,54 @@ def test_scenario_a_legacy_bc_fallback_runs():
     assert np.all(np.isfinite(x))
     assert result["_consumed_load_conditions"] == 0
     assert np.isfinite(result["final_compliance"])
+
+
+def test_registration_exposes_reconstructed_tessellation():
+    """GEN-TESS: tras registrar la reconstrucción, el teselado activo debe ser
+    el de la pieza generada (no quedar None y mostrar la pieza vieja).
+
+    Regresión del bug: `_register_reconstruction_model` comprobaba
+    `tess.get("success")`, clave que el dict de ÉXITO de tessellate_model no
+    trae, así que descartaba la teselación y el viewport no cambiaba.
+    """
+    import json
+    import time
+
+    from api import Api
+
+    api = Api()
+    assert api.importStep("cono.step")["ok"]
+    assert api.generateMesh(json.dumps({"target_element_size": 8.0}))["ok"]
+    load = api.createCondition(json.dumps({
+        "type": "load", "name": "L",
+        "faces": {"name": "f", "entities": [], "mode": "multi"},
+        "orientation": "perpendicular", "reference_plane_normal": [0, 0, 1],
+        "angle_deg": None, "sense": "positive", "magnitude": 1000.0,
+        "indeterminate": False, "unit": "N", "metadata": {},
+        "direction": [0, 0, -1],
+    }))
+    supp = api.createCondition(json.dumps({
+        "type": "elasticity", "name": "S",
+        "faces": {"name": "f", "entities": [], "mode": "multi"},
+    }))
+    run = api.runGenerativeDesign(json.dumps({
+        "scenario": "A", "condition_ids": [load["id"], supp["id"]],
+        "volume_fraction": 0.4, "max_iterations": 3,
+        "penalization": 3.0, "filter_radius": 2.0,
+        "convergence_tolerance": 1e-3,
+    }))
+    assert run["ok"], run
+    jid = run["jobId"]
+    for _ in range(600):
+        poll = api.pollJob(jid)
+        if poll.get("state") in ("done", "error", "failed"):
+            break
+        time.sleep(0.2)
+    assert poll.get("state") == "done", poll
+    reg = api.registerReconstruction(jid)
+    assert reg["ok"] and reg.get("registered"), reg
+    preview = api.getMeshPreview()
+    assert preview["ok"], preview
+    assert int(preview["mesh"].get("num_triangles") or 0) > 0
+    assert preview["mesh"].get("vertices") and preview["mesh"].get("indices")
+

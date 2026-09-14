@@ -1167,7 +1167,15 @@ class PipelineController:
             self.current_tessellation = None
             if hasattr(self.cad, "tessellate_model"):
                 tess = self.cad.tessellate_model(model_id, face_mapping=True)
-                if tess and tess.get("success"):
+                # GEN-TESS (reversible): el dict de éxito de tessellate_model
+                # NO trae la clave "success" (solo el fallo la trae), así que el
+                # `tess.get("success")` anterior era siempre falsy y la
+                # reconstrucción nunca quedaba como teselación activa: el
+                # viewport seguía mostrando la pieza vieja ("no hace nada").
+                # Se valida por geometría real, igual que import_model.
+                mismatch = (not tess or tess.get("success") is False
+                            or not tess.get("vertices") or not tess.get("indices"))
+                if not mismatch:
                     self.current_tessellation = tess
 
             # Record a reconstruction feature in history + Document so the

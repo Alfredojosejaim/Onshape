@@ -240,6 +240,11 @@ class Api:
                     with self._lock:
                         self._jobs[jid].update(state="done", progress=1.0,
                                                result=_clean(res))
+                        # GEN-RAW (reversible): el solido OCP de la
+                        # reconstruccion no sobrevive a _clean (queda str);
+                        # se guarda el dict crudo para registerReconstruction.
+                        if kind == "generative" and isinstance(res, dict):
+                            self._jobs[jid]["raw"] = res
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("job %s fallo: %s", jid, exc)
                     with self._lock:
@@ -798,7 +803,14 @@ class Api:
         try:
             with self._lock:
                 j = self._jobs.get(job_id)
-                res = dict(j["result"]) if j and j["result"] else None
+                # GEN-RAW: preferir el resultado crudo (con el solido OCP).
+                res = None
+                if j:
+                    raw = j.get("raw")
+                    if isinstance(raw, dict):
+                        res = dict(raw)
+                    elif j.get("result"):
+                        res = dict(j["result"])
             if not res:
                 return {"ok": False, "error": "job sin resultado"}
             recon = res.get("reconstruction") or {}

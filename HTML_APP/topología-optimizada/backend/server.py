@@ -21,6 +21,23 @@ from api import Api
 
 _API = Api()
 
+# PROMPT-FIX (reversible): whitelist de metodos permitidos. Espejo de
+# _METHODS en app_desktop.py: solo estos nombres pueden resolverse via
+# getattr. Cualquier otro se rechaza limpiamente sin tocar el Api.
+ALLOWED_METHODS = frozenset({
+    "getSnapshot", "getMaterials", "setMaterial", "validateProblem",
+    "importStep", "importStepBytes", "listFixtures", "listLibrary",
+    "switchModel", "removeModel", "getSolids", "generateMesh",
+    "generateAdaptiveMesh", "setBoundaries", "runFea", "runFeaIterative",
+    "runOptimization", "runSimpLoop", "runSimpKratosVerified",
+    "runGenerativeDesign", "registerReconstruction", "runThermal", "runModal",
+    "runCrossCheck", "cadOperation", "validateState",
+    "createCondition", "listConditions", "clearConditions",
+    "getLicense", "pollJob", "getMeshPreview", "getSurfaceMesh",
+    "getSafetySummary", "compareStudies",
+    "exportStep", "getNavProfiles", "setNavProfile",
+})
+
 
 class _Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
@@ -30,11 +47,15 @@ class _Handler(BaseHTTPRequestHandler):
             length = 0
         try:
             req = json.loads(self.rfile.read(length) or b"{}")
-            fn = getattr(_API, str(req.get("method", "")))
-            args = req.get("args", [])
-            if not isinstance(args, list):
-                args = [args]
-            payload = {"ok": True, "result": fn(*args)}
+            method = str(req.get("method", ""))
+            if method not in ALLOWED_METHODS:
+                payload = {"ok": False, "error": f"ValueError: metodo no permitido: {method!r}"}
+            else:
+                fn = getattr(_API, method)
+                args = req.get("args", [])
+                if not isinstance(args, list):
+                    args = [args]
+                payload = {"ok": True, "result": fn(*args)}
         except Exception as exc:  # noqa: BLE001
             payload = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
         data = json.dumps(payload).encode("utf-8")

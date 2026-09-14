@@ -72,12 +72,14 @@ export interface OptimizationState {
 }
 
 export interface FeaResults {
-  maxVonMisesMpa: number;
-  minSafetyFactor: number;
-  maxDisplacementMm: number;
-  modalFreqHz?: number; // ausente si no hay analisis modal -> "—"
-  strainEnergyJ: number;
-  meshQualityPercent: number;
+  // PROMPT-FIX (reversible): null = "sin resultados" (la UI muestra "—").
+  // mapFeaResult solo asigna numeros reales; el estado inicial es todo null.
+  maxVonMisesMpa: number | null;
+  minSafetyFactor: number | null;
+  maxDisplacementMm: number | null;
+  modalFreqHz?: number | null; // ausente o null si no hay analisis modal -> "—"
+  strainEnergyJ: number | null;
+  meshQualityPercent: number | null;
 }
 
 export interface CadModelPreset {

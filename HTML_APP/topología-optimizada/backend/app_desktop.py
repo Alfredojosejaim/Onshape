@@ -41,6 +41,7 @@ _METHODS = (
     "runCrossCheck", "cadOperation", "validateState",
     "createCondition", "listConditions", "clearConditions",
     "getLicense", "pollJob", "getMeshPreview", "getSurfaceMesh",
+    "getSafetySummary", "compareStudies",
     "exportStep", "getNavProfiles", "setNavProfile",
 )
 

@@ -23,3 +23,12 @@ Cada opción ofrecida en `/plan` debe citar contra qué fase de `plan.md` se
 justifica. Sin fase asociada → marcar "fuera de plan, requiere aprobación
 explícita". Esto evita que módulos nuevos (ESO/Level-Set/simetría/térmico/
 animación en su día) entren sin decisión registrada.
+
+## Regla resultados UI (14-sep-2026, EXPLÍCITA del usuario)
+
+Sin estudio real → estado vacío / "sin resultados" (nunca cifras por
+defecto). Con estudio real → mostrar ÚNICAMENTE resultados derivados del
+estado real (`mapFeaResult`/`mapSimpResult` del core). El mock local sin
+bridge (`App.tsx` tick) es SOLO fallback técnico controlado tras pulsar
+Iniciar en demo: anclado a su propio estado, etiquetado `MOCK-FALLBACK`,
+nunca visible por defecto.

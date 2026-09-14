@@ -298,7 +298,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({
               <div className="flex items-center justify-between font-mono">
                 <span className="text-text-muted text-[10px]">Tensión Máx. Von Mises:</span>
                 <span className="text-fea-stress-yield font-bold text-[13px]">
-                  {feaResults.maxVonMisesMpa.toFixed(1)} MPa
+                  {feaResults.maxVonMisesMpa !== null && feaResults.maxVonMisesMpa !== undefined ? `${feaResults.maxVonMisesMpa.toFixed(1)} MPa` : '—'}
                 </span>
               </div>
               {/* Thermal color bar legend */}
@@ -320,25 +320,25 @@ export const RightPanel: React.FC<RightPanelProps> = ({
               <div className="bg-surface-elevated/40 p-2 rounded border border-border-subtle/30">
                 <span className="text-text-muted text-[9px] block">Factor de Seguridad:</span>
                 <span className="text-fea-stress-optimal font-bold text-[12px]">
-                  SF = {feaResults.minSafetyFactor.toFixed(2)}
+                  {feaResults.minSafetyFactor !== null && feaResults.minSafetyFactor !== undefined ? `SF = ${feaResults.minSafetyFactor.toFixed(2)}` : 'SF = —'}
                 </span>
               </div>
               <div className="bg-surface-elevated/40 p-2 rounded border border-border-subtle/30">
                 <span className="text-text-muted text-[9px] block">Desplazamiento Máx:</span>
                 <span className="text-secondary font-bold text-[12px]">
-                  {feaResults.maxDisplacementMm.toFixed(3)} mm
+                  {feaResults.maxDisplacementMm !== null && feaResults.maxDisplacementMm !== undefined ? `${feaResults.maxDisplacementMm.toFixed(3)} mm` : '—'}
                 </span>
               </div>
               <div className="bg-surface-elevated/40 p-2 rounded border border-border-subtle/30">
                 <span className="text-text-muted text-[9px] block">1ª Frec. Propia:</span>
                 <span className="text-text-primary font-bold text-[12px]">
-                  {feaResults.modalFreqHz !== undefined ? `${feaResults.modalFreqHz} Hz` : '—'}
+                  {feaResults.modalFreqHz !== undefined && feaResults.modalFreqHz !== null ? `${feaResults.modalFreqHz} Hz` : '—'}
                 </span>
               </div>
               <div className="bg-surface-elevated/40 p-2 rounded border border-border-subtle/30">
                 <span className="text-text-muted text-[9px] block">Energía Deformación:</span>
                 <span className="text-text-primary font-bold text-[12px]">
-                  {feaResults.strainEnergyJ.toFixed(2)} J
+                  {feaResults.strainEnergyJ !== null && feaResults.strainEnergyJ !== undefined ? `${feaResults.strainEnergyJ.toFixed(2)} J` : '—'}
                 </span>
               </div>
             </div>

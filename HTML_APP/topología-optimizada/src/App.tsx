@@ -251,29 +251,34 @@ export default function App() {
 
   // Optimization Runtime State
   // UI-CLEAN (reversible): masa 0 sin modelo real.
+  // PROMPT-FIX (reversible): sin resultados iniciales (igual que
+  // resetOptimizationState): compliance 0 + historiales vacios para que el
+  // panel muestre "sin resultados" en vez de 148.5 ficticio.
   const initialMass = ((currentModel?.volumeCm3 ?? 0) * selectedMaterial.density) / 1000;
   const [optimizationState, setOptimizationState] = useState<OptimizationState>({
     isRunning: false,
     isPaused: false,
     currentIteration: 0,
     totalIterations: 100,
-    currentCompliance: 148.5,
+    currentCompliance: 0,
     currentVolume: 1.0,
-    convergenceDelta: 0.015,
+    convergenceDelta: 0,
     initialMassKg: initialMass,
     currentMassKg: initialMass,
-    complianceHistory: [148.5],
+    complianceHistory: [],
     volumeHistory: [1.0],
   });
 
   // FEA Analysis Results
+  // PROMPT-FIX (reversible): null = "sin resultados" (RightPanel muestra
+  // "—"). Antes habia cifras ficticias (342.4 MPa, 1.47, 0.421 mm...).
   const [feaResults, setFeaResults] = useState<FeaResults>({
-    maxVonMisesMpa: 342.4,
-    minSafetyFactor: 1.47,
-    maxDisplacementMm: 0.421,
-    modalFreqHz: 428,
-    strainEnergyJ: 1.84,
-    meshQualityPercent: 98.4,
+    maxVonMisesMpa: null,
+    minSafetyFactor: null,
+    maxDisplacementMm: null,
+    modalFreqHz: undefined,
+    strainEnergyJ: null,
+    meshQualityPercent: null,
   });
 
   // Viewport & Mesh toggles
@@ -614,12 +619,12 @@ export default function App() {
         isPaused: false,
         currentIteration: 0,
         totalIterations: simpParams.maxIterations,
-        currentCompliance: 148.5,
+        currentCompliance: 0,
         currentVolume: 1.0,
-        convergenceDelta: 0.015,
+        convergenceDelta: 0,
         initialMassKg: parseFloat(baseMass.toFixed(2)),
         currentMassKg: parseFloat(baseMass.toFixed(2)),
-        complianceHistory: [148.5],
+        complianceHistory: [],
         volumeHistory: [1.0],
       });
       return;
@@ -628,6 +633,14 @@ export default function App() {
   };
 
   // Run iterations smoothly (SOLO simulacion local: con bridge manda el core).
+  // MOCK-FALLBACK (reversible): sin bridge (demo dev) este tick es un
+  // fallback tecnico controlado, nunca un resultado. Regla: sin estudio
+  // real -> estado vacio ("sin resultados", ya aplicado al inicial); con
+  // estudio real -> solo mapSimpResult del core; el mock solo anima tras
+  // pulsar Iniciar sin backend, anclado a su propio estado (history[0])
+  // para no saltar. Para volver atras: restaurar la formula con 148.5/41.2.
+  const MOCK_BASE_COMPLIANCE = 148.5;
+  const MOCK_TARGET_RATIO = 41.2 / 148.5;
   useEffect(() => {
     if (optimizationState.isRunning && !backend.hasBridge()) {
       timerRef.current = window.setInterval(() => {
@@ -645,8 +658,13 @@ export default function App() {
           const newVol = 1.0 - (1.0 - targetVol) * Math.pow(ratio, 0.8);
           const newMass = prev.initialMassKg * newVol;
 
-          // Compliance decreases and converges
-          const newCompliance = 148.5 - (148.5 - 41.2) * Math.pow(ratio, 0.65) + (Math.random() - 0.5) * 0.4;
+          // Compliance decreases and converges (mock anclado a estado
+          // propio: base = primer valor de la serie, no constante fija).
+          const base = prev.complianceHistory.length > 0
+            ? prev.complianceHistory[0]
+            : (prev.currentCompliance > 0 ? prev.currentCompliance : MOCK_BASE_COMPLIANCE);
+          const target = base * MOCK_TARGET_RATIO;
+          const newCompliance = base - (base - target) * Math.pow(ratio, 0.65) + (Math.random() - 0.5) * 0.4;
           const delta = Math.abs(0.015 * (1 - ratio));
 
           return {

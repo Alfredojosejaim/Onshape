@@ -257,6 +257,27 @@ class PropertiesPanel(QWidget):
         self._btn_add_force = QPushButton("+ Agregar Fuerza")
         col.addWidget(self._btn_add_force)
 
+        # ============ Acoplamiento térmico (Fase 4.5d.4, opt-in) ============
+        col.addWidget(_section_title("Acoplamiento térmico"))
+        self._thermal_enable = QCheckBox("Usar acoplamiento térmico")
+        self._thermal_enable.setChecked(False)
+        self._thermal_enable.setEnabled(False)
+        self._thermal_enable.setToolTip(
+            "Sin estudio térmico resuelto: ejecute un estudio Thermal primero.")
+        col.addWidget(self._thermal_enable)
+        col.addWidget(_field_label("Estudio térmico fuente"))
+        self._thermal_study = QComboBox()
+        self._thermal_study.setEnabled(False)
+        col.addWidget(self._thermal_study)
+        col.addWidget(_field_label("α manual (1/K, 0 = del material)"))
+        self._thermal_alpha = QDoubleSpinBox()
+        self._thermal_alpha.setRange(0.0, 1.0e-3)
+        self._thermal_alpha.setDecimals(9)
+        self._thermal_alpha.setSingleStep(1e-6)
+        self._thermal_alpha.setValue(0.0)
+        self._thermal_alpha.setSpecialValueText("Auto (material)")
+        col.addWidget(self._thermal_alpha)
+
         # ============ Restricciones ============
         col.addWidget(_section_title("Restricciones"))
         col.addWidget(_field_label("Tipo de fijación"))
@@ -317,6 +338,9 @@ class PropertiesPanel(QWidget):
         self._cb_geom.toggled.connect(lambda checked: self._toggle_vis("geometry", checked))
         self._cb_forces.toggled.connect(lambda checked: self._toggle_vis("forces", checked))
         self._cb_constraints.toggled.connect(lambda checked: self._toggle_vis("constraints", checked))
+        self._thermal_enable.toggled.connect(
+            lambda checked: self._thermal_study.setEnabled(
+                checked and self._thermal_study.count() > 0))
         self._btn_sel_force.clicked.connect(lambda: self._use_selection("force"))
         self._btn_sel_constraint.clicked.connect(lambda: self._use_selection("constraint"))
         self._btn_sel_clear.clicked.connect(self.clear_selection)
@@ -502,6 +526,42 @@ normal ({', '.join(f'{v:+.3f}' for v in payload.get('normal', []))}) ·
     def load_weight(self) -> float:
         """Peso relativo del caso de carga (Fase 4.5a)."""
         return self._load_weight.value()
+
+    # ---- Acoplamiento térmico (Fase 4.5d.4) ----
+    def set_thermal_studies(self, studies: list) -> None:
+        """Puebla el selector con [(id, nombre)] de Thermal COMPLETED.
+
+        Sin estudios: checkbox deshabilitado con tooltip explícito (nunca
+        clickeable-para-fallar-después).
+        """
+        self._thermal_study.clear()
+        for sid, name in studies:
+            self._thermal_study.addItem(str(name), str(sid))
+        has = bool(studies)
+        self._thermal_enable.setEnabled(has)
+        self._thermal_study.setEnabled(has and self._thermal_enable.isChecked())
+        if has:
+            self._thermal_enable.setToolTip(
+                "Suma cargas de dilatación del estudio térmico al análisis.")
+        else:
+            self._thermal_enable.setChecked(False)
+            self._thermal_enable.setToolTip(
+                "Sin estudio térmico resuelto: ejecute un estudio Thermal primero.")
+
+    def thermal_enabled(self) -> bool:
+        return self._thermal_enable.isChecked() and self._thermal_enable.isEnabled()
+
+    def thermal_study_id(self) -> str | None:
+        if not self.thermal_enabled():
+            return None
+        return self._thermal_study.currentData()
+
+    def thermal_alpha(self) -> float | None:
+        """α manual o None (= usar thermal_expansion del material)."""
+        if not self.thermal_enabled():
+            return None
+        v = self._thermal_alpha.value()
+        return v if v > 0 else None
 
     def constraint_type(self) -> str:
         return self._CONSTRAINT_TYPES[self._constraint.currentIndex()][1]

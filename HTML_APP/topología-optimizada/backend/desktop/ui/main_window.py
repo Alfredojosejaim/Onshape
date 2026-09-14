@@ -17,7 +17,7 @@ import os
 from typing import Any, Dict, Optional
 
 import numpy as np
-from PySide6.QtCore import QSignalBlocker
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QFileDialog, QMessageBox, QInputDialog,
 )
@@ -126,6 +126,15 @@ class MainWindow(QMainWindow):
         self.properties.runOptimization.connect(self._on_run_optimization)
         self.properties.forceAdded.connect(self._on_add_force)
         self.properties.constraintAdded.connect(self._on_add_constraint)
+        self.results.playAnimation.connect(self._on_anim_play)
+        self.results.pauseAnimation.connect(self._on_anim_pause)
+
+        # Fase 4.5d.5: QTimer de animación modal (nunca loop bloqueante en UI).
+        self._anim_timer = QTimer(self)
+        self._anim_timer.timeout.connect(self._on_anim_tick)
+        self._anim_frames: list = []
+        self._anim_index: int = 0
+        self._modal_cache: dict | None = None
         self.design_tree.clear_button().clicked.connect(self._on_clear_selection)
         self.controller_reset_after_model()
 
@@ -218,6 +227,8 @@ class MainWindow(QMainWindow):
             ref_resolver=self._condition_part_ref_label)
         studies = list(self.controller.studies)
         self.design_tree.set_studies(studies)
+        # Fase 4.5d.4: el toggle térmico solo ofrece Thermal COMPLETED.
+        self.properties.set_thermal_studies(self._completed_thermal_studies())
         # Timeline ramificado desde 1 pieza (mismo umbral que el árbol de
         # diseño, que agrupa desde la primera pieza); con 0 grupos se
         # conserva el flujo pipeline/feature vigente.
@@ -228,6 +239,19 @@ class MainWindow(QMainWindow):
                 (label, [condition_label(c) for c in conds])
                 for label, conds in groups
             ])
+
+    def _completed_thermal_studies(self) -> list:
+        """[(id, nombre)] de estudios Thermal con status COMPLETED (4.5d.4)."""
+        from core.cae_studies import StudyStatus
+
+        out = []
+        for s in self.controller.studies:
+            st = getattr(s, "study_type", None)
+            if st is None or st.value != "thermal":
+                continue
+            if s.status == StudyStatus.COMPLETED:
+                out.append((s.id, s.name))
+        return out
 
     def _condition_part_ref_label(self, ref) -> Optional[str]:
         """Etiqueta de pieza para una entidad (sólido -> nombre de cuerpo,
@@ -319,6 +343,7 @@ class MainWindow(QMainWindow):
         if not self.controller.model_id:
             QMessageBox.warning(self, "Sin modelo", "Importa primero un STEP.")
             return
+        self._stop_animation_and_modal()
         self._set_busy(True, "Generando malla FEM (Gmsh / provisional)...")
         self.statusBar().showMessage("Generando malla volumétrica...")
         self.controller.run_in_background(
@@ -330,6 +355,7 @@ class MainWindow(QMainWindow):
     def _on_mesh_done(self, mesh) -> None:
         nodes = self.controller.mesh_nodes
         elements = self.controller.mesh_elements
+        self._stop_animation_and_modal()
         self.viewport.show_mesh(nodes, elements)
         self.design_tree.set_context(
             self.controller.model_name,
@@ -402,6 +428,7 @@ class MainWindow(QMainWindow):
         if not self.controller.mesh:
             QMessageBox.warning(self, "Sin malla", "Genera la malla primero.")
             return
+        self._stop_animation_and_modal()
         self._configure_boundaries()
         self._set_busy(True, "Resolviendo análisis estático (FEA)...")
         self.controller.run_in_background(
@@ -444,6 +471,7 @@ class MainWindow(QMainWindow):
         if not self.controller.mesh:
             QMessageBox.warning(self, "Sin malla", "Genera la malla primero.")
             return
+        self._stop_animation_and_modal()
         self._configure_boundaries()
         self.results.clear_history()
         self.timeline.set_pipeline_step(4)
@@ -463,6 +491,20 @@ class MainWindow(QMainWindow):
                 self.timeline.set_iteration(info["iteration"], info["volume_fraction"])
             launch_qt(upd)
 
+        # Fase 4.5d.4: acoplamiento térmico opt-in (resuelto aquí, en el
+        # hilo UI, para fallar antes de lanzar el worker si el campo no
+        # coincide con la malla actual).
+        thermal_kwargs: dict = {}
+        if self.properties.thermal_enabled():
+            try:
+                thermal_kwargs = self.controller.resolve_thermal_kwargs(
+                    self.properties.thermal_study_id())
+                if self.properties.thermal_alpha() is not None:
+                    thermal_kwargs["thermal_alpha"] = float(self.properties.thermal_alpha())
+            except Exception as exc:
+                self._set_busy(False)
+                QMessageBox.warning(self, "Acoplamiento térmico", str(exc))
+                return
         self.controller.run_in_background(
             lambda: self.controller.run_optimization(
                 volume_fraction=params["volume_fraction"],
@@ -477,6 +519,7 @@ class MainWindow(QMainWindow):
                 ls_cfl=float(params.get("ls_cfl", 0.5)),
                 ls_hole_period=int(params.get("ls_hole_period", 3)),
                 symmetry_planes=params.get("symmetry_planes"),
+                **thermal_kwargs,
             ),
             on_done=self._on_optimization_done,
             on_error=lambda e: self._on_error("Optimización", e),
@@ -507,6 +550,129 @@ class MainWindow(QMainWindow):
                 f"c={result.get('final_compliance', 0):.4e}, iter={result.get('iterations')}")
 
     # ------------------------------------------------------------------ #
+    # Animación modal (Fase 4.5d.5)
+    #
+    # - Solo el actor de malla FEA; si se veía el sólido reconstruido o la
+    #   densidad, se muestra la malla y se oculta la densidad durante la
+    #   animación (se restaura al pausar).
+    # - QTimer, nunca loop bloqueante. Picking suspendido con mensaje
+    #   explícito + cursor. El timer se para en: pausa, nuevo run/malla,
+    #   cierre de modelo, reset de flujo, fin de estudios.
+    # ------------------------------------------------------------------ #
+    def _mesh_stamp(self) -> tuple | None:
+        try:
+            nodes = np.asarray(self.controller.mesh_nodes, dtype=float)
+        except Exception:
+            return None
+        if nodes.size == 0:
+            return None
+        return (int(nodes.shape[0]), tuple(np.round(nodes.min(axis=0), 6)),
+                tuple(np.round(nodes.max(axis=0), 6)))
+
+    def _on_anim_play(self) -> None:
+        from core.cae_studies import animate_mode_shape
+
+        cache = self._modal_cache
+        if not cache:
+            QMessageBox.information(
+                self, "Sin modo", "Ejecute primero un estudio Modal.")
+            return
+        stamp = self._mesh_stamp()
+        if stamp != cache["mesh_stamp"]:
+            QMessageBox.warning(
+                self, "Malla cambiada",
+                "La malla cambió desde que corrió el estudio modal. "
+                "Re-ejecute el estudio Modal antes de animar.")
+            return
+        nodes = np.asarray(self.controller.mesh_nodes, dtype=float)
+        shapes = cache["mode_shapes"]
+        mi = self.results.animation_mode_index()
+        if not 0 <= mi < len(shapes):
+            QMessageBox.warning(self, "Modo inválido",
+                                f"mode_index={mi} fuera de rango.")
+            return
+        try:
+            anim = animate_mode_shape(nodes, np.asarray(shapes[mi], dtype=float),
+                                      amplitude="auto", n_frames=16)
+        except Exception as exc:
+            QMessageBox.warning(self, "Animación", f"No se pudo generar: {exc}")
+            return
+        self.stop_mode_animation()
+        self.viewport.show_mesh(nodes, self.controller.mesh_elements)
+        ok, reason = self.viewport.begin_mode_animation()
+        if not ok:
+            QMessageBox.information(self, "Animación no disponible", reason)
+            return
+        self.viewport.set_kind_visible("density", False)
+        self._anim_frames = [np.asarray(f, dtype=float) for f in anim["frames"]]
+        self._anim_index = 0
+        self.viewport.set_picking_suspended(True)
+        self.viewport.setCursor(Qt.CursorShape.ForbiddenCursor)
+        speed = self.results.animation_speed()
+        self._anim_timer.start(int(120.0 / max(speed, 0.1)))
+        label = f"Modo {mi + 1}/{len(shapes)} ({cache['frequencies'][mi]:.1f} Hz)"
+        self.results.set_animation_playing(
+            True, f"▶ {label} · picking deshabilitado durante la animación.")
+        self.statusBar().showMessage(
+            f"Animando {label}: picking deshabilitado (cursor ⊘). "
+            "Pause para recuperar la selección.")
+
+    def _on_anim_tick(self) -> None:
+        if not self._anim_frames:
+            self.stop_mode_animation()
+            return
+        try:
+            self.viewport.apply_mode_displacement(self._anim_frames[self._anim_index])
+        except Exception as exc:
+            self.stop_mode_animation()
+            self.statusBar().showMessage(f"Animación detenida: {exc}")
+            return
+        self._anim_index = (self._anim_index + 1) % len(self._anim_frames)
+
+    def _on_anim_pause(self) -> None:
+        self.stop_mode_animation()
+        self.statusBar().showMessage("Animación pausada: geometría base restaurada.")
+
+    def stop_mode_animation(self) -> None:
+        """Para el timer y restaura base + picking + densidad (idempotente)."""
+        try:
+            if self._anim_timer.isActive():
+                self._anim_timer.stop()
+        except Exception:
+            pass
+        self._anim_frames = []
+        self._anim_index = 0
+        try:
+            self.viewport.end_mode_animation()
+        except Exception:
+            pass
+        try:
+            self.viewport.set_kind_visible("density", True)
+        except Exception:
+            pass
+        try:
+            self.viewport.set_picking_suspended(False)
+        except Exception:
+            pass
+        try:
+            self.viewport.unsetCursor()
+        except Exception:
+            pass
+        try:
+            self.results.set_animation_playing(False, "")
+        except Exception:
+            pass
+
+    def _stop_animation_and_modal(self) -> None:
+        """Parada total al cambiar de contexto: timer + caché modal + UI."""
+        self.stop_mode_animation()
+        self._modal_cache = None
+        try:
+            self.results.clear_modal_modes()
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------ #
     # Studies (architecture layer)
     # ------------------------------------------------------------------ #
     def _on_create_study(self) -> None:
@@ -524,6 +690,7 @@ class MainWindow(QMainWindow):
             parts=parts,
             model_id=self.controller.model_id,
             get_solid_selections=self._current_solid_selections,
+            thermal_studies=self._completed_thermal_studies(),
         )
         result = panel.exec()
         if result != StudyPanel.Accepted or panel.study is None:
@@ -554,6 +721,7 @@ class MainWindow(QMainWindow):
                                 f"El estudio no está configurado correctamente.{parts_info}{conds_info}.")
             return
         self._configure_boundaries()
+        self._stop_animation_and_modal()
         self.results.clear_history()
         self._set_busy(True, f"Ejecutando estudio '{study.name}' (SIMP)...")
 
@@ -578,6 +746,11 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Estudio con errores: {sr.error_message}")
             QMessageBox.warning(self, "Estudio", sr.error_message or "Error de ejecución.")
             return
+        # Fase 4.5d.5: estudio Modal corrido → poblar animación + mostrar malla.
+        st = getattr(study, "study_type", None)
+        if st is not None and st.value == "modal":
+            self._finish_modal_study(study, sr)
+            return
         data = sr.data or {}
         unsupported = data.get("_unsupported_conditions") or []
         self.results.set_result(data, self.properties.material_name())
@@ -600,6 +773,35 @@ class MainWindow(QMainWindow):
                   "referencien caras o cuerpos válidos.",
             )
         self.statusBar().showMessage(msg)
+
+    def _finish_modal_study(self, study, sr) -> None:
+        """Post-proceso de Modal corrido (Fase 4.5d.5): malla + animación."""
+        data = sr.data or {}
+        freqs = data.get("frequencies") or []
+        shapes = data.get("mode_shapes") or []
+        if not freqs or not shapes:
+            self.statusBar().showMessage(
+                f"Estudio '{study.name}' sin modos para animar.")
+            return
+        stamp = self._mesh_stamp()
+        if stamp is None:
+            self.statusBar().showMessage("Estudio modal sin malla activa.")
+            return
+        self._modal_cache = {
+            "study_id": study.id,
+            "frequencies": [float(f) for f in freqs],
+            "mode_shapes": shapes,
+            "mesh_stamp": stamp,
+        }
+        self.stop_mode_animation()
+        self.viewport.show_mesh(self.controller.mesh_nodes,
+                                self.controller.mesh_elements)
+        labels = [f"Modo {i + 1} — {float(f):.1f} Hz"
+                  for i, f in enumerate(freqs)]
+        self.results.set_modal_modes(labels)
+        self.statusBar().showMessage(
+            f"Estudio '{study.name}' completado: {len(freqs)} modo(s). "
+            "Use ▶ Animar en Resultados.")
 
     def _on_create_generative_study(self) -> None:
         """Open the GenerativeStudyPanel (scenario A/B) and register the study."""
@@ -644,6 +846,7 @@ class MainWindow(QMainWindow):
                                 "El diseño generativo no está configurado correctamente.")
             return
         self._configure_boundaries()
+        self._stop_animation_and_modal()
         self.results.clear_history()
         self._set_busy(True, f"Ejecutando diseño '{study.name}' (generativo)...")
 
@@ -989,6 +1192,7 @@ class MainWindow(QMainWindow):
     def _on_reset_flow(self) -> None:
         # Reiniciar flujo: solo reinicia pasos/estado del flujo (timeline +
         # historial de resultados). NO elimina el modelo (ver _on_close_model).
+        self._stop_animation_and_modal()
         self.timeline.reset()
         self.results.clear_history()
         self.statusBar().showMessage("Flujo reiniciado. Importe o vuelva a ejecutar los pasos.")
@@ -999,6 +1203,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("No hay modelo cargado.")
             return
         name = self.controller.model_name or self.controller.model_id
+        self._stop_animation_and_modal()
         self.controller.close_model()
         try:
             self.viewport.scene.clear()

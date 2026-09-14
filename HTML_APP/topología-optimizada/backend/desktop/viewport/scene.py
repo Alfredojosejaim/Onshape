@@ -81,6 +81,9 @@ class Scene:
         # Cache cara -> vertex ids unicos (rubber-band: proyeccion a pantalla)
         self._face_vertex_cache: Dict[int, List[int]] = {}
         self._cell_highlight = None  # HighlightRenderer sobre el polydata modelo
+        # Animación modal (Fase 4.5d.5): base guardada aparte, nunca se muta.
+        self._mesh_base: Optional[np.ndarray] = None
+        self._anim_active: bool = False
 
     # ------------------------------------------------------------------ #
     # Events
@@ -445,6 +448,8 @@ class Scene:
         keys = list(self._actors.keys())
         for key in keys:
             self.remove_object(key)
+        self._anim_active = False
+        self._mesh_base = None
         self._bbox = None
         self._model_vertices = None
         self._model_triangles = None
@@ -459,6 +464,9 @@ class Scene:
     def set_mesh(self, nodes: np.ndarray, elements: np.ndarray, color=(0.6, 0.65, 0.75)) -> None:
         """Render the volumetric FE mesh as an outlined surface."""
         tris = self._extract_mesh_surface(elements)
+        # Fin explícito de cualquier animación: el actor se reconstruye.
+        self._anim_active = False
+        self._mesh_base = np.asarray(nodes, dtype=float).copy()
         self.remove_by_kind("mesh")
         actor = self._renderer.make_triangle_actor(
             nodes,
@@ -560,6 +568,84 @@ class Scene:
         self.remove_by_kind("density")
         self.add_object(SceneObject("Densidad de material", "density"), actor)
         self._notify()
+
+    # ------------------------------------------------------------------ #
+    # Animación modal (Fase 4.5d.5) — SOLO el actor de malla FEA ("mesh").
+    #
+    # Restricciones:
+    # 1. Nunca se anima la geometría reconstruida (B-Rep) ni el campo de
+    #    densidad: no hay correspondencia 1:1 con los DOFs de la malla.
+    # 2. La posición base se guarda aparte (set_mesh); cada frame es
+    #    base + desplazamiento, nunca acumulación in-place.
+    # ------------------------------------------------------------------ #
+    def _mesh_actor(self):
+        for key, obj in self._objects.items():
+            if obj.kind == "mesh":
+                return self._actors.get(key)
+        return None
+
+    def set_kind_visible(self, kind: str, visible: bool) -> None:
+        for key, obj in self._objects.items():
+            if obj.kind == kind:
+                actor = self._actors.get(key)
+                if actor is not None:
+                    try:
+                        actor.SetVisibility(1 if visible else 0)
+                    except Exception:
+                        pass
+        self._notify()
+
+    def begin_mode_animation(self) -> tuple[bool, str]:
+        """Habilita la animación sobre el actor de malla. (ok, motivo)."""
+        if self._anim_active:
+            return True, ""
+        actor = self._mesh_actor()
+        if actor is None or self._mesh_base is None:
+            kinds = sorted({o.kind for o in self._objects.values()})
+            detail = ", ".join(kinds) if kinds else "escena vacía"
+            return (False,
+                    "Sin actor de malla FEA para animar "
+                    f"(visible: {detail}). La animación modal actúa sobre la "
+                    "malla, no sobre el sólido reconstruido.")
+        self._anim_active = True
+        return True, ""
+
+    def apply_mode_displacement(self, displacement: np.ndarray) -> None:
+        """Un frame: puntos = base + desplazamiento (nunca acumula)."""
+        if not self._anim_active:
+            raise RuntimeError("Animación no iniciada (begin_mode_animation).")
+        from desktop.viewport.renderer import vtk_points_array
+
+        disp = np.asarray(displacement, dtype=float)
+        if disp.shape != self._mesh_base.shape:
+            raise ValueError(
+                f"desplazamiento {disp.shape} no coincide con la base {self._mesh_base.shape}.")
+        if not np.all(np.isfinite(disp)):
+            raise ValueError("desplazamiento con valores no finitos.")
+        actor = self._mesh_actor()
+        if actor is None:
+            raise RuntimeError("El actor de malla desapareció durante la animación.")
+        poly = actor.GetMapper().GetInput()
+        poly.GetPoints().SetData(vtk_points_array(self._mesh_base + disp))
+        poly.Modified()
+        self._renderer.render()
+
+    def end_mode_animation(self) -> None:
+        """Restaura la base exacta y cierra la animación (idempotente)."""
+        if not self._anim_active:
+            return
+        from desktop.viewport.renderer import vtk_points_array
+
+        self._anim_active = False
+        actor = self._mesh_actor()
+        if actor is not None and self._mesh_base is not None:
+            try:
+                poly = actor.GetMapper().GetInput()
+                poly.GetPoints().SetData(vtk_points_array(self._mesh_base))
+                poly.Modified()
+            except Exception:
+                pass
+        self._renderer.render()
 
     @staticmethod
     def _density_colormap(colormap: str) -> "vtkColorTransferFunction":

@@ -82,6 +82,12 @@ class TopologyOptimizationStudy(Study):
         # - condition ids resolved against the shared ConditionManager.
         self.parts: List[CadEntityRef] = []
         self.conditions: List[str] = []
+        # Fase 4.5d.4: acoplamiento térmico one-way opt-in. thermal_study_id
+        # referencia un ThermalAnalysis COMPLETED (temperaturas nodales);
+        # None = sin acoplamiento. thermal_alpha None = α del material.
+        self.thermal_study_id: Optional[str] = None
+        self.thermal_alpha: Optional[float] = None
+        self.thermal_reference_temperature: float = 293.15
 
     # ------------------------------------------------------------------ #
     # Parts
@@ -200,4 +206,7 @@ class TopologyOptimizationStudy(Study):
         base["iteration_history"] = self._iteration_history
         base["parts"] = [p.to_dict() for p in self.parts]
         base["conditions"] = [str(c) for c in self.conditions]
+        base["thermal_study_id"] = self.thermal_study_id
+        base["thermal_alpha"] = self.thermal_alpha
+        base["thermal_reference_temperature"] = self.thermal_reference_temperature
         return base

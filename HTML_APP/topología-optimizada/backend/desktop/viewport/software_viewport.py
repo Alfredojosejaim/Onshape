@@ -352,6 +352,8 @@ class SoftwareViewport(QWidget):
         self._last_x: float = 0.0
         self._last_y: float = 0.0
         self._click_start: bool = True
+        # Fase 4.5d.5: paridad con Viewport3D (picking suspendible).
+        self._picking_suspended: bool = False
 
         # Escena y selección
         self._scene = _SoftwareScene()
@@ -515,8 +517,33 @@ class SoftwareViewport(QWidget):
             self._cam_y -= dy * self._zoom * 0.002
         self.update()
 
+    def set_picking_suspended(self, suspended: bool) -> None:
+        """Paridad con Viewport3D (Fase 4.5d.5)."""
+        self._picking_suspended = bool(suspended)
+        if suspended:
+            self._click_start = False
+
+    def begin_mode_animation(self) -> tuple:  # noqa: ANN201
+        """Viewport por software: animación no soportada (explícito)."""
+        return (False,
+                "Animación modal no disponible en el viewport por software "
+                "(requiere la vista GPU/VTK).")
+
+    def apply_mode_displacement(self, displacement) -> None:  # noqa: ANN001,ANN202
+        raise RuntimeError("Animación no soportada en el viewport por software.")
+
+    def end_mode_animation(self) -> None:
+        return None
+
+    def set_kind_visible(self, kind: str, visible: bool) -> None:
+        return None
+
     def mouseReleaseEvent(self, ev: QMouseEvent) -> None:
         ev.accept()
+        if self._picking_suspended:
+            self._mode = "idle"
+            self._click_start = False
+            return
         if self._click_start and self._mode == "idle":
             x, y = float(ev.position().x()), float(ev.position().y())
             self._selection_mgr.pick(x, y,

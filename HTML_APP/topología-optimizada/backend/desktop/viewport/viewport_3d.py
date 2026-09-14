@@ -235,6 +235,9 @@ class Viewport3D(QWidget):
         self._rubber_points = None
         self._mode = "idle"  # idle | orbit | pan | zoom
         self._click_start = True
+        # Fase 4.5d.5: picking suspendido explícitamente durante la animación
+        # modal (la geometría en movimiento no es seleccionable).
+        self._picking_suspended = False
 
         # ── Imports de VTK (lazy — solo se cargan si se construye Viewport3D) ──
         from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
@@ -425,9 +428,25 @@ class Viewport3D(QWidget):
                 vtk_add = False
         return bool(qt_add or vtk_add)
 
+    def set_picking_suspended(self, suspended: bool) -> None:
+        """Suspende/reanuda el picking (Fase 4.5d.5: sin selección sobre
+        geometría en movimiento). Navegar (órbita/pan/zoom) sigue activo."""
+        self._picking_suspended = bool(suspended)
+        if suspended:
+            self._rubber_active = False
+            try:
+                self._hide_rubber_band()
+            except Exception:
+                pass
+            self._click_start = False
+
     def _on_left_press(self, obj, ev) -> None:
         event = self._make_input_event(mouse_button=MouseButton.LEFT)
         self._resolve_and_execute(event)
+        if self._picking_suspended:
+            self._click_start = False
+            self._left_held = False
+            return
         self._last_x, self._last_y = self._xy()
         self._press_x, self._press_y = self._last_x, self._last_y
         self._left_held = True
@@ -584,6 +603,10 @@ class Viewport3D(QWidget):
 
     def _on_left_release(self, obj, ev) -> None:
         self._left_held = False
+        if self._picking_suspended:
+            self._mode = "idle"
+            self._click_start = False
+            return
         if self._rubber_active:
             # Drag con banda activa: resolver por rectangulo, no pick puntual.
             self._finish_rubber_band()
@@ -728,6 +751,22 @@ class Viewport3D(QWidget):
         colormap: str = "jet",
     ) -> None:
         self.scene.set_density_field(nodes, elements, densities, colormap=colormap)
+        self.renderer.render()
+
+    # ------------------------------------------------------------------ #
+    # Animación modal (Fase 4.5d.5): delegación fina a Scene.
+    # ------------------------------------------------------------------ #
+    def begin_mode_animation(self) -> tuple[bool, str]:
+        return self.scene.begin_mode_animation()
+
+    def apply_mode_displacement(self, displacement: np.ndarray) -> None:
+        self.scene.apply_mode_displacement(displacement)
+
+    def end_mode_animation(self) -> None:
+        self.scene.end_mode_animation()
+
+    def set_kind_visible(self, kind: str, visible: bool) -> None:
+        self.scene.set_kind_visible(kind, visible)
         self.renderer.render()
 
     def finalize(self) -> None:

@@ -358,6 +358,53 @@ class PipelineController:
         except ThermalError as exc:
             raise PipelineError(f"Carga térmica inválida: {exc}")
 
+    def resolve_thermal_kwargs(self, thermal_study_id) -> Dict[str, Any]:
+        """Resuelve el acoplamiento térmico desde un estudio Thermal resuelto.
+
+        Fase 4.5d.4: la UI solo ofrece estudios con status COMPLETED, pero la
+        validación se repite aquí (fail-loud): tipo thermal, COMPLETED,
+        ``result.data["temperatures"]`` presente y con un valor por nodo de
+        la malla ACTUAL. Sin α explícito se usa ``thermal_expansion`` del
+        material activo; sin ninguno → PipelineError.
+        """
+        from core.cae_studies import StudyStatus
+
+        sid = str(thermal_study_id or "").strip()
+        if not sid:
+            raise PipelineError("thermal_study_id vacío.")
+        study = self._studies.get(sid)
+        if study is None:
+            raise PipelineError(f"Estudio térmico desconocido: {sid!r}.")
+        if getattr(study, "study_type", None) is None or study.study_type.value != "thermal":
+            raise PipelineError(f"El estudio {sid!r} no es térmico.")
+        if study.status != StudyStatus.COMPLETED:
+            raise PipelineError(
+                f"Estudio térmico {sid!r} en estado {study.status!r} (requerido 'completed').")
+        data = getattr(getattr(study, "result", None), "data", None) or {}
+        temps = data.get("temperatures")
+        if temps is None:
+            raise PipelineError(f"El estudio térmico {sid!r} no trae 'temperatures'.")
+        temps = np.asarray(temps, dtype=float).ravel()
+        n_nodes = int(np.asarray(self.mesh_nodes).shape[0])
+        if temps.shape[0] != n_nodes:
+            raise PipelineError(
+                f"Campo térmico ({temps.shape[0]}) incompatible con la malla "
+                f"actual ({n_nodes} nodos): re-ejecute el estudio térmico.")
+        alpha = getattr(study, "thermal_alpha_override", None)
+        if alpha is None:
+            alpha = getattr(self.material(), "thermal_expansion", None)
+        if alpha is None:
+            raise PipelineError(
+                "Acoplamiento térmico sin α: fije α en el panel o asigne "
+                "thermal_expansion al material.")
+        return {
+            "thermal_temperatures": temps,
+            "thermal_alpha": float(alpha),
+            "thermal_reference_temperature": float(
+                getattr(study, "thermal_reference_temperature_override",
+                        293.15) or 293.15),
+        }
+
     def _load_case_vectors(self, nodes: np.ndarray, num_dofs: int):
         """MULTICARGA legacy: un vector por entrada de ``self.forces``.
 
@@ -1454,6 +1501,14 @@ class PipelineController:
                 p = study.optimization_params
                 conditions = study.consume_conditions(self.conditions) \
                     if study.conditions else None
+                # Fase 4.5d.4: acoplamiento térmico opt-in del estudio.
+                thermal_kwargs: Dict[str, Any] = {}
+                if getattr(study, "thermal_study_id", None):
+                    thermal_kwargs = self.resolve_thermal_kwargs(study.thermal_study_id)
+                    if getattr(study, "thermal_alpha", None) is not None:
+                        thermal_kwargs["thermal_alpha"] = float(study.thermal_alpha)
+                    thermal_kwargs["thermal_reference_temperature"] = float(
+                        getattr(study, "thermal_reference_temperature", 293.15) or 293.15)
                 result = self.run_optimization(
                     volume_fraction=p.volume_fraction,
                     max_iterations=p.max_iterations,
@@ -1463,6 +1518,7 @@ class PipelineController:
                     progress_cb=progress_cb,
                     conditions=conditions,
                     halo_radius=None,  # enabled: solver computes from mesh
+                    **thermal_kwargs,
                 )
                 study.status = StudyStatus.COMPLETED
                 sr = StudyResult(success=True, status="completed", data=result)

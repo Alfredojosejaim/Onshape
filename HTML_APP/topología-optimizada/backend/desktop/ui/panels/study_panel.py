@@ -47,9 +47,11 @@ class StudyPanel(QDialog):
         parts: Optional[List[CadEntityRef]] = None,
         model_id: Optional[str] = None,
         get_solid_selections: Optional[Any] = None,
+        thermal_studies: Optional[List[tuple]] = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Estudio de optimización")
+        self._thermal_studies = list(thermal_studies or [])
         self.setMinimumWidth(460)
         self._conditions = condition_manager
         self._condition_ids = list(condition_ids or [])
@@ -158,6 +160,25 @@ class StudyPanel(QDialog):
         self._thermal_note.setWordWrap(True)
         root.addWidget(self._thermal_note)
 
+        # --- Fase 4.5d.4: acoplamiento térmico opt-in (solo topology) ---
+        from PySide6.QtWidgets import QCheckBox
+        self._thermal_enable = QCheckBox("Acoplar temperaturas de un estudio térmico resuelto")
+        self._thermal_enable.setChecked(False)
+        self._thermal_study = QComboBox()
+        for sid, name in self._thermal_studies:
+            self._thermal_study.addItem(str(name), str(sid))
+        has_thermal = bool(self._thermal_studies)
+        self._thermal_enable.setEnabled(has_thermal)
+        self._thermal_study.setEnabled(False)
+        if not has_thermal:
+            self._thermal_enable.setToolTip(
+                "Sin estudio térmico resuelto: ejecute un estudio Thermal primero.")
+        self._thermal_enable.toggled.connect(
+            lambda checked: self._thermal_study.setEnabled(
+                checked and self._thermal_study.count() > 0))
+        root.addWidget(self._thermal_enable)
+        root.addWidget(self._thermal_study)
+
         # --- Conditions ---
         root.addWidget(QLabel("Condiciones reutilizables (carga / soporte / obstrucción):"))
 
@@ -201,6 +222,8 @@ class StudyPanel(QDialog):
         for w in (self._modal_modes, self._modal_fmin, self._modal_fmax):
             w.setEnabled(is_modal)
         self._thermal_note.setVisible(is_thermal)
+        for w in (self._thermal_enable, self._thermal_study):
+            w.setVisible(is_topo)
         self._refresh_parts_list()
 
     def _refresh_parts_list(self) -> None:
@@ -301,6 +324,8 @@ class StudyPanel(QDialog):
                 return
             study = TopologyOptimizationStudy(name=self._name.text().strip() or "Estudio")
             study.model_id = self._model_id
+            if self._thermal_enable.isChecked() and self._thermal_enable.isEnabled():
+                study.thermal_study_id = self._thermal_study.currentData()
             study.optimization_params.volume_fraction = float(self._volfrac.value())
             study.optimization_params.max_iterations = int(self._max_iter.value())
             study.optimization_params.penalization = float(self._penal.value())

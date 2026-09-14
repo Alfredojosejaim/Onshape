@@ -6,7 +6,9 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QScrollArea, QTextEdit,
+    QComboBox, QPushButton, QHBoxLayout,
 )
+from PySide6.QtCore import Signal
 
 from desktop.ui.style import PALETTE
 
@@ -25,6 +27,9 @@ def _value_label() -> QLabel:
 
 
 class ResultsPanel(QWidget):
+    playAnimation = Signal()
+    pauseAnimation = Signal()
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         root = QVBoxLayout(self)
@@ -85,6 +90,35 @@ class ResultsPanel(QWidget):
             "font-family: Consolas, monospace; font-size: 11px;"
         )
         col.addWidget(self._log)
+
+        # ---- Animación modal (Fase 4.5d.5: solo estudio Modal corrido) ----
+        self._anim_section = QWidget()
+        anim = QVBoxLayout(self._anim_section)
+        anim.setContentsMargins(0, 0, 0, 0)
+        anim.setSpacing(6)
+        anim.addWidget(_section_title("Animación modal"))
+        self._mode_combo = QComboBox()
+        self._mode_combo.setToolTip("Modo propio a animar")
+        anim.addWidget(self._mode_combo)
+        row = QHBoxLayout()
+        self._btn_play = QPushButton("▶ Animar")
+        self._btn_play.setToolTip(
+            "Anima la malla FEA (picking deshabilitado mientras anima).")
+        self._btn_play.clicked.connect(self._on_play_pause)
+        row.addWidget(self._btn_play)
+        self._speed_combo = QComboBox()
+        self._speed_combo.addItems(["0.5×", "1×", "2×"])
+        self._speed_combo.setCurrentIndex(1)
+        self._speed_combo.setToolTip("Velocidad de reproducción")
+        row.addWidget(self._speed_combo)
+        anim.addLayout(row)
+        self._anim_status = QLabel("")
+        self._anim_status.setWordWrap(True)
+        self._anim_status.setStyleSheet("font-size: 11px;")
+        anim.addWidget(self._anim_status)
+        col.addWidget(self._anim_section)
+        self._anim_section.setVisible(False)
+        self._playing = False
         col.addStretch(1)
 
     # ------------------------------------------------------------------ #
@@ -128,3 +162,43 @@ class ResultsPanel(QWidget):
         self._compliance.setText("—")
         self._conv.setText("—")
         self._log.clear()
+        self.clear_modal_modes()
+
+    # ---- Animación modal (Fase 4.5d.5) ----
+    def set_modal_modes(self, labels: list) -> None:
+        """Muestra la sección con un label por modo ("Modo 1 — 42.3 Hz")."""
+        self._mode_combo.clear()
+        for i, lab in enumerate(labels):
+            self._mode_combo.addItem(str(lab), i)
+        self._playing = False
+        self._btn_play.setText("▶ Animar")
+        self._anim_status.setText("")
+        self._anim_section.setVisible(bool(labels))
+
+    def clear_modal_modes(self) -> None:
+        self._mode_combo.clear()
+        self._playing = False
+        self._btn_play.setText("▶ Animar")
+        self._anim_status.setText("")
+        self._anim_section.setVisible(False)
+
+    def animation_mode_index(self) -> int:
+        data = self._mode_combo.currentData()
+        return int(data) if data is not None else 0
+
+    def animation_speed(self) -> float:
+        try:
+            return float(self._speed_combo.currentText().replace("×", ""))
+        except (TypeError, ValueError):
+            return 1.0
+
+    def set_animation_playing(self, playing: bool, message: str = "") -> None:
+        self._playing = bool(playing)
+        self._btn_play.setText("⏸ Pausar" if playing else "▶ Animar")
+        self._anim_status.setText(message)
+
+    def _on_play_pause(self) -> None:
+        if self._playing:
+            self.pauseAnimation.emit()
+        else:
+            self.playAnimation.emit()

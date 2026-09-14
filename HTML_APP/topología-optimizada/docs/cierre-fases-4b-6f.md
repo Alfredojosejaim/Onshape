@@ -116,3 +116,23 @@ rechazo explícito antes que fallback silencioso.
   toggle térmico (requiere estudio térmico resuelto) y botón animar-modo
   (requiere plumbing modal→panel).
 - **0.5**: confirm-gate anclado a fases de `plan.md` (ver `AGENTS.md`).
+
+## 12. Fase 4.5d.4–5 — toggle térmico + animar-modo en UI desktop (14-sep-2026)
+
+- **4.5d.4**: sección "Acoplamiento térmico" en `properties.py` (checkbox +
+  combo de Thermal COMPLETED + α manual/0=auto) y en `StudyPanel` (topology);
+  `controller.resolve_thermal_kwargs()` fail-loud (tipo/estado/campo/malla/α);
+  `TopologyOptimizationStudy.thermal_study_id/alpha/Tref` → `execute_study`;
+  quick-run valida en hilo UI antes del worker. Sin backend nuevo: el core y
+  `_simp_loop` ya procesaban `thermal_*` (vale para ambos motores).
+- **4.5d.5**: sección "Animación modal" en `results.py` (combo de modos +
+  ▶/⏸ + velocidad 0.5/1/2×), visible solo con Modal corrido; `MainWindow`
+  con QTimer (~120ms/velocidad), frames de `core.animate_mode_shape`
+  (base + desplazamiento, desktop directo — misma función que `api`).
+  Restricciones: (1) solo actor "mesh" (`begin` falla explícito sin malla;
+  densidad oculta durante, B-Rep nunca tocado; software viewport dice que
+  requiere GPU); (2) base guardada en `set_mesh`, `end` restaura exacto;
+  (3) picking suspendido + cursor ⊘ + mensajes; (4) QTimer, sin loops;
+  (5) parada en pausa/nuevo run/malla/import/cierre/reset (`_stop_animation_and_modal`;
+  caché modal validado por stamp de malla).
+- Tests `backend/tests/test_fase45d_ui.py` 7/7 (16/16 total con regresión).

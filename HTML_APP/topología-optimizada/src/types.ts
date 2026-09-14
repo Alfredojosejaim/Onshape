@@ -1,5 +1,10 @@
 export type ActiveTab = 'optimizacion' | 'analizis' | 'malla';
 
+// OPT-TYPE (reversible): tipo de optimización elegible en parámetros
+// (estructural SIMP vs generativa escenario A). Para volver atrás: quitar +
+// uso en App/RightPanel.
+export type OptimizationType = 'estructural' | 'generativa';
+
 export type ActiveTool =
   | 'seleccionar'
   | 'medir'
@@ -69,6 +74,15 @@ export interface BoundaryCondition {
   // Vacío = caso único (__single_...), comportamiento anterior.
   loadCaseId?: string;
   loadWeight?: number;
+  // LOAD-DIR2 (reversible): dirección paramétrica de la carga —
+  // mode (perpendicular/paralelo al plano), plane (xy/xz/yz), ángulo en el
+  // plano (°) y sentido (+1/-1). El vector se deriva como
+  // value = mag·dir y loadNormal = normal del plano. Para volver atrás:
+  // borrar + uso en ToolParamsPanel.
+  loadMode?: 'perpendicular' | 'paralelo';
+  loadPlane?: 'xy' | 'xz' | 'yz';
+  loadAngleDeg?: number;
+  loadSense?: 1 | -1;
   active: boolean;
   statusTag?: string;
   colorTag?: string;

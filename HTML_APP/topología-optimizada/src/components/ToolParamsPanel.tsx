@@ -338,23 +338,52 @@ function MeshRemeshParams({ busy, onApply }: { busy: boolean; onApply: (p: Recor
   );
 }
 
-// Editor del vector + direccion de carga (antes en el modal de edicion;// movido aqui para no tapar el viewport). Guarda en vivo sobre la condicion
+// Editor del vector + direccion de carga (antes en el modal de edicion;
+// movido aqui para no tapar el viewport). Guarda en vivo sobre la condicion
 // destino (la crea si aun no existe: queda inactiva hasta picar caras) y
 // reenvia al backend via onPushCondition.
-// LOAD-DIR (reversible): direccion = normal de referencia del core
-// (LoadCondition perpendicular + reference_plane_normal). Para volver atras:
-// quitar el select + loadNormal.
-type LoadDir = 'X' | 'Y' | 'Z';
-const LOAD_DIRS: Record<LoadDir, [number, number, number]> = {
-  X: [1, 0, 0],
-  Y: [0, 1, 0],
-  Z: [0, 0, 1],
+// LOAD-DIR2 (reversible): direccion parametrica = modo (perpendicular o
+// paralelo al plano) + plano (xy/xz/yz) + angulo en el plano (°) + sentido
+// (+/-). La flecha muestra la proyeccion en el plano y al pincharla invierte
+// el sentido. Para volver atras: restaurar el select Direccion (git).
+type LoadMode = 'perpendicular' | 'paralelo';
+type LoadPlane = 'xy' | 'xz' | 'yz';
+const PLANE_NORMAL: Record<LoadPlane, [number, number, number]> = {
+  xy: [0, 0, 1],
+  xz: [0, 1, 0],
+  yz: [1, 0, 0],
+};
+const PLANE_AXES: Record<LoadPlane, [[number, number, number], [number, number, number]]> = {
+  xy: [[1, 0, 0], [0, 1, 0]],
+  xz: [[1, 0, 0], [0, 0, 1]],
+  yz: [[0, 1, 0], [0, 0, 1]],
 };
 
-function dirFromNormal(n: [number, number, number] | undefined): LoadDir {
-  if (n && n[0] === 1 && n[1] === 0 && n[2] === 0) return 'X';
-  if (n && n[0] === 0 && n[1] === 1 && n[2] === 0) return 'Y';
-  return 'Z';
+// Vector unitario: paralelo = giro en el plano desde el 1er eje;
+// perpendicular = normal inclinada hacia el 1er eje por el angulo.
+function loadDirVector(mode: LoadMode, plane: LoadPlane, angleDeg: number, sense: 1 | -1): [number, number, number] {
+  const r = (Number.isFinite(angleDeg) ? angleDeg : 0) * Math.PI / 180;
+  const c = Math.cos(r) * sense;
+  const s = Math.sin(r) * sense;
+  const n = PLANE_NORMAL[plane];
+  const [a1, a2] = PLANE_AXES[plane];
+  const base = mode === 'paralelo' ? [a1, a2] : [n, a1];
+  const v: [number, number, number] = [
+    c * base[0][0] + s * base[1][0],
+    c * base[0][1] + s * base[1][1],
+    c * base[0][2] + s * base[1][2],
+  ];
+  const m = Math.hypot(v[0], v[1], v[2]) || 1;
+  return [v[0] / m, v[1] / m, v[2] / m];
+}
+
+// Angulo CSS de la flecha (proyeccion del vector en los ejes del plano).
+function loadArrowDeg(mode: LoadMode, plane: LoadPlane, angleDeg: number, sense: 1 | -1): number {
+  const d = loadDirVector(mode, plane, angleDeg, sense);
+  const [a1, a2] = PLANE_AXES[plane];
+  const sx = d[0] * a1[0] + d[1] * a1[1] + d[2] * a1[2];
+  const syUp = d[0] * a2[0] + d[1] * a2[1] + d[2] * a2[2];
+  return (Math.atan2(-syUp, sx) * 180) / Math.PI;
 }
 
 function CargaEditor({
@@ -368,54 +397,63 @@ function CargaEditor({
   onPushCondition: (c: BoundaryCondition) => void;
   onConfirmTool: () => void;
 }) {
-  const [fx, setFx] = useState('0');
-  const [fy, setFy] = useState('-4500');
-  const [fz, setFz] = useState('1200');
-  const [dir, setDir] = useState<LoadDir>('Z');
+  const [mag, setMag] = useState('4500');
+  const [unit, setUnit] = useState<'N' | 'kN'>('N');
+  const [mode, setMode] = useState<LoadMode>('perpendicular');
+  const [plane, setPlane] = useState<LoadPlane>('xy');
+  const [angle, setAngle] = useState('0');
+  const [sense, setSense] = useState<1 | -1>(1);
   // LOAD-CASE (reversible, Fase 1.3 plan.md): caso de carga + peso.
   const [caseId, setCaseId] = useState('');
   const [weight, setWeight] = useState('1');
 
   // Carga los valores guardados al abrir/cambiar de condicion.
   useEffect(() => {
-    const v = cond?.value;
-    if (v && v.length === 3) {
-      setFx(String(v[0]));
-      setFy(String(v[1]));
-      setFz(String(v[2]));
+    if (cond?.magnitude && Number.isFinite(cond.magnitude) && cond.magnitude > 0) {
+      setMag(String(Math.round(cond.magnitude)));
     }
-    setDir(dirFromNormal(cond?.loadNormal));
+    if (cond?.loadMode) setMode(cond.loadMode);
+    if (cond?.loadPlane) setPlane(cond.loadPlane);
+    if (cond?.loadAngleDeg !== undefined) setAngle(String(cond.loadAngleDeg));
+    if (cond?.loadSense) setSense(cond.loadSense);
     setCaseId(cond?.loadCaseId ?? '');
     setWeight(String(cond?.loadWeight ?? 1));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cond?.id]);
 
   const saveAll = (
-    sx: string, sy: string, sz: string, d: LoadDir, live: boolean,
+    magStr: string, u: 'N' | 'kN', m: LoadMode, pl: LoadPlane,
+    angStr: string, se: 1 | -1, live: boolean,
     caseOverride?: string, weightOverride?: string,
   ): BoundaryCondition | null => {
-    const nx = parseFloat(sx);
-    const ny = parseFloat(sy);
-    const nz = parseFloat(sz);
-    if (live && (!Number.isFinite(nx) || !Number.isFinite(ny) || !Number.isFinite(nz))) return null;
-    const vx = Number.isFinite(nx) ? nx : 0;
-    const vy = Number.isFinite(ny) ? ny : 0;
-    const vz = Number.isFinite(nz) ? nz : 0;
-    const mag = Math.hypot(vx, vy, vz);
+    const magRaw = parseFloat(magStr);
+    if (live && (!Number.isFinite(magRaw) || magRaw <= 0)) return null;
+    const magN = (Number.isFinite(magRaw) && magRaw > 0 ? magRaw : 0) * (u === 'kN' ? 1000 : 1);
+    const angRaw = parseFloat(angStr);
+    const ang = Number.isFinite(angRaw) ? Math.max(-180, Math.min(180, angRaw)) : 0;
+    const d = loadDirVector(m, pl, ang, se);
+    const vx = magN * d[0];
+    const vy = magN * d[1];
+    const vz = magN * d[2];
     const gid = (caseOverride ?? caseId).trim();
     const wRaw = parseFloat(weightOverride ?? weight);
     const w = Number.isFinite(wRaw) && wRaw > 0 ? wRaw : 1;
-    const details = `[${vx}, ${vy}, ${vz}] N · dir ${d}${gid ? ` · caso ${gid} ×${w}` : ''}`;
+    const sym = m === 'perpendicular' ? '⊥' : '∥';
+    const details = `[${vx.toFixed(0)}, ${vy.toFixed(0)}, ${vz.toFixed(0)}] N · ${sym}${pl.toUpperCase()} ${ang}° · ${se === 1 ? '+' : '−'}${gid ? ` · caso ${gid} ×${w}` : ''}`;
     const updated: BoundaryCondition = cond
-      ? { ...cond, value: [vx, vy, vz], magnitude: mag, details, loadNormal: LOAD_DIRS[d], loadCaseId: gid || undefined, loadWeight: w }
+      ? { ...cond, value: [vx, vy, vz], magnitude: magN, details, loadNormal: PLANE_NORMAL[pl], loadMode: m, loadPlane: pl, loadAngleDeg: ang, loadSense: se, loadCaseId: gid || undefined, loadWeight: w }
       : {
           id: 'faces_carga',
           name: 'Carga en caras',
           type: 'carga',
           details,
           value: [vx, vy, vz],
-          magnitude: mag,
-          loadNormal: LOAD_DIRS[d],
+          magnitude: magN,
+          loadNormal: PLANE_NORMAL[pl],
+          loadMode: m,
+          loadPlane: pl,
+          loadAngleDeg: ang,
+          loadSense: se,
           loadCaseId: gid || undefined,
           loadWeight: w,
           faces: 0,
@@ -428,76 +466,142 @@ function CargaEditor({
   };
 
   const confirm = () => {
-    saveAll(fx, fy, fz, dir, false);
+    saveAll(mag, unit, mode, plane, angle, sense, false);
     onConfirmTool();
   };
 
   const numCls =
-    'flex-1 bg-surface-elevated border border-border-subtle rounded px-2 py-1 text-text-primary font-mono text-[11px] outline-none focus:border-secondary/60';
+    'min-w-0 flex-1 bg-surface-elevated border border-border-subtle rounded px-2 py-1 text-text-primary font-mono text-[11px] outline-none focus:border-secondary/60';
+  const segOn =
+    'flex-1 min-w-0 truncate px-1.5 py-1 rounded text-[10px] font-semibold bg-secondary/15 text-secondary ring-1 ring-secondary/30 transition-colors';
+  const segOff =
+    'flex-1 min-w-0 truncate px-1.5 py-1 rounded text-[10px] text-text-secondary hover:bg-surface-elevated hover:text-text-primary transition-colors';
+  const arrowDeg = loadArrowDeg(mode, plane, parseFloat(angle) || 0, sense);
   return (
-    <div className="flex flex-col gap-2 font-mono text-[11px]">
-      <span className="text-text-muted">Vector fuerza [N]:</span>
-      {(
-        [
-          ['Fx', fx, setFx, 'text-fea-stress-critical'],
-          ['Fy', fy, setFy, 'text-fea-stress-optimal'],
-          ['Fz', fz, setFz, 'text-secondary'],
-        ] as [string, string, React.Dispatch<React.SetStateAction<string>>, string][]
-      ).map(([label, val, setVal, color]) => (
-        <div key={label} className="flex items-center gap-2">
-          <span className={`${color} font-bold`}>{label}:</span>
-          <input
-            type="number"
-            value={val}
-            onChange={(e) => {
-              setVal(e.target.value);
-              const cur = { Fx: fx, Fy: fy, Fz: fz, [label]: e.target.value };
-              saveAll(cur.Fx, cur.Fy, cur.Fz, dir, true);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') confirm();
-            }}
-            className={numCls}
-          />
-        </div>
-      ))}
-      <div className="flex items-center gap-2">
-        <span className="text-text-muted">Dirección:</span>
-        <select
-          aria-label="Dirección de la carga"
-          value={dir}
+    <div className="flex flex-col gap-2 font-mono text-[11px] min-w-0">
+      {/* Valor + unidades */}
+      <div className="flex items-center gap-1.5 min-w-0">
+        <span className="text-text-muted shrink-0">Valor:</span>
+        <input
+          type="number"
+          aria-label="Valor de la carga"
+          min="0"
+          step="100"
+          value={mag}
           onChange={(e) => {
-            const d = e.target.value as LoadDir;
-            setDir(d);
-            saveAll(fx, fy, fz, d, false);
+            setMag(e.target.value);
+            saveAll(e.target.value, unit, mode, plane, angle, sense, true);
           }}
-          className="flex-1 bg-surface-elevated border border-border-subtle rounded px-2 py-1 text-text-primary text-[11px] outline-none focus:border-secondary/60"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') confirm();
+          }}
+          className={numCls}
+        />
+        <select
+          aria-label="Unidades de la carga"
+          value={unit}
+          onChange={(e) => {
+            const u = e.target.value as 'N' | 'kN';
+            setUnit(u);
+            saveAll(mag, u, mode, plane, angle, sense, false);
+          }}
+          className="shrink-0 w-[60px] bg-surface-elevated border border-border-subtle rounded px-1 py-1 text-text-primary text-[11px] outline-none focus:border-secondary/60"
         >
-          <option value="Z">Perpendicular Z (defecto)</option>
-          <option value="X">Eje X</option>
-          <option value="Y">Eje Y</option>
+          <option value="N">N</option>
+          <option value="kN">kN</option>
         </select>
       </div>
-      <div className="bg-surface-elevated/40 p-1.5 rounded border border-border-subtle/30">
+      {/* Modo: perpendicular / paralelo */}
+      <div className="flex items-center gap-1 min-w-0" role="group" aria-label="Modo de dirección">
+        {(['perpendicular', 'paralelo'] as LoadMode[]).map((m) => (
+          <button
+            key={m}
+            type="button"
+            title={m === 'perpendicular' ? 'Perpendicular al plano' : 'Paralelo al plano'}
+            onClick={() => {
+              setMode(m);
+              saveAll(mag, unit, m, plane, angle, sense, false);
+            }}
+            className={m === mode ? segOn : segOff}
+          >
+            {m === 'perpendicular' ? '⊥ Perpend.' : '∥ Paralelo'}
+          </button>
+        ))}
+      </div>
+      {/* Plano + angulo + flecha de sentido */}
+      <div className="flex items-center gap-1 min-w-0">
+        <div className="flex items-center gap-1 flex-1 min-w-0" role="group" aria-label="Plano">
+          {(['xy', 'xz', 'yz'] as LoadPlane[]).map((pl) => (
+            <button
+              key={pl}
+              type="button"
+              title={`Plano ${pl.toUpperCase()}`}
+              onClick={() => {
+                setPlane(pl);
+                saveAll(mag, unit, mode, pl, angle, sense, false);
+              }}
+              className={pl === plane ? segOn : segOff}
+            >
+              {pl.toUpperCase()}
+            </button>
+          ))}
+        </div>
+        <input
+          type="number"
+          aria-label="Ángulo en el plano (grados)"
+          title="Ángulo en el plano (°)"
+          min="-180"
+          max="180"
+          step="5"
+          value={angle}
+          onChange={(e) => {
+            setAngle(e.target.value);
+            saveAll(mag, unit, mode, plane, e.target.value, sense, true);
+          }}
+          className="shrink-0 w-14 bg-surface-elevated border border-border-subtle rounded px-1.5 py-1 text-text-primary font-mono text-[11px] outline-none focus:border-secondary/60"
+        />
+        <span className="text-text-muted shrink-0">°</span>
+        <button
+          type="button"
+          onClick={() => {
+            const ns = (sense === 1 ? -1 : 1) as 1 | -1;
+            setSense(ns);
+            saveAll(mag, unit, mode, plane, angle, ns, false);
+          }}
+          title={`Sentido ${sense === 1 ? '+' : '−'} — pinchar invierte la carga`}
+          aria-label="Invertir sentido de la carga"
+          className="shrink-0 w-9 h-7 flex items-center justify-center rounded bg-surface-elevated border border-border-subtle hover:border-secondary/60 text-secondary transition-colors active:scale-95"
+        >
+          <svg viewBox="0 0 24 24" className="w-5 h-5" style={{ transform: `rotate(${arrowDeg}deg)` }}>
+            <line x1="4" y1="12" x2="16.5" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            <polyline points="12.5,7.5 17,12 12.5,16.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+      </div>
+      <div className="flex items-center gap-1.5 min-w-0 text-[10px]">
+        <span className="text-text-muted shrink-0">Vector:</span>
+        <span className="truncate text-secondary" title={cond?.details ?? ''}>{cond?.details ?? '—'}</span>
+      </div>
+      <div className="bg-surface-elevated/40 p-1.5 rounded border border-border-subtle/30 min-w-0">
         <span className="text-text-muted block text-[9px]">Caras asignadas:</span>
         <span className="text-secondary text-[10px] break-all">{facesText(cond)}</span>
       </div>
       {/* LOAD-CASE (reversible, Fase 1.3): caso + peso multicarga.
           Vacío = caso único (comportamiento anterior). */}
-      <div className="flex items-center gap-2">
-        <span className="text-text-muted">Caso:</span>
+      <div className="flex items-center gap-1.5 min-w-0">
+        <span className="text-text-muted shrink-0">Caso:</span>
         <input
           type="text"
           aria-label="Caso de carga"
-          placeholder="vacío = único"
+          placeholder="único"
           value={caseId}
           onChange={(e) => {
             setCaseId(e.target.value);
-            saveAll(fx, fy, fz, dir, false, e.target.value, weight);
+            saveAll(mag, unit, mode, plane, angle, sense, false, e.target.value, weight);
           }}
           className={numCls}
         />
-        <span className="text-text-muted">Peso:</span>
+        <span className="text-text-muted shrink-0">×</span>
         <input
           type="number"
           aria-label="Peso del caso de carga"
@@ -506,9 +610,9 @@ function CargaEditor({
           value={weight}
           onChange={(e) => {
             setWeight(e.target.value);
-            saveAll(fx, fy, fz, dir, true, caseId, e.target.value);
+            saveAll(mag, unit, mode, plane, angle, sense, true, caseId, e.target.value);
           }}
-          className="w-16 bg-surface-elevated border border-border-subtle rounded px-2 py-1 text-text-primary font-mono text-[11px] outline-none focus:border-secondary/60"
+          className="shrink-0 w-14 bg-surface-elevated border border-border-subtle rounded px-1.5 py-1 text-text-primary font-mono text-[11px] outline-none focus:border-secondary/60"
         />
       </div>
       <button

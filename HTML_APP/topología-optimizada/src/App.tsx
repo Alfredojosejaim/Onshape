@@ -14,6 +14,7 @@ import {
   MeshOpResult,
   MeshToolAction,
   OptimizationState,
+  OptimizationType,
   SimpParameters,
   ViewBody,
 } from './types';import { MATERIALS } from './data/materials';
@@ -250,6 +251,12 @@ export default function App() {
     tolerance: 0.001,
     maxIterations: 100,
   });
+  // OPT-TYPE (reversible): estructural (SIMP) vs generativa (escenario A).
+  const [optType, setOptType] = useState<OptimizationType>('estructural');
+  // OPT-NOTICE (reversible): aviso visible de pre-vuelo/errores de
+  // optimización (antes fallaba en silencio: sin malla quedaba en
+  // "Pausar" sin correr nada). null = sin aviso.
+  const [optNotice, setOptNotice] = useState<string | null>(null);
 
   // Optimization Runtime State
   // UI-CLEAN (reversible): masa 0 sin modelo real.
@@ -413,8 +420,8 @@ export default function App() {
   const [meshFormat, setMeshFormat] = useState<string | null>(null);
   // MALLA-IMPORT-END
   const snapRef = useRef<ApiSnapshot | null>(null);
-  const stateRef = useRef({ boundaryConditions, selectedMaterial, simpParams, currentModel, activeTool });
-  stateRef.current = { boundaryConditions, selectedMaterial, simpParams, currentModel, activeTool };
+  const stateRef = useRef({ boundaryConditions, selectedMaterial, simpParams, currentModel, activeTool, optType });
+  stateRef.current = { boundaryConditions, selectedMaterial, simpParams, currentModel, activeTool, optType };
 
   const applySnapshotToModel = (snap: ApiSnapshot, filename: string, displayName: string) => {
     snapRef.current = snap;
@@ -552,6 +559,7 @@ export default function App() {
     if (simpPoll.error && simpJobId) {
       setSimpJobId(null);
       setOptimizationState((prev) => ({ ...prev, isRunning: false }));
+      setOptNotice(`La optimización terminó con error: ${simpPoll.error}`);
     }
   }, [simpPoll.error, simpJobId]);
 
@@ -576,6 +584,7 @@ export default function App() {
   const timerRef = useRef<number | null>(null);
 
   const startOptimization = () => {
+    setOptNotice(null);
     // Sin bridge: simulacion local de siempre.
     if (!backend.hasBridge()) {
       setOptimizationState((prev) => ({
@@ -585,8 +594,22 @@ export default function App() {
       }));
       return;
     }
-    // Con bridge: SIMP real del core en background (requiere malla).
-    if (!snapRef.current?.has_mesh || simpJobId) return;
+    // OPT-PREFLIGHT (reversible): con bridge, validar ANTES de marcar
+    // isRunning (antes quedaba en "Pausar" sin correr nada y sin mensaje).
+    if (!snapRef.current?.has_mesh) {
+      setOptNotice('Sin malla: genera la malla primero (pestaña Malla → Volumétrica o Remallar).');
+      return;
+    }
+    if (simpJobId) return;
+    const bcs = stateRef.current.boundaryConditions;
+    if (!bcs.some((c) => c.type === 'carga' && c.active)) {
+      setOptNotice('Sin carga activa: abre Carga en la barra, pica caras y Acepta.');
+      return;
+    }
+    if (!bcs.some((c) => c.type === 'fijacion' && c.active)) {
+      setOptNotice('Sin fijación activa: abre Fijación en la barra, pica caras y Acepta.');
+      return;
+    }
     setOptimizationState((prev) => ({
       ...prev,
       isRunning: true,
@@ -597,20 +620,35 @@ export default function App() {
       await pushBoundaries();
       const st = stateRef.current;
       try {
-        const r = await backend.runOptimization({
-          volume_fraction: st.simpParams.volfrac,
-          max_iterations: st.simpParams.maxIterations,
-          penalization: st.simpParams.penalization,
-          filter_radius: st.simpParams.filterRadius,
-          tolerance: st.simpParams.tolerance,
-        });
+        // OPT-TYPE (reversible): generativa = escenario A (pieza existente)
+        // con los mismos parámetros SIMP; el job se sondea igual.
+        const r = st.optType === 'generativa'
+          ? await backend.runGenerativeDesign({
+              scenario: 'A',
+              volume_fraction: st.simpParams.volfrac,
+              max_iterations: st.simpParams.maxIterations,
+              penalization: st.simpParams.penalization,
+              filter_radius: st.simpParams.filterRadius,
+              convergence_tolerance: st.simpParams.tolerance,
+            })
+          : await backend.runOptimization({
+              volume_fraction: st.simpParams.volfrac,
+              max_iterations: st.simpParams.maxIterations,
+              penalization: st.simpParams.penalization,
+              filter_radius: st.simpParams.filterRadius,
+              tolerance: st.simpParams.tolerance,
+            });
         if (r.ok && r.jobId) {
           setSimpJobId(r.jobId);
         } else {
           setOptimizationState((prev) => ({ ...prev, isRunning: false }));
+          setOptNotice(typeof (r as { error?: unknown }).error === 'string'
+            ? String((r as { error?: unknown }).error)
+            : 'El backend rechazó la optimización (revisa malla y condiciones).');
         }
       } catch {
         setOptimizationState((prev) => ({ ...prev, isRunning: false }));
+        setOptNotice('Error de comunicación con el backend.');
       }
     })();
   };
@@ -1093,6 +1131,17 @@ export default function App() {
 
       {/* 4. MAIN ENGINEERING STAGE */}
       <div className="pt-[146px] pb-7 flex-1 w-full flex flex-col bg-viewport-bg">
+        {/* OPT-NOTICE (reversible): aviso de pre-vuelo/errores. */}
+        {optNotice && (
+          <div className="mx-space-sm mt-space-sm flex items-center gap-2 rounded-lg border border-fea-stress-yield/50 bg-fea-stress-yield/10 px-3 py-2 text-[11px] text-text-primary" role="alert">
+            <span className="material-symbols-outlined text-[16px] text-fea-stress-yield shrink-0">warning</span>
+            <span className="flex-1 min-w-0">{optNotice}</span>
+            <button type="button" onClick={() => setOptNotice(null)} aria-label="Cerrar aviso"
+              className="shrink-0 rounded hover:bg-surface-elevated px-1 text-text-secondary hover:text-text-primary">
+              <span className="material-symbols-outlined text-[16px]">close</span>
+            </button>
+          </div>
+        )}
         <div className="w-full flex-1 flex flex-col xl:flex-row gap-space-sm p-space-sm bg-viewport-bg min-h-[calc(100dvh-8.5rem)]">
           {/* EXT-RAIL (reversible): riel delgado entre el marco y el arbol.
               Borrar esta linea para volver atras. */}
@@ -1187,6 +1236,8 @@ export default function App() {
             onSelectMaterial={handleSelectMaterial}
             simpParams={simpParams}
             onChangeSimpParams={setSimpParams}
+            optType={optType}
+            onChangeOptType={setOptType}
             optimizationState={optimizationState}
             onStartOptimization={startOptimization}
             onPauseOptimization={pauseOptimization}

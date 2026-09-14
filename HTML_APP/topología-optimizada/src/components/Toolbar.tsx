@@ -48,14 +48,14 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                 id={`tool-${t.tool}`}
                 type="button"
                 onClick={() => onSelectTool(t.tool)}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] transition-colors shadow-sm ${
+                className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] transition-colors shadow-sm ${
                   activeTool === t.tool
                     ? 'bg-surface-elevated text-secondary font-medium ring-1 ring-secondary/30'
                     : 'hover:bg-surface-elevated text-text-secondary hover:text-text-primary'
                 }`}
                 title={t.title}
               >
-                <span className="material-symbols-outlined text-[15px]">{t.icon}</span>
+                <span className="material-symbols-outlined text-[14px]">{t.icon}</span>
                 <span>{t.label}</span>
               </button>
             ))}
@@ -67,14 +67,14 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           id="tool-select"
           type="button"
           onClick={() => onSelectTool('seleccionar')}
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] transition-colors shadow-sm ${
+          className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] transition-colors shadow-sm ${
             activeTool === 'seleccionar'
               ? 'bg-surface-elevated text-secondary font-medium ring-1 ring-secondary/30'
               : 'hover:bg-surface-elevated text-text-secondary hover:text-text-primary'
           }`}
           title="Seleccionar entidad geométrica"
         >
-          <span className="material-symbols-outlined text-[15px]">near_me</span>
+          <span className="material-symbols-outlined text-[14px]">near_me</span>
           <span>Seleccionar</span>
         </button>
 
@@ -83,14 +83,14 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           id="tool-measure"
           type="button"
           onClick={() => onSelectTool('medir')}
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] transition-colors ${
+          className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] transition-colors ${
             activeTool === 'medir'
               ? 'bg-surface-elevated text-secondary font-medium ring-1 ring-secondary/30'
               : 'hover:bg-surface-elevated text-text-secondary hover:text-text-primary'
           }`}
           title="Medir cotas y distancias geométricas"
         >
-          <span className="material-symbols-outlined text-[15px]">straighten</span>
+          <span className="material-symbols-outlined text-[14px]">straighten</span>
           <span>Medir</span>
         </button>
 
@@ -101,14 +101,14 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           id="tool-load"
           type="button"
           onClick={() => onSelectTool('carga')}
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] transition-colors ${
+          className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] transition-colors ${
             activeTool === 'carga'
               ? 'bg-surface-elevated text-tertiary font-medium ring-1 ring-tertiary/30'
               : 'hover:bg-surface-elevated text-text-secondary hover:text-text-primary'
           }`}
           title="Definir cargas mecánicas (Fuerzas y presiones)"
         >
-          <span className="material-symbols-outlined text-[15px] text-tertiary">arrow_downward</span>
+          <span className="material-symbols-outlined text-[14px] text-tertiary">arrow_downward</span>
           <span>Carga</span>
         </button>
 
@@ -117,14 +117,14 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           id="tool-fixation"
           type="button"
           onClick={() => onSelectTool('fijacion')}
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] transition-colors ${
+          className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] transition-colors ${
             activeTool === 'fijacion'
               ? 'bg-surface-elevated text-secondary font-medium ring-1 ring-secondary/30'
               : 'hover:bg-surface-elevated text-text-secondary hover:text-text-primary'
           }`}
           title="Definir condiciones de apoyo y empotramientos"
         >
-          <span className="material-symbols-outlined text-[15px] text-secondary">anchor</span>
+          <span className="material-symbols-outlined text-[14px] text-secondary">anchor</span>
           <span>Fijación</span>
         </button>
 
@@ -133,14 +133,14 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           id="tool-preserved"
           type="button"
           onClick={() => onSelectTool('preservada')}
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] transition-colors ${
+          className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] transition-colors ${
             activeTool === 'preservada'
               ? 'bg-surface-elevated text-fea-stress-optimal font-medium ring-1 ring-fea-stress-optimal/30'
               : 'hover:bg-surface-elevated text-text-secondary hover:text-text-primary'
           }`}
           title="Región no diseñable preservada (ρ = 1.0)"
         >
-          <span className="material-symbols-outlined text-[15px] text-fea-stress-optimal">shield</span>
+          <span className="material-symbols-outlined text-[14px] text-fea-stress-optimal">shield</span>
           <span>Preservada</span>
         </button>
 
@@ -149,14 +149,14 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           id="tool-keepout"
           type="button"
           onClick={() => onSelectTool('keepout')}
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] transition-colors ${
+          className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] transition-colors ${
             activeTool === 'keepout'
               ? 'bg-surface-elevated text-fea-stress-critical font-medium ring-1 ring-fea-stress-critical/30'
               : 'hover:bg-surface-elevated text-text-secondary hover:text-text-primary'
           }`}
           title="Zona de obstáculo prohibida (ρ = 0.0)"
         >
-          <span className="material-symbols-outlined text-[15px] text-fea-stress-critical">block</span>
+          <span className="material-symbols-outlined text-[14px] text-fea-stress-critical">block</span>
           <span>Keep-out</span>
         </button>
 
@@ -167,14 +167,14 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           id="tool-mesh"
           type="button"
           onClick={onToggleMesh}
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] transition-colors ${
+          className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] transition-colors ${
             showMesh
               ? 'bg-secondary/15 text-secondary border border-secondary/30 font-medium'
               : 'hover:bg-surface-elevated text-text-secondary hover:text-text-primary'
           }`}
           title="Visualizar malla de tetraedros (Gmsh)"
         >
-          <span className="material-symbols-outlined text-[15px]">grid_on</span>
+          <span className="material-symbols-outlined text-[14px]">grid_on</span>
           <span>Malla Gmsh</span>
         </button>
 
@@ -183,14 +183,14 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           id="tool-section"
           type="button"
           onClick={onToggleSection}
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] transition-colors ${
+          className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] transition-colors ${
             showSection
               ? 'bg-secondary/15 text-secondary border border-secondary/30 font-medium'
               : 'hover:bg-surface-elevated text-text-secondary hover:text-text-primary'
           }`}
           title="Plano de corte interactivo de sección"
         >
-          <span className="material-symbols-outlined text-[15px]">cut</span>
+          <span className="material-symbols-outlined text-[14px]">cut</span>
           <span>Sección</span>
         </button>
 
@@ -203,14 +203,14 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           id="tool-remesh"
           type="button"
           onClick={() => onSelectTool('malla')}
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] transition-colors ${
+          className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] transition-colors ${
             activeTool === 'malla'
               ? 'bg-surface-elevated text-secondary font-medium ring-1 ring-secondary/30'
               : 'hover:bg-surface-elevated text-text-secondary hover:text-text-primary'
           }`}
           title="Remallar dominio CAD (Gmsh Tet4)"
         >
-          <span className="material-symbols-outlined text-[15px]">refresh</span>
+          <span className="material-symbols-outlined text-[14px]">refresh</span>
           <span>Remallar</span>
         </button>
         {/* REMESH-TOOL-END */}

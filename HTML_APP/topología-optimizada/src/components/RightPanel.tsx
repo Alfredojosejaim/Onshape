@@ -1,5 +1,5 @@
 import React from 'react';
-import { Material, SimpParameters, OptimizationState, ActiveTab, FeaResults, MeshOpResult } from '../types';
+import { Material, SimpParameters, OptimizationState, OptimizationType, ActiveTab, FeaResults, MeshOpResult } from '../types';
 // FASE3-START (reversible): FoS + comparativa. Para volver atrás: quitar
 // imports + usos <SafetyCard/> y <CompareTable/>.
 import { SafetyCard } from './SafetyCard';
@@ -18,6 +18,9 @@ interface RightPanelProps {
   onSelectMaterial: (m: Material) => void;
   simpParams: SimpParameters;
   onChangeSimpParams: (params: SimpParameters) => void;
+  // OPT-TYPE (reversible): estructural (SIMP) vs generativa (escenario A).
+  optType: OptimizationType;
+  onChangeOptType: (t: OptimizationType) => void;
   optimizationState: OptimizationState;
   onStartOptimization: () => void;
   onPauseOptimization: () => void;
@@ -39,6 +42,8 @@ export const RightPanel: React.FC<RightPanelProps> = ({
   onSelectMaterial,
   simpParams,
   onChangeSimpParams,
+  optType,
+  onChangeOptType,
   optimizationState,
   onStartOptimization,
   onPauseOptimization,
@@ -137,6 +142,28 @@ export const RightPanel: React.FC<RightPanelProps> = ({
           </header>
 
           <div className="flex flex-col gap-2 text-[11px]">
+            {/* OPT-TYPE (reversible): estructural vs generativa. */}
+            <div className="flex items-center gap-1 min-w-0" role="group" aria-label="Tipo de optimización">
+              {(['estructural', 'generativa'] as OptimizationType[]).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  title={t === 'estructural' ? 'Optimización estructural SIMP' : 'Optimización generativa (escenario A: pieza existente)'}
+                  onClick={() => onChangeOptType(t)}
+                  disabled={optimizationState.isRunning}
+                  className={`flex-1 min-w-0 truncate px-1.5 py-1 rounded text-[10px] font-semibold transition-colors disabled:opacity-50 ${
+                    optType === t
+                      ? 'bg-secondary/15 text-secondary ring-1 ring-secondary/30'
+                      : 'text-text-secondary hover:bg-surface-elevated hover:text-text-primary'
+                  }`}
+                >
+                  {t === 'estructural' ? 'Estructural' : 'Generativa'}
+                </button>
+              ))}
+              <span className="shrink-0 px-1.5 py-0.5 rounded bg-secondary/10 border border-secondary/30 text-secondary font-mono text-[10px] font-semibold tracking-wider">
+                {optType === 'estructural' ? 'SIMP' : 'GEN-A'}
+              </span>
+            </div>
             {/* Volume Fraction Slider */}
             <div className="flex flex-col gap-1 bg-surface-elevated/40 p-2 rounded border border-border-subtle/30">
               <div className="flex items-center justify-between font-mono text-[11px]">
@@ -267,7 +294,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({
                   <span>
                     {optimizationState.currentIteration > 0 && !optimizationState.isPaused
                       ? 'Reanudar Optimización'
-                      : 'Iniciar Optimización SIMP'}
+                      : optType === 'estructural' ? 'Iniciar Optimización SIMP' : 'Iniciar Diseño Generativo'}
                   </span>
                 </button>
               ) : (

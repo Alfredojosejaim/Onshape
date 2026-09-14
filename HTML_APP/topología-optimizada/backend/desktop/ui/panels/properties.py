@@ -83,7 +83,7 @@ class PropertiesPanel(QWidget):
         col.setContentsMargins(14, 12, 14, 14)
         col.setSpacing(10)
         scroll.setWidget(inner)
-        root.addWidget(scroll)
+        root.addWidget(scroll, 1)
 
         # ---- Progress / status (kept out of the scroll flow, pinned) ----
         self._progress = QProgressBar()

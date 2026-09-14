@@ -56,8 +56,7 @@ def test_tet10_conversion_and_hex8():
     assert r["compliance"] > 0
 
 
-def test_repair_and_supports():
-    from core.cad_reconstruction import repair_self_intersections, generate_supports
+def test_repair_and_supports():    from core.cad_reconstruction import repair_self_intersections, generate_supports
     sv = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], float)
     st = np.array([[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]])
     rep = repair_self_intersections(sv, st)
@@ -66,3 +65,25 @@ def test_repair_and_supports():
     nodes, els = np.asarray(s.nodes), np.asarray(s.elements)
     out = generate_supports(nodes, els, np.ones(len(els)))
     assert out["num_pillars"] >= 0 and "overhang" in out
+
+
+def test_explicit_load_direction():
+    """La direction explícita (UI paramétrica) manda sobre orientation."""
+    from core.conditions import condition_from_dict
+    from core.generative_engine import direction_vector
+    base = {'type': 'load', 'name': 'L', 'faces': {'name': 'f', 'entities': [], 'mode': 'multi'},
+            'orientation': 'perpendicular', 'reference_plane_normal': [0, 0, 1],
+            'angle_deg': None, 'sense': 'positive', 'magnitude': 1000.0,
+            'indeterminate': False, 'unit': 'N', 'metadata': {}}
+    c_exp = condition_from_dict({**base, 'direction': [1, 0, 0]})
+    assert list(direction_vector(c_exp)) == pytest.approx([1, 0, 0])
+    # Roundtrip con direction.
+    c_rt = condition_from_dict(c_exp.to_dict())
+    assert list(direction_vector(c_rt)) == pytest.approx([1, 0, 0])
+    # Sin direction: modelo clásico.
+    c_old = condition_from_dict(base)
+    assert list(direction_vector(c_old)) == pytest.approx([0, 0, 1])
+    # Direction inválida: fail-loud al usarla, no silencio.
+    c_bad = condition_from_dict({**base, 'direction': [0, 0, 0]})
+    with pytest.raises(ValueError):
+        direction_vector(c_bad)

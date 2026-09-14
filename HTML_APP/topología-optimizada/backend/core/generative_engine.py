@@ -147,11 +147,19 @@ def consume_conditions(
 def direction_vector(cond: LoadCondition) -> np.ndarray:
     """Direction of a load depending on its plane orientation/sense/magnitude.
 
+    - Explicit ``cond.direction`` (unit, sense already baked by the sender,
+      e.g. the parametric web UI) has priority and is used as-is.
     - ``perpendicular``: along the reference plane normal;
     - ``parallel``: any axis orthogonal to the normal (in the plane);
     - ``angle``: the normal rotated by ``angle_deg`` towards the plane.
-    ``sense`` applies afterwards (positive keeps the direction, negative flips).
+    ``sense`` applies afterwards, EXCEPT with explicit direction (final).
     """
+    _exp = getattr(cond, "direction", None)
+    if _exp is not None:
+        v = np.asarray(_exp, dtype=float).ravel()
+        if v.shape[0] == 3 and np.isfinite(v).all() and float(np.linalg.norm(v)) > 1e-12:
+            return v / float(np.linalg.norm(v))
+        raise ValueError(f"LoadCondition.direction={_exp!r} inválida (unitaria, finita).")
     n = np.asarray(cond.reference_plane_normal, dtype=float)
     norm = float(np.linalg.norm(n))
     if norm < 1e-12:

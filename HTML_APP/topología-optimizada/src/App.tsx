@@ -255,8 +255,11 @@ export default function App() {
   const [optType, setOptType] = useState<OptimizationType>('estructural');
   // OPT-NOTICE (reversible): aviso visible de pre-vuelo/errores de
   // optimización (antes fallaba en silencio: sin malla quedaba en
-  // "Pausar" sin correr nada). null = sin aviso.
-  const [optNotice, setOptNotice] = useState<string | null>(null);
+  // "Pausar" sin correr nada). actionLabel/onAction lo hacen accionable
+  // (p. ej. "Generar malla ahora"). null = sin aviso.
+  const [optNotice, setOptNotice] = useState<{
+    text: string; actionLabel?: string; onAction?: () => void;
+  } | null>(null);
 
   // Optimization Runtime State
   // UI-CLEAN (reversible): masa 0 sin modelo real.
@@ -559,7 +562,7 @@ export default function App() {
     if (simpPoll.error && simpJobId) {
       setSimpJobId(null);
       setOptimizationState((prev) => ({ ...prev, isRunning: false }));
-      setOptNotice(`La optimización terminó con error: ${simpPoll.error}`);
+      setOptNotice({ text: `La optimización terminó con error: ${simpPoll.error}` });
     }
   }, [simpPoll.error, simpJobId]);
 
@@ -594,20 +597,42 @@ export default function App() {
       }));
       return;
     }
-    // OPT-PREFLIGHT (reversible): con bridge, validar ANTES de marcar
-    // isRunning (antes quedaba en "Pausar" sin correr nada y sin mensaje).
-    if (!snapRef.current?.has_mesh) {
-      setOptNotice('Sin malla: genera la malla primero (pestaña Malla → Volumétrica o Remallar).');
-      return;
-    }
-    if (simpJobId) return;
-    const bcs = stateRef.current.boundaryConditions;
-    if (!bcs.some((c) => c.type === 'carga' && c.active)) {
-      setOptNotice('Sin carga activa: abre Carga en la barra, pica caras y Acepta.');
+    void (async () => {
+      // OPT-REFRESH (reversible): re-leer el snapshot por si la malla se
+      // generó fuera de este flujo (evita falsos "sin malla" por caché).
+      if (!snapRef.current?.has_mesh) {
+        try {
+          const s = await backend.getSnapshot();
+          const snap = (s as unknown as { snapshot?: ApiSnapshot }).snapshot;
+          if (s.ok && snap) {
+            snapRef.current = snap;
+            setHasMesh(!!snap.has_mesh);
+          }
+        } catch {
+          /* se mantiene el aviso de abajo */
+        }
+      }
+      // OPT-PREFLIGHT (reversible): con bridge, validar ANTES de marcar
+      // isRunning (antes quedaba en "Pausar" sin correr nada y sin mensaje).
+      if (!snapRef.current?.has_mesh) {
+        setOptNotice({
+          text: 'Sin malla volumétrica: lo que ves es la superficie CAD, no la malla FEM. Genérala para poder optimizar.',
+          actionLabel: 'Generar malla ahora',
+          onAction: () => {
+            setOptNotice(null);
+            handleRemesh();
+          },
+        });
+        return;
+      }
+      if (simpJobId) return;
+      const bcs = stateRef.current.boundaryConditions;
+      if (!bcs.some((c) => c.type === 'carga' && c.active)) {
+      setOptNotice({ text: 'Sin carga activa: abre Carga en la barra, pica caras y Acepta.' });
       return;
     }
     if (!bcs.some((c) => c.type === 'fijacion' && c.active)) {
-      setOptNotice('Sin fijación activa: abre Fijación en la barra, pica caras y Acepta.');
+      setOptNotice({ text: 'Sin fijación activa: abre Fijación en la barra, pica caras y Acepta.' });
       return;
     }
     setOptimizationState((prev) => ({
@@ -616,7 +641,6 @@ export default function App() {
       isPaused: false,
       totalIterations: stateRef.current.simpParams.maxIterations,
     }));
-    void (async () => {
       await pushBoundaries();
       const st = stateRef.current;
       try {
@@ -642,13 +666,15 @@ export default function App() {
           setSimpJobId(r.jobId);
         } else {
           setOptimizationState((prev) => ({ ...prev, isRunning: false }));
-          setOptNotice(typeof (r as { error?: unknown }).error === 'string'
-            ? String((r as { error?: unknown }).error)
-            : 'El backend rechazó la optimización (revisa malla y condiciones).');
+          setOptNotice({
+            text: typeof (r as { error?: unknown }).error === 'string'
+              ? String((r as { error?: unknown }).error)
+              : 'El backend rechazó la optimización (revisa malla y condiciones).',
+          });
         }
       } catch {
         setOptimizationState((prev) => ({ ...prev, isRunning: false }));
-        setOptNotice('Error de comunicación con el backend.');
+        setOptNotice({ text: 'Error de comunicación con el backend.' });
       }
     })();
   };
@@ -764,9 +790,22 @@ export default function App() {
           setFeaJobId(null);
           // UI-CLEAN2 (reversible): remallado real genera la fila Malla.
           if (r.ok) setHasMesh(true);
+          // MESH-ERR (reversible): si el snapshot sigue sin malla, avisar
+          // (p. ej. modelo de superficie sin sólido para volumétrica).
+          if (!snap.has_mesh) {
+            setOptNotice({ text: 'La malla no quedó registrada: el modelo puede ser solo superficie (la volumétrica Tet4 requiere sólido STEP).' });
+          }
+        } else {
+          // MESH-ERR (reversible): antes este fallo era silencioso y el
+          // usuario solo veía "sin malla" al optimizar.
+          setOptNotice({
+            text: typeof (r as { error?: unknown }).error === 'string'
+              ? `No se pudo generar la malla: ${String((r as { error?: unknown }).error)}`
+              : 'No se pudo generar la malla (error del backend).',
+          });
         }
       } catch {
-        /* se conservan los datos anteriores */
+        setOptNotice({ text: 'No se pudo generar la malla (error de comunicación con el backend).' });
       } finally {
         setIsRemeshing(false);
         setShowMesh(true);
@@ -1135,7 +1174,13 @@ export default function App() {
         {optNotice && (
           <div className="mx-space-sm mt-space-sm flex items-center gap-2 rounded-lg border border-fea-stress-yield/50 bg-fea-stress-yield/10 px-3 py-2 text-[11px] text-text-primary" role="alert">
             <span className="material-symbols-outlined text-[16px] text-fea-stress-yield shrink-0">warning</span>
-            <span className="flex-1 min-w-0">{optNotice}</span>
+            <span className="flex-1 min-w-0">{optNotice.text}</span>
+            {optNotice.actionLabel && optNotice.onAction && (
+              <button type="button" onClick={optNotice.onAction}
+                className="shrink-0 rounded bg-secondary/15 border border-secondary/40 px-2 py-1 font-semibold text-secondary hover:bg-secondary hover:text-on-primary transition-colors">
+                {optNotice.actionLabel}
+              </button>
+            )}
             <button type="button" onClick={() => setOptNotice(null)} aria-label="Cerrar aviso"
               className="shrink-0 rounded hover:bg-surface-elevated px-1 text-text-secondary hover:text-text-primary">
               <span className="material-symbols-outlined text-[16px]">close</span>

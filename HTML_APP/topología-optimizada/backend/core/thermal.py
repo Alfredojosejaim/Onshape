@@ -294,6 +294,64 @@ def solve_steady_thermal(
 
 
 # ---------------------------------------------------------------------- #
+# Fase 6d — Acoplamiento térmico-estructural (one-way, explícito)
+# ---------------------------------------------------------------------- #
+def thermal_load_vector(
+    nodes: np.ndarray,
+    elements: np.ndarray,
+    young_modulus: float,
+    poisson_ratio: float,
+    thermal_expansion: float,
+    temperatures: np.ndarray,
+    reference_temperature: float = 293.15,
+) -> np.ndarray:
+    """Fuerzas nodales equivalentes a dilatación térmica (one-way coupling).
+
+    ``f_e = V_e · B_eᵀ · D · ε_th,e`` con
+    ``ε_th,e = α·(T̄_e − T_ref)·[1,1,1,0,0,0]`` (T̄_e = media nodal del
+    tetraedro). El vector resultante se SUMA al de cargas mecánicas en el
+    solver (mismo caso de carga: actuación simultánea).
+
+    Raises:
+        ThermalError: ante α inválido, temperaturas inconsistentes con la
+            malla o T_ref no finita. Nunca devuelve un vector nulo
+            silencioso ante entradas malformadas.
+    """
+    from core.fea import _build_constitutive, _tet_volume_and_B  # local: sin ciclo
+
+    nodes = np.asarray(nodes, dtype=float)
+    elements = np.asarray(elements, dtype=int)
+    T = np.asarray(temperatures, dtype=float).ravel()
+    if T.shape[0] != nodes.shape[0]:
+        raise ThermalError(
+            f"temperatures ({T.shape[0]}) no coincide con nodos ({nodes.shape[0]}).")
+    if not np.all(np.isfinite(T)):
+        raise ThermalError("temperatures contiene valores no finitos.")
+    alpha = float(thermal_expansion)
+    if not np.isfinite(alpha) or alpha <= 0:
+        raise ThermalError(
+            f"thermal_expansion={thermal_expansion!r} inválido (requerido > 0).")
+    t_ref = float(reference_temperature)
+    if not np.isfinite(t_ref):
+        raise ThermalError(f"reference_temperature={reference_temperature!r} no finita.")
+    D = _build_constitutive(float(young_modulus), float(poisson_ratio))
+    n_dofs = int(nodes.shape[0] * 3)
+    F = np.zeros(n_dofs)
+    for e in range(elements.shape[0]):
+        con = elements[e]
+        vol, B = _tet_volume_and_B(nodes[con])
+        dT = float(np.mean(T[con]) - t_ref)
+        if dT == 0.0:
+            continue
+        eps_th = np.array([alpha * dT] * 3 + [0.0] * 3)
+        fe = vol * (B.T @ (D @ eps_th))
+        base = con * 3
+        for a in range(4):
+            F[base[a]: base[a] + 3] += fe[a * 3: a * 3 + 3]
+    return F
+
+
+# ---------------------------------------------------------------------- #
 # Study bridge: ThermalBoundary list -> solver inputs
 # ---------------------------------------------------------------------- #
 def _boundary_node_ids(boundary) -> Optional[List[int]]:

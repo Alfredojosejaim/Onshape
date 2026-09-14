@@ -47,13 +47,16 @@ class PropertiesPanel(QWidget):
     # Fase 0 (higiene): solo opciones con motor real detrás.
     # - Objetivo: el solver solo acepta MINIMIZE_COMPLIANCE
     #   (topo_problem.py::problem_to_solver_inputs rechaza el resto).
-    # - Algoritmo: único optimizador implementado es SIMP/OC
-    #   (OptimizerType.SIMP; ESO/LEVEL_SET/MMA/GCMMA son enum sin motor).
+    # - Algoritmo: OC (SIMP), MMA propio (Fase 4), ESO hard-kill
+    #   (Fase 6a) y Level-Set HJ (Fase 6f). GCMMA sigue sin motor.
     _OBJECTIVES = [
         "Compliance mínima (SIMP)",
     ]
     _ALGORITHMS = [
         "SIMP (Optimality Criteria)",
+        "MMA (Moving Asymptotes)",
+        "ESO (Evolutionary)",
+        "Level-Set",
     ]
     _CONSTRAINT_TYPES = [
         ("Fija (Empotramiento)", "fixed"),
@@ -117,6 +120,14 @@ class PropertiesPanel(QWidget):
         self._algorithm = QComboBox()
         self._algorithm.addItems(self._ALGORITHMS)
         col.addWidget(self._algorithm)
+
+        col.addWidget(_field_label("Criterio ESO"))
+        self._eso_criterion = QComboBox()
+        self._eso_criterion.addItems([
+            "Compliance (energía de deformación)",
+            "Tensión (von Mises)",
+        ])
+        col.addWidget(self._eso_criterion)
 
         col.addWidget(_field_label("Penalización SIMP (p)"))
         self._penalization = QDoubleSpinBox()
@@ -268,6 +279,17 @@ class PropertiesPanel(QWidget):
     # Signals / interactions
     # ------------------------------------------------------------------ #
     def _on_run(self):
+        algo_text = self._algorithm.currentText().upper()
+        if "MMA" in algo_text:
+            optimizer = "mma"
+        elif "ESO" in algo_text:
+            optimizer = "eso"
+        elif "LEVEL" in algo_text:
+            optimizer = "level_set"
+        else:
+            optimizer = "oc"
+        crit_text = self._eso_criterion.currentText().upper()
+        eso_criterion = "stress" if "TENSI" in crit_text else "compliance"
         params = {
             "volume_fraction": self._volume.value() / 100.0,
             "max_iterations": self._iterations.value(),
@@ -275,6 +297,8 @@ class PropertiesPanel(QWidget):
             "filter_radius": self._filter.value(),
             "tolerance": 1e-3,
             "material": self._material.currentText(),
+            "optimizer": optimizer,
+            "eso_criterion": eso_criterion,
         }
         self.runOptimization.emit(params)
 

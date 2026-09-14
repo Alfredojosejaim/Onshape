@@ -635,6 +635,30 @@ class GenerativeDesignEngine:
             # Sin casos (p.ej. todo unsupported en modo permisivo): vector nulo
             # unico para no romper el contrato del solver.
             cases, weights = [forces], [1.0]
+        # Fase 6d: acoplamiento térmico one-way (misma actuación simultánea:
+        # el vector térmico se suma a cada caso mecánico).
+        if kwargs.get("thermal_temperatures") is not None:
+            from core.thermal import ThermalError, thermal_load_vector
+
+            _alpha = kwargs.get("thermal_alpha", None)
+            if _alpha is None:
+                _alpha = getattr(self.material, "thermal_expansion", None)
+            if _alpha is None:
+                raise ValueError(
+                    "Acoplamiento térmico sin α: pase thermal_alpha o asigne "
+                    "thermal_expansion al material.")
+            try:
+                _fth = thermal_load_vector(
+                    np.asarray(nodes, dtype=float),
+                    np.asarray(elements, dtype=int),
+                    self.material.young_modulus, self.material.poisson_ratio,
+                    float(_alpha),
+                    np.asarray(kwargs.get("thermal_temperatures"), dtype=float),
+                    reference_temperature=float(
+                        kwargs.get("thermal_reference_temperature", 293.15)))
+            except ThermalError as exc:
+                raise ValueError(f"Carga térmica inválida: {exc}")
+            cases = [np.asarray(c, dtype=float) + _fth for c in cases]
 
         solver = SIMPSolver(
             nodes=nodes,
@@ -648,6 +672,8 @@ class GenerativeDesignEngine:
         solver.set_loads(cases, weights)
         if fixed_dofs:
             solver.set_fixed_dofs(np.asarray(fixed_dofs, dtype=int))
+        if kwargs.get("symmetry_planes") is not None:
+            solver.set_symmetry_planes(kwargs.get("symmetry_planes"))
         if preserved.size:
             solver.set_preserved_elements(preserved)
         if void.size:
@@ -670,6 +696,7 @@ class GenerativeDesignEngine:
             tolerance=kwargs.get("tolerance", 1e-3),
             callback=progress_cb,
             optimizer=kwargs.get("optimizer", "oc"),
+            eso_criterion=kwargs.get("eso_criterion", "compliance"),
         )
         result["_consumed_load_conditions"] = len(conditions.get(ConditionType.LOAD, []))
         result["_consumed_elasticity_conditions"] = len(conditions.get(ConditionType.ELASTICITY, []))
@@ -699,6 +726,15 @@ def run_generative_design(
     # user-configured settings (volume fraction, iterations, penalization,
     # filter radius, tolerance) are honoured instead of fixed defaults.
     p = study.optimization_params
+    _opt = str(getattr(getattr(p, "optimizer", None), "value", "simp")).lower()
+    # Mapeo honesto OptimizerType -> solver (Fase 6a/6f): sin coerción
+    # silenciosa; GCMMA sigue sin motor y falla explícito.
+    _opt_map = {"simp": "oc", "oc": "oc", "mma": "mma", "eso": "eso",
+                "level_set": "level_set"}
+    if _opt not in _opt_map:
+        raise ValueError(
+            f"optimizer={_opt!r} sin motor implementado (usar 'simp', 'mma', 'eso' o 'level_set')."
+        )
     solve_kwargs = dict(
         volume_fraction=p.volume_fraction,
         max_iterations=p.max_iterations,
@@ -707,6 +743,7 @@ def run_generative_design(
         tolerance=p.convergence_tolerance,
         progress_cb=progress_cb,
         halo_radius=None,  # Solver computes from actual mesh element size
+        optimizer=_opt_map[_opt],
     )
 
     if study.scenario == "A":

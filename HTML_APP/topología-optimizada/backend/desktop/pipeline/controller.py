@@ -332,6 +332,32 @@ class PipelineController:
                 fixed_dofs.extend([ni * 3, ni * 3 + 1, ni * 3 + 2])
         return np.sort(np.unique(np.asarray(fixed_dofs, dtype=int)))
 
+    def _thermal_force_vector(self, nodes, elements, mat, temperatures,
+                              alpha, ref_T):
+        """Vector térmico one-way (Fase 6d) o None si no se pide.
+
+        ``temperatures`` None → None (sin acoplamiento). Si se da, α sale
+        de ``thermal_alpha`` o de ``material.thermal_expansion``; sin
+        ninguno → PipelineError explícito (nunca α=0 silencioso).
+        """
+        if temperatures is None:
+            return None
+        a = alpha if alpha is not None else getattr(mat, "thermal_expansion", None)
+        if a is None:
+            raise PipelineError(
+                "Acoplamiento térmico sin α: pase thermal_alpha o asigne "
+                "thermal_expansion al material.")
+        from core.thermal import ThermalError, thermal_load_vector
+        try:
+            return thermal_load_vector(
+                np.asarray(nodes, dtype=float),
+                np.asarray(elements, dtype=int),
+                mat.young_modulus, mat.poisson_ratio,
+                float(a), np.asarray(temperatures, dtype=float),
+                reference_temperature=float(ref_T))
+        except ThermalError as exc:
+            raise PipelineError(f"Carga térmica inválida: {exc}")
+
     def _load_case_vectors(self, nodes: np.ndarray, num_dofs: int):
         """MULTICARGA legacy: un vector por entrada de ``self.forces``.
 
@@ -681,6 +707,11 @@ class PipelineController:
         conditions=None,
         halo_radius: Optional[float] = None,
         optimizer: str = "oc",
+        eso_criterion: str = "compliance",
+        symmetry_planes=None,
+        thermal_temperatures=None,
+        thermal_alpha: Optional[float] = None,
+        thermal_reference_temperature: float = 293.15,
     ) -> Dict[str, Any]:
         """Run the self-contained SIMP topology optimisation.
 
@@ -690,14 +721,22 @@ class PipelineController:
         void elements, so the solve *consumes* the pre-created conditions
         instead of the bare ``self.forces`` / ``self.constraints`` arrays.
 
-        ``optimizer`` (Fase 4): "oc" (default histórico) o "mma" (Moving
-        Asymptotes propio, core/topopt.py). Otro valor → PipelineError.
+        ``optimizer`` (Fase 4/6a/6f): "oc" (default histórico), "mma", "eso"
+        o "level_set" (HJ). Otro valor → PipelineError.
+
+        ``thermal_temperatures`` (Fase 6d, one-way): campo nodal [K] que
+        genera cargas de dilatación sumadas a las mecánicas. Requiere α
+        (``thermal_alpha`` o ``material.thermal_expansion``).
         """
         if self.mesh is None:
             raise PipelineError("No hay malla. Genera la malla primero.")
-        if optimizer not in ("oc", "mma"):
+        if optimizer not in ("oc", "mma", "eso", "level_set"):
             raise PipelineError(
-                f"optimizer={optimizer!r} no soportado (usar 'oc' o 'mma')."
+                f"optimizer={optimizer!r} no soportado (usar 'oc', 'mma', 'eso' o 'level_set')."
+            )
+        if eso_criterion not in ("compliance", "stress"):
+            raise PipelineError(
+                f"eso_criterion={eso_criterion!r} no soportado (usar 'compliance' o 'stress')."
             )
         nodes, elements = self.mesh_nodes, self.mesh_elements
         mat = self.material()
@@ -726,6 +765,11 @@ class PipelineController:
                 progress_cb=progress_cb,
                 halo_radius=halo_radius,
                 optimizer=optimizer,
+                eso_criterion=eso_criterion,
+                symmetry_planes=symmetry_planes,
+                thermal_temperatures=thermal_temperatures,
+                thermal_alpha=thermal_alpha,
+                thermal_reference_temperature=thermal_reference_temperature,
             )
             self.result = g
             self.result_densities = np.asarray(g["densities"], dtype=float)
@@ -740,6 +784,10 @@ class PipelineController:
             self.set_simple_boundaries()
         force = self._apply_loads(nodes, int(nodes.shape[0] * 3))
         fixed = self._apply_constraints(nodes)
+        # Fase 6d: acoplamiento térmico one-way (misma actuación simultánea).
+        f_thermal = self._thermal_force_vector(
+            nodes, elements, mat, thermal_temperatures,
+            thermal_alpha, thermal_reference_temperature)
 
         solver = SIMPSolver(
             nodes=nodes,
@@ -752,6 +800,9 @@ class PipelineController:
         )
         # MULTICARGA: casos separados en vez del vector sumado.
         cases, weights = self._load_case_vectors(nodes, int(nodes.shape[0] * 3))
+        if f_thermal is not None:
+            force = force + f_thermal
+            cases = [c + f_thermal for c in cases]
         if len(cases) > 1:
             solver.set_loads(cases, weights)
         else:
@@ -762,8 +813,13 @@ class PipelineController:
                 list(set(self._load_nodes + self._bot_nodes)),
                 radius=float(halo_radius) if halo_radius > 0 else None,
             )
+        if symmetry_planes is not None:
+            try:
+                solver.set_symmetry_planes(symmetry_planes)
+            except Exception as exc:
+                raise PipelineError(f"symmetry_planes inválido: {exc}")
         try:
-            result = solver.optimize(max_iterations=max_iterations, tolerance=tolerance, callback=progress_cb, optimizer=optimizer)
+            result = solver.optimize(max_iterations=max_iterations, tolerance=tolerance, callback=progress_cb, optimizer=optimizer, eso_criterion=eso_criterion)
         except Exception as exc:
             logger.exception("Optimization failed")
             raise PipelineError(f"Optimización falló: {exc}")

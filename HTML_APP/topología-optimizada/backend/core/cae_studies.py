@@ -582,3 +582,65 @@ def study_snapshot(study, result=None) -> dict:
             except Exception:
                 continue
     return snap
+
+
+# ====================================================================== #
+# Fase 6e (plan.md): animación de modos — postproceso puro del eigenvector.
+# ====================================================================== #
+
+def animate_mode_shape(nodes, mode_shape, amplitude="auto", n_frames=16) -> dict:
+    """Fotogramas de animación de un modo propio (desplazamientos nodales).
+
+    ``frames[f] = amplitude · sin(2π·f/n_frames) · phi`` con ``phi`` el
+    eigenvector (N,3). ``amplitude="auto"`` escala al 5% de la diagonal
+    del bbox (regla explícita y documentada); un float fija [unidades] > 0.
+
+    Args:
+        nodes: (N,3) coordenadas.
+        mode_shape: (3N,) vector DOF completo o (N,3).
+        amplitude: "auto" o float > 0.
+        n_frames: entero en [2, 32].
+
+    Returns:
+        {"frames", "amplitude", "n_frames", "max_displacement"}.
+        Los fotogramas son desplazamientos (no posiciones absolutas): el
+        visor suma la base. Nunca interpola en silencio ante entradas
+        malformadas (ValueError explícito).
+    """
+    import numpy as np
+
+    xyz = np.asarray(nodes, dtype=float)
+    if xyz.ndim != 2 or xyz.shape[1] != 3 or xyz.shape[0] == 0:
+        raise ValueError(f"nodes debe ser (N,3) no vacío, got shape {xyz.shape}.")
+    phi = np.asarray(mode_shape, dtype=float)
+    n = xyz.shape[0]
+    if phi.shape == (3 * n,):
+        phi = phi.reshape(n, 3)
+    if phi.shape != (n, 3):
+        raise ValueError(
+            f"mode_shape debe ser (3N,) o (N,3) con N={n}, got shape {phi.shape}.")
+    if not np.all(np.isfinite(phi)):
+        raise ValueError("mode_shape contiene valores no finitos.")
+    peak = float(np.max(np.linalg.norm(phi, axis=1)))
+    if peak <= 0:
+        raise ValueError("mode_shape nulo: sin deformación que animar.")
+    nf = int(n_frames)
+    if not 2 <= nf <= 32:
+        raise ValueError(f"n_frames={n_frames!r} fuera de rango [2, 32].")
+    if isinstance(amplitude, str):
+        if amplitude != "auto":
+            raise ValueError(f"amplitude={amplitude!r}: usar 'auto' o float > 0.")
+        diag = float(np.linalg.norm(xyz.max(axis=0) - xyz.min(axis=0)))
+        amp = 0.05 * diag / peak
+    else:
+        amp = float(amplitude)
+        if not np.isfinite(amp) or amp <= 0:
+            raise ValueError(f"amplitude={amplitude!r} debe ser > 0.")
+    phases = 2.0 * np.pi * np.arange(nf) / float(nf)
+    frames = [(amp * np.sin(ph) * phi) for ph in phases]
+    return {
+        "frames": frames,
+        "amplitude": float(amp),
+        "n_frames": int(nf),
+        "max_displacement": float(amp * peak),
+    }

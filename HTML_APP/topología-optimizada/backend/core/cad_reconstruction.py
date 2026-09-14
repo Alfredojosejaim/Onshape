@@ -424,6 +424,765 @@ class MeshHoleFiller:
         )
 
 
+# ---------------------------------------------------------------------------
+# Fase 5a — Reparación básica + decimación (numpy-only, sin dependencias nuevas)
+# ---------------------------------------------------------------------------
+
+def mesh_quality_report(
+    vertices: np.ndarray,
+    triangles: np.ndarray,
+) -> Dict[str, Any]:
+    """Diagnóstico explícito de una malla triangular (no modifica nada).
+
+    Reporta: vértices/triángulos, degenerados (índices repetidos o área ~0),
+    aristas non-manifold (>2 triángulos por arista), loops de borde
+    (shells abiertos) y vértices no referenciados. Las condiciones
+    ambiguas (non-manifold, self-intersections) se REPORTAN, no se
+    "arreglan" en silencio — mismo principio que el resto del proyecto.
+    """
+    verts = np.asarray(vertices, dtype=float)
+    tris = np.asarray(triangles, dtype=int)
+    n_tris = int(tris.shape[0]) if tris.size else 0
+    report: Dict[str, Any] = {
+        "vertices": int(verts.shape[0]) if verts.size else 0,
+        "triangles": n_tris,
+        "degenerate_triangles": 0,
+        "non_manifold_edges": 0,
+        "boundary_loops": 0,
+        "unreferenced_vertices": 0,
+        "open": False,
+    }
+    if n_tris == 0:
+        return report
+    # Degenerados: índice repetido dentro del triángulo.
+    dup_idx = int(np.sum(
+        (tris[:, 0] == tris[:, 1]) | (tris[:, 1] == tris[:, 2]) | (tris[:, 0] == tris[:, 2])
+    ))
+    # Área ~0 (producto cruzado).
+    v0, v1, v2 = verts[tris[:, 0]], verts[tris[:, 1]], verts[tris[:, 2]]
+    areas = 0.5 * np.linalg.norm(np.cross(v1 - v0, v2 - v0), axis=1)
+    zero_area = int(np.sum(areas <= 1e-18))
+    report["degenerate_triangles"] = int(max(dup_idx, zero_area))
+    edges = _boundary_edges(tris)
+    report["non_manifold_edges"] = int(sum(1 for c in edges.values() if c > 2))
+    loops = _boundary_loops(tris)
+    report["boundary_loops"] = int(len(loops))
+    report["open"] = bool(loops)
+    used = np.unique(tris.ravel()) if tris.size else np.zeros(0, dtype=int)
+    report["unreferenced_vertices"] = int(verts.shape[0] - used.shape[0])
+    return report
+
+
+def repair_mesh(
+    vertices: np.ndarray,
+    triangles: np.ndarray,
+    weld_tolerance_decimals: int = 9,
+) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+    """Reparación básica determinista de una malla triangular.
+
+    Hace (solo lo no ambiguo): suelda vértices coincidentes (reusa
+    :func:`_deduplicate_vertices`), elimina triángulos degenerados
+    (índices repetidos o área ~0) y elimina vértices no referenciados.
+
+    NO toca aristas non-manifold ni self-intersections: se reportan en
+    ``stats`` para decisión explícita del usuario (nunca fix silencioso).
+
+    Returns (vertices, triangles, stats).
+    """
+    verts = np.asarray(vertices, dtype=float)
+    tris = np.asarray(triangles, dtype=int)
+    stats: Dict[str, Any] = {
+        "vertices_before": int(verts.shape[0]) if verts.size else 0,
+        "triangles_before": int(tris.shape[0]) if tris.size else 0,
+        "vertices_welded": 0,
+        "degenerate_removed": 0,
+        "unreferenced_removed": 0,
+        "non_manifold_edges": 0,
+        "boundary_loops": 0,
+    }
+    if tris.size == 0:
+        return verts.reshape(-1, 3), tris.reshape(-1, 3), stats
+
+    # 1) Soldar duplicados exactos (redondeo a N decimales).
+    if weld_tolerance_decimals != 9:
+        rounded = np.round(verts, weld_tolerance_decimals)
+        view = rounded.view(
+            np.dtype([("x", "f8"), ("y", "f8"), ("z", "f8")])
+        ).reshape(verts.shape[0])
+        uniq, inverse = np.unique(view, return_inverse=True)
+        dedup = uniq.view(np.float64).reshape(-1, 3)
+        remap = inverse.astype(np.int64)
+    else:
+        remap, dedup = _deduplicate_vertices(verts)
+    stats["vertices_welded"] = int(verts.shape[0] - dedup.shape[0])
+    tris = np.take(remap, tris)
+
+    # 2) Eliminar degenerados (índice repetido o área ~0).
+    dup_mask = (tris[:, 0] == tris[:, 1]) | (tris[:, 1] == tris[:, 2]) | (tris[:, 0] == tris[:, 2])
+    v0, v1, v2 = dedup[tris[:, 0]], dedup[tris[:, 1]], dedup[tris[:, 2]]
+    areas = 0.5 * np.linalg.norm(np.cross(v1 - v0, v2 - v0), axis=1)
+    zero_mask = areas <= 1e-18
+    bad = dup_mask | zero_mask
+    stats["degenerate_removed"] = int(np.sum(bad))
+    tris = tris[~bad]
+
+    # 3) Compactar vértices no referenciados.
+    if tris.size:
+        used, compact = np.unique(tris.ravel(), return_inverse=True)
+        stats["unreferenced_removed"] = int(dedup.shape[0] - used.shape[0])
+        verts_out = dedup[used]
+        tris_out = compact.reshape(tris.shape)
+    else:
+        stats["unreferenced_removed"] = int(dedup.shape[0])
+        verts_out = np.zeros((0, 3), dtype=float)
+        tris_out = np.zeros((0, 3), dtype=int)
+
+    # 4) Diagnosticar lo ambiguo (solo reporte).
+    if tris_out.size:
+        edges = _boundary_edges(tris_out)
+        stats["non_manifold_edges"] = int(sum(1 for c in edges.values() if c > 2))
+        stats["boundary_loops"] = int(len(_boundary_loops(tris_out)))
+
+    stats["vertices_after"] = int(verts_out.shape[0])
+    stats["triangles_after"] = int(tris_out.shape[0])
+    return verts_out, tris_out, stats
+
+
+def decimate_mesh(
+    vertices: np.ndarray,
+    triangles: np.ndarray,
+    target_fraction: float = 0.5,
+) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+    """Decimación por clustering de vértices en grilla (determinista, numpy-only).
+
+    La celda se dimensiona desde el bbox para apuntar a
+    ``target_fraction`` de triángulos. Cada celda colapsa a su centroide;
+    los triángulos degenerados resultantes se eliminan y los vértices
+    huérfanos se compactan. Si la malla ya está por debajo del objetivo,
+    se devuelve sin cambios (sin upsampling silencioso).
+
+    Args:
+        target_fraction: fracción objetivo de triángulos en (0, 1].
+
+    Returns (vertices, triangles, stats). Levanta ``ValueError`` ante
+    ``target_fraction`` fuera de rango.
+    """
+    if not 0.0 < float(target_fraction) <= 1.0:
+        raise ValueError(
+            f"target_fraction={target_fraction!r} fuera de rango (0, 1]."
+        )
+    verts = np.asarray(vertices, dtype=float)
+    tris = np.asarray(triangles, dtype=int)
+    stats: Dict[str, Any] = {
+        "triangles_before": int(tris.shape[0]) if tris.size else 0,
+        "target_fraction": float(target_fraction),
+        "cell_size": 0.0,
+        "triangles_after": int(tris.shape[0]) if tris.size else 0,
+        "decimated": False,
+    }
+    if tris.size == 0 or verts.size == 0:
+        return verts.reshape(-1, 3), tris.reshape(-1, 3), stats
+
+    n_target = max(int(tris.shape[0] * float(target_fraction)), 1)
+    if n_target >= tris.shape[0]:
+        return verts, tris, stats
+
+    # Celda por área de superficie: cada celda retiene ~2 triángulos
+    # (un quad de la grilla), así que celda = sqrt(area_total / (n_target/2)).
+    # Esto es robusto ante mallas planas (volumen ~0) donde un estimador
+    # volumétrico colapsaría a celda ~0.
+    v0, v1, v2 = verts[tris[:, 0]], verts[tris[:, 1]], verts[tris[:, 2]]
+    total_area = float(0.5 * np.linalg.norm(np.cross(v1 - v0, v2 - v0), axis=1).sum())
+    if total_area <= 1e-18:
+        return verts, tris, stats
+    cell = float(np.sqrt(total_area / max(n_target / 2.0, 1.0)))
+    lo = verts.min(axis=0)
+    stats["cell_size"] = cell
+
+    cell_idx = np.floor((verts - lo) / cell).astype(np.int64)
+    # Clave por celda → centroide.
+    keys = [tuple(int(c) for c in row) for row in cell_idx]
+    uniq_keys: Dict[Tuple[int, int, int], int] = {}
+    order: List[Tuple[int, int, int]] = []
+    for k in keys:
+        if k not in uniq_keys:
+            uniq_keys[k] = len(order)
+            order.append(k)
+    remap = np.asarray([uniq_keys[k] for k in keys], dtype=np.int64)
+    new_verts = np.zeros((len(order), 3), dtype=float)
+    counts = np.zeros(len(order), dtype=float)
+    np.add.at(new_verts, remap, verts)
+    np.add.at(counts, remap, 1.0)
+    new_verts /= counts[:, None]
+
+    new_tris = remap[tris]
+    dup_mask = (new_tris[:, 0] == new_tris[:, 1]) | (new_tris[:, 1] == new_tris[:, 2]) | (new_tris[:, 0] == new_tris[:, 2])
+    new_tris = new_tris[~dup_mask]
+    if new_tris.size:
+        used, compact = np.unique(new_tris.ravel(), return_inverse=True)
+        new_verts = new_verts[used]
+        new_tris = compact.reshape(new_tris.shape)
+    else:
+        new_verts = np.zeros((0, 3), dtype=float)
+        new_tris = np.zeros((0, 3), dtype=int)
+
+    stats["triangles_after"] = int(new_tris.shape[0])
+    stats["vertices_after"] = int(new_verts.shape[0])
+    stats["decimated"] = bool(new_tris.shape[0] < stats["triangles_before"])
+    return new_verts, new_tris, stats
+
+
+class MeshRepair:
+    """Reparación básica de malla (suelda + degenerados + huérfanos)."""
+
+    def repair(
+        self,
+        vertices: np.ndarray,
+        triangles: np.ndarray,
+    ) -> ReconstructionResult:
+        verts, tris, stats = repair_mesh(vertices, triangles)
+        return ReconstructionResult(
+            stage=ReconstructionStage.SMOOTHED_MESH,
+            status=ReconstructionStatus.COMPLETED,
+            data={"vertices": verts, "triangles": tris},
+            metadata={k: (int(v) if isinstance(v, (int, np.integer)) else v)
+                      for k, v in stats.items()},
+        )
+
+
+class MeshDecimator:
+    """Decimación por clustering (reduce conteo de triángulos)."""
+
+    def __init__(self, target_fraction: float = 0.5) -> None:
+        if not 0.0 < float(target_fraction) <= 1.0:
+            raise ValueError(
+                f"target_fraction={target_fraction!r} fuera de rango (0, 1]."
+            )
+        self.target_fraction = float(target_fraction)
+
+    def decimate(
+        self,
+        vertices: np.ndarray,
+        triangles: np.ndarray,
+        target_fraction: Optional[float] = None,
+    ) -> ReconstructionResult:
+        frac = float(target_fraction) if target_fraction is not None else self.target_fraction
+        verts, tris, stats = decimate_mesh(vertices, triangles, frac)
+        return ReconstructionResult(
+            stage=ReconstructionStage.SMOOTHED_MESH,
+            status=ReconstructionStatus.COMPLETED,
+            data={"vertices": verts, "triangles": tris},
+            metadata={k: (int(v) if isinstance(v, (int, np.integer)) else float(v) if isinstance(v, float) else v)
+                      for k, v in stats.items()},
+        )
+
+
+# ---------------------------------------------------------------------------
+# Fase 5b — Remallado uniforme + non-manifold explícito + self-intersections
+# (numpy-only, sin dependencias nuevas)
+# ---------------------------------------------------------------------------
+
+def _edge_to_triangles(triangles: np.ndarray) -> Dict[Tuple[int, int], List[int]]:
+    """Arista (u<v) -> índices de triángulos que la usan."""
+    tris = np.asarray(triangles, dtype=int)
+    out: Dict[Tuple[int, int], List[int]] = {}
+    for ti in range(tris.shape[0]):
+        a, b, c = int(tris[ti, 0]), int(tris[ti, 1]), int(tris[ti, 2])
+        for u, v in ((a, b), (b, c), (a, c)):
+            key = (min(u, v), max(u, v))
+            out.setdefault(key, []).append(ti)
+    return out
+
+
+def uniform_remesh(
+    vertices: np.ndarray,
+    triangles: np.ndarray,
+    target_length: float,
+    iterations: int = 3,
+) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+    """Remallado uniforme isotrópico (split/collapse/flip + suavizado).
+
+    Lleva las aristas hacia ``target_length``: divide las > 4/3·L,
+    colapsa las < 4/5·L al punto medio, voltea aristas interiores para
+    optimizar valencia (6 interior / 4 borde) y suaviza con laplaciano
+    (borde fijo, reusa :func:`smooth_surface_mesh`). Termina con
+    :func:`repair_mesh` para compactar degenerados.
+
+    Args:
+        target_length: longitud de arista objetivo (> 0, misma unidad
+            que los vértices).
+        iterations: pasadas split/collapse/flip (>= 0).
+
+    Returns (vertices, triangles, stats). ``ValueError`` explícito ante
+    parámetros fuera de rango.
+    """
+    if not float(target_length) > 0.0:
+        raise ValueError(f"target_length={target_length!r} debe ser > 0.")
+    if int(iterations) < 0:
+        raise ValueError(f"iterations={iterations!r} debe ser >= 0.")
+    L = float(target_length)
+    verts: List[np.ndarray] = [np.asarray(r, dtype=float) for r in np.asarray(vertices, dtype=float)]
+    tris: List[List[int]] = [list(map(int, r)) for r in np.asarray(triangles, dtype=int)]
+    stats: Dict[str, Any] = {"splits": 0, "collapses": 0, "flips": 0,
+                             "iterations": int(iterations), "target_length": L}
+    if not tris or not verts:
+        stats.update({"vertices_after": len(verts), "triangles_after": len(tris)})
+        return np.asarray(verts, dtype=float).reshape(-1, 3), np.zeros((0, 3), dtype=int), stats
+
+    def _third(t: List[int], u: int, v: int) -> int:
+        for w in t:
+            if w != u and w != v:
+                return w
+        raise ValueError("triángulo degenerado en remallado")  # pragma: no cover
+
+    for _ in range(int(iterations)):
+        # --- Split: aristas largas -> punto medio ---
+        emap = _edge_to_triangles(np.asarray(tris, dtype=int))
+        for (u, v), tlist in emap.items():
+            if u >= len(verts) or v >= len(verts):
+                continue  # pragma: no cover - defensivo
+            if float(np.linalg.norm(verts[u] - verts[v])) <= 4.0 / 3.0 * L:
+                continue
+            mid = 0.5 * (verts[u] + verts[v])
+            verts.append(mid)
+            mi = len(verts) - 1
+            for ti in tlist:
+                t = tris[ti]
+                if u not in t or v not in t:
+                    continue
+                w = _third(t, u, v)
+                tris[ti] = [u, mi, w]
+                tris.append([mi, v, w])
+            stats["splits"] += 1
+
+        # --- Collapse: aristas cortas -> punto medio ---
+        V = np.asarray(verts, dtype=float)
+        T = np.asarray(tris, dtype=int)
+        emap = _edge_to_triangles(T)
+        order = sorted(emap.keys(),
+                       key=lambda e: float(np.linalg.norm(V[e[0]] - V[e[1]])))
+        alive = [True] * len(verts)
+        for (u, v) in order:
+            if not alive[u] or not alive[v]:
+                continue
+            if float(np.linalg.norm(verts[u] - verts[v])) >= 4.0 / 5.0 * L:
+                continue
+            mid = 0.5 * (verts[u] + verts[v])
+            verts[u] = mid
+            alive[v] = False
+            for t in tris:
+                for k in range(3):
+                    if t[k] == v:
+                        t[k] = u
+            stats["collapses"] += 1
+        # Compactar colapsados + quitar degenerados del colapso.
+        keep_v = [i for i, a in enumerate(alive) if a]
+        remap = {old: new for new, old in enumerate(keep_v)}
+        verts = [verts[i] for i in keep_v]
+        new_tris: List[List[int]] = []
+        for t in tris:
+            nt = [remap[x] for x in t]
+            if nt[0] == nt[1] or nt[1] == nt[2] or nt[0] == nt[2]:
+                continue
+            new_tris.append(nt)
+        tris = new_tris
+        if not tris:
+            break
+
+        # --- Flip: optimizar valencia (solo aristas interiores) ---
+        V = np.asarray(verts, dtype=float)
+        T = np.asarray(tris, dtype=int)
+        emap = _edge_to_triangles(T)
+        edge_set = set(emap.keys())
+        boundary_v = _boundary_vertices(_triangle_adjacency(T, V.shape[0]), T)
+        valence = np.zeros(V.shape[0], dtype=int)
+        for t in T:
+            for x in t:
+                valence[int(x)] += 1
+        target = np.array([4 if i in boundary_v else 6 for i in range(V.shape[0])])
+        for (u, v), tlist in emap.items():
+            if len(tlist) != 2:
+                continue
+            t1, t2 = tris[tlist[0]], tris[tlist[1]]
+            try:
+                a = _third(t1, u, v)
+                b = _third(t2, u, v)
+            except ValueError:
+                continue  # pragma: no cover - defensivo
+            if a == b:
+                continue
+            if (min(a, b), max(a, b)) in edge_set:
+                continue
+            before = sum((valence[x] - target[x]) ** 2 for x in (u, v, a, b))
+            # Tras el flip: u,v pierden un triángulo; a,b ganan uno.
+            after = ((valence[u] - 1 - target[u]) ** 2 + (valence[v] - 1 - target[v]) ** 2
+                     + (valence[a] + 1 - target[a]) ** 2 + (valence[b] + 1 - target[b]) ** 2)
+            if after < before:
+                tris[tlist[0]] = [a, b, u]
+                tris[tlist[1]] = [b, a, v]
+                valence[u] -= 1
+                valence[v] -= 1
+                valence[a] += 1
+                valence[b] += 1
+                stats["flips"] += 1
+
+        # --- Suavizado laplaciano (borde fijo) ---
+        V = np.asarray(verts, dtype=float)
+        T = np.asarray(tris, dtype=int)
+        V, _ = smooth_surface_mesh(V, T, iterations=1, alpha=0.5)
+        verts = [np.asarray(r, dtype=float) for r in V]
+
+    V = np.asarray(verts, dtype=float)
+    T = np.asarray(tris, dtype=int) if tris else np.zeros((0, 3), dtype=int)
+    V, T, rep_stats = repair_mesh(V, T)
+    stats["repair"] = {k: int(v) for k, v in rep_stats.items() if isinstance(v, (int, np.integer))}
+    stats["vertices_after"] = int(V.shape[0])
+    stats["triangles_after"] = int(T.shape[0])
+    return V, T, stats
+
+
+def split_non_manifold(
+    vertices: np.ndarray,
+    triangles: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+    """Separa non-manifold duplicando vértices (operación explícita y reversible).
+
+    - Aristas con >2 triángulos: cada cara extra recibe copias propias
+      de ambos extremos (las hojas dejan de compartir la arista).
+    - Vértices cuyo link tiene >1 componente (conos/abanicos
+      desconectados): cada componente extra recibe una copia del vértice.
+
+    No elimina ni mueve geometría: solo duplica índices. Lo que no se
+    puede separar de forma bien definida se reporta en ``stats``
+    (p. ej. conteo residual, que debe ser 0 al terminar).
+
+    Returns (vertices, triangles, stats).
+    """
+    verts: List[np.ndarray] = [np.asarray(r, dtype=float) for r in np.asarray(vertices, dtype=float)]
+    tris: List[List[int]] = [list(map(int, r)) for r in np.asarray(triangles, dtype=int)]
+    stats: Dict[str, Any] = {"non_manifold_edges_split": 0,
+                             "non_manifold_vertices_split": 0,
+                             "vertices_added": 0}
+
+    # Pase 1: aristas con más de 2 caras.
+    emap = _edge_to_triangles(np.asarray(tris, dtype=int))
+    for (u, v), tlist in emap.items():
+        if len(tlist) <= 2:
+            continue
+        for ti in tlist[2:]:
+            t = tris[ti]
+            ku = [k for k in range(3) if t[k] == u]
+            kv = [k for k in range(3) if t[k] == v]
+            if not ku or not kv:
+                continue  # pragma: no cover - defensivo
+            verts.append(verts[u].copy())
+            verts.append(verts[v].copy())
+            nu, nv = len(verts) - 2, len(verts) - 1
+            for k in ku:
+                t[k] = nu
+            for k in kv:
+                t[k] = nv
+            stats["non_manifold_edges_split"] += 1
+            stats["vertices_added"] += 2
+
+    # Pase 2: vértices con link en >1 componente (union-find sobre el link).
+    T = np.asarray(tris, dtype=int)
+    n = len(verts)
+    incident: List[List[int]] = [[] for _ in range(n)]
+    for ti in range(T.shape[0]):
+        for x in T[ti]:
+            incident[int(x)].append(ti)
+    for x in range(n):
+        faces = incident[x]
+        if len(faces) < 2:
+            continue
+        parent: Dict[int, int] = {}
+
+        def _find(a: int) -> int:
+            while parent[a] != a:
+                parent[a] = parent[parent[a]]
+                a = parent[a]
+            return a
+
+        def _union(a: int, b: int) -> None:
+            ra, rb = _find(a), _find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        link_verts = set()
+        for ti in faces:
+            opp = [int(y) for y in T[ti] if int(y) != x]
+            for y in opp:
+                link_verts.add(y)
+                parent.setdefault(y, y)
+            if len(opp) == 2:
+                _union(opp[0], opp[1])
+        comps: Dict[int, List[int]] = {}
+        for ti in faces:
+            opp = [int(y) for y in T[ti] if int(y) != x]
+            root = _find(opp[0])
+            comps.setdefault(root, []).append(ti)
+        if len(comps) <= 1:
+            continue
+        comp_list = list(comps.values())
+        for extra in comp_list[1:]:
+            verts.append(verts[x].copy())
+            nx = len(verts) - 1
+            for ti in extra:
+                t = tris[ti]
+                for k in range(3):
+                    if t[k] == x:
+                        t[k] = nx
+            stats["non_manifold_vertices_split"] += 1
+            stats["vertices_added"] += 1
+
+    V = np.asarray(verts, dtype=float)
+    Tout = np.asarray(tris, dtype=int)
+    residual = int(sum(1 for c in _edge_to_triangles(Tout).values() if len(c) > 2))
+    stats["residual_non_manifold_edges"] = residual
+    stats["vertices_after"] = int(V.shape[0])
+    stats["triangles_after"] = int(Tout.shape[0])
+    return V, Tout, stats
+
+
+def _sat_tri_tri(p: np.ndarray, q: np.ndarray, eps: float = 1e-12) -> bool:
+    """SAT triángulo-triángulo (incluye coplanares). ``p``/``q``: (3,3)."""
+    e1 = [p[1] - p[0], p[2] - p[1], p[0] - p[2]]
+    e2 = [q[1] - q[0], q[2] - q[1], q[0] - q[2]]
+    n1 = np.cross(e1[0], e1[1])
+    n2 = np.cross(e2[0], e2[1])
+    if np.linalg.norm(n1) <= eps or np.linalg.norm(n2) <= eps:
+        return False  # degenerado: lo cubre repair_mesh, no es intersección
+    axes = [n1, n2]
+    for a in e1:
+        for b in e2:
+            c = np.cross(a, b)
+            if np.linalg.norm(c) > eps:
+                axes.append(c)
+    # Ejes en el plano (normales de arista): imprescindibles para separar
+    # triángulos coplanares disjuntos, donde todos los cross(e1,e2) son
+    # paralelos a la normal y siempre solapan.
+    for a in e1:
+        c = np.cross(a, n1)
+        if np.linalg.norm(c) > eps:
+            axes.append(c)
+    for b in e2:
+        c = np.cross(b, n2)
+        if np.linalg.norm(c) > eps:
+            axes.append(c)
+    for ax in axes:
+        pp = p @ ax
+        qq = q @ ax
+        if pp.max() < qq.min() - eps or qq.max() < pp.min() - eps:
+            return False
+    return True
+
+
+def count_self_intersections(
+    vertices: np.ndarray,
+    triangles: np.ndarray,
+) -> Dict[str, Any]:
+    """Cuenta pares de triángulos que se intersectan (diagnóstico, no repara).
+
+    Broadphase con grilla uniforme + SAT exacto. Pares que comparten
+    vértices se excluyen (adyacencia, no auto-intersección). La
+    reparación de self-intersections es ambigua por definición, así que
+    aquí solo se REPORTA (mismo principio que non-manifold en 5a).
+    """
+    verts = np.asarray(vertices, dtype=float)
+    tris = np.asarray(triangles, dtype=int)
+    out: Dict[str, Any] = {"pairs_checked": 0, "intersecting_pairs": 0}
+    if tris.size == 0:
+        return out
+    # Celda por área de superficie (robusta ante mallas planas donde un
+    # estimador volumétrico colapsaría a celda ~0 y la grilla explotaría).
+    va, vb, vc = verts[tris[:, 0]], verts[tris[:, 1]], verts[tris[:, 2]]
+    total_area = float(0.5 * np.linalg.norm(np.cross(vb - va, vc - va), axis=1).sum())
+    if total_area <= 1e-18:
+        return out
+    cell = float(np.sqrt(total_area / max(tris.shape[0], 1)))
+    cell = max(cell, 1e-9)
+    lo = verts.min(axis=0)
+    grid: Dict[Tuple[int, int, int], List[int]] = {}
+    big: List[int] = []
+    for ti in range(tris.shape[0]):
+        tv = verts[tris[ti]]
+        c0 = tuple(int(c) for c in np.floor((tv.min(axis=0) - lo) / cell))
+        c1 = tuple(int(c) for c in np.floor((tv.max(axis=0) - lo) / cell))
+        span_cells = (c1[0] - c0[0] + 1) * (c1[1] - c0[1] + 1) * (c1[2] - c0[2] + 1)
+        if span_cells > 4096:
+            # Triángulo gigante respecto a la celda: vía directa contra
+            # todos (correcto y acotado; evita explosión de la grilla).
+            big.append(ti)
+            continue
+        for ix in range(c0[0], c1[0] + 1):
+            for iy in range(c0[1], c1[1] + 1):
+                for iz in range(c0[2], c1[2] + 1):
+                    grid.setdefault((ix, iy, iz), []).append(ti)
+    seen = set()
+
+    def _check_pair(a: int, b: int) -> None:
+        key = (min(a, b), max(a, b))
+        if key in seen:
+            return
+        seen.add(key)
+        # Adyacentes (comparten vértice) no cuentan.
+        if len({int(x) for x in tris[a]} & {int(x) for x in tris[b]}):
+            return
+        out["pairs_checked"] += 1
+        if _sat_tri_tri(verts[tris[a]], verts[tris[b]]):
+            out["intersecting_pairs"] += 1
+
+    for cell_tris in grid.values():
+        for i in range(len(cell_tris)):
+            for j in range(i + 1, len(cell_tris)):
+                _check_pair(cell_tris[i], cell_tris[j])
+    for b in big:
+        for a in range(tris.shape[0]):
+            if a != b:
+                _check_pair(a, b)
+    return out
+
+
+class MeshRemesher:
+    """Remallado uniforme isotrópico hacia una longitud de arista objetivo."""
+
+    def __init__(self, target_length: float, iterations: int = 3) -> None:
+        if not float(target_length) > 0.0:
+            raise ValueError(f"target_length={target_length!r} debe ser > 0.")
+        if int(iterations) < 0:
+            raise ValueError(f"iterations={iterations!r} debe ser >= 0.")
+        self.target_length = float(target_length)
+        self.iterations = int(iterations)
+
+    def remesh(
+        self,
+        vertices: np.ndarray,
+        triangles: np.ndarray,
+        target_length: Optional[float] = None,
+        iterations: Optional[int] = None,
+    ) -> ReconstructionResult:
+        L = float(target_length) if target_length is not None else self.target_length
+        it = int(iterations) if iterations is not None else self.iterations
+        verts, tris, stats = uniform_remesh(vertices, triangles, L, it)
+        flat: Dict[str, Any] = {}
+        for k, v in stats.items():
+            if isinstance(v, dict):
+                for k2, v2 in v.items():
+                    flat[f"repair_{k2}"] = int(v2)
+            elif isinstance(v, (int, np.integer)):
+                flat[k] = int(v)
+            elif isinstance(v, float):
+                flat[k] = float(v)
+            else:
+                flat[k] = v
+        return ReconstructionResult(
+            stage=ReconstructionStage.SMOOTHED_MESH,
+            status=ReconstructionStatus.COMPLETED,
+            data={"vertices": verts, "triangles": tris},
+            metadata=flat,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Fase 6c — Reporte de overhang para manufactura aditiva (diagnóstico puro)
+# ---------------------------------------------------------------------------
+
+def overhang_report(
+    nodes: np.ndarray,
+    elements: np.ndarray,
+    densities: np.ndarray,
+    build_direction=(0.0, 0.0, 1.0),
+    overhang_angle_deg: float = 45.0,
+    threshold: float = 0.5,
+) -> Dict[str, Any]:
+    """Facetas en voladizo (diagnóstico puro, definición estándar de AM).
+
+    Una faceta expuesta (cara de un elemento sólido sin vecino sólido) está
+    en voladizo si su normal exterior apunta hacia abajo más allá de
+    ``overhang_angle_deg`` desde la vertical (0° = techo plano, 90° = pared
+    vertical auto-soportada). La restricción activa de overhang queda fuera
+    de alcance; este reporte guía orientación y soportes sin fixes
+    silenciosos.
+
+    Args:
+        densities: por elemento (salida SIMP) o por nodo.
+        build_direction: vector de construcción (no nulo).
+        overhang_angle_deg: umbral en (0, 90).
+        threshold: umbral de sólido en (0, 1).
+    """
+    try:
+        bd = np.asarray(build_direction, dtype=float).ravel()
+    except (TypeError, ValueError):
+        raise ValueError(f"build_direction={build_direction!r} debe ser un vector 3D no nulo.")
+    if bd.shape[0] != 3 or float(np.linalg.norm(bd)) <= 1e-12:
+        raise ValueError(f"build_direction={build_direction!r} debe ser un vector 3D no nulo.")
+    if not 0.0 < float(overhang_angle_deg) < 90.0:
+        raise ValueError(f"overhang_angle_deg={overhang_angle_deg!r} fuera de rango (0, 90).")
+    if not 0.0 < float(threshold) < 1.0:
+        raise ValueError(f"threshold={threshold!r} fuera de rango (0, 1).")
+    bd = bd / float(np.linalg.norm(bd))
+    verts = np.asarray(nodes, dtype=float)
+    els = np.asarray(elements, dtype=int)
+    dens = np.asarray(densities, dtype=float).ravel()
+    if dens.shape[0] == els.shape[0]:
+        solid = dens > float(threshold)
+    elif dens.shape[0] == verts.shape[0]:
+        solid = np.array([bool(np.mean(dens[e]) > float(threshold)) for e in els])
+    else:
+        raise ValueError(
+            f"densities ({dens.shape[0]}) no coincide con elementos ({els.shape[0]}) "
+            f"ni nodos ({verts.shape[0]}).")
+    out: Dict[str, Any] = {
+        "solid_elements": int(np.sum(solid)),
+        "unsupported_elements": 0,
+        "unsupported_fraction": 0.0,
+        "overhang_faces": 0,
+        "build_direction": [float(v) for v in bd],
+        "overhang_angle_deg": float(overhang_angle_deg),
+    }
+    solid_idx = np.nonzero(solid)[0]
+    if solid_idx.shape[0] == 0:
+        return out
+    solid_set = set(int(i) for i in solid_idx)
+    # Cara (nodos ordenados) -> elementos sólidos que la usan.
+    face_map: Dict[tuple, list] = {}
+    _faces = ((1, 2, 3), (0, 2, 3), (0, 1, 3), (0, 1, 2))
+    for e in solid_idx:
+        con = [int(v) for v in els[int(e)]]
+        for f in _faces:
+            key = tuple(sorted((con[f[0]], con[f[1]], con[f[2]])))
+            face_map.setdefault(key, []).append(int(e))
+    limit = -float(np.cos(np.radians(float(overhang_angle_deg))))
+    bad_elements = set()
+    n_faces = 0
+    zmin = float((verts[els[solid_idx]].reshape(-1, 3) @ bd).min())
+    for key, owners in face_map.items():
+        if len(owners) != 1:
+            continue  # cara interna entre sólidos
+        e = owners[0]
+        con = [int(v) for v in els[e]]
+        pts = verts[list(key)]
+        if float((pts @ bd).max()) <= zmin + 1e-9:
+            continue  # descansa en la placa de construcción
+        n = np.cross(pts[1] - pts[0], pts[2] - pts[0])
+        nm = float(np.linalg.norm(n))
+        if nm <= 1e-18:
+            continue  # degenerada: repair_mesh la cubre
+        n = n / nm
+        centroid = verts[con].mean(axis=0)
+        if float(n @ (centroid - pts.mean(axis=0))) > 0:
+            n = -n  # normal exterior
+        if float(n @ bd) < limit:
+            n_faces += 1
+            bad_elements.add(e)
+    out["overhang_faces"] = int(n_faces)
+    out["unsupported_elements"] = int(len(bad_elements))
+    out["unsupported_fraction"] = float(len(bad_elements) / max(solid_idx.shape[0], 1))
+    out["unsupported_ids"] = sorted(bad_elements)
+    return out
+
+
 class MarchingTetrahedraExtractor(SurfaceExtractor):
     """Real isosurface extraction via marching tetrahedra on a Tet4 mesh.
 
@@ -669,11 +1428,19 @@ class ReconstructionPipeline:
         mesh_smoother: Optional["MeshSmoother"] = None,
         hole_filler: Optional["MeshHoleFiller"] = None,
         step_path: Optional[str] = None,
+        mesh_repair: Optional["MeshRepair"] = None,
+        decimate_fraction: Optional[float] = None,
     ) -> None:
         self._surface_extractor = surface_extractor or MarchingTetrahedraExtractor()
         self._brep_fitter = brep_fitter or OCPBRepFitter(step_path=step_path)
         self._mesh_smoother = mesh_smoother
         self._hole_filler = hole_filler
+        self._mesh_repair = mesh_repair
+        if decimate_fraction is not None and not 0.0 < float(decimate_fraction) <= 1.0:
+            raise ValueError(
+                f"decimate_fraction={decimate_fraction!r} fuera de rango (0, 1]."
+            )
+        self._decimate_fraction = float(decimate_fraction) if decimate_fraction is not None else None
         self._step_path = step_path
         self._stages: Dict[ReconstructionStage, ReconstructionResult] = {}
         self._status = ReconstructionStatus.NOT_STARTED
@@ -754,16 +1521,31 @@ class ReconstructionPipeline:
             return result
 
         # Stage 3: mesh smoothing (post-process of noisy isosurfaces)
+        # Fase 5a (opt-in): reparación antes del suavizado + decimación
+        # después. Sin mesh_repair/decimate_fraction el flujo es idéntico.
         smoothed_data = None
         if surface_result.status == ReconstructionStatus.COMPLETED and surface_result.data:
             mesh_data = surface_result.data
             if isinstance(mesh_data, dict) and mesh_data.get("vertices") is not None:
                 try:
+                    rep_verts = np.asarray(mesh_data["vertices"])
+                    rep_tris = np.asarray(mesh_data["triangles"])
+                    if self._mesh_repair is not None:
+                        rep_result = self._mesh_repair.repair(rep_verts, rep_tris)
+                        rep_verts = np.asarray(rep_result.data["vertices"])
+                        rep_tris = np.asarray(rep_result.data["triangles"])
+                        self._stages[ReconstructionStage.SMOOTHED_MESH] = rep_result
                     if self._mesh_smoother is None:
                         self._mesh_smoother = MeshSmoother()
-                    smooth_result = self._mesh_smoother.smooth(
-                        np.asarray(mesh_data["vertices"]), np.asarray(mesh_data["triangles"])
-                    )
+                    smooth_result = self._mesh_smoother.smooth(rep_verts, rep_tris)
+                    if self._decimate_fraction is not None:
+                        dec_result = MeshDecimator(self._decimate_fraction).decimate(
+                            np.asarray(smooth_result.data["vertices"]),
+                            np.asarray(smooth_result.data["triangles"]),
+                        )
+                        dec_result.metadata["smoothed_before"] = int(
+                            np.asarray(smooth_result.data["triangles"]).shape[0])
+                        smooth_result = dec_result
                     smoothed_data = smooth_result.data
                     self._stages[ReconstructionStage.SMOOTHED_MESH] = smooth_result
                 except Exception as exc:  # pragma: no cover - defensive

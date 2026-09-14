@@ -79,6 +79,62 @@ def _err(exc: Exception) -> dict:
             "trace": traceback.format_exc(limit=5)}
 
 
+def _check_symmetry_planes(sym):
+    """Valida symmetry_planes (lista de [eje, valor]); None si OK."""
+    if not isinstance(sym, list):
+        return f"symmetry_planes debe ser lista de [eje, valor], got {type(sym).__name__}"
+    for s in sym:
+        if not isinstance(s, (list, tuple)) or len(s) != 2:
+            return f"plano inválido {s!r}: usar [eje, valor]"
+        ax, val = s
+        ok_ax = (isinstance(ax, int) and ax in (0, 1, 2)) or (
+            isinstance(ax, str) and ax.lower() in ("x", "y", "z"))
+        ok_val = isinstance(val, (int, float)) and not isinstance(val, bool)
+        try:
+            import math
+            ok_val = ok_val and math.isfinite(float(val))
+        except (TypeError, ValueError):
+            ok_val = False
+        if not (ok_ax and ok_val):
+            return (f"plano inválido {s!r}: eje 0/1/2 o 'x'/'y'/'z' "
+                    f"y valor finito")
+    return None
+
+
+def _check_thermal_params(p):
+    """Valida params térmicos; (error, dict). None error si OK."""
+    import math
+    out = {}
+    if p.get("thermal_temperatures") is not None:
+        t = p.get("thermal_temperatures")
+        if not isinstance(t, list) or not t:
+            return "thermal_temperatures debe ser lista no vacía de [K]", {}
+        try:
+            tf = [float(v) for v in t]
+        except (TypeError, ValueError):
+            return "thermal_temperatures debe ser lista no vacía de [K]", {}
+        if not all(math.isfinite(v) for v in tf):
+            return "thermal_temperatures contiene valores no finitos", {}
+        out["thermal_temperatures"] = tf
+    if p.get("thermal_alpha") is not None:
+        try:
+            a = float(p.get("thermal_alpha"))
+        except (TypeError, ValueError):
+            return "thermal_alpha debe ser > 0", {}
+        if not math.isfinite(a) or a <= 0:
+            return "thermal_alpha debe ser > 0", {}
+        out["thermal_alpha"] = a
+    if p.get("thermal_reference_temperature") is not None:
+        try:
+            r = float(p.get("thermal_reference_temperature"))
+        except (TypeError, ValueError):
+            return "thermal_reference_temperature no finita", {}
+        if not math.isfinite(r):
+            return "thermal_reference_temperature no finita", {}
+        out["thermal_reference_temperature"] = r
+    return None, out
+
+
 class Api:
     def __init__(self):
         from desktop.pipeline.controller import PipelineController
@@ -428,12 +484,33 @@ class Api:
         try:
             p = json.loads(params_json or "{}")
             conds = self._resolve_conditions(p.get("condition_ids"))
+            optimizer = str(p.get("optimizer", "oc")).lower()
+            if optimizer not in ("oc", "mma", "eso", "level_set"):
+                return {"ok": False,
+                        "error": f"optimizer={optimizer!r} no soportado (usar 'oc', 'mma', 'eso' o 'level_set')"}
+            eso_criterion = str(p.get("eso_criterion", "compliance")).lower()
+            if eso_criterion not in ("compliance", "stress"):
+                return {"ok": False,
+                        "error": f"eso_criterion={eso_criterion!r} no soportado (usar 'compliance' o 'stress')"}
+            sym = p.get("symmetry_planes")
+            if sym is not None:
+                err = _check_symmetry_planes(sym)
+                if err:
+                    return {"ok": False, "error": err}
             kwargs = dict(
                 volume_fraction=float(p.get("volume_fraction", 0.3)),
                 max_iterations=int(p.get("max_iterations", 30)),
                 penalization=float(p.get("penalization", 3.0)),
                 filter_radius=float(p.get("filter_radius", 1.5)),
-                tolerance=float(p.get("tolerance", 1e-3)))
+                tolerance=float(p.get("tolerance", 1e-3)),
+                optimizer=optimizer,
+                eso_criterion=eso_criterion)
+            if sym is not None:
+                kwargs["symmetry_planes"] = [[s[0], float(s[1])] for s in sym]
+            terr, tkwargs = _check_thermal_params(p)
+            if terr:
+                return {"ok": False, "error": terr}
+            kwargs.update(tkwargs)
             if conds is not None:
                 kwargs["conditions"] = conds
             halo = p.get("halo_radius")
@@ -730,6 +807,67 @@ class Api:
         except Exception as exc:  # noqa: BLE001
             return _err(exc)
 
+    def getModeAnimation(self, params_json: str = "{}") -> dict:
+        """Fotogramas de animación de un modo propio (Fase 6e).
+
+        params: {jobId (modal), mode_index: 0, amplitude: "auto"|float,
+        n_frames: 16}. Lee mode_shapes del job modal y la malla activa.
+        Límite explícito: N·n_frames ≤ 2M flotantes (sugerir menos
+        fotogramas si se excede). Síncrono (postproceso puro).
+        """
+        import numpy as np
+        try:
+            p = json.loads(params_json or "{}")
+            from core.cae_studies import animate_mode_shape
+            with self._lock:
+                j = self._jobs.get(p.get("jobId"))
+                job = dict(j) if j else None
+            if job is None:
+                return {"ok": False,
+                        "error": f"job desconocido: {p.get('jobId')!r}"}
+            if job.get("state") != "done":
+                return {"ok": False,
+                        "error": f"job {p.get('jobId')!r} en estado {job.get('state')!r} (requerido 'done')"}
+            data = (job.get("result") or {}).get("data") or {}
+            shapes = data.get("mode_shapes")
+            freqs = data.get("frequencies") or []
+            if not shapes:
+                return {"ok": False,
+                        "error": "el job no contiene mode_shapes (¿job modal?)"}
+            try:
+                mi = int(p.get("mode_index", 0))
+            except (TypeError, ValueError):
+                return {"ok": False,
+                        "error": f"mode_index={p.get('mode_index')!r} inválido"}
+            if not 0 <= mi < len(shapes):
+                return {"ok": False,
+                        "error": f"mode_index={mi} fuera de rango [0, {len(shapes)})"}
+            c = self._ctrl
+            if c.mesh is None:
+                return {"ok": False, "error": "sin malla (mallar primero)"}
+            nodes = np.asarray(c.mesh_nodes, dtype=float)
+            nf = p.get("n_frames", 16)
+            try:
+                nf = int(nf)
+            except (TypeError, ValueError):
+                return {"ok": False, "error": f"n_frames={p.get('n_frames')!r} inválido"}
+            if nodes.shape[0] * nf > 2_000_000:
+                return {"ok": False,
+                        "error": (f"animación muy grande ({nodes.shape[0]} nodos × {nf} "
+                                  f"fotogramas): reducir n_frames")}
+            anim = animate_mode_shape(nodes, np.asarray(shapes[mi], dtype=float),
+                                      amplitude=p.get("amplitude", "auto"),
+                                      n_frames=nf)
+            return {"ok": True,
+                    "mode_index": mi,
+                    "frequency": freqs[mi] if mi < len(freqs) else None,
+                    "amplitude": anim["amplitude"],
+                    "n_frames": anim["n_frames"],
+                    "max_displacement": anim["max_displacement"],
+                    "frames": _clean([f.tolist() for f in anim["frames"]])}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
     # -- Kratos dentro del flujo: verificacion cruzada + SIMP verificado ----
     # NOTA honesta: el nucleo SIMP (core/topopt.SIMPSolver) esta acoplado a su
     # FEASolver interno y el callable de Kratos devuelve un dict, no esa
@@ -802,7 +940,8 @@ class Api:
     # con engine="kratos" el equilibrio K(rho)*u=F de CADA iteracion lo
     # resuelve Kratos con E penalizado por elemento.
     def _simp_loop(self, simp_kwargs: dict, engine: str,
-                   halo_radius) -> dict:
+                   halo_radius, optimizer: str = "oc",
+                   eso_criterion: str = "compliance") -> dict:
         import numpy as np
         from vendored.simp import SIMPSolver as VendoredSIMP
         c = self._ctrl
@@ -829,6 +968,28 @@ class Api:
         # MULTICARGA: casos separados (Kratos reconstruye su RHS por caso).
         cases, weights = c._load_case_vectors(
             np.asarray(nodes), int(np.asarray(nodes).shape[0] * 3))
+        # Fase 6d: acoplamiento térmico one-way.
+        if simp_kwargs.get("thermal_temperatures") is not None:
+            from core.thermal import ThermalError, thermal_load_vector
+            _alpha = simp_kwargs.get("thermal_alpha", None)
+            if _alpha is None:
+                _alpha = getattr(mat, "thermal_expansion", None)
+            if _alpha is None:
+                raise RuntimeError(
+                    "Acoplamiento térmico sin α: pase thermal_alpha o asigne "
+                    "thermal_expansion al material.")
+            try:
+                _fth = thermal_load_vector(
+                    np.asarray(nodes, dtype=float),
+                    np.asarray(elements, dtype=int),
+                    mat.young_modulus, mat.poisson_ratio, float(_alpha),
+                    np.asarray(simp_kwargs.get("thermal_temperatures"), dtype=float),
+                    reference_temperature=float(
+                        simp_kwargs.get("thermal_reference_temperature", 293.15)))
+            except ThermalError as exc:
+                raise RuntimeError(f"Carga térmica inválida: {exc}")
+            force = np.asarray(force, dtype=float) + _fth
+            cases = [np.asarray(cc, dtype=float) + _fth for cc in cases]
         if len(cases) > 1:
             solver.set_loads(cases, weights)
         else:
@@ -839,9 +1000,13 @@ class Api:
                 list(set(c._load_nodes + c._bot_nodes)),
                 radius=float(halo_radius) if halo_radius > 0 else None)
         try:
+            if simp_kwargs.get("symmetry_planes") is not None:
+                solver.set_symmetry_planes(simp_kwargs.get("symmetry_planes"))
             result = solver.optimize(
                 max_iterations=int(simp_kwargs.get("max_iterations", 30)),
-                tolerance=float(simp_kwargs.get("tolerance", 1e-3)))
+                tolerance=float(simp_kwargs.get("tolerance", 1e-3)),
+                optimizer=optimizer,
+                eso_criterion=eso_criterion)
         except Exception as exc:
             from desktop.pipeline.controller import PipelineError
             raise PipelineError(f"Optimizacion ({engine}) fallo: {exc}")
@@ -856,11 +1021,30 @@ class Api:
             if engine not in ("local", "kratos"):
                 return {"ok": False,
                         "error": f"engine desconocido: {engine} (local|kratos)"}
+            optimizer = str(p.get("optimizer", "oc")).lower()
+            if optimizer not in ("oc", "mma", "eso", "level_set"):
+                return {"ok": False,
+                        "error": f"optimizer={optimizer!r} no soportado (usar 'oc', 'mma', 'eso' o 'level_set')"}
+            eso_criterion = str(p.get("eso_criterion", "compliance")).lower()
+            if eso_criterion not in ("compliance", "stress"):
+                return {"ok": False,
+                        "error": f"eso_criterion={eso_criterion!r} no soportado (usar 'compliance' o 'stress')"}
             kwargs = {k: p.get(k) for k in (
                 "volume_fraction", "max_iterations", "penalization",
-                "filter_radius", "tolerance") if p.get(k) is not None}
+                "filter_radius", "tolerance", "symmetry_planes",
+                "thermal_temperatures", "thermal_alpha",
+                "thermal_reference_temperature") if p.get(k) is not None}
+            if "symmetry_planes" in kwargs:
+                err = _check_symmetry_planes(kwargs["symmetry_planes"])
+                if err:
+                    return {"ok": False, "error": err}
+            terr, tkwargs = _check_thermal_params(p)
+            if terr:
+                return {"ok": False, "error": terr}
+            kwargs.update(tkwargs)
             jid = self._submit("simp_loop", self._simp_loop,
-                               kwargs, engine, p.get("halo_radius"))
+                               kwargs, engine, p.get("halo_radius"),
+                               optimizer, eso_criterion)
             return {"ok": True, "jobId": jid}
         except Exception as exc:  # noqa: BLE001
             return _err(exc)
@@ -990,6 +1174,32 @@ class Api:
                                      threshold=threshold)
             return {"ok": True, "summary": summary,
                     "factor_of_safety": _clean(fos)}
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    def getOverhangReport(self, params_json: str = "{}") -> dict:
+        """Reporte de overhang del resultado SIMP activo (Fase 6c).
+
+        params: {build_direction: [x,y,z], overhang_angle_deg: 45,
+        threshold: 0.5}. Requiere malla + densidades de resultado.
+        Diagnóstico puro: no modifica nada.
+        """
+        import numpy as np
+        try:
+            p = json.loads(params_json or "{}")
+            from core.cad_reconstruction import overhang_report
+            c = self._ctrl
+            if c.mesh is None or getattr(c, "result_densities", None) is None:
+                return {"ok": False,
+                        "error": "sin malla o sin resultado de optimización"}
+            rep = overhang_report(
+                np.asarray(c.mesh_nodes, dtype=float),
+                np.asarray(c.mesh_elements, dtype=int),
+                np.asarray(c.result_densities, dtype=float),
+                build_direction=p.get("build_direction", (0.0, 0.0, 1.0)),
+                overhang_angle_deg=float(p.get("overhang_angle_deg", 45.0)),
+                threshold=float(p.get("threshold", 0.5)))
+            return {"ok": True, "report": _clean(rep)}
         except Exception as exc:  # noqa: BLE001
             return _err(exc)
 

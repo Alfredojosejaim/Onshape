@@ -45,6 +45,28 @@ class TopOptError(Exception):
     """Raised when topology optimization cannot run."""
 
 
+def _tet_shape_gradients(coords: np.ndarray) -> np.ndarray:
+    """3x4 gradientes de las funciones de forma de un tet lineal.
+
+    Misma matriz X que :func:`core.fea._tet_volume_and_B`: las filas 1..3
+    de ``inv(X)`` son (dN_i/dx, dN_i/dy, dN_i/dz) por nodo-columna.
+    """
+    X = np.array(
+        [
+            [1, coords[0, 0], coords[0, 1], coords[0, 2]],
+            [1, coords[1, 0], coords[1, 1], coords[1, 2]],
+            [1, coords[2, 0], coords[2, 1], coords[2, 2]],
+            [1, coords[3, 0], coords[3, 1], coords[3, 2]],
+        ],
+        dtype=float,
+    )
+    try:
+        invX = np.linalg.inv(X)
+    except np.linalg.LinAlgError:
+        raise TopOptError("Tetraedro degenerado al calcular gradientes de forma.")
+    return invX[1:4, :]
+
+
 class SIMPSolver:
     """Minimise compliance:  min rho  c = u^T K u   s.t.  V(rho)/V0 <= volfrac.
 
@@ -268,6 +290,77 @@ class SIMPSolver:
         mask[np.asarray(indices, dtype=np.int64)] = True
         self._void = mask
         self._finalize_active()
+
+    # ------------------------------------------------------------------ #
+    # Manufacturing constraint: planos de simetría (Fase 6c)
+    # ------------------------------------------------------------------ #
+    def set_symmetry_planes(self, planes) -> None:
+        """Fuerza simetría del diseño respecto a planos coordenados.
+
+        Args:
+            planes: iterable de ``(eje, valor)`` donde eje es 0/1/2 o
+                'x'/'y'/'z' y valor la coordenada del plano. ``None`` o
+                vacío desactiva la simetría.
+
+        Cada elemento se aparea con el más cercano a su reflejado; sin
+        contraparte (malla asimétrica) conserva su valor (explícito en
+        ``symmetry_pairs``). OC/MMA promedian pares por iteración; ESO
+        promedia sensibilidades y propaga remociones al espejo.
+        """
+        if not planes:
+            self._sym_pairs = None
+            return
+        parsed = []
+        for p in planes:
+            try:
+                ax, val = p
+            except (TypeError, ValueError):
+                raise TopOptError(
+                    f"plano de simetría inválido {p!r}: usar (eje, valor).")
+            if isinstance(ax, str):
+                ax = {"x": 0, "y": 1, "z": 2}.get(ax.lower(), -1)
+            if ax not in (0, 1, 2) or not np.isfinite(float(val)):
+                raise TopOptError(
+                    f"plano de simetría inválido {p!r}: eje 0/1/2 o x/y/z y valor finito.")
+            parsed.append((int(ax), float(val)))
+        from scipy.spatial import cKDTree
+
+        centers = np.asarray(self.element_centers, dtype=float)
+        mirrored = centers.copy()
+        for ax, val in parsed:
+            mirrored[:, ax] = 2.0 * val - mirrored[:, ax]
+        tree = cKDTree(centers)
+        dist, idx = tree.query(mirrored, k=1)
+        h = float(np.mean(self._volumes) ** (1.0 / 3.0)) if self.num_elements else 1.0
+        pairs = np.arange(self.num_elements)
+        n_paired = 0
+        for i in range(self.num_elements):
+            if dist[i] <= 0.25 * h:
+                pairs[i] = int(idx[i])
+                n_paired += 1
+        self._sym_pairs = pairs
+        self._sym_paired_count = int(n_paired)
+
+    def _mirror_average(self, v: np.ndarray) -> np.ndarray:
+        """Promedia cada elemento con su espejo (OC/MMA continuo)."""
+        if getattr(self, "_sym_pairs", None) is None:
+            return v
+        return 0.5 * (np.asarray(v, dtype=float) + np.asarray(v, dtype=float)[self._sym_pairs])
+
+    def _mirror_min(self, x: np.ndarray, xmin: float) -> np.ndarray:
+        """Propaga remociones al espejo (ESO binario: la remoción gana).
+
+        Preservados y vacíos se re-pinean después (nunca los toca)."""
+        if getattr(self, "_sym_pairs", None) is None:
+            return x
+        out = np.asarray(x, dtype=float).copy()
+        mirror = out[self._sym_pairs]
+        out[(out <= 0.5 * (1.0 + xmin)) | (mirror <= 0.5 * (1.0 + xmin))] = xmin
+        if self._preserved is not None:
+            out[self._preserved] = 1.0
+        if self._void is not None:
+            out[self._void] = xmin
+        return out
 
     def protect_elements_near_nodes(
         self,
@@ -559,18 +652,47 @@ class SIMPSolver:
         tolerance: float = 0.01,
         callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         optimizer: str = "oc",
+        evolutionary_rate: float = 0.02,
+        eso_criterion: str = "compliance",
+        ls_cfl: float = 0.5,
+        ls_hole_period: int = 3,
     ) -> Dict[str, Any]:
         """Run the SIMP loop.
 
         Args:
-            optimizer: "oc" (Optimality Criteria, default histórico) o
-                "mma" (Moving Asymptotes propio, Fase 4). Cualquier otro
-                valor lanza TopOptError explícito (sin fallback silencioso
-                a OC).
+            optimizer: "oc" (Optimality Criteria, default histórico),
+                "mma" (Moving Asymptotes propio, Fase 4), "eso"
+                (Evolutionary hard-kill, Fase 6a) o "level_set"
+                (frontera implícita HJ, Fase 6f). Cualquier otro valor
+                lanza TopOptError explícito (sin fallback silencioso a OC).
+            evolutionary_rate: fracción de elementos sólidos a remover
+                por iteración ESO (solo aplica a "eso").
+            eso_criterion: "compliance" (energía de deformación, default) o
+                "stress" (von Mises por elemento, Xie & Steven original).
+                Solo aplica a "eso".
+            ls_cfl: CFL del paso HJ explícito en (0, 1] (solo "level_set").
+            ls_hole_period: cada cuántas iteraciones redistanciar +
+                nuclear (solo "level_set").
         """
-        if optimizer not in ("oc", "mma"):
+        if optimizer not in ("oc", "mma", "eso", "level_set"):
             raise TopOptError(
-                f"optimizer={optimizer!r} no soportado (usar 'oc' o 'mma')."
+                f"optimizer={optimizer!r} no soportado (usar 'oc', 'mma', 'eso' o 'level_set')."
+            )
+        if optimizer == "eso":
+            return self._eso_optimize(
+                max_iterations=max_iterations,
+                tolerance=tolerance,
+                callback=callback,
+                evolutionary_rate=evolutionary_rate,
+                eso_criterion=eso_criterion,
+            )
+        if optimizer == "level_set":
+            return self._level_set_optimize(
+                max_iterations=max_iterations,
+                tolerance=tolerance,
+                callback=callback,
+                ls_cfl=ls_cfl,
+                ls_hole_period=ls_hole_period,
             )
         x = np.copy(self.x)
         converged = False
@@ -587,6 +709,7 @@ class SIMPSolver:
                 xnew = self._mma_update(x, dc_f, self._volumes, fscale)
             else:
                 xnew = self._oc_update(x, dc_f, self._volumes)
+            xnew = self._mirror_average(xnew)
 
             change = float(np.max(np.abs(xnew - x)))
             # volume fraction relative to the active, designable subdomain
@@ -616,6 +739,19 @@ class SIMPSolver:
                 break
 
         # Final analysis with converged density field (multicarga ponderada)
+        return self._finalize_result(
+            x, history, converged, max_iterations, tolerance, optimizer)
+
+    def _finalize_result(
+        self,
+        x: np.ndarray,
+        history: List[Dict[str, Any]],
+        converged: bool,
+        max_iterations: int,
+        tolerance: float,
+        optimizer: str,
+    ) -> Dict[str, Any]:
+        """Análisis final + dict de resultado (compartido OC/MMA/ESO)."""
         final_us = self._solve_all(x)
         weight = np.power(x, self.penalization)
         ke_term = np.zeros(self.num_elements)
@@ -641,6 +777,11 @@ class SIMPSolver:
 
         nodal_vm = self._nodal_vm(final_u)
         max_disp = float(np.max(np.abs(final_u))) if final_u.size else 0.0
+        # Restricción de tensión máxima (Fase 6b): medida agregada p-norm
+        # (estándar para constraint global) + máximo nodal explícito.
+        _vm_pos = np.maximum(nodal_vm, 0.0)
+        p_norm_vm = float(
+            (np.mean(_vm_pos ** 8) ** (1.0 / 8.0)) if _vm_pos.size else 0.0)
 
         result = {
             "success": True,
@@ -665,6 +806,8 @@ class SIMPSolver:
             "max_displacement": max_disp,
             "element_strain_energy": ke_term.tolist(),
             "nodal_von_mises": nodal_vm.tolist(),
+            "max_von_mises": float(np.max(nodal_vm)) if nodal_vm.size else 0.0,
+            "p_norm_von_mises": p_norm_vm,
             "penalization": float(self.penalization),
             "filter_radius": float(self.filter_radius),
             "num_load_cases": len(cases),
@@ -675,6 +818,316 @@ class SIMPSolver:
         }
         self.x = x
         return result
+
+    # ------------------------------------------------------------------ #
+    # ESO hard-kill (Fase 6a): remoción evolutiva por ranking de
+    # sensibilidad (Xie & Steven). Diseño 0/1 puro: cada iteración remueve
+    # una fracción ER de los elementos sólidos menos sensibles hasta
+    # alcanzar volfrac; luego verifica convergencia por estabilidad del
+    # compliance (criterio clásico sobre las últimas 10 iteraciones).
+    # Preservados nunca se remueven; vacíos quedan en rho_min.
+    # ------------------------------------------------------------------ #
+    def _element_von_mises(self, u: np.ndarray) -> np.ndarray:
+        """Von Mises por elemento (tetraedro = deformación constante)."""
+        from core.fea import _tet_volume_and_B
+
+        D = self.fea.D
+        vm = np.zeros(self.num_elements)
+        for e in range(self.num_elements):
+            con = self.fea.elements[e]
+            _, B = _tet_volume_and_B(self.fea.nodes[con])
+            stress = D @ (B @ u[self.dof_map[e]])
+            vm[e] = float(np.sqrt(
+                stress[0] ** 2 + stress[1] ** 2 + stress[2] ** 2
+                - stress[0] * stress[1] - stress[0] * stress[2] - stress[1] * stress[2]
+                + 3.0 * (stress[3] ** 2 + stress[4] ** 2 + stress[5] ** 2)
+            ))
+        return vm
+
+    def _element_von_mises_for_eso(self, x: np.ndarray) -> np.ndarray:
+        """VM por elemento del caso de carga dominante (mismo criterio que
+        ``ke_term`` del finalizador: mayor peso; desempate: primero)."""
+        cases = getattr(self, "_load_cases", None) or []
+        us = self._solve_all(x)
+        dom = max(range(len(us)), key=lambda i: cases[i][1]) if us else 0
+        return self._element_von_mises(us[dom])
+
+    def _eso_optimize(
+        self,
+        max_iterations: int = 50,
+        tolerance: float = 0.01,
+        callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        evolutionary_rate: float = 0.02,
+        eso_criterion: str = "compliance",
+    ) -> Dict[str, Any]:
+        if not 0.0 < float(evolutionary_rate) < 1.0:
+            raise TopOptError(
+                f"evolutionary_rate={evolutionary_rate!r} fuera de rango (0, 1)."
+            )
+        if eso_criterion not in ("compliance", "stress"):
+            raise TopOptError(
+                f"eso_criterion={eso_criterion!r} no soportado (usar 'compliance' o 'stress')."
+            )
+        er = float(evolutionary_rate)
+        xmin = self.rho_min
+        active = self._active
+        preserved = self._preserved if self._preserved is not None else \
+            np.zeros(self.num_elements, dtype=bool)
+        # ESO parte del dominio lleno (solo vacíos pre-vaciados).
+        x = np.ones(self.num_elements)
+        if self._void is not None:
+            x[self._void] = xmin
+        x[preserved] = 1.0
+        target_vol = float(self.volfrac * self._vol0_free)
+        alpha_prev: Optional[np.ndarray] = None
+        history: List[Dict[str, Any]] = []
+        converged = False
+        for it in range(max_iterations):
+            compliance, dc = self._compliance_and_sensitivities(x)
+            if eso_criterion == "stress":
+                # Criterio tensional (Xie & Steven original): ranking por
+                # von Mises por elemento del caso de carga dominante.
+                alpha = self._apply_filter(self._element_von_mises_for_eso(x), x)
+            else:
+                # Sensibilidad = energía de deformación por elemento (positiva).
+                alpha = self._apply_filter(-dc, x)
+            if alpha_prev is not None:
+                alpha = 0.5 * (alpha + alpha_prev)
+            alpha_prev = alpha
+            alpha = self._mirror_average(alpha)
+            vol_now = float(np.dot(x[active], self._volumes[active]))
+            solid = active & (~preserved) & (x > 0.5)
+            removed_vol = 0.0
+            n_removed = 0
+            if vol_now > target_vol and np.any(solid):
+                order = np.argsort(alpha[solid], kind="stable")
+                solid_idx = np.nonzero(solid)[0][order]
+                quota = max(int(np.ceil(er * solid_idx.shape[0])), 1)
+                xnew = np.copy(x)
+                for e in solid_idx[:quota]:
+                    if vol_now - removed_vol - self._volumes[e] < target_vol:
+                        break
+                    xnew[e] = xmin
+                    removed_vol += float(self._volumes[e])
+                    n_removed += 1
+            else:
+                xnew = np.copy(x)
+            xnew = self._mirror_min(xnew, xmin)
+            change = float(n_removed / max(int(np.sum(active)), 1))
+            vol_frac = float(np.dot(xnew[active], self._volumes[active]) / max(self._vol0_free, 1e-12))
+            history.append(
+                {
+                    "iteration": it + 1,
+                    "compliance": float(compliance),
+                    "volume_fraction": vol_frac,
+                    "max_change": change,
+                }
+            )
+            if callback:
+                callback(
+                    {
+                        "iteration": it + 1,
+                        "compliance": float(compliance),
+                        "volume_fraction": vol_frac,
+                        "max_change": change,
+                        "densities": xnew.copy(),
+                    }
+                )
+            x = xnew
+            # Convergencia ESO clásica: en volumen objetivo y compliance
+            # estable en las últimas 10 iteraciones. Si no se pudo remover
+            # nada (objetivo alcanzado o ninguna remoción cabe sin pasarse
+            # del objetivo discreto), el diseño ya no puede progresar.
+            if vol_frac <= float(self.volfrac) + 1e-12 and len(history) >= 10:
+                last = np.array([h["compliance"] for h in history[-10:]])
+                denom = max(float(np.sum(np.abs(last[5:]))), 1e-12)
+                if abs(float(np.sum(last[5:]) - np.sum(last[:5]))) / denom <= tolerance:
+                    converged = True
+                    break
+            if n_removed == 0:
+                converged = True
+                break
+        return self._finalize_result(
+            x, history, converged, max_iterations, tolerance, "eso")
+
+    # ------------------------------------------------------------------ #
+    # Level-Set explícito (Fase 6f): frontera implícita φ=0 advectada por
+    # Hamilton-Jacobi con velocidad = sensibilidad − λ (volumen), más
+    # redistancing de Sussman y nucleación topológica periódica.
+    # Material: Heaviside suavizado nodal (ancho h) promediado por elemento.
+    # Preservados/vacíos se re-pinean tras el mapeo (igual que OC/ESO).
+    # ------------------------------------------------------------------ #
+    def _level_set_optimize(
+        self,
+        max_iterations: int = 50,
+        tolerance: float = 0.01,
+        callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        ls_cfl: float = 0.2,
+        ls_hole_period: int = 5,
+    ) -> Dict[str, Any]:
+        if not 0.0 < float(ls_cfl) <= 1.0:
+            raise TopOptError(f"ls_cfl={ls_cfl!r} fuera de rango (0, 1].")
+        if int(ls_hole_period) < 1:
+            raise TopOptError(f"ls_hole_period={ls_hole_period!r} debe ser >= 1.")
+        from scipy.spatial import cKDTree
+
+        vols = np.asarray(self._volumes, dtype=float)
+        active = np.asarray(self._active, dtype=bool)
+        if not np.any(active):
+            raise TopOptError("Level-Set sin subdominio diseñable (todo preservado/vacío).")
+        preserved = self._preserved if self._preserved is not None else \
+            np.zeros(self.num_elements, dtype=bool)
+        nodes = np.asarray(self.nodes, dtype=float)
+        elements = np.asarray(self.elements, dtype=int)
+        ne = self.num_elements
+        nn = nodes.shape[0]
+        h = float(np.mean(vols[active]) ** (1.0 / 3.0))
+        h = max(h, 1e-12)
+        target_vol = float(self.volfrac * self._vol0_free)
+        xmin = self.rho_min
+
+        # Operadores de gradiente por elemento + incidencia nodo->elementos.
+        grads = np.zeros((ne, 3, 4))
+        for e in range(ne):
+            grads[e] = _tet_shape_gradients(nodes[elements[e]])
+        incidence: List[List[int]] = [[] for _ in range(nn)]
+        for e in range(ne):
+            for a in elements[e]:
+                incidence[int(a)].append(e)
+        node_tree = cKDTree(nodes)
+        # Espaciado nodal (la nucleación debe cubrir al menos el anillo
+        # vecino: el radio en h de elemento puede quedar bajo el espaciado).
+        _nn_dist, _ = node_tree.query(nodes, k=2)
+        nodal_h = max(float(np.mean(_nn_dist[:, 1])), 1e-12)
+
+        def _nodal_average(elem_vals: np.ndarray) -> np.ndarray:
+            out = np.zeros(nn)
+            wsum = np.zeros(nn)
+            for e in range(ne):
+                v = float(elem_vals[e]) * vols[e]
+                for a in elements[e]:
+                    out[int(a)] += v
+                    wsum[int(a)] += vols[e]
+            return np.divide(out, np.maximum(wsum, 1e-18))
+
+        def _nodal_grad_norm(phi: np.ndarray) -> np.ndarray:
+            g = np.zeros((nn, 3))
+            wsum = np.zeros(nn)
+            for e in range(ne):
+                ge = grads[e] @ phi[elements[e]]
+                for a in elements[e]:
+                    g[int(a)] += ge * vols[e]
+                    wsum[int(a)] += vols[e]
+            g /= np.maximum(wsum, 1e-18)[:, None]
+            return np.linalg.norm(g, axis=1)
+
+        def _heaviside(phi: np.ndarray) -> np.ndarray:
+            # Banda estrecha (0.5h): nítida como 0/1 pero derivable para HJ.
+            w = 0.5 * h
+            x = np.zeros(ne)
+            for e in range(ne):
+                pv = phi[elements[e]] / w
+                hv = np.where(pv <= -1.0, 0.0,
+                              np.where(pv >= 1.0, 1.0,
+                                       0.5 + 0.5 * (pv + np.sin(np.pi * pv) / np.pi)))
+                x[e] = float(np.mean(hv))
+            x = np.maximum(x, xmin)
+            x[preserved] = 1.0
+            if self._void is not None:
+                x[self._void] = xmin
+            return x
+
+        def _nucleate(phi: np.ndarray, se: np.ndarray, frac: float) -> int:
+            xe = _heaviside(phi)
+            solid = active & (~preserved) & (xe > 0.5)
+            if not np.any(solid):
+                return 0
+            order = np.argsort(se[solid], kind="stable")
+            cand = np.nonzero(solid)[0][order]
+            k = max(int(np.ceil(frac * cand.shape[0])), 1)
+            centers = np.asarray(self.element_centers, dtype=float)
+            n = 0
+            for e in cand[:k]:
+                idx = node_tree.query_ball_point(centers[e], 1.5 * nodal_h)
+                phi[idx] = -1.0
+                n += 1
+            return n
+
+        def _redistance(phi: np.ndarray, iters: int = 3) -> np.ndarray:
+            d = phi.copy()
+            s = np.sign(phi)
+            for _ in range(max(int(iters), 0)):
+                g = _nodal_grad_norm(d)
+                d = d - 0.3 * h * s * (g - 1.0)
+            return d
+
+        # Init: dominio lleno + nucleación inicial por derivada topológica.
+        phi = np.full(nn, 1.0)
+        x0 = _heaviside(phi)
+        _, dc0 = self._compliance_and_sensitivities(x0)
+        _nucleate(phi, self._apply_filter(-dc0, x0), 0.05)
+
+        history: List[Dict[str, Any]] = []
+        converged = False
+        for it in range(max_iterations):
+            x = _heaviside(phi)
+            compliance, dc = self._compliance_and_sensitivities(x)
+            se = self._apply_filter(-dc, x)
+            vol = float(np.dot(x[active], vols[active]))
+            # Multiplicador de volumen (control proporcional con ganancia
+            # K=3: compensa el paso CFL pequeño del HJ explícito).
+            # Convención dφ/dt = −V|∇φ| con φ>0 sólido: remover exige V>0
+            # en baja sensibilidad → V = λ−se, con media(V) = +K·(vol−target)
+            # /ΣV (sobre-volumen → φ decrece → se remueve).
+            se_a = se[active]
+            lam = (float(np.dot(se_a, vols[active])) + 3.0 * (vol - target_vol)) / max(float(vols[active].sum()), 1e-18)
+            v_elem = np.zeros(ne)
+            v_elem[active] = lam - se[active]
+            v_nod = _nodal_average(v_elem)
+            gnorm = _nodal_grad_norm(phi)
+            vmax = float(np.max(np.abs(v_nod)))
+            if vmax <= 1e-18:
+                x = _heaviside(phi)
+                vol_frac = float(np.dot(x[active], vols[active]) / max(self._vol0_free, 1e-12))
+                history.append({"iteration": it + 1, "compliance": float(compliance),
+                                "volume_fraction": vol_frac, "max_change": 0.0})
+                converged = True
+                break
+            dt = float(ls_cfl) * h / vmax
+            phi = phi - dt * v_nod * gnorm
+            if (it + 1) % int(ls_hole_period) == 0:
+                phi = _redistance(phi)
+                if vol > target_vol:
+                    _nucleate(phi, se, 0.04)
+            xnew = _heaviside(phi)
+            change = float(np.max(np.abs(xnew - x)))
+            vol_frac = float(np.dot(xnew[active], vols[active]) / max(self._vol0_free, 1e-12))
+            history.append(
+                {
+                    "iteration": it + 1,
+                    "compliance": float(compliance),
+                    "volume_fraction": vol_frac,
+                    "max_change": change,
+                }
+            )
+            if callback:
+                callback(
+                    {
+                        "iteration": it + 1,
+                        "compliance": float(compliance),
+                        "volume_fraction": vol_frac,
+                        "max_change": change,
+                        "densities": xnew.copy(),
+                    }
+                )
+            if vol_frac <= float(self.volfrac) + 1e-12 and len(history) >= 10:
+                last = np.array([h["compliance"] for h in history[-10:]])
+                denom = max(float(np.sum(np.abs(last[5:]))), 1e-12)
+                if abs(float(np.sum(last[5:]) - np.sum(last[:5]))) / denom <= tolerance:
+                    converged = True
+                    break
+        return self._finalize_result(
+            _heaviside(phi), history, converged, max_iterations, tolerance, "level_set")
 
     def _nodal_vm(self, u: np.ndarray) -> np.ndarray:
         nodal_accum = np.zeros(self.fea.num_nodes)

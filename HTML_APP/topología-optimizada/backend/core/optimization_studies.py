@@ -30,7 +30,9 @@ class OptimizerType(str, Enum):
     ESO = "eso"          # Evolutionary Structural Optimization
     LEVEL_SET = "level_set"
     # Fase 4: MMA propio implementado en core/topopt.py
-    # (optimizer="mma"). ESO/LEVEL_SET siguen sin motor (ocultos en UI).
+    # (optimizer="mma"). Fase 6a: ESO hard-kill implementado
+    # (optimizer="eso"). Fase 6f: Level-Set HJ implementado
+    # (optimizer="level_set").
     MMA = "mma"
 
 

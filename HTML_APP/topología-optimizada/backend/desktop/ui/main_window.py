@@ -432,6 +432,8 @@ class MainWindow(QMainWindow):
             "filter_radius": 1.5,
             "tolerance": 1e-3,
             "material": self.properties.material_name(),
+            "optimizer": "oc",
+            "eso_criterion": "compliance",
         })
 
     def _on_run_optimization(self, params: dict) -> None:
@@ -465,6 +467,8 @@ class MainWindow(QMainWindow):
                 filter_radius=params["filter_radius"],
                 tolerance=params["tolerance"],
                 progress_cb=progress_cb,
+                optimizer=str(params.get("optimizer", "oc")).lower(),
+                eso_criterion=str(params.get("eso_criterion", "compliance")).lower(),
             ),
             on_done=self._on_optimization_done,
             on_error=lambda e: self._on_error("Optimización", e),

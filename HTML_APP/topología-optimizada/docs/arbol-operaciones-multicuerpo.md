@@ -55,8 +55,11 @@ del árbol y la envía a `createCondition` con id estable (sobrescribe).
 5. **Malla volumétrica**: solo existe en el modelo activo del core (se limpia
    al re-importar); el caché `meshByFile` se autocorrige al activar.
 6. **Core vendorado** (`backend/core|desktop|adapters|services`): copia del
-   2026-09-11. Re-sincronizar según `backend/CORE_VENDORADO.txt`. El proyecto
-   origen no se modifica.
+   2026-09-11 que ya **divergió** de la fuente externa (+2.854 líneas con el
+   trabajo de Fases 1-6). **NO re-sincronizar**: el `Copy-Item -Recurse -Force`
+   que documentaba `backend/CORE_VENDORADO.txt` era destructivo y fue retirado
+   el 2026-09-14 (ver `docs/auditoria-2026-09-14.md`). El proyecto origen no se
+   modifica.
 
 ## Reversibilidad
 

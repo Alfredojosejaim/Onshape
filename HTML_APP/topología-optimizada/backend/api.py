@@ -1047,13 +1047,18 @@ class Api:
                 return {"ok": False,
                         "error": f"engine desconocido: {engine} (local|kratos)"}
             optimizer = str(p.get("optimizer", "oc")).lower()
-            if optimizer not in ("oc", "mma", "eso", "level_set"):
-                return {"ok": False,
-                        "error": f"optimizer={optimizer!r} no soportado (usar 'oc', 'mma', 'eso' o 'level_set')"}
+            # AUDIT-FIX (14-sep-2026): la comprobacion especifica de gcmma va
+            # ANTES del rechazo generico. Estaba despues y era codigo muerto:
+            # gcmma ya caia en el "not in" y el usuario recibia el mensaje
+            # generico sin la explicacion (nucleo vs path vendored). Caso
+            # detectado en auditoria; ver docs/auditoria-2026-09-14.md.
             if optimizer == "gcmma":
                 return {"ok": False,
                         "error": "optimizer='gcmma' solo en núcleo (runOptimization): "
                                  "el path vendored está congelado (Fase 4.5b)."}
+            if optimizer not in ("oc", "mma", "eso", "level_set"):
+                return {"ok": False,
+                        "error": f"optimizer={optimizer!r} no soportado (usar 'oc', 'mma', 'eso' o 'level_set')"}
             eso_criterion = str(p.get("eso_criterion", "compliance")).lower()
             if eso_criterion not in ("compliance", "stress"):
                 return {"ok": False,

@@ -1,18 +1,47 @@
-CORE VENDORADO (autocontenido)
-==============================
-Carpetas backend/core, backend/desktop, backend/adapters, backend/services
-son una COPIA de Topologia_Optimizada en la fecha indicada abajo. La app las
-usa primero (ver api.py); solo si faltan, usa la carpeta hermana externa.
+CORE VENDORADO (autocontenido) — estado REAL al 14-sep-2026
+===========================================================
 
-- Fuente: D:\Documentos\GitHub\Onshape\Topologia_Optimizada
-- Fecha de copia: 2026-09-11
-- Contenido: *.py + *.json (sin __pycache__, sin tests_obsoletos)
+Carpetas backend/core, backend/desktop, backend/adapters y backend/services
+son una COPIA de Topologia_Optimizada, PERO YA NO SON UNA COPIA FIEL: el
+contenido local ha divergido y contiene todo el trabajo de las Fases 1-6.
 
-Re-sincronizar (PowerShell, desde la raiz del proyecto):
-  $SRC="<ruta>\Topologia_Optimizada"
-  foreach ($d in @("core","desktop","adapters","services")) {
-    Copy-Item -Recurse -Force -Path "$SRC\$d" -Destination "backend\$d"
-  }
+- Fuente historica: D:\Documentos\GitHub\Onshape\Topologia_Optimizada
+- Fecha de la copia inicial: 2026-09-11
+- Fecha de esta revision: 2026-09-14
+
+    ------------------------------------------------------------------
+    AVISO — NO RE-SINCRONIZAR. La re-sincronizacion era DESTRUCTIVA.
+    ------------------------------------------------------------------
+    El procedimiento de re-sync que documentaba esta nota
+    (Copy-Item -Recurse -Force sobre backend\core|desktop|adapters|
+    services) SOBRESCRIBIA el trabajo local con una fuente externa
+    obsoleta. Medido el 14-sep-2026:
+
+        carpeta      externo (lineas)   local (lineas)   delta
+        core              11.461           13.396        +1.935
+        desktop            9.055            9.930          +875
+        adapters             284              304           +20
+        services           1.089            1.113           +24
+        ------------------------------------------------ +2.854
+
+    Caso concreto: Topologia_Optimizada\core\topopt.py tiene 450 lineas
+    y CERO rastro de gcmma / symmetry_planes / level_set /
+    _eso_optimize. backend\core\topopt.py tiene 1.306 lineas con TODO
+    eso. Un re-sync borraba MMA, GCMMA, ESO, level-set, simetria,
+    acoplamiento termico, herramientas de malla, FoS y comparacion de
+    estudios.
+
+    Si algun dia hace falta refrescar desde la fuente externa, el orden
+    obligatorio es: (1) commit o rama de respaldo, (2) traer SOLO los
+    ficheros concretos que se quieran, (3) diff revisado a mano,
+    (4) pytest backend/tests. Nunca un Copy-Item recursivo -Force.
+
+Ruta de importacion (verificado en backend/api.py:23-28):
+  El core LOCAL manda siempre. La carpeta externa solo se anade a
+  sys.path si backend/core NO existe (desarrollo). Con backend/core
+  presente no hay mezcla de versiones en runtime.
+
+Limpieza de artefactos (esto si es seguro):
   Get-ChildItem -Recurse -Directory -Include __pycache__,.pytest_cache,.ruff_cache `
     "backend\core","backend\desktop","backend\adapters","backend\services" |
     Remove-Item -Recurse -Force

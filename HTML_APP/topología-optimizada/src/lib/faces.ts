@@ -166,11 +166,12 @@ export function buildConditionJson(
   };
 }
 
-/** Etiqueta corta para el arbol: "3 caras: face_0, face_2, face_5". */
+/** Etiqueta corta para el arbol: SOLO el numero de caras ("3 caras").
+ *  La lista de que caras estan seleccionadas (face_0, face_2...) se muestra
+ *  unicamente al abrir la herramienta en el menu (ToolParamsPanel). */
 export function facesLabel(faceIndices: number[]): string {
   if (faceIndices.length === 0) return 'sin caras';
-  const ids = [...faceIndices].sort((a, b) => a - b).map((f) => `face_${f}`);
-  return `${faceIndices.length} cara${faceIndices.length > 1 ? 's' : ''}: ${ids.join(', ')}`;
+  return `${faceIndices.length} cara${faceIndices.length > 1 ? 's' : ''}`;
 }
 /** Los rangos cubren todo el teselado (sin diezmar)? Solo entonces el
  *  picking triangulo->cara es fiable: el backend diezma arrays grandes

@@ -18,8 +18,16 @@ function hasBridge(): boolean {
 
 async function call<T>(method: string, ...args: never[]): Promise<Ok<T>> {
   if (!hasBridge()) return mock<T>(method);
+  const fn = window.pywebview!.api[method];
+  // BRIDGE-GUARD (reversible): si el metodo no esta expuesto por el host
+  // (whitelist desactualizada / bundle viejo), devolver error explicito en vez
+  // de un TypeError opaco que la UI mostraba como fallo de conexion.
+  if (typeof fn !== 'function') {
+    return { ok: false,
+             error: `método no expuesto por el backend: ${method}` } as unknown as Ok<T>;
+  }
   try {
-    return (await window.pywebview!.api[method](...args)) as Ok<T>;
+    return (await fn(...args)) as Ok<T>;
   } catch (e) {
     return { ok: false, error: String(e) } as unknown as Ok<T>;
   }

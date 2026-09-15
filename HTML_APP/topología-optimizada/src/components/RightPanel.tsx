@@ -234,6 +234,18 @@ export const RightPanel: React.FC<RightPanelProps> = ({
                 <span className="material-symbols-outlined text-[12px] text-secondary">shape_line</span>
                 Geometría limpia (bordes nítidos)
               </span>
+              <label className="flex items-center justify-between pl-2">
+                <span className="text-text-secondary" title="Generativa: optimizar la pieza (solo vacía) o una caja de diseño (crece estructura orgánica)">Design space</span>
+                <select
+                  value={simpParams.designSpace}
+                  disabled={optimizationState.isRunning}
+                  onChange={(e) => onChangeSimpParams({ ...simpParams, designSpace: e.target.value as SimpParameters['designSpace'] })}
+                  className="bg-surface-container-lowest border border-border-subtle/40 rounded px-1 py-0.5 text-text-primary"
+                >
+                  <option value="part">Pieza</option>
+                  <option value="envelope">Envelope</option>
+                </select>
+              </label>
               <label className="flex items-center justify-between pl-2 cursor-pointer">
                 <span className="text-text-secondary">Proyección Heaviside</span>
                 <input

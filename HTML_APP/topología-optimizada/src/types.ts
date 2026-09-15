@@ -98,6 +98,7 @@ export interface SimpParameters {
   heavisideBeta: number; // agudeza de la proyección
   extrusionAxis: 'off' | 'x' | 'y' | 'z'; // extrusión 2D (densidad constante por eje)
   brepStyle: 'faceted' | 'bspline'; // reconstrucción STEP facetada vs B-spline
+  designSpace: 'part' | 'envelope'; // generativa: pieza original vs caja de diseño
 }
 
 export interface OptimizationState {

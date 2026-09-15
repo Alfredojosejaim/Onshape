@@ -15,6 +15,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
+import traceback
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from api import Api
@@ -61,6 +62,18 @@ class _Handler(BaseHTTPRequestHandler):
                 payload = {"ok": True, "result": fn(*args)}
         except Exception as exc:  # noqa: BLE001
             payload = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            # SERVER-LOG (reversible): dejar rastro del fallo en disco. Si el
+            # proceso muere por DLL nativa, este log es lo unico que sobrevive
+            # para diagnosticar (antes solo se veia "url/conexion" en la UI).
+            try:
+                with open(os.path.join(_HERE, "server_error.log"), "a",
+                          encoding="utf-8") as _fh:
+                    _fh.write(f"method={locals().get('method')!r} "
+                              f"exc={type(exc).__name__}: {exc}\n")
+                    _fh.write(traceback.format_exc())
+                    _fh.write("-" * 60 + "\n")
+            except Exception:  # noqa: BLE001
+                pass
         data = json.dumps(payload).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -74,4 +87,10 @@ class _Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
+    # HTTPServer MONO-HILO (reversible/obligatorio): Gmsh usa `signal`, que
+    # solo funciona en el hilo principal. Con ThreadingHTTPServer los handlers
+    # corren en hilos y `generateMesh` fallaba con "signal only works in main
+    # thread", cayendo al ProvisionalTet4Mesher (malla NO conforme) -> BCs
+    # degradadas y resultado colapsado (85 cm3 -> 1.7 cm3). NO volver a
+    # ThreadingHTTPServer sin sacar gmsh del handler. Ver server_error.log.
     HTTPServer(("127.0.0.1", port), _Handler).serve_forever()

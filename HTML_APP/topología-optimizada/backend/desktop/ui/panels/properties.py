@@ -212,7 +212,7 @@ class PropertiesPanel(QWidget):
         # Proyección Heaviside + extrusión 2D (aprobación explícita 15-sep-2026,
         # fuera de plan): contornos 0/1 nítidos y diseño constante por eje.
         self._heaviside_enable = QCheckBox("Proyección Heaviside (bordes nítidos)")
-        self._heaviside_enable.setChecked(False)
+        self._heaviside_enable.setChecked(True)
         col.addWidget(self._heaviside_enable)
         col.addWidget(_field_label("Beta Heaviside (agudeza)"))
         self._heaviside_beta = QDoubleSpinBox()

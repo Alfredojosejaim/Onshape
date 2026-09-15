@@ -91,6 +91,9 @@ export default function App() {
   // Boundary Conditions
   const [boundaryConditions, setBoundaryConditions] = useState<BoundaryCondition[]>(INITIAL_CONDITIONS);
   const [editingCondition, setEditingCondition] = useState<BoundaryCondition | null>(null);
+  // TREE-SELECT-DELETE (reversible): fila marcada con clic simple (solo
+  // resalta; doble clic abre la herramienta). Supr/papelera la eliminan.
+  const [selectedCondId, setSelectedCondId] = useState<string | null>(null);
   // FACES-START (reversible): caras B-Rep seleccionadas por ARCHIVO,
   // HERRAMIENTA y CONDICION (face_index del core). Cada herramienta tiene su
   // cubeta y cada condicion aplicada (Carga 1, Carga 2...) la suya: al
@@ -303,10 +306,15 @@ export default function App() {
     // PERF-DEFAULT (reversible): 100 iteraciones era un default caro (con
     // malla fina, minutos). 50 alcanza la convergencia típica de SIMP.
     maxIterations: 50,
-    heaviside: false,
+    // GEO-CLEAN-DEFAULTS (15-sep-2026, aprobado): bordes nítidos + STEP
+    // B-spline. Design space 'part' por defecto: itera de inmediato (el
+    // envelope mallaría ~60k tets y la 1ra iteración tarda ~10s+, lo que se
+    // veía como "no itera"). El envelope queda como opción para orgánico.
+    heaviside: true,
     heavisideBeta: 8.0,
     extrusionAxis: 'off',
-    brepStyle: 'faceted',
+    brepStyle: 'bspline',
+    designSpace: 'part',
   });
   // OPT-TYPE (reversible): estructural (SIMP) vs generativa (escenario A).
   const [optType, setOptType] = useState<OptimizationType>('estructural');
@@ -684,14 +692,20 @@ export default function App() {
         try {
           const rr = (await backend.registerReconstruction(gj)) as unknown as {
             ok: boolean; registered?: { model_id?: string; model_name?: string };
+            key?: string | null;
+            entry?: { key?: string; filename?: string; displayName?: string } | null;
             snapshot?: ApiSnapshot; error?: string; reason?: unknown;
           };
           const reg = rr.ok ? rr.registered : undefined;
           if (reg && (reg.model_id || reg.model_name) && rr.snapshot) {
-            const nm = reg.model_name || 'Pieza generada';
-            applySnapshotToModel(rr.snapshot, nm, nm);
-            void fetchSurface(nm);
-            void fetchSolids(nm);
+            // LIBRARY-FIRST: usar la entrada de libreria (key) para que la
+            // pieza generada se pueda borrar y deshacer (Ctrl+Z) como cualquier
+            // modelo, no solo quedar como activo del controller.
+            const nm = rr.entry?.displayName || reg.model_name || 'Pieza generada';
+            const fn = rr.entry?.filename || nm;
+            applySnapshotToModel(rr.snapshot, fn, nm, rr.key ?? rr.entry?.key ?? undefined);
+            void fetchSurface(fn);
+            void fetchSolids(fn);
             const parts = [`Diseño generativo listo: "${nm}" cargada como modelo activo.`];
             const uns = unsText(result);
             if (uns) parts.push(uns);
@@ -799,6 +813,17 @@ export default function App() {
             }
             setHasMesh(!!snap.has_mesh);
             setFeaJobId(null);
+            // MESH-FALLBACK (reversible): si la malla salió del mesher
+            // provisional (voxel, NO conforme al CAD), las condiciones por
+            // cara pueden degradarse (nodos fuera de la cara). Avisar explícito
+            // en vez de que la fijación "desaparezca" en silencio.
+            const mr = (r as unknown as { result?: { fallback?: boolean; mesher?: string; fallback_reason?: string } }).result;
+            if (mr?.fallback) {
+              setOptNotice({
+                text: `Malla generada con ${mr.mesher ?? 'mesher provisional'} (no conforme al CAD). `
+                  + `Las condiciones por cara pueden degradarse. Motivo: ${mr.fallback_reason ?? 'Gmsh no disponible'}.`,
+              });
+            }
           } else {
             setOptNotice({
               text: typeof (r as { error?: unknown }).error === 'string'
@@ -845,6 +870,14 @@ export default function App() {
       isPaused: false,
       totalIterations: stateRef.current.simpParams.maxIterations,
     }));
+    // ENVELOPE-HINT (reversible): el design space 'envelope' malla ~60k tets
+    // y la primera iteración tarda; avisar en vez de parecer colgado.
+    if (stateRef.current.optType === 'generativa'
+        && stateRef.current.simpParams.designSpace === 'envelope') {
+      setOptNotice({
+        text: 'Envelope: generando el dominio de diseño (puede tardar antes de la primera iteración)…',
+      });
+    }
       // COND-SYNC (reversible): condiciones reales al backend (la
       // generativa las necesita por id; la estructural las usa si existen
       // y si no cae al legacy de setBoundaries).
@@ -876,6 +909,7 @@ export default function App() {
               extrusion_axis: st.simpParams.extrusionAxis === 'off' ? null : st.simpParams.extrusionAxis,
               brep_style: st.simpParams.brepStyle,
               smoothing_method: st.simpParams.brepStyle === 'bspline' ? 'taubin' : 'laplacian',
+              design_space: st.simpParams.designSpace,
             })
           : await backend.runOptimization({
               condition_ids: condIds.length > 0 ? condIds : undefined,
@@ -1468,7 +1502,11 @@ export default function App() {
       return next;
     });
     setEditingCondition((prev) => (prev?.id === id ? null : prev));
+    setSelectedCondId((prev) => (prev === id ? null : prev));
   };
+  // TREE-SELECT: clic simple marca la fila (sin abrir la herramienta). El
+  // borrado se hace con Supr sobre la fila marcada (o el modal de edicion).
+  const handleSelectCondition = (id: string) => setSelectedCondId(id);
   const handleDeleteSelected = async () => {
     if (!backend.hasBridge()) return;
     if (stateRef.current.currentModel == null && !editingCondition) {
@@ -1476,7 +1514,9 @@ export default function App() {
       return;
     }
     const tool = stateRef.current.activeTool;
+    // TREE-SELECT-DELETE: la fila marcada con clic simple tiene prioridad.
     const condId =
+      selectedCondId ??
       editingCondition?.id ??
       (tool === 'carga' || tool === 'fijacion' || tool === 'preservada' || tool === 'keepout'
         ? activeTargetId
@@ -1533,6 +1573,10 @@ export default function App() {
     }
     setOptNotice({ text: 'Nada que eliminar: seleccioná una herramienta o una pieza.' });
   };
+  // DELETE-REF (reversible): el listener de Supr usa siempre el handler actual
+  // (sin closure obsoleta de selectedCondId/boundaryConditions).
+  const deleteSelectedRef = useRef(handleDeleteSelected);
+  deleteSelectedRef.current = handleDeleteSelected;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
@@ -1555,7 +1599,7 @@ export default function App() {
       if (e.key !== 'Delete' || mod || e.altKey) return;
       if (typing || showImport || showExport || showHelp || editingCondition) return;
       e.preventDefault();
-      void handleDeleteSelected();
+      void deleteSelectedRef.current();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -1595,24 +1639,7 @@ export default function App() {
       </div>
 
       {/* 4. MAIN ENGINEERING STAGE */}
-      <div className="pt-[146px] pb-7 flex-1 w-full flex flex-col bg-viewport-bg">
-        {/* OPT-NOTICE (reversible): aviso de pre-vuelo/errores. */}
-        {optNotice && (
-          <div className="mx-space-sm mt-space-sm flex items-center gap-2 rounded-lg border border-fea-stress-yield/50 bg-fea-stress-yield/10 px-3 py-2 text-[11px] text-text-primary" role="alert">
-            <span className="material-symbols-outlined text-[16px] text-fea-stress-yield shrink-0">warning</span>
-            <span className="flex-1 min-w-0">{optNotice.text}</span>
-            {optNotice.actionLabel && optNotice.onAction && (
-              <button type="button" onClick={optNotice.onAction}
-                className="shrink-0 rounded bg-secondary/15 border border-secondary/40 px-2 py-1 font-semibold text-secondary hover:bg-secondary hover:text-on-primary transition-colors">
-                {optNotice.actionLabel}
-              </button>
-            )}
-            <button type="button" onClick={() => setOptNotice(null)} aria-label="Cerrar aviso"
-              className="shrink-0 rounded hover:bg-surface-elevated px-1 text-text-secondary hover:text-text-primary">
-              <span className="material-symbols-outlined text-[16px]">close</span>
-            </button>
-          </div>
-        )}
+      <div className="relative pt-[146px] pb-7 flex-1 w-full flex flex-col bg-viewport-bg">
         <div className="w-full flex-1 flex flex-col xl:flex-row gap-space-sm p-space-sm bg-viewport-bg min-h-[calc(100dvh-8.5rem)]">
           {/* EXT-RAIL (reversible): riel delgado entre el marco y el arbol.
               Borrar esta linea para volver atras. */}
@@ -1653,9 +1680,34 @@ export default function App() {
             onPushCondition={pushFaceCondition}
             onMeshTool={handleMeshTool}
             meshBusy={meshBusy}
+            // TREE-SELECT (reversible): clic simple marca (Supr borra).
+            selectedConditionId={selectedCondId}
+            onSelectCondition={handleSelectCondition}
           />
 
           {/* CENTRAL 3D CAD VIEWPORT */}
+          {/* VIEWPORT-WRAP (reversible): contenedor relativo para anclar el
+              aviso SOBRE el viewport (no tapa el arbol de operaciones ni la
+              biblioteca de materiales). Para volver atras: sacar el aviso de
+              aqui y devolverlo a nivel de etapa. */}
+          <div className="relative flex-1 min-w-0 flex flex-col">
+          {/* OPT-NOTICE (reversible): aviso de pre-vuelo/errores. */}
+          {optNotice && (
+            <div className="absolute top-space-sm left-space-sm right-space-sm z-30 flex items-center gap-2 rounded-lg border border-fea-stress-yield/50 bg-fea-stress-yield/10 px-3 py-2 text-[11px] text-text-primary shadow-lg" role="alert">
+              <span className="material-symbols-outlined text-[16px] text-fea-stress-yield shrink-0">warning</span>
+              <span className="flex-1 min-w-0">{optNotice.text}</span>
+              {optNotice.actionLabel && optNotice.onAction && (
+                <button type="button" onClick={optNotice.onAction}
+                  className="shrink-0 rounded bg-secondary/15 border border-secondary/40 px-2 py-1 font-semibold text-secondary hover:bg-secondary hover:text-on-primary transition-colors">
+                  {optNotice.actionLabel}
+                </button>
+              )}
+              <button type="button" onClick={() => setOptNotice(null)} aria-label="Cerrar aviso"
+                className="shrink-0 rounded hover:bg-surface-elevated px-1 text-text-secondary hover:text-text-primary">
+                <span className="material-symbols-outlined text-[16px]">close</span>
+              </button>
+            </div>
+          )}
           {/* BLACKSCREEN-FIX: el viewport nunca deja la app en negro. */}
           <ErrorBoundary label="el viewport 3D">
           <React.Suspense
@@ -1701,6 +1753,7 @@ export default function App() {
           />
           </React.Suspense>
           </ErrorBoundary>
+          </div>
 
           {/* RIGHT PANEL: Materials, SIMP Parameters, and FEA Results */}
           <RightPanel

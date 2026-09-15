@@ -70,9 +70,12 @@ export function useJobPoll(jobId: string | null, onDone?: (result: unknown) => v
       }
     };
     void tick();
+    // POLL-1S (reversible): 2s hacía que una corrida corta terminara antes de
+    // mostrar la primera iteración ("no itera"). 1s muestra el avance. Para
+    // volver atrás: 2000.
     id = setInterval(() => {
       void tick();
-    }, 2000);
+    }, 1000);
     return () => {
       cancelled = true;
       stop();

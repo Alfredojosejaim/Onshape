@@ -66,8 +66,17 @@ class Bridge:
         req = urllib.request.Request(
             self._base, data=data,
             headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=120) as res:
-            body = json.loads(res.read().decode("utf-8"))
+        # BRIDGE-ROBUST (reversible): si el backend no responde (proceso caido,
+        # timeout), devolver un error legible en vez de propagar la excepcion de
+        # urllib (que en la UI se veia como "error de url / falta de conexion"
+        # y dejaba la app sin poder seguir). Para volver atras: quitar el try.
+        try:
+            with urllib.request.urlopen(req, timeout=120) as res:
+                body = json.loads(res.read().decode("utf-8"))
+        except Exception as exc:  # noqa: BLE001 - el error viaja al frontend
+            logger.error("backend no responde en %s: %s", method, exc)
+            return {"ok": False,
+                    "error": f"backend no responde ({method}): {type(exc).__name__}: {exc}"}
         if isinstance(body, dict) and body.get("ok") and "result" in body:
             result = body["result"]
             return result if isinstance(result, dict) else {"ok": True, "value": result}

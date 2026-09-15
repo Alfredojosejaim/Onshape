@@ -132,6 +132,89 @@ def generate_bridge_mesh(
     )
 
 
+def _voxel_tet_mesh(lo, hi, resolution):
+    """Rejilla de voxels (caja lo..hi) partida en 6 tets cada uno."""
+    lo = np.asarray(lo, dtype=float)
+    hi = np.asarray(hi, dtype=float)
+    res = max(float(resolution), 1e-6)
+    steps = np.maximum(np.ceil((hi - lo) / res).astype(int), 1)
+    nx, ny, nz = int(steps[0]), int(steps[1]), int(steps[2])
+
+    def node_index(i, j, k):
+        return i * (ny + 1) * (nz + 1) + j * (nz + 1) + k
+
+    total = (nx + 1) * (ny + 1) * (nz + 1)
+    pts = np.empty((total, 3))
+    for i in range(nx + 1):
+        for j in range(ny + 1):
+            for k in range(nz + 1):
+                pts[node_index(i, j, k)] = lo + np.array([i * res, j * res, k * res])
+
+    elements: List[List[int]] = []
+    voxels: List[Tuple[int, int, int]] = []
+    for i in range(nx):
+        for j in range(ny):
+            for k in range(nz):
+                n = [
+                    node_index(i, j, k), node_index(i + 1, j, k),
+                    node_index(i + 1, j + 1, k), node_index(i, j + 1, k),
+                    node_index(i, j, k + 1), node_index(i + 1, j, k + 1),
+                    node_index(i + 1, j + 1, k + 1), node_index(i, j + 1, k + 1),
+                ]
+                elements.append([n[0], n[1], n[4], n[2]])
+                elements.append([n[1], n[5], n[4], n[2]])
+                elements.append([n[4], n[5], n[6], n[2]])
+                elements.append([n[4], n[6], n[7], n[2]])
+                elements.append([n[0], n[4], n[3], n[2]])
+                elements.append([n[7], n[4], n[3], n[2]])
+                voxels.append((i, j, k))
+    return pts, np.asarray(elements, dtype=int), voxels
+
+
+def generate_design_space_mesh(
+    model_nodes: np.ndarray,
+    resolution: Optional[float] = None,
+    padding: Optional[float] = None,
+    max_voxels: int = 12000,
+) -> BridgeMesh:
+    """Envelope de diseño (design space) para escenario A.
+
+    Caja que encierra la malla del modelo + padding, mallada en voxels->6 tets.
+    Es el dominio donde el optimizador puede **crecer** material (a diferencia
+    de la pieza original, donde solo puede vaciar por dentro) — la diferencia
+    entre "esculpir" y diseño generativo orgánico.
+
+    ``resolution`` (tamaño de voxel, mm): por defecto ``max(span)/30``. Si la
+    rejilla supera ``max_voxels`` se engrosa automáticamente para acotar el
+    costo del solver (el valor efectivo se reporta en ``target_node_sets``).
+    """
+    nodes = np.asarray(model_nodes, dtype=float)
+    lo = nodes.min(axis=0)
+    hi = nodes.max(axis=0)
+    span = hi - lo
+    smax = float(np.max(span)) if span.size else 1.0
+    if padding is None:
+        padding = 0.10 * smax if smax > 0 else 1.0
+    pad = max(float(padding), 0.0)
+    lo = lo - pad
+    hi = hi + pad
+    res = float(resolution) if resolution and float(resolution) > 0 else smax / 30.0
+    res = max(res, 1e-6)
+    # Acotar el número de voxels (cada uno = 6 tets) para no colgar el solver.
+    while True:
+        steps = np.maximum(np.ceil((hi - lo) / res).astype(int), 1)
+        n_vox = int(steps[0]) * int(steps[1]) * int(steps[2])
+        if n_vox <= max_voxels:
+            break
+        res *= 1.25
+    pts, els, vox = _voxel_tet_mesh(lo, hi, res)
+    return BridgeMesh(
+        nodes=pts, elements=els, voxels=vox,
+        target_node_sets={"resolution": [res], "padding": [pad],
+                          "voxels": [len(vox)]},
+    )
+
+
 def consume_conditions(
     manager: ConditionManager,
     condition_ids: List[str],
@@ -199,6 +282,8 @@ class GenerativeDesignEngine:
         model_shape: Any = None,
         face_surface_elements: Optional[Dict[str, List[List[int]]]] = None,
         physical_groups: Optional[Dict[str, List[int]]] = None,
+        face_tolerance: float = 0.5,
+        surface_matches_mesh: bool = True,
     ) -> None:
         self.model_id = model_id
         self.mesh_nodes = np.asarray(mesh_nodes, dtype=float) if mesh_nodes is not None else None
@@ -208,6 +293,15 @@ class GenerativeDesignEngine:
         self.condition_manager = condition_manager or ConditionManager()
         self.model_shape = model_shape
         self.face_surface_elements = face_surface_elements or {}
+        # TOL-MESH-ADAPTIVE (P4/halo, decisión diferida en plan.md): tolerancia
+        # cara->nodo de malla. 0.5mm es el default histórico para la malla del
+        # modelo; con un design space (envelope) de malla regular se sube a
+        # ~1.5·h para que las caras del sólido mapeen a la rejilla.
+        self._face_tolerance = float(face_tolerance)
+        # SURFACE-MATCH: los face_surface_elements referencian los nodos de la
+        # malla del MODELO. Con un envelope (malla distinta) dejan de ser
+        # válidos y se cae a distribución uniforme en vez de indexar mal.
+        self._surface_matches_mesh = bool(surface_matches_mesh)
         self._face_index_to_groups: Dict[int, List[str]] = {}
         if physical_groups:
             for grp_name, face_indices in physical_groups.items():
@@ -229,18 +323,13 @@ class GenerativeDesignEngine:
                 return [i for i in range(self.mesh_nodes.shape[0])
                         if abs(float(self.mesh_nodes[i, axis]) - coord) <= tol]
             return []
-        from core.selection import FaceRegion, NodeSelectionEngine
         face_indices = [
             int(e.face_index) for e in load.faces.entities
             if e.entity_type == EntityType.FACE and e.face_index is not None
         ]
         if not face_indices:
             return []
-        region = FaceRegion(face_indices=face_indices, tolerance=0.5)
-        return NodeSelectionEngine.select_nodes(
-            self.mesh_nodes, region.to_dict(), cad_shape=self.model_shape,
-            default_tolerance=0.5,
-        )
+        return self._select_nodes_for_faces(face_indices)
 
     def _face_triangles_for_load(self, load: LoadCondition,
                                    node_indices: Optional[List[int]] = None,
@@ -255,6 +344,12 @@ class GenerativeDesignEngine:
         ``allow_boundary_fallback=False`` to disable it.
         """
         from core.boundary import face_triangles_for_indices
+        if not self._surface_matches_mesh:
+            # Design space/envelope: los triángulos de superficie referencian
+            # los nodos de la malla del modelo, no los del envelope. Devolver
+            # [] fuerza distribución uniforme (correcta en índices) en vez de
+            # indexar nodos equivocados.
+            return []
         if not self.face_surface_elements:
             return []
         face_indices = [
@@ -271,31 +366,109 @@ class GenerativeDesignEngine:
         )
         return tris
 
+    def _mean_edge_length(self) -> float:
+        """Longitud media de arista de los tets (para tolerancia adaptativa)."""
+        if self.mesh_nodes is None or self.mesh_elements is None \
+                or len(self.mesh_elements) == 0:
+            return 1.0
+        p = np.asarray(self.mesh_nodes, dtype=float)[np.asarray(self.mesh_elements, dtype=int)]
+        edges = [np.linalg.norm(p[:, i] - p[:, j], axis=1)
+                 for i in range(4) for j in range(i + 1, 4)]
+        h = float(np.mean(np.concatenate(edges))) if edges else 1.0
+        return h if np.isfinite(h) and h > 0 else 1.0
+
+    def _map_faces_with_tolerance(self, face_indices: List[int], tol: float) -> List[int]:
+        from core.selection import FaceRegion, NodeSelectionEngine
+        region = FaceRegion(face_indices=sorted(int(f) for f in face_indices),
+                            tolerance=tol)
+        return list(NodeSelectionEngine.select_nodes(
+            self.mesh_nodes, region.to_dict(),
+            cad_shape=self.model_shape, default_tolerance=tol))
+
+    def _select_nodes_for_faces(self, face_indices: List[int]) -> List[int]:
+        """Mapea caras CAD a nodos con tolerancia adaptativa + reintento.
+
+        Con malla conforme (Gmsh) los nodos están SOBRE la cara y 0.5mm basta.
+        Con malla NO conforme (provisional/voxel) los nodos quedan a ~h/2 de la
+        cara y 0.5mm mapea 0-1 nodos: la condición se "degradaba" y la
+        optimización colapsaba. Aquí, si el mapeo estricto es DISPERSO (menos de
+        la mitad de los nodos esperados por área = A/h²), se reintenta con
+        `2·h_elemento` y se conserva el que más nodos mapea.
+        """
+        if not face_indices or self.model_shape is None:
+            return []
+        strict = self._map_faces_with_tolerance(face_indices, self._face_tolerance)
+        h = self._mean_edge_length()
+        try:
+            area = sum(float(self.model_shape.Faces()[int(fi)].Area())
+                       for fi in face_indices)
+        except Exception:  # noqa: BLE001 - defensivo
+            area = 0.0
+        expected = max(1.0, area / max(h * h, 1e-9))
+        if not strict or len(strict) < 0.5 * expected:
+            alt = self._map_faces_with_tolerance(
+                face_indices, max(self._face_tolerance, 2.0 * h))
+            if len(alt) > len(strict):
+                return alt
+        return strict
+
+    def _resolved_load_nodes(self, load: LoadCondition) -> List[int]:
+        """Nodos donde la carga se aplica REALMENTE (mismo fallback que la BC).
+
+        HALO-CONSISTENTE: `_map_conditions_to_problem` cae al extremo del eje
+        cuando una cara real no mapea (modo permisivo). El halo debe proteger
+        esos mismos nodos, no un conjunto vacío.
+        """
+        idx = self._node_indices_for_load(load)
+        if idx:
+            return list(idx)
+        nodes = self.mesh_nodes
+        vec = direction_vector(load)
+        axis = int(np.argmax(np.abs(vec)))
+        coord = nodes[:, axis].max() if vec[axis] > 0 else nodes[:, axis].min()
+        tol = 1e-3 * float(np.ptp(nodes[:, axis]))
+        return [i for i in range(nodes.shape[0])
+                if abs(float(nodes[i, axis]) - coord) <= tol]
+
+    def _resolved_support_nodes(self, cond: ElasticityCondition) -> List[int]:
+        """Nodos donde la fijación se aplica REALMENTE (mismo fallback base-Z)."""
+        face_indices = [
+            int(e.face_index) for e in cond.faces.entities
+            if e.entity_type == EntityType.FACE and e.face_index is not None
+        ]
+        target: List[int] = []
+        if self.model_shape is not None and face_indices:
+            target = self._select_nodes_for_faces(face_indices)
+        if not target:
+            axis = 2
+            coord = float(self.mesh_nodes[:, axis].min())
+            target = [i for i in range(self.mesh_nodes.shape[0])
+                      if abs(float(self.mesh_nodes[i, axis]) - coord)
+                      <= 1e-6 * max(1.0, np.ptp(self.mesh_nodes[:, axis]))]
+        return target
+
     def _load_node_indices(self, conditions: Dict) -> List[int]:
-        """Collect all mesh node indices targeted by load conditions."""
+        """Collect all mesh node indices targeted by load conditions.
+
+        Usa la resolución REAL (con fallback) para que el halo de preservación
+        coincida exactamente con dónde se aplica la carga.
+        """
         nodes: set = set()
         for load in conditions.get(ConditionType.LOAD, []):
             if isinstance(load, LoadCondition):
-                nodes |= set(self._node_indices_for_load(load))
+                nodes |= set(self._resolved_load_nodes(load))
         return sorted(nodes)
 
     def _support_node_indices(self, conditions: Dict) -> List[int]:
-        """Collect all mesh node indices targeted by elasticity (support) conditions."""
+        """Collect all mesh node indices targeted by elasticity (support) conditions.
+
+        Usa la resolución REAL (con fallback base-Z) para que el halo de
+        preservación coincida exactamente con dónde se fija la pieza.
+        """
         nodes: set = set()
         for cond in conditions.get(ConditionType.ELASTICITY, []):
-            if not isinstance(cond, ElasticityCondition):
-                continue
-            face_indices = [
-                int(e.face_index) for e in cond.faces.entities
-                if e.entity_type == EntityType.FACE and e.face_index is not None
-            ]
-            if self.model_shape is not None and face_indices:
-                from core.selection import FaceRegion, NodeSelectionEngine
-                region = FaceRegion(face_indices=face_indices, tolerance=0.5)
-                nodes |= set(NodeSelectionEngine.select_nodes(
-                    self.mesh_nodes, region.to_dict(),
-                    cad_shape=self.model_shape, default_tolerance=0.5,
-                ))
+            if isinstance(cond, ElasticityCondition):
+                nodes |= set(self._resolved_support_nodes(cond))
         return sorted(nodes)
 
     def _protected_elements(self, conditions: List[ProtectedRegion],
@@ -319,13 +492,7 @@ class GenerativeDesignEngine:
                 if e.entity_type == EntityType.FACE and e.face_index is not None:
                     face_one.add(int(e.face_index))
         if self.model_shape is not None and face_one:
-            from core.selection import FaceRegion, NodeSelectionEngine
-            region = FaceRegion(face_indices=sorted(face_one), tolerance=0.5)
-            face_one_nodes = set(NodeSelectionEngine.select_nodes(
-                self.mesh_nodes, region.to_dict(), cad_shape=self.model_shape,
-                default_tolerance=0.5,
-            ))
-            node_set |= face_one_nodes
+            node_set |= set(self._select_nodes_for_faces(sorted(face_one)))
         # Fallback: protect elements touching the model bounding box ends.
         # Explicit heuristic (not a CAD-face mapping): only applies when no
         # protected-region face resolved to nodes.
@@ -610,9 +777,10 @@ class GenerativeDesignEngine:
             target_nodes: List[int] = []
             if self.model_shape is not None and face_indices:
                 from core.selection import FaceRegion, NodeSelectionEngine
-                region = FaceRegion(face_indices=face_indices, tolerance=0.5)
+                region = FaceRegion(face_indices=face_indices, tolerance=self._face_tolerance)
                 target_nodes = NodeSelectionEngine.select_nodes(
-                    nodes, region.to_dict(), cad_shape=self.model_shape, default_tolerance=0.5,
+                    nodes, region.to_dict(), cad_shape=self.model_shape,
+                    default_tolerance=self._face_tolerance,
                 )
             if not target_nodes and face_indices and raise_on_unmapped_face:
                 unsupported.append("elasticity")
@@ -867,8 +1035,17 @@ def run_generative_design(
     extrusion_axis=None,
     smoothing_method: str = "laplacian",
     brep_style: str = "faceted",
+    design_space: str = "part",
+    design_space_resolution: Optional[float] = None,
+    design_space_padding: Optional[float] = None,
 ) -> Dict[str, Any]:
     """High-level entry: run the generative design pipeline (A or B).
+
+    ``design_space``: "part" (default, histórico: se optimiza la pieza
+    importada, solo se puede vaciar) o "box"/"envelope" (se malla una caja
+    que encierra la pieza y el optimizador puede CRECER una estructura
+    orgánica). Con envelope, la tolerancia cara->nodo se vuelve adaptativa
+    (~1.5·h) y los triángulos de superficie del modelo se desactivan.
 
     Returns a dict with the SIMP result plus the B-Rep reconstruction.
     ``legacy_force``/``legacy_fixed_dofs`` (GEN-LEGACY) permiten correr sin
@@ -924,8 +1101,39 @@ def run_generative_design(
     )
 
     if study.scenario == "A":
-        # Mesh is the imported model mesh (set on the engine).
+        env_meta = None
+        if design_space in ("box", "envelope"):
+            model_nodes = engine.mesh_nodes
+            if model_nodes is None:
+                raise ValueError("design_space='box' requiere la malla del modelo.")
+            res = design_space_resolution
+            if res is None:
+                ds = getattr(study, "design_space", None)
+                ds_res = getattr(ds, "resolution", None) if ds is not None else None
+                # 1.0 es el default de DesignSpace (demasiado fino para una
+                # pieza real): sólo se honra si el usuario lo subió.
+                res = float(ds_res) if ds_res and float(ds_res) > 1.0 else None
+            env = generate_design_space_mesh(
+                model_nodes, resolution=res, padding=design_space_padding)
+            eff_res = float(env.target_node_sets["resolution"][0])
+            engine.mesh_nodes = env.nodes
+            engine.mesh_elements = env.elements
+            # Los triángulos de superficie del modelo NO pertenecen a esta malla
+            # y la tolerancia debe ser mesh-adaptativa para mapear las caras.
+            engine._surface_matches_mesh = False
+            engine._face_tolerance = 1.5 * eff_res
+            env_meta = {
+                "design_space": "envelope",
+                "resolution": eff_res,
+                "voxels": int(env.target_node_sets["voxels"][0]),
+                "num_elements": int(env.elements.shape[0]),
+            }
+        elif design_space != "part":
+            raise ValueError(
+                f"design_space={design_space!r} no soportado (usar 'part' o 'box').")
         result = engine.solve_simp(conditions, **solve_kwargs)
+        if env_meta is not None:
+            result["_design_space"] = env_meta
     elif study.scenario == "B":
         # GEN-B (reversible): el escenario B genera el espacio de diseño entre
         # las piezas objetivo; la malla base del modelo NO es la malla puente.

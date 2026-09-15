@@ -1007,7 +1007,10 @@ class Api:
                                heaviside_continuation=bool(p.get("heaviside_continuation", False)),
                                extrusion_axis=p.get("extrusion_axis"),
                                brep_style=str(p.get("brep_style", "faceted")).lower(),
-                               smoothing_method=str(p.get("smoothing_method", "laplacian")).lower())
+                               smoothing_method=str(p.get("smoothing_method", "laplacian")).lower(),
+                               design_space=str(p.get("design_space", "part")).lower(),
+                               design_space_resolution=p.get("design_space_resolution"),
+                               design_space_padding=p.get("design_space_padding"))
             holder_g["jid"] = jid
             return {"ok": True, "jobId": jid}
         except Exception as exc:  # noqa: BLE001
@@ -1032,13 +1035,82 @@ class Api:
             recon = res.get("reconstruction") or {}
             # El solido crudo no viaja en _clean (serializado a str); se
             # re-ejecuta la reconstruccion solo si hay densidades.
+            prev_key = self._active_key
             info = self._ctrl._register_reconstruction_model(recon)
             reason = None
             if not info.get("model_id"):
                 from desktop.pipeline.controller import reconstruction_failure_reason
                 reason = reconstruction_failure_reason(recon)
-            return {"ok": True, "registered": _clean(info),
-                    "snapshot": self._snapshot(), "reason": reason}
+                return {"ok": True, "registered": _clean(info),
+                        "snapshot": self._snapshot(), "reason": reason}
+            # LIBRARY-FIRST (reversible): la pieza generada debe ser un modelo
+            # de PRIMERA CLASE de la libreria (con key), no solo el activo del
+            # controller. Sin esto: no se podia borrar (currentModel sin key),
+            # Ctrl+Z no la deshacia y el estado quedaba inconsistente (2da
+            # optimizacion rota). Se exporta el solido a STEP en disco y se
+            # re-importa: close_model() limpia malla/condiciones del modelo
+            # anterior, dejando el pipeline listo para otra corrida.
+            model_id = str(info["model_id"])
+            updir = os.path.join(_HERE, "uploads")
+            os.makedirs(updir, exist_ok=True)
+            step_path = os.path.join(updir, f"computed_{model_id[:8]}.step")
+            exported = False
+            try:
+                exported = bool(self._ctrl.cad.export_step(model_id, step_path))
+            except Exception:  # noqa: BLE001
+                exported = False
+            key = None
+            entry_view = None
+            if exported and os.path.exists(step_path):
+                key = self._register_library(os.path.basename(step_path), step_path)
+                try:
+                    self._ctrl.import_model(step_path)
+                    self._active_key = key
+                except Exception:  # noqa: BLE001
+                    # La entrada queda igual en la libreria; activarla fallara
+                    # explicito en switchModel si el STEP no re-importa.
+                    pass
+
+                entry_copy = dict(self._library.get(key) or {})
+
+                def _undo_recon(prev=prev_key, k=key):
+                    if k in self._library:
+                        del self._library[k]
+                    if prev and prev in self._library:
+                        p = self._library[prev]["path"]
+                        try:
+                            if str(p).lower().endswith((".stl", ".obj", ".ply", ".3mf")):
+                                self._ctrl.import_mesh_model(p)
+                            else:
+                                self._ctrl.import_model(p)
+                            self._active_key = prev
+                        except Exception:  # noqa: BLE001
+                            self._active_key = None
+                    else:
+                        self._active_key = None
+
+                def _redo_recon(k=key, e=entry_copy):
+                    # Re-crear la entrada si el undo la quitó (si no, rehacer no
+                    # tendría de dónde re-importar).
+                    if k not in self._library and e:
+                        self._library[k] = dict(e)
+                    if k in self._library:
+                        p = self._library[k]["path"]
+                        try:
+                            self._ctrl.import_model(p)
+                            self._active_key = k
+                        except Exception:  # noqa: BLE001
+                            self._active_key = None
+
+                self._push_undo(
+                    f"optimización generativa ({info.get('model_name', '')})",
+                    _undo_recon, _redo_recon)
+                e = self._library.get(key) or {}
+                entry_view = {"key": key, "filename": e.get("filename"),
+                              "displayName": e.get("displayName")}
+            return {"ok": True, "registered": _clean(info), "key": key,
+                    "entry": entry_view, "snapshot": self._snapshot(),
+                    "reason": reason}
         except Exception as exc:  # noqa: BLE001
             return _err(exc)
 

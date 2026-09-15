@@ -1428,22 +1428,22 @@ class OCPBRepFitter(BRepFitter):
         solid = TopoDS_Solid()
         solid_builder.MakeSolid(solid)
         shell_volumes: list = []
+        _kept_count = 1
         if sewed_shape.ShapeType() == TopAbs_ShapeEnum.TopAbs_SHELL:
             solid_builder.Add(solid, sewed_shape)
         else:
-            # LARGEST-SHELL (reversible): la isosuperficie puede tener
-            # varias componentes conexas (fragmentos flotantes) y el cosido
-            # devuelve un COMPOUND con una cáscara por componente. Quedarse
-            # con la PRIMERA (orden arbitrario del explorador) registraba
-            # fragmentos de ~4 mm³ descartando la estructura principal
-            # (~4000 mm³: el "cuerpo de 0,0 cm³"). Se conserva la de mayor
-            # |volumen| y se reportan las descartadas en metadata (visible,
-            # nunca silencioso). Para volver atrás: tomar exp.Current().
+            # MULTI-SHELL (reversible): la isosuperficie puede tener varias
+            # componentes conexas y el cosido devuelve un COMPOUND con una
+            # cáscara por componente. Antes se conservaba SOLO la de mayor
+            # |volumen|, descartando islas que podían ser justamente las zonas
+            # de carga/fijación. Ahora se conservan TODAS las cáscaras
+            # significativas (>= 1% de la mayor) y se reportan las descartadas
+            # en metadata (visible, nunca silencioso). Para volver atrás:
+            # `solid_builder.Add(solid, max(shells)[1])`.
             from OCP.TopExp import TopExp_Explorer
             from OCP.BRepGProp import BRepGProp
             from OCP.GProp import GProp_GProps
-            best = None
-            best_vol = -1.0
+            shells: list = []
             exp = TopExp_Explorer(sewed_shape, TopAbs_ShapeEnum.TopAbs_SHELL)
             while exp.More():
                 sh = exp.Current()
@@ -1454,32 +1454,93 @@ class OCPBRepFitter(BRepFitter):
                 except Exception:  # pragma: no cover - defensivo
                     v = -1.0
                 shell_volumes.append(round(v, 3))
-                if v > best_vol:
-                    best_vol, best = v, sh
+                if v > 0:
+                    shells.append((v, sh))
                 exp.Next()
-            if best is None:
+            if not shells:
                 return ReconstructionResult(
                     stage=ReconstructionStage.BREP_SOLID,
                     status=ReconstructionStatus.FAILED,
-                    error_message="Sewing produced no usable shells",
+                    error_message=("Sewing produced no usable shells "
+                                   "(todas con volumen 0: isosuperficie abierta; "
+                                   "optimización probablemente colapsada)"),
+                    metadata={"sewed_shells": len(shell_volumes),
+                              "sewed_shell_volumes": shell_volumes},
                 )
-            solid_builder.Add(solid, best)
+            best_vol = max(v for v, _ in shells)
+            kept = [(v, sh) for v, sh in shells if v >= max(0.01 * best_vol, 1e-9)]
+            for _v, sh in kept:
+                solid_builder.Add(solid, sh)
+            _kept_count = len(kept)
         # remove internal faces inside the solid
         from OCP.BRepCheck import BRepCheck_Analyzer
         from OCP.AIS import AIS_Shape
         from OCP.TopAbs import TopAbs_ShapeEnum
         if not BRepCheck_Analyzer(solid).IsValid():
+            if shell_volumes and len(shell_volumes) > 1:
+                # Varias cáscaras pueden dar un sólido inválido: reintentar con
+                # la mayor únicamente (comportamiento histórico) en vez de fallar.
+                from OCP.TopExp import TopExp_Explorer
+                from OCP.BRepGProp import BRepGProp
+                from OCP.GProp import GProp_GProps
+                best = None
+                best_v = -1.0
+                exp = TopExp_Explorer(sewed_shape, TopAbs_ShapeEnum.TopAbs_SHELL)
+                while exp.More():
+                    sh = exp.Current()
+                    try:
+                        props = GProp_GProps()
+                        BRepGProp.VolumeProperties_s(sh, props)
+                        v = abs(float(props.Mass()))
+                    except Exception:  # pragma: no cover - defensivo
+                        v = -1.0
+                    if v > best_v:
+                        best_v, best = v, sh
+                    exp.Next()
+                solid = TopoDS_Solid()
+                solid_builder.MakeSolid(solid)
+                if best is not None:
+                    solid_builder.Add(solid, best)
+                _kept_count = 1
+        # REPAIR (reversible): la isosuperficie de un resultado degenerado puede
+        # quedar abierta (cáscaras con volumen 0). ShapeFix_Solid intenta
+        # cerrar/orientar antes de decidir validez; si no repara, se reporta
+        # FAILED con el detalle de volúmenes (nunca un motivo opaco).
+        if not BRepCheck_Analyzer(solid).IsValid():
+            try:
+                from OCP.ShapeFix import ShapeFix_Solid
+                fixer = ShapeFix_Solid(solid)
+                fixer.SetPrecision(1e-3)
+                fixer.SetMaxTolerance(1.0)
+                fixer.Perform()
+                fixed = fixer.Solid()
+                if not fixed.IsNull() and BRepCheck_Analyzer(fixed).IsValid():
+                    solid = fixed
+            except Exception:  # noqa: BLE001 - defensivo
+                pass
+        if not BRepCheck_Analyzer(solid).IsValid() or _kept_count == 0:
+            fail_meta: Dict[str, Any] = {"vertices": int(vertices.shape[0]),
+                                         "triangles": int(triangles.shape[0])}
+            if shell_volumes:
+                fail_meta["sewed_shells"] = len(shell_volumes)
+                fail_meta["sewed_shell_volumes"] = shell_volumes
             return ReconstructionResult(
                 stage=ReconstructionStage.BREP_SOLID,
                 status=ReconstructionStatus.FAILED,
-                error_message="Reconstructed solid is not valid",
+                error_message=(
+                    "Reconstructed solid is not valid (isosuperficie abierta/"
+                    "degenerada; probablemente la optimización colapsó por una "
+                    "condición de contorno degradada)"),
+                metadata=fail_meta,
             )
         metadata: Dict[str, Any] = {"vertices": int(vertices.shape[0]),
                                      "triangles": int(triangles.shape[0])}
         if shell_volumes:
             metadata["sewed_shells"] = len(shell_volumes)
             metadata["sewed_shell_volumes"] = shell_volumes
-            metadata["kept_shell_volume"] = max(shell_volumes)
+            metadata["kept_shells"] = int(_kept_count)
+            metadata["kept_shell_volume"] = float(
+                sum(sorted(shell_volumes, reverse=True)[:_kept_count]))
         try:
             self._exchange_step(solid, metadata)
         except Exception as exc:  # pragma: no cover

@@ -20,6 +20,11 @@ interface OperationRowProps {
   // estilo Onshape (Enter/blur confirma, Escape cancela). El modal con lapiz
   // tambien tiene el campo. Para volver atras: quitar prop + bloque.
   onRenameCondition?: (bc: BoundaryCondition, name: string) => void;
+  // TREE-SELECT (reversible): clic simple SOLO marca la fila; doble clic abre
+  // la herramienta. Para volver atras: quitar estas 2 props y devolver el
+  // onClick a onActivateTool.
+  selected?: boolean;
+  onSelect?: () => void;
 }
 
 export const OperationRow: React.FC<OperationRowProps> = ({
@@ -28,6 +33,8 @@ export const OperationRow: React.FC<OperationRowProps> = ({
   onEditCondition,
   onActivateTool,
   onRenameCondition,
+  selected = false,
+  onSelect,
 }) => {
   const isLoad = bc.type === 'carga';
   const isFix = bc.type === 'fijacion';
@@ -52,17 +59,20 @@ export const OperationRow: React.FC<OperationRowProps> = ({
   return (
     <div
       key={bc.id}
-      className={`flex items-center justify-between px-2 py-1.5 rounded cursor-pointer transition-colors border border-border-subtle/20 ${bgClass}`}
-      // TOOL-OPEN: clic abre la herramienta en el panel (no el modal, para
-      // no tapar el viewport); el lapiz sigue abriendo el modal de edicion.
+      className={`flex items-center justify-between px-2 py-1.5 rounded cursor-pointer transition-colors border ${
+        selected ? 'border-secondary/70 ring-1 ring-secondary/40' : 'border-border-subtle/20'
+      } ${bgClass}`}
+      // TREE-SELECT-DELETE: clic simple SOLO marca (selecciona) la fila; el
+      // doble clic abre la herramienta en el panel; el lapiz abre el modal.
       onClick={() => {
-        if (onActivateTool) onActivateTool(bc);
+        if (onSelect) onSelect();
+        else if (onActivateTool) onActivateTool(bc);
         else onEditCondition(bc);
       }}
       onDoubleClick={() => {
         if (onActivateTool) onActivateTool(bc);
       }}
-      title="Clic: abrir herramienta • Lápiz: editar en ventana"
+      title="Clic: seleccionar • Doble clic: abrir herramienta • Lápiz: editar en ventana"
     >
       <div className="flex items-center gap-2">
         <div

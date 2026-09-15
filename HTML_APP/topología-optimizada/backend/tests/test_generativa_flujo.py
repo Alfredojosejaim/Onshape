@@ -410,3 +410,21 @@ def test_registration_exposes_reconstructed_tessellation():
     assert int(preview["mesh"].get("num_triangles") or 0) > 0
     assert preview["mesh"].get("vertices") and preview["mesh"].get("indices")
 
+    # LIBRARY-FIRST (reversible): la pieza generada es un modelo de primera
+    # clase de la libreria (con key) para que se pueda BORRAR y DESHACER como
+    # cualquier otra; antes quedaba solo como activo del controller y Ctrl+Z /
+    # Supr no funcionaban (habia que reiniciar la app).
+    assert reg.get("key"), reg
+    lib = api.listLibrary()
+    assert any(l["key"] == reg["key"] for l in lib["library"])
+    assert lib["activeKey"] == reg["key"]
+    assert api.removeModel(reg["key"])["ok"]  # borrable
+    assert api.undo()["ok"]  # y su borrado es reversible
+    # Deshacer la OPTIMIZACION restaura el modelo original (no la generada).
+    u = api.undo()
+    assert u["ok"], u
+    assert reg["key"] not in [l["key"] for l in u["library"]]
+    assert u["activeKey"] is not None
+    r = api.redo()
+    assert r["ok"] and r["activeKey"] == reg["key"]
+

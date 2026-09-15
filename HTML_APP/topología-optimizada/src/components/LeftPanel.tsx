@@ -46,6 +46,10 @@ interface LeftPanelProps {
   // MALLA-TOOLS (reversible): ejecuta herramienta de malla + busy.
   onMeshTool: (action: MeshToolAction, params: Record<string, number>) => void;
   meshBusy: string | null;
+  // TREE-SELECT (reversible): seleccion con clic simple (doble clic abre).
+  // Para volver atras: quitar estas 2 props.
+  selectedConditionId?: string | null;
+  onSelectCondition?: (id: string) => void;
 }
 
 export const LeftPanel: React.FC<LeftPanelProps> = ({
@@ -80,6 +84,9 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
   // MALLA-TOOLS (reversible)
   onMeshTool,
   meshBusy,
+  // TREE-SELECT (reversible)
+  selectedConditionId,
+  onSelectCondition,
 }) => {
   // UI-CLEAN2 (reversible): sin nodo archivo no hay picker local.
   // models/onSelectModel/isModelVisible/onToggleModelVisibility se conservan
@@ -212,6 +219,8 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
                 onEditCondition={onEditCondition}
                 onActivateTool={onActivateTool}
                 onRenameCondition={(c, name) => onSaveCondition({ ...c, name })}
+                selected={selectedConditionId === bc.id}
+                onSelect={() => onSelectCondition?.(bc.id)}
               />
             ))
           )}

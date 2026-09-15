@@ -119,6 +119,70 @@ def test_fallbacks_unmapped_faces_are_flagged_not_silent():
     assert len(cases) == 1 and float(np.abs(cases[0]).sum()) > 0.0
 
 
+def test_halo_preserves_load_support_zones_and_reports():
+    """Punto 1 (prompt.md): cargas/soportes -> preserved (halo), no solo solver.
+
+    Con nodos BC controlados y radio manual parcial, los elementos del halo
+    quedan en rho=1 y se reportan en _preserved_elements/_halo_nodes; el
+    opt-out explícito (halo_radius=None) los deja fuera.
+    """
+    from tests.test_gcmma import kuhn_bar as _kb6
+    nodes, els, _ = _kb6(6)
+    nodes = np.asarray(nodes, dtype=float)
+    els = np.asarray(els, dtype=int)
+    mgr = ConditionManager()
+    load = _load_condition()
+    supp = _elasticity_condition()
+    mgr.add(load)
+    mgr.add(supp)
+    by_type = {ConditionType.LOAD: [load], ConditionType.ELASTICITY: [supp],
+               ConditionType.PROTECTED_REGION: [], ConditionType.OBSTRUCTION: []}
+
+    eng = _engine(nodes, els, mgr)
+    eng._load_node_indices = lambda conds: [0]
+    eng._support_node_indices = lambda conds: [int(nodes.shape[0] - 1)]
+    result = eng.solve_simp(dict(by_type), volume_fraction=0.4,
+                            max_iterations=2, penalization=3.0,
+                            filter_radius=0.6, tolerance=1e-3,
+                            halo_radius=1.0)
+    x = np.asarray(result["densities"], dtype=float)
+    halo = set(int(i) for i in result["_preserved_elements"])
+    assert 0 < len(halo) < len(els)
+    assert result.get("_halo_skipped") is None
+    assert set(result["_halo_nodes"]) == {0, int(nodes.shape[0] - 1)}
+    assert all(x[e] == 1.0 for e in halo)
+    touch0 = {e for e in range(len(els)) if 0 in np.asarray(els[e]).tolist()}
+    assert touch0 and touch0 <= halo
+
+    eng2 = _engine(nodes, els, mgr)
+    eng2._load_node_indices = lambda conds: [0]
+    eng2._support_node_indices = lambda conds: [int(nodes.shape[0] - 1)]
+    result2 = eng2.solve_simp(dict(by_type), volume_fraction=0.4,
+                              max_iterations=2, penalization=3.0,
+                              filter_radius=0.6, tolerance=1e-3,
+                              halo_radius=None)
+    assert result2["_preserved_elements"] == []
+    assert result2["_halo_radius"] is None
+
+
+def test_halo_full_coverage_skips_loud_not_silent():
+    """Si el halo cubriría toda la malla (juguete), se revierte y se declara."""
+    nodes, els, _ = _mesh()  # kuhn_bar(2): 12 tets, radio auto 2.2 > dominio
+    mgr = ConditionManager()
+    load = _load_condition()
+    supp = _elasticity_condition()
+    mgr.add(load)
+    mgr.add(supp)
+    by_type = {ConditionType.LOAD: [load], ConditionType.ELASTICITY: [supp],
+               ConditionType.PROTECTED_REGION: [], ConditionType.OBSTRUCTION: []}
+    eng = _engine(nodes, els, mgr)
+    result = eng.solve_simp(dict(by_type), volume_fraction=0.4,
+                            max_iterations=2, penalization=3.0,
+                            filter_radius=0.6, tolerance=1e-3)
+    assert result.get("_halo_skipped") == "full_coverage"
+    assert 0.0 < result["final_volume_fraction"] <= 1.0
+
+
 def _study(condition_ids, max_iterations=3):
     study = GenerativeDesignStudy(name="g")
     study.scenario = "A"
@@ -254,6 +318,42 @@ def test_reconstruct_exposes_brep_error_on_collapse():
     assert "surface_mesh" in reconstruction_failure_reason(
         {"stage": "surface_mesh", "status": "completed"})
     assert reconstruction_failure_reason({}) == "sin información de reconstrucción"
+
+
+def test_brep_fitter_keeps_largest_shell_not_first():
+    """LARGEST-SHELL: con varias componentes conexas el cosido devuelve un
+    COMPOUND; el fitter debe conservar la cáscara de mayor volumen (no la
+    primera del explorador) y reportar las descartadas. Regresión del
+    "cuerpo de 0,0 cm³" (se registraba un fragmento de ~4 mm³ descartando
+    la estructura principal de ~4000 mm³).
+    """
+    from core.cad_reconstruction import OCPBRepFitter
+
+    def box_tris(origin, size):
+        ox, oy, oz = origin
+        s = size
+        v = np.array([
+            [ox, oy, oz], [ox + s, oy, oz], [ox + s, oy + s, oz], [ox, oy + s, oz],
+            [ox, oy, oz + s], [ox + s, oy, oz + s], [ox + s, oy + s, oz + s], [ox, oy + s, oz + s],
+        ], dtype=float)
+        f = [(0, 1, 2), (0, 2, 3), (4, 6, 5), (4, 7, 6),
+             (0, 4, 5), (0, 5, 1), (2, 6, 7), (2, 7, 3),
+             (0, 3, 7), (0, 7, 4), (1, 5, 6), (1, 6, 2)]
+        return v, f
+
+    v1, f1 = box_tris((0.0, 0.0, 0.0), 10.0)   # grande: 1000 mm3
+    v2, f2 = box_tris((50.0, 0.0, 0.0), 1.0)    # fragmento: 1 mm3
+    verts = np.vstack([v1, v2])
+    tris = np.array(f1 + [[a + 8, b + 8, c + 8] for a, b, c in f2], dtype=int)
+    out = OCPBRepFitter().fit(verts, tris)
+    assert out.status.value == "completed", out.error_message
+    assert out.metadata.get("sewed_shells") == 2
+    from OCP.BRepGProp import BRepGProp
+    from OCP.GProp import GProp_GProps
+    props = GProp_GProps()
+    BRepGProp.VolumeProperties_s(out.data, props)
+    assert abs(abs(float(props.Mass())) - 1000.0) < 5.0
+    assert abs(float(out.metadata["kept_shell_volume"]) - 1000.0) < 5.0
 
 
 def test_registration_exposes_reconstructed_tessellation():

@@ -33,6 +33,7 @@ ALLOWED_METHODS = frozenset({
     "runGenerativeDesign", "registerReconstruction", "runThermal", "runModal",
     "runCrossCheck", "cadOperation", "validateState",
     "createCondition", "listConditions", "clearConditions",
+    "deleteCondition", "undo", "redo",
     "getLicense", "pollJob", "getMeshPreview", "getSurfaceMesh",
     "getSafetySummary", "compareStudies",
     "meshQualityReport", "repairMesh", "smoothMesh", "decimateMesh", "remeshMesh",

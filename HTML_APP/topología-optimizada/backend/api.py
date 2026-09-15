@@ -148,6 +148,13 @@ class Api:
         # (el controller limpia downstream solo, como la app de escritorio).
         self._library: dict[str, dict] = {}
         self._active_key: str | None = None
+        # UNDO-REDO (reversible): pila de operaciones destructivas
+        # (removeModel/deleteCondition/clearConditions). Cada entrada guarda
+        # {label, undo, redo} como clausuras (los modelos viven en disco y
+        # las condiciones se serializan a dict, sin snapshots pesados).
+        # Para volver atras: quitar _push_undo + undo/redo + su uso.
+        self._undo_stack: list = []
+        self._redo_stack: list = []
 
     # -- utilidades -----------------------------------------------------
     def _model_stats(self) -> dict:
@@ -226,6 +233,70 @@ class Api:
             snap["is_mesh"] = False
             snap["mesh_format"] = None
         return snap
+
+    def _push_undo(self, label: str, undo_fn, redo_fn) -> None:
+        """Apila una operación reversible (tope 50) y limpia redo."""
+        self._undo_stack.append({"label": label, "undo": undo_fn,
+                                 "redo": redo_fn})
+        if len(self._undo_stack) > 50:
+            del self._undo_stack[:-50]
+        self._redo_stack.clear()
+
+    def _conditions_view(self) -> list:
+        mgr = getattr(self._ctrl, "conditions", None)
+        out = []
+        for c in (mgr.all if mgr is not None else []):
+            try:
+                d = c.to_dict()
+            except Exception:  # noqa: BLE001
+                d = {}
+            out.append({"id": c.id, "name": d.get("name", c.id),
+                        "type": d.get("type",
+                                      getattr(getattr(c, "condition_type", None),
+                                              "value", "?"))})
+        return out
+
+    def _undo_redo_state(self) -> dict:
+        return {"library": self._library_view(),
+                "activeKey": self._active_key,
+                "snapshot": self._snapshot(),
+                "conditions": self._conditions_view(),
+                "canUndo": (self._undo_stack[-1]["label"]
+                            if self._undo_stack else None),
+                "canRedo": (self._redo_stack[-1]["label"]
+                            if self._redo_stack else None)}
+
+    def undo(self) -> dict:
+        """Deshace la última operación destructiva (modelo/condición)."""
+        try:
+            if not self._undo_stack:
+                out = {"ok": False, "error": "nada que deshacer"}
+                out.update(self._undo_redo_state())
+                return out
+            item = self._undo_stack.pop()
+            item["undo"]()
+            self._redo_stack.append(item)
+            out = {"ok": True, "label": item["label"]}
+            out.update(self._undo_redo_state())
+            return out
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    def redo(self) -> dict:
+        """Rehace la última operación deshecha."""
+        try:
+            if not self._redo_stack:
+                out = {"ok": False, "error": "nada que rehacer"}
+                out.update(self._undo_redo_state())
+                return out
+            item = self._redo_stack.pop()
+            item["redo"]()
+            self._undo_stack.append(item)
+            out = {"ok": True, "label": item["label"]}
+            out.update(self._undo_redo_state())
+            return out
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
 
     def _submit(self, kind: str, fn, *args, **kwargs) -> str:
         jid = f"{kind}_{uuid.uuid4().hex[:8]}"
@@ -431,17 +502,54 @@ class Api:
             key = str(key)
             if key not in self._library:
                 return {"ok": False, "error": f"modelo desconocido: {key}"}
+            entry = dict(self._library[key])
             was_active = (key == self._active_key)
-            del self._library[key]
-            if was_active:
-                try:
-                    self._ctrl.close_model()
-                except Exception:  # noqa: BLE001
-                    pass
-                self._active_key = None
-            return {"ok": True, "library": self._library_view(),
-                    "activeKey": self._active_key,
-                    "snapshot": self._snapshot()}
+
+            def _do_remove(k: str) -> None:
+                if k in self._library:
+                    del self._library[k]
+                if k == self._active_key:
+                    try:
+                        self._ctrl.close_model()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    self._active_key = None
+
+            def _do_restore(e: dict, active: bool) -> bool:
+                """Restaura la entrada; si era activo re-importa del disco
+                (la malla se regenera con Remallar: needsRemesh=True)."""
+                self._library[e["key"]] = dict(e)
+                needs_remesh = False
+                if active and os.path.exists(e["path"]):
+                    try:
+                        if str(e["path"]).lower().endswith(
+                                (".stl", ".obj", ".ply", ".3mf")):
+                            self._ctrl.import_mesh_model(e["path"])
+                        else:
+                            self._ctrl.import_model(e["path"])
+                        self._active_key = e["key"]
+                        needs_remesh = True
+                    except Exception:  # noqa: BLE001
+                        self._active_key = None
+                        needs_remesh = False
+                elif active:
+                    self._active_key = None
+                return needs_remesh
+
+            entry["key"] = key
+            _do_remove(key)
+            label = f"eliminar modelo {entry.get('displayName', key)}"
+            self._push_undo(
+                label,
+                lambda: _do_restore(entry, was_active),
+                lambda: _do_remove(key),
+            )
+            out = {"ok": True, "library": self._library_view(),
+                   "activeKey": self._active_key,
+                   "snapshot": self._snapshot(),
+                   "undone_op": label}
+            out.update({"canUndo": label, "canRedo": None})
+            return out
         except Exception as exc:  # noqa: BLE001
             return _err(exc)
 
@@ -732,10 +840,75 @@ class Api:
 
     def clearConditions(self) -> dict:
         try:
+            from core.conditions import condition_from_dict
             mgr = getattr(self._ctrl, "conditions", None)
+            saved = []
             if mgr is not None:
+                saved = [c.to_dict() for c in mgr.all]
                 mgr.clear()
-            return {"ok": True, "snapshot": self._snapshot()}
+
+            def _do_restore(items) -> None:
+                m = getattr(self._ctrl, "conditions", None)
+                if m is None:
+                    return
+                for d in items:
+                    try:
+                        m.add(condition_from_dict(dict(d)))
+                    except Exception:  # noqa: BLE001
+                        continue
+
+            def _do_clear() -> None:
+                m = getattr(self._ctrl, "conditions", None)
+                if m is not None:
+                    m.clear()
+
+            if saved:
+                self._push_undo(f"limpiar {len(saved)} condiciones",
+                                lambda: _do_restore(saved), _do_clear)
+            out = {"ok": True, "snapshot": self._snapshot(),
+                   "conditions": self._conditions_view()}
+            out.update({"canUndo": (self._undo_stack[-1]["label"]
+                                    if self._undo_stack else None),
+                        "canRedo": None})
+            return out
+        except Exception as exc:  # noqa: BLE001
+            return _err(exc)
+
+    def deleteCondition(self, condition_id: str) -> dict:
+        """Elimina UNA condición reutilizable por id (reversible: undo)."""
+        try:
+            from core.conditions import condition_from_dict
+            cid = str(condition_id)
+            mgr = getattr(self._ctrl, "conditions", None)
+            if mgr is None:
+                return {"ok": False, "error": "controller sin ConditionManager"}
+            cond = mgr.get(cid)
+            if cond is None:
+                return {"ok": False, "error": f"condición desconocida: {cid}"}
+            saved = cond.to_dict()
+            name = saved.get("name", cid)
+            mgr.remove(cid)
+
+            def _do_restore(d) -> None:
+                m = getattr(self._ctrl, "conditions", None)
+                if m is None:
+                    return
+                try:
+                    m.add(condition_from_dict(dict(d)))
+                except Exception:  # noqa: BLE001
+                    pass
+
+            def _do_remove(i: str) -> None:
+                m = getattr(self._ctrl, "conditions", None)
+                if m is not None:
+                    m.remove(i)
+
+            label = f"eliminar condición {name}"
+            self._push_undo(label, lambda: _do_restore(saved),
+                            lambda: _do_remove(cid))
+            out = {"ok": True, "id": cid, "conditions": self._conditions_view()}
+            out.update({"canUndo": label, "canRedo": None})
+            return out
         except Exception as exc:  # noqa: BLE001
             return _err(exc)
 

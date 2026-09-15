@@ -259,14 +259,35 @@ export default function App() {
   // COND-SYNC (reversible): re-envía al backend todas las condiciones
   // activas con caras (sobrescribe por id) y devuelve sus ids para
   // condition_ids. Sin esto la generativa corría sin condiciones.
+  // REOPT-FIX (reversible): las caras son del modelo donde se picaron; si
+  // el modelo activo cambió (p. ej. pieza generada registrada), los
+  // face_index viejos mapearían caras ajenas o fallarían en el backend.
+  // Se filtran contra las caras del modelo actual y se avisa (fail-loud)
+  // en vez de correr degradado en silencio. Para volver atrás: quitar el
+  // filtro y devolver todos los ids.
   const syncConditionsForRun = async (): Promise<string[]> => {
     if (!backend.hasBridge()) return [];
+    const faceCount = surface?.faces?.length ?? 0;
     const actives = stateRef.current.boundaryConditions.filter(
       (c) => (c.type === 'carga' || c.type === 'fijacion' || c.type === 'preservada') &&
         (c.faceIndices?.length ?? 0) > 0,
     );
+    const stale: string[] = [];
+    const valid = actives.filter((c) => {
+      const idx = c.faceIndices ?? [];
+      if (faceCount > 0 && idx.some((f) => f < 0 || f >= faceCount)) {
+        stale.push(c.name);
+        return false;
+      }
+      return true;
+    });
+    if (stale.length > 0) {
+      setOptNotice({
+        text: `Herramientas de otra geometría ignoradas: ${stale.join(', ')}. Re-aplicá las caras sobre el modelo actual para usarlas.`,
+      });
+    }
     const ids: string[] = [];
-    for (const c of actives) {
+    for (const c of valid) {
       const r = (await pushFaceCondition(c)) as unknown as { ok?: boolean; id?: string };
       if (r && r.ok !== false) ids.push(c.id);
     }
@@ -794,7 +815,17 @@ export default function App() {
           return;
         }
       }
-      if (simpJobId) return;
+      // REOPT-FIX (reversible): si quedó un jobId viejo sin polling activo
+      // se libera y se sigue; solo se bloquea con corrida realmente en
+      // curso (antes cualquier resto silencioso impedía re-optimizar).
+      // Para volver atrás: `if (simpJobId) return;`.
+      if (simpJobId) {
+        if (simpPoll.loading) {
+          setOptNotice({ text: 'Ya hay una optimización en curso: esperá a que termine.' });
+          return;
+        }
+        setSimpJobId(null);
+      }
       const bcs = stateRef.current.boundaryConditions;
       if (!bcs.some((c) => c.type === 'carga' && c.active)) {
       setOptNotice({ text: 'Sin carga activa: abre Carga en la barra, pica caras y Acepta.' });
@@ -1313,24 +1344,209 @@ export default function App() {
     setHasMesh(false);
   };
 
-  // Undo / Redo helpers
-  const handleUndo = () => {
-    if (optimizationState.currentIteration > 0) {
-      setOptimizationState((prev) => ({
-        ...prev,
-        currentIteration: Math.max(0, prev.currentIteration - 5),
-      }));
+  // UNDO-REDO (reversible): deshacer/rehacer la última operación
+  // destructiva del backend (eliminar modelo/condición, limpiar
+  // condiciones) y refrescar la UI con lo que responde (librería +
+  // snapshot + condiciones). Para volver atrás: handlers locales.
+  type UndoRedoResult = {
+    ok: boolean; label?: string; error?: unknown;
+    library?: { key: string; filename: string; displayName: string; active: boolean }[];
+    activeKey?: string | null; snapshot?: ApiSnapshot;
+    conditions?: { id: string; name: string; type: string }[];
+  };
+  const refreshFromUndoRedo = (r: UndoRedoResult) => {
+    const lib = r.library ?? [];
+    setModels((prev) => {
+      const keys = new Set(lib.map((l) => l.key));
+      const kept = prev.filter((m) => !m.key || keys.has(m.key));
+      const have = new Set(kept.map((m) => m.key));
+      const missing = lib
+        .filter((l) => !have.has(l.key))
+        .map((l) => ({
+          id: `real_${l.filename}`, filename: l.filename, displayName: l.displayName,
+          faces: 0, edges: 0, solids: 0, volumeCm3: 0, elementsTet4: 0, nodes: 0,
+          key: l.key,
+        }));
+      return [...kept, ...missing];
+    });
+    const ids = new Set((r.conditions ?? []).map((c) => c.id));
+    setBoundaryConditions((prev) =>
+      prev.filter(
+        (c) =>
+          (c.type !== 'carga' && c.type !== 'fijacion' && c.type !== 'preservada') ||
+          ids.has(c.id),
+      ),
+    );
+    if (r.activeKey) {
+      const entry = lib.find((l) => l.key === r.activeKey);
+      if (entry && r.snapshot) {
+        applySnapshotToModel(r.snapshot, entry.filename, entry.displayName, entry.key);
+        void fetchSurface(entry.filename);
+        void fetchSolids(entry.filename);
+      }
+    } else {
+      setCurrentModel(null);
+      snapRef.current = null;
+      setHasMesh(false);
+    }
+    setSimpJobId(null);
+    setFeaJobId(null);
+    setDensityField(null);
+    resetOptimizationState();
+    setOptNotice({
+      text: r.ok ? `Listo: ${r.label ?? 'operación revertida'}.` : String(r.error ?? 'Sin cambios.'),
+    });
+  };
+  const handleUndoBackend = async () => {
+    if (!backend.hasBridge()) {
+      setOptNotice({ text: 'Sin backend no hay historial que deshacer.' });
+      return;
+    }
+    try {
+      refreshFromUndoRedo((await backend.undo()) as unknown as UndoRedoResult);
+    } catch {
+      setOptNotice({ text: 'No se pudo deshacer.' });
+    }
+  };
+  const handleRedoBackend = async () => {
+    if (!backend.hasBridge()) {
+      setOptNotice({ text: 'Sin backend no hay historial que rehacer.' });
+      return;
+    }
+    try {
+      refreshFromUndoRedo((await backend.redo()) as unknown as UndoRedoResult);
+    } catch {
+      setOptNotice({ text: 'No se pudo rehacer.' });
     }
   };
 
-  const handleRedo = () => {
-    if (optimizationState.currentIteration < optimizationState.totalIterations) {
-      setOptimizationState((prev) => ({
-        ...prev,
-        currentIteration: Math.min(prev.totalIterations, prev.currentIteration + 5),
-      }));
-    }
+  // Undo / Redo helpers (Toolbar + Ctrl+Z / Ctrl+Shift+Z).
+  const handleUndo = () => {
+    void handleUndoBackend();
   };
+
+  const handleRedo = () => {
+    void handleRedoBackend();
+  };
+
+  // SUPR-DELETE (reversible): Supr elimina la herramienta seleccionada
+  // (condición en edición o destino de la herramienta activa) o, si no hay
+  // herramienta, la pieza actual de la librería. Todo es reversible con
+  // Ctrl+Z (backend undo). Ctrl+Z / Ctrl+Shift+Z (o Ctrl+Y) deshacen /
+  // rehacen. No actúa escribiendo en campos, en modales ni sin bridge.
+  // Para volver atrás: quitar este efecto + handlers.
+  const removeLocalCondition = (id: string) => {
+    setBoundaryConditions((prev) => prev.filter((c) => c.id !== id));
+    setFaceSelByFile((prev) => {
+      const next: Record<string, Record<string, number[]>> = {};
+      for (const f of Object.keys(prev)) {
+        const bucket = { ...prev[f] };
+        delete bucket[id];
+        next[f] = bucket;
+      }
+      return next;
+    });
+    setTargetCondByTool((prev) => {
+      const next = { ...prev };
+      for (const k of Object.keys(next) as (keyof typeof next)[]) {
+        if (next[k] === id) delete next[k];
+      }
+      return next;
+    });
+    setEditingCondition((prev) => (prev?.id === id ? null : prev));
+  };
+  const handleDeleteSelected = async () => {
+    if (!backend.hasBridge()) return;
+    if (stateRef.current.currentModel == null && !editingCondition) {
+      setOptNotice({ text: 'Nada que eliminar: importá una pieza o aplicá una herramienta.' });
+      return;
+    }
+    const tool = stateRef.current.activeTool;
+    const condId =
+      editingCondition?.id ??
+      (tool === 'carga' || tool === 'fijacion' || tool === 'preservada' || tool === 'keepout'
+        ? activeTargetId
+        : null);
+    const isCond =
+      !!condId &&
+      condId !== 'faces_seleccionar' &&
+      boundaryConditions.some((c) => c.id === condId);
+    if (isCond && condId) {
+      const r = (await backend.deleteCondition(condId)) as unknown as { ok?: boolean; error?: unknown };
+      if (!r.ok) {
+        setOptNotice({ text: `No se pudo eliminar la herramienta: ${String(r.error ?? 'backend')}.` });
+        return;
+      }
+      removeLocalCondition(condId);
+      setActiveTool('seleccionar');
+      setOptNotice({ text: 'Herramienta eliminada (Ctrl+Z para deshacer).' });
+      return;
+    }
+    const m = stateRef.current.currentModel;
+    if (m?.key) {
+      const r = (await backend.removeModel(m.key)) as unknown as {
+        ok?: boolean; error?: unknown; library?: { key: string; filename: string; displayName: string; active: boolean }[];
+        activeKey?: string | null; snapshot?: ApiSnapshot;
+      };
+      if (!r.ok) {
+        setOptNotice({ text: `No se pudo eliminar la pieza: ${String(r.error ?? 'backend')}.` });
+        return;
+      }
+      const lib = r.library ?? [];
+      setModels((prev) => prev.filter((x) => x.key !== m.key));
+      if (r.activeKey) {
+        const entry = lib.find((l) => l.key === r.activeKey);
+        const existing = models.find((x) => x.key === r.activeKey);
+        if (entry && existing && r.snapshot) {
+          applySnapshotToModel(r.snapshot, entry.filename, entry.displayName, entry.key);
+          void fetchSurface(entry.filename);
+          void fetchSolids(entry.filename);
+        }
+      } else {
+        const rest = models.filter((x) => x.key !== m.key && x.key);
+        if (rest.length > 0) handleSelectModelReal(rest[0]);
+        else {
+          setCurrentModel(null);
+          snapRef.current = null;
+          setHasMesh(false);
+        }
+      }
+      setSimpJobId(null);
+      setFeaJobId(null);
+      setDensityField(null);
+      setOptNotice({ text: `Pieza "${m.displayName}" eliminada (Ctrl+Z para deshacer).` });
+      return;
+    }
+    setOptNotice({ text: 'Nada que eliminar: seleccioná una herramienta o una pieza.' });
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
+      const typing =
+        tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (el?.isContentEditable ?? false);
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+        if (typing || showImport || showExport || showHelp) return;
+        e.preventDefault();
+        void handleUndoBackend();
+        return;
+      }
+      if ((mod && (e.key === 'y' || e.key === 'Y')) || (mod && e.shiftKey && (e.key === 'z' || e.key === 'Z'))) {
+        if (typing || showImport || showExport || showHelp) return;
+        e.preventDefault();
+        void handleRedoBackend();
+        return;
+      }
+      if (e.key !== 'Delete' || mod || e.altKey) return;
+      if (typing || showImport || showExport || showHelp || editingCondition) return;
+      e.preventDefault();
+      void handleDeleteSelected();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showImport, showExport, showHelp, editingCondition]);
 
   return (
     <div className="min-h-screen bg-viewport-bg text-on-surface font-sans select-none flex flex-col">

@@ -20,6 +20,17 @@ export function useJobPoll(jobId: string | null, onDone?: (result: unknown) => v
   useEffect(() => {
     if (!jobId) return;
     let cancelled = false;
+    // REOPT-FIX (reversible): antes el intervalo seguía sondeando cada 2s
+    // tras done/error y re-disparaba onDone sin fin (efectos repetidos y
+    // puerto ocupado). Ahora se detiene en estado terminal. Para volver
+    // atrás: quitar los clearInterval.
+    let id: ReturnType<typeof setInterval> | null = null;
+    const stop = () => {
+      if (id !== null) {
+        clearInterval(id);
+        id = null;
+      }
+    };
     setLoading(true);
     setError(null);
     const tick = async () => {
@@ -35,6 +46,7 @@ export function useJobPoll(jobId: string | null, onDone?: (result: unknown) => v
         if (!r.ok) {
           setError('pollJob falló en el backend');
           setLoading(false);
+          stop();
           return;
         }
         setState(r.state ?? null);
@@ -42,27 +54,28 @@ export function useJobPoll(jobId: string | null, onDone?: (result: unknown) => v
         if (r.state === 'done') {
           setResult(r.result ?? null);
           setLoading(false);
+          stop();
           if (onDone) onDone(r.result ?? null);
         } else if (r.state === 'error' || r.state === 'failed') {
           setError(typeof r.error === 'string' && r.error ? r.error : 'El job terminó con error');
           setLoading(false);
+          stop();
         }
       } catch (e) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : String(e));
           setLoading(false);
+          stop();
         }
       }
     };
     void tick();
-    const id = setInterval(() => {
-      void tick().then(() => {
-        // detener el intervalo cuando ya no hay carga (done/error)
-      });
+    id = setInterval(() => {
+      void tick();
     }, 2000);
     return () => {
       cancelled = true;
-      clearInterval(id);
+      stop();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId]);

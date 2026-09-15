@@ -1719,7 +1719,7 @@ class PipelineController:
                     tolerance=p.convergence_tolerance,
                     progress_cb=progress_cb,
                     conditions=conditions,
-                    halo_radius=None,  # enabled: solver computes from mesh
+                    halo_radius=0.0,  # auto topológico (1 capa); None = opt-out
                     **thermal_kwargs,
                 )
                 study.status = StudyStatus.COMPLETED

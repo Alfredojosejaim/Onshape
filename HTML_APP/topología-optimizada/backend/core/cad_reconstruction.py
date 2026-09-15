@@ -1362,13 +1362,43 @@ class OCPBRepFitter(BRepFitter):
         from OCP.TopAbs import TopAbs_ShapeEnum
         solid = TopoDS_Solid()
         solid_builder.MakeSolid(solid)
+        shell_volumes: list = []
         if sewed_shape.ShapeType() == TopAbs_ShapeEnum.TopAbs_SHELL:
             solid_builder.Add(solid, sewed_shape)
         else:
+            # LARGEST-SHELL (reversible): la isosuperficie puede tener
+            # varias componentes conexas (fragmentos flotantes) y el cosido
+            # devuelve un COMPOUND con una cáscara por componente. Quedarse
+            # con la PRIMERA (orden arbitrario del explorador) registraba
+            # fragmentos de ~4 mm³ descartando la estructura principal
+            # (~4000 mm³: el "cuerpo de 0,0 cm³"). Se conserva la de mayor
+            # |volumen| y se reportan las descartadas en metadata (visible,
+            # nunca silencioso). Para volver atrás: tomar exp.Current().
             from OCP.TopExp import TopExp_Explorer
+            from OCP.BRepGProp import BRepGProp
+            from OCP.GProp import GProp_GProps
+            best = None
+            best_vol = -1.0
             exp = TopExp_Explorer(sewed_shape, TopAbs_ShapeEnum.TopAbs_SHELL)
-            if exp.More():
-                solid_builder.Add(solid, exp.Current())
+            while exp.More():
+                sh = exp.Current()
+                try:
+                    props = GProp_GProps()
+                    BRepGProp.VolumeProperties_s(sh, props)
+                    v = abs(float(props.Mass()))
+                except Exception:  # pragma: no cover - defensivo
+                    v = -1.0
+                shell_volumes.append(round(v, 3))
+                if v > best_vol:
+                    best_vol, best = v, sh
+                exp.Next()
+            if best is None:
+                return ReconstructionResult(
+                    stage=ReconstructionStage.BREP_SOLID,
+                    status=ReconstructionStatus.FAILED,
+                    error_message="Sewing produced no usable shells",
+                )
+            solid_builder.Add(solid, best)
         # remove internal faces inside the solid
         from OCP.BRepCheck import BRepCheck_Analyzer
         from OCP.AIS import AIS_Shape
@@ -1380,7 +1410,11 @@ class OCPBRepFitter(BRepFitter):
                 error_message="Reconstructed solid is not valid",
             )
         metadata: Dict[str, Any] = {"vertices": int(vertices.shape[0]),
-                                    "triangles": int(triangles.shape[0])}
+                                     "triangles": int(triangles.shape[0])}
+        if shell_volumes:
+            metadata["sewed_shells"] = len(shell_volumes)
+            metadata["sewed_shell_volumes"] = shell_volumes
+            metadata["kept_shell_volume"] = max(shell_volumes)
         try:
             self._exchange_step(solid, metadata)
         except Exception as exc:  # pragma: no cover
@@ -1484,6 +1518,32 @@ class ReconstructionPipeline:
             densities_arr, int(elements_arr.shape[0]),
             force_list or None,
         )
+        # NODAL-PASSTHROUGH (reversible): el extractor promedia elementos a
+        # nodos antes de marchar; un anillo preservado (rho=1) compartiendo
+        # nodos con interior optimizado (~0.4) quedaba promediado bajo el
+        # umbral -> la isosuperficie rompía el anillo (loops abiertos de
+        # 15-46 aristas) y fill_holes lo sellaba con un abanico, borrando
+        # agujeros de diseño. Forzar a 1.0 los NODOS de los elementos
+        # preservados garantiza que el anillo sobreviva a la extracción.
+        # El extractor ya acepta densidades por nodo: se le pasa el campo
+        # nodal (la etapa DENSITY_FIELD conserva el elemental original).
+        # Para volver atrás: quitar este bloque (el extractor promedia solo).
+        nodes_arr = np.asarray(nodes, dtype=float)
+        extract_densities: np.ndarray = densities_arr
+        nodal_forced = False
+        if force_list:
+            if densities_arr.shape[0] == elements_arr.shape[0]:
+                nodal = _element_densities_to_nodes(
+                    nodes_arr, elements_arr, densities_arr)
+                for e in force_list:
+                    nodal[elements_arr[int(e)]] = 1.0
+                extract_densities = nodal
+                nodal_forced = True
+            elif densities_arr.shape[0] == nodes_arr.shape[0]:
+                extract_densities = densities_arr.copy()
+                for e in force_list:
+                    extract_densities[elements_arr[int(e)]] = 1.0
+                nodal_forced = True
 
         # Stage 1: record density field
         self._stages[ReconstructionStage.DENSITY_FIELD] = ReconstructionResult(
@@ -1496,13 +1556,14 @@ class ReconstructionPipeline:
                 "frozen_passthrough": (
                     "frozen_face_as_keep_in@1.0" if frozen_list else None
                 ),
+                "nodal_passthrough": bool(nodal_forced),
             },
         )
 
         # Stage 2: surface extraction
         try:
             surface_result = self._surface_extractor.extract(
-                nodes, elements_arr, densities_arr, threshold
+                nodes, elements_arr, extract_densities, threshold
             )
             surface_result.metadata.setdefault("frozen_elements", frozen_list)
             surface_result.metadata.setdefault("preserved_elements", preserved_list)

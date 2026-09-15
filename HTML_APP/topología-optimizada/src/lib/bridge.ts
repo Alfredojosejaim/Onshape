@@ -90,6 +90,21 @@ export const backend = {
     call<{ id: string }>('createCondition', conditionJson as never),
   listConditions: () => call<{ conditions: unknown[] }>('listConditions'),
   clearConditions: () => call('clearConditions'),
+  deleteCondition: (id: string) =>
+    call<{ id: string; conditions: unknown[] }>('deleteCondition', id as never),
+  // UNDO-REDO (reversible): deshacer/rehacer última operación destructiva
+  // (modelo/condición). Responde librería + snapshot + condiciones para
+  // refrescar la UI. Para volver atrás: quitar + endpoints + uso en App.
+  undo: () => call<{
+    label?: string; library: { key: string; filename: string; displayName: string; active: boolean }[];
+    activeKey: string | null; snapshot: unknown; conditions: { id: string; name: string; type: string }[];
+    canUndo: string | null; canRedo: string | null;
+  }>('undo'),
+  redo: () => call<{
+    label?: string; library: { key: string; filename: string; displayName: string; active: boolean }[];
+    activeKey: string | null; snapshot: unknown; conditions: { id: string; name: string; type: string }[];
+    canUndo: string | null; canRedo: string | null;
+  }>('redo'),
   runGenerativeDesign: (params = {}) =>
     call<{ jobId: string }>('runGenerativeDesign', JSON.stringify(params) as never),
   registerReconstruction: (jobId: string) =>

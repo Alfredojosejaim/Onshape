@@ -310,6 +310,8 @@ class GenerativeDesignEngine:
         """
         if self.mesh_elements is None:
             return np.array([], dtype=int), False
+        if not conditions:
+            return np.array([], dtype=int), False
         node_set: set = set()
         face_one = set()
         for region in conditions:
@@ -746,16 +748,56 @@ class GenerativeDesignEngine:
         if void.size:
             solver.set_void_elements(void)
 
-        # Automatic halo around load / support nodes (opt-in via halo_radius;
-        # None means disabled for backward compatibility with existing tests).
-        halo_radius = kwargs.get("halo_radius")
+        # Halo alrededor de nodos de carga/soporte (Punto 1 auditoría
+        # prompt.md): las cargas/fijaciones solo generaban forces/fixed_dofs,
+        # sin preservación geométrica, así que el optimizador vaciaba justo
+        # la zona de aplicación. El halo une esos elementos a `preserved`
+        # (rho=1, no optimizables).
+        # Convención: ausente o <= 0 = AUTO topológico (una capa: elementos
+        # que tocan un nodo BC; independiente del tamaño de malla y nunca
+        # más grueso de lo necesario para materializar la zona), > 0 =
+        # manual geométrico (radio en unidades de malla, vía
+        # protect_elements_near_nodes), None explícito = opt-out.
+        # (El auto geométrico 2x h_element se descartó: con caras grandes
+        # preservaba la pieza entera —cono 1012/1047— y el SIMP no tenía
+        # dominio que optimizar: densidades ~1, sin isosuperficie, B-Rep
+        # fallido y volumen sin reducir.)
+        _halo_sentinel = object()
+        halo_radius = kwargs.get("halo_radius", _halo_sentinel)
+        if halo_radius is _halo_sentinel:
+            halo_radius = 0.0
+        halo_nodes: List[int] = []
+        halo_skipped: Optional[str] = None
+        halo_mode: Optional[str] = None
         if halo_radius is not None:
-            halo_nodes = set(self._load_node_indices(conditions))
-            halo_nodes |= set(self._support_node_indices(conditions))
+            halo_nodes = sorted(set(self._load_node_indices(conditions))
+                                | set(self._support_node_indices(conditions)))
             if halo_nodes:
-                solver.protect_elements_near_nodes(
-                    list(halo_nodes), radius=float(halo_radius),
-                )
+                import numpy as _np
+                _pre = (None if solver._preserved is None
+                        else _np.asarray(solver._preserved).copy())
+                if float(halo_radius) <= 0:
+                    halo_mode = "topological_1layer"
+                    _hn = set(int(i) for i in halo_nodes)
+                    _layer = np.array([
+                        e for e in range(self.mesh_elements.shape[0])
+                        if _hn.intersection(self.mesh_elements[e].tolist())
+                    ], dtype=int)
+                    _union = (np.union1d(
+                        _layer, np.nonzero(_pre)[0])
+                        if _pre is not None else _layer)
+                    solver.set_preserved_elements(_union)
+                else:
+                    halo_mode = "geometric_radius"
+                    solver.protect_elements_near_nodes(
+                        halo_nodes, radius=float(halo_radius))
+                if not bool(_np.asarray(solver._active).any()):
+                    # Guarda degenerate: el halo cubriría TODA la malla
+                    # dejando dominio activo vacío y volfrac final 0.0.
+                    # Se revierte al preserved previo y se declara explícito.
+                    solver._preserved = _pre
+                    solver._finalize_active()
+                    halo_skipped = "full_coverage"
 
         progress_cb = kwargs.get("progress_cb")
         result = solver.optimize(
@@ -780,8 +822,22 @@ class GenerativeDesignEngine:
         result["_consumed_protected_conditions"] = len(conditions.get(ConditionType.PROTECTED_REGION, []))
         result["_consumed_obstruction_conditions"] = len(conditions.get(ConditionType.OBSTRUCTION, []))
         result["_unsupported_conditions"] = sorted(unsupported)
-        result["_preserved_elements"] = [int(i) for i in np.asarray(
-            preserved, dtype=int).ravel().tolist()] if preserved.size else []
+        # Snapshot real de preserved DESPUÉS del halo (el solver une el
+        # halo con lo previo; reportar `preserved` pre-halo ocultaría la
+        # preservación de cargas/soportes en la reconstrucción).
+        _solver_preserved = getattr(solver, "_preserved", None)
+        if _solver_preserved is not None and np.asarray(_solver_preserved).any():
+            _final_preserved = np.nonzero(np.asarray(_solver_preserved))[0]
+        else:
+            _final_preserved = np.asarray(preserved, dtype=int).ravel()
+        result["_preserved_elements"] = [int(i) for i in _final_preserved.tolist()]
+        result["_halo_nodes"] = [int(i) for i in halo_nodes]
+        result["_halo_radius"] = (None if halo_radius is None
+                                  else float(halo_radius))
+        if halo_mode is not None:
+            result["_halo_mode"] = halo_mode
+        if halo_skipped is not None:
+            result["_halo_skipped"] = halo_skipped
         result["_frozen_elements"] = []
         return result
 
@@ -794,12 +850,16 @@ def run_generative_design(
     step_path: Optional[str] = None,
     legacy_force: Optional[np.ndarray] = None,
     legacy_fixed_dofs: Optional[np.ndarray] = None,
+    halo_radius: Optional[float] = 0.0,
 ) -> Dict[str, Any]:
     """High-level entry: run the generative design pipeline (A or B).
 
     Returns a dict with the SIMP result plus the B-Rep reconstruction.
     ``legacy_force``/``legacy_fixed_dofs`` (GEN-LEGACY) permiten correr sin
     condiciones reutilizables usando las BC clásicas del controller.
+    ``halo_radius``: 0.0/auto topológico (defecto, una capa de elementos
+    que tocan nodos de carga/soporte), > 0 manual geométrico (radio en
+    unidades de malla), None desactiva la preservación (opt-out).
     """
     conditions = consume_conditions(condition_manager, study.conditions)
 
@@ -836,7 +896,7 @@ def run_generative_design(
         filter_radius=p.filter_radius,
         tolerance=p.convergence_tolerance,
         progress_cb=progress_cb,
-        halo_radius=None,  # Solver computes from actual mesh element size
+        halo_radius=halo_radius,  # 0.0 = auto desde la malla (Punto 1); None = opt-out
         optimizer=_opt_map[_opt],
         legacy_force=legacy_force,
         legacy_fixed_dofs=legacy_fixed_dofs,

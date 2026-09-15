@@ -33,6 +33,12 @@ interface RightPanelProps {
   isMeshModel?: boolean;
   meshFormat?: string | null;
   meshResult?: MeshOpResult | null;
+  // DENSITY-VIEW (reversible): toggle + leyenda del overlay SIMP.
+  densityAvailable?: boolean;
+  densityMin?: number | null;
+  densityMax?: number | null;
+  showDensity?: boolean;
+  onToggleDensity?: () => void;
 }
 
 export const RightPanel: React.FC<RightPanelProps> = ({
@@ -55,6 +61,11 @@ export const RightPanel: React.FC<RightPanelProps> = ({
   isMeshModel,
   meshFormat,
   meshResult,
+  densityAvailable,
+  densityMin,
+  densityMax,
+  showDensity,
+  onToggleDensity,
 }) => {
   return (
     <aside className="w-full xl:w-80 2xl:w-88 flex flex-col gap-2 flex-shrink-0 min-w-0 select-none xl:sticky xl:top-[154px] xl:max-h-[calc(100dvh-154px-3rem)] xl:overflow-y-auto xl:[&>*]:shrink-0">
@@ -277,6 +288,33 @@ export const RightPanel: React.FC<RightPanelProps> = ({
                   <div className="text-right">
                     Cumplimiento: <span className="text-secondary font-semibold">{optimizationState.currentCompliance.toFixed(1)} mJ</span>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* DENSITY-VIEW (reversible): overlay de densidades SIMP sobre
+                la malla (solo visual, no modifica la pieza). Para volver
+                atrás: borrar bloque + props. */}
+            {densityAvailable && (
+              <div className="flex flex-col gap-1.5 bg-surface-elevated/60 p-2.5 rounded border border-secondary/30">
+                <button
+                  type="button"
+                  onClick={onToggleDensity}
+                  className="flex items-center justify-between font-mono text-[11px] text-text-secondary hover:text-text-primary transition-colors"
+                  title="Mostrar u ocultar el campo de densidades sobre la malla"
+                >
+                  <span>Campo de densidades ρ</span>
+                  <span className={`material-symbols-outlined text-[16px] ${showDensity ? 'text-secondary' : 'text-text-muted'}`}>
+                    {showDensity ? 'visibility' : 'visibility_off'}
+                  </span>
+                </button>
+                <div
+                  className="h-2 rounded-full"
+                  style={{ background: 'linear-gradient(90deg, #1e3a8a, #f97316)' }}
+                />
+                <div className="flex items-center justify-between font-mono text-[10px] text-text-muted">
+                  <span>vacío ρ = {densityMin?.toFixed(2) ?? '—'}</span>
+                  <span>sólido ρ = {densityMax?.toFixed(2) ?? '—'}</span>
                 </div>
               </div>
             )}

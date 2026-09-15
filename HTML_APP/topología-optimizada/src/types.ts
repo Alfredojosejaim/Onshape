@@ -94,6 +94,10 @@ export interface SimpParameters {
   filterRadius: number; // r_min in mm
   tolerance: number; // Δρ (1e-3)
   maxIterations: number;
+  heaviside: boolean; // proyección Heaviside (bordes 0/1 nítidos)
+  heavisideBeta: number; // agudeza de la proyección
+  extrusionAxis: 'off' | 'x' | 'y' | 'z'; // extrusión 2D (densidad constante por eje)
+  brepStyle: 'faceted' | 'bspline'; // reconstrucción STEP facetada vs B-spline
 }
 
 export interface OptimizationState {

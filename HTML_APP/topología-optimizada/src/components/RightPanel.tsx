@@ -228,6 +228,63 @@ export const RightPanel: React.FC<RightPanelProps> = ({
               </div>
             </div>
 
+            {/* Geometría limpia: Heaviside + extrusión 2D + B-spline STEP */}
+            <div className="flex flex-col gap-1 bg-surface-elevated/20 p-2 rounded border border-border-subtle/30 font-mono text-[10px]">
+              <span className="text-text-muted font-medium flex items-center gap-1">
+                <span className="material-symbols-outlined text-[12px] text-secondary">shape_line</span>
+                Geometría limpia (bordes nítidos)
+              </span>
+              <label className="flex items-center justify-between pl-2 cursor-pointer">
+                <span className="text-text-secondary">Proyección Heaviside</span>
+                <input
+                  type="checkbox"
+                  checked={simpParams.heaviside}
+                  disabled={optimizationState.isRunning}
+                  onChange={(e) => onChangeSimpParams({ ...simpParams, heaviside: e.target.checked })}
+                  className="accent-secondary"
+                />
+              </label>
+              <label className="flex items-center justify-between pl-2">
+                <span className="text-text-secondary">Beta (agudeza)</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={128}
+                  step={1}
+                  value={simpParams.heavisideBeta}
+                  disabled={optimizationState.isRunning || !simpParams.heaviside}
+                  onChange={(e) => onChangeSimpParams({ ...simpParams, heavisideBeta: parseFloat(e.target.value) || 1 })}
+                  className="w-16 bg-surface-container-lowest border border-border-subtle/40 rounded px-1 py-0.5 text-text-primary text-right"
+                />
+              </label>
+              <label className="flex items-center justify-between pl-2">
+                <span className="text-text-secondary" title="Densidad constante a lo largo del eje (pieza 2.5D)">Extrusión 2D</span>
+                <select
+                  value={simpParams.extrusionAxis}
+                  disabled={optimizationState.isRunning}
+                  onChange={(e) => onChangeSimpParams({ ...simpParams, extrusionAxis: e.target.value as SimpParameters['extrusionAxis'] })}
+                  className="bg-surface-container-lowest border border-border-subtle/40 rounded px-1 py-0.5 text-text-primary"
+                >
+                  <option value="off">Off</option>
+                  <option value="x">X</option>
+                  <option value="y">Y</option>
+                  <option value="z">Z</option>
+                </select>
+              </label>
+              <label className="flex items-center justify-between pl-2">
+                <span className="text-text-secondary" title="STEP facetado (malla) vs B-spline (caras suaves)">Reconstrucción STEP</span>
+                <select
+                  value={simpParams.brepStyle}
+                  disabled={optimizationState.isRunning}
+                  onChange={(e) => onChangeSimpParams({ ...simpParams, brepStyle: e.target.value as SimpParameters['brepStyle'] })}
+                  className="bg-surface-container-lowest border border-border-subtle/40 rounded px-1 py-0.5 text-text-primary"
+                >
+                  <option value="faceted">Facetada</option>
+                  <option value="bspline">B-spline</option>
+                </select>
+              </label>
+            </div>
+
             <div className="grid grid-cols-2 gap-1.5">
               <div className="flex items-center justify-between px-2 py-1 rounded bg-surface-elevated/40 border border-border-subtle/30 text-[10px] font-mono">
                 <span className="text-text-muted">Tol. Conv. (Δρ)</span>

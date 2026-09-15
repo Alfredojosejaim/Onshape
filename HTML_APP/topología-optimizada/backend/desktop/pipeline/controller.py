@@ -820,6 +820,11 @@ class PipelineController:
         overhang_penalty: float = 0.5,
         objective: str = "min_compliance",
         compliance_limit=None,
+        heaviside_projection: bool = False,
+        heaviside_beta: float = 1.0,
+        heaviside_eta: float = 0.5,
+        heaviside_continuation: bool = False,
+        extrusion_axis=None,
     ) -> Dict[str, Any]:
         """Run the self-contained SIMP topology optimisation.
 
@@ -896,6 +901,11 @@ class PipelineController:
                 overhang_penalty=overhang_penalty,
                 objective=objective,
                 compliance_limit=compliance_limit,
+                heaviside_projection=heaviside_projection,
+                heaviside_beta=heaviside_beta,
+                heaviside_eta=heaviside_eta,
+                heaviside_continuation=heaviside_continuation,
+                extrusion_axis=extrusion_axis,
             )
             self.result = g
             self.result_densities = np.asarray(g["densities"], dtype=float)
@@ -944,6 +954,18 @@ class PipelineController:
                 solver.set_symmetry_planes(symmetry_planes)
             except Exception as exc:
                 raise PipelineError(f"symmetry_planes inválido: {exc}")
+        if heaviside_projection:
+            try:
+                solver.set_heaviside_projection(
+                    beta=heaviside_beta, eta=heaviside_eta,
+                    continuation=heaviside_continuation)
+            except Exception as exc:
+                raise PipelineError(f"heaviside_projection inválida: {exc}")
+        if extrusion_axis is not None:
+            try:
+                solver.set_extrusion_filter(extrusion_axis)
+            except Exception as exc:
+                raise PipelineError(f"extrusion_axis inválido: {exc}")
         try:
             result = solver.optimize(max_iterations=max_iterations, tolerance=tolerance, callback=progress_cb, optimizer=optimizer, eso_criterion=eso_criterion, evolutionary_rate=evolutionary_rate, ls_cfl=ls_cfl, ls_hole_period=ls_hole_period, min_thickness=min_thickness, overhang_constraint=overhang_constraint, build_direction=build_direction, overhang_angle_deg=overhang_angle_deg, overhang_penalty=overhang_penalty, objective=objective, compliance_limit=compliance_limit)
         except Exception as exc:

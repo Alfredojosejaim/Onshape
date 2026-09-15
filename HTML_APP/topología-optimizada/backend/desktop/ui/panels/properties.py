@@ -209,6 +209,21 @@ class PropertiesPanel(QWidget):
         self._overhang_angle.setRange(1.0, 89.0)
         self._overhang_angle.setValue(45.0)
         col.addWidget(self._overhang_angle)
+        # Proyección Heaviside + extrusión 2D (aprobación explícita 15-sep-2026,
+        # fuera de plan): contornos 0/1 nítidos y diseño constante por eje.
+        self._heaviside_enable = QCheckBox("Proyección Heaviside (bordes nítidos)")
+        self._heaviside_enable.setChecked(False)
+        col.addWidget(self._heaviside_enable)
+        col.addWidget(_field_label("Beta Heaviside (agudeza)"))
+        self._heaviside_beta = QDoubleSpinBox()
+        self._heaviside_beta.setRange(1.0, 128.0)
+        self._heaviside_beta.setDecimals(1)
+        self._heaviside_beta.setValue(8.0)
+        col.addWidget(self._heaviside_beta)
+        col.addWidget(_field_label("Extrusión 2D (densidad constante por eje)"))
+        self._extrusion_axis = QComboBox()
+        self._extrusion_axis.addItems(["Off", "X", "Y", "Z"])
+        col.addWidget(self._extrusion_axis)
         self._objective_minvol = QCheckBox("Minimizar volumen sujeto a compliance")
         self._objective_minvol.setChecked(False)
         col.addWidget(self._objective_minvol)
@@ -421,6 +436,12 @@ class PropertiesPanel(QWidget):
                           else "min_compliance"),
             "compliance_limit": (self._compliance_limit.value()
                                  if self._objective_minvol.isChecked() else None),
+            "heaviside_projection": self._heaviside_enable.isChecked(),
+            "heaviside_beta": self._heaviside_beta.value(),
+            "heaviside_continuation": True,
+            "extrusion_axis": (
+                self._extrusion_axis.currentText().lower()
+                if self._extrusion_axis.currentIndex() > 0 else None),
         }
         self.runOptimization.emit(params)
 

@@ -117,6 +117,16 @@ class SIMPSolver:
         self.dof_map = self._compute_dof_map()
         self.element_centers = self._compute_element_centers()
         self._filter = self._build_weighted_filter()
+        # Proyección Heaviside (filtro de densidad + proyección, opt-in).
+        # Desactivada por defecto: sin ella el lazo OC/MMA/GCMMA es
+        # bit-idéntico al histórico (regresión garantizada).
+        self._heaviside = False
+        self._heaviside_beta = 1.0
+        self._heaviside_eta = 0.5
+        self._heaviside_continuation = False
+        # Filtro de extrusión 2D (densidad constante por eje, opt-in).
+        self._extrusion_axis: Optional[int] = None
+        self._extrusion_groups: Optional[List[List[int]]] = None
 
         if element_densities0 is not None:
             self.x = np.clip(np.asarray(element_densities0, dtype=float).ravel(), self.rho_min, 1.0)
@@ -381,6 +391,130 @@ class SIMPSolver:
             out[self._preserved] = 1.0
         if self._void is not None:
             out[self._void] = xmin
+        return out
+
+    # ------------------------------------------------------------------ #
+    # Proyección Heaviside (filtro de densidad + proyección, opt-in)
+    # Elimina densidades intermedias (grises) → contorno 0/1 nítido.
+    # x (diseño) --H--> x̃ = Hx/Hs --proj--> x̄ = física.
+    # Sensibilidad por regla de la cadena: dc/dx = Hᵀ(dc/dx̄·dx̄/dx̃)/Hs.
+    # ------------------------------------------------------------------ #
+    def set_heaviside_projection(
+        self, beta: float = 1.0, eta: float = 0.5, continuation: bool = False,
+    ) -> None:
+        """Activa la proyección Heaviside sobre el campo filtrado.
+
+        Args:
+            beta: agudeza de la proyección (mayor = más 0/1). Debe ser > 0.
+            eta: umbral de proyección en (0, 1); típico 0.5.
+            continuation: si True, arranca en β=1 y duplica cada 5
+                iteraciones hasta ``beta`` (evita mínimos locales tempranos).
+        """
+        b = float(beta)
+        e = float(eta)
+        if not np.isfinite(b) or b <= 0:
+            raise TopOptError(f"heaviside beta={beta!r} inválido (debe ser > 0).")
+        if not np.isfinite(e) or not 0.0 < e < 1.0:
+            raise TopOptError(f"heaviside eta={eta!r} inválido (debe estar en (0, 1)).")
+        self._heaviside = True
+        self._heaviside_beta = b
+        self._heaviside_eta = e
+        self._heaviside_continuation = bool(continuation)
+
+    def _beta_at(self, it: int) -> float:
+        if not self._heaviside_continuation:
+            return self._heaviside_beta
+        return float(min(self._heaviside_beta, 2.0 ** (it // 5)))
+
+    def _filtered_density(self, x: np.ndarray) -> np.ndarray:
+        xa = np.asarray(x, dtype=float).ravel()
+        if self._filter is None:
+            return xa
+        hs = getattr(self, "_Hs_col", None)
+        denom = np.maximum(hs, 1e-12) if hs is not None else 1.0
+        return np.asarray(self._filter.dot(xa)).ravel() / denom
+
+    def _project(self, xt: np.ndarray, beta: Optional[float] = None,
+                 eta: Optional[float] = None) -> np.ndarray:
+        """x̃ → x̄ (Heaviside suave). Sin proyección activa devuelve x̃."""
+        xt = np.asarray(xt, dtype=float)
+        if not self._heaviside:
+            return xt
+        b = self._heaviside_beta if beta is None else float(beta)
+        e = self._heaviside_eta if eta is None else float(eta)
+        denom = np.tanh(b * e) + np.tanh(b * (1.0 - e))
+        return (np.tanh(b * e) + np.tanh(b * (xt - e))) / denom
+
+    def _dproject(self, xt: np.ndarray, beta: Optional[float] = None,
+                  eta: Optional[float] = None) -> np.ndarray:
+        """dx̄/dx̃ de la proyección Heaviside (1 si está desactivada)."""
+        xt = np.asarray(xt, dtype=float)
+        if not self._heaviside:
+            return np.ones_like(xt)
+        b = self._heaviside_beta if beta is None else float(beta)
+        e = self._heaviside_eta if eta is None else float(eta)
+        denom = np.tanh(b * e) + np.tanh(b * (1.0 - e))
+        return (b * (1.0 - np.tanh(b * (xt - e)) ** 2)) / denom
+
+    def _physical_density(self, x: np.ndarray, beta: Optional[float] = None) -> np.ndarray:
+        """Densidad física usada por el FEA. Sin Heaviside = x (idéntico)."""
+        if not self._heaviside:
+            return np.asarray(x, dtype=float).ravel()
+        return self._project(self._filtered_density(x), beta=beta)
+
+    def _design_sensitivity(self, x: np.ndarray, dc_phys: np.ndarray,
+                            beta: Optional[float] = None) -> np.ndarray:
+        """dc/dx a partir de dc/dx̄ (filtro de densidad + proyección).
+
+        Sin Heaviside cae al filtro de sensibilidad histórico (idéntico).
+        """
+        if not self._heaviside:
+            return self._apply_filter(dc_phys, x)
+        xt = self._filtered_density(x)
+        dc = np.asarray(dc_phys, dtype=float).ravel() * self._dproject(xt, beta=beta)
+        if self._filter is not None:
+            hs = getattr(self, "_Hs_col", None)
+            denom = np.maximum(hs, 1e-12) if hs is not None else 1.0
+            dc = np.asarray(self._filter.dot(dc)).ravel() / denom
+        return dc
+
+    # ------------------------------------------------------------------ #
+    # Filtro de extrusión 2D (densidad constante a lo largo de un eje)
+    # ------------------------------------------------------------------ #
+    def set_extrusion_filter(self, axis=None) -> None:
+        """Obliga densidad constante a lo largo de ``axis`` (0/1/2 o x/y/z).
+
+        Para piezas mecanizadas / cortadas por láser o agua: el diseño solo
+        varía en el plano perpendicular al eje de extrusión. ``None``
+        desactiva. Fail-loud si el eje no es válido.
+        """
+        if axis is None:
+            self._extrusion_axis = None
+            self._extrusion_groups = None
+            return
+        if isinstance(axis, str):
+            axis = {"x": 0, "y": 1, "z": 2}.get(axis.lower(), -1)
+        if axis not in (0, 1, 2):
+            raise TopOptError(
+                f"extrusion_axis={axis!r} inválido (usar 0/1/2 o 'x'/'y'/'z').")
+        self._extrusion_axis = int(axis)
+        others = [a for a in (0, 1, 2) if a != int(axis)]
+        h = float(np.mean(np.cbrt(self._volumes))) if self.num_elements else 1.0
+        h = max(h, 1e-12)
+        q = np.round(self.element_centers[:, others] / h).astype(np.int64)
+        groups: Dict[int, List[int]] = {}
+        for i in range(self.num_elements):
+            key = int(q[i, 0]) * 73856093 ^ int(q[i, 1]) * 19349663
+            groups.setdefault(key, []).append(i)
+        self._extrusion_groups = list(groups.values())
+
+    def _apply_extrusion(self, x: np.ndarray) -> np.ndarray:
+        if getattr(self, "_extrusion_groups", None) is None:
+            return x
+        out = np.asarray(x, dtype=float).copy()
+        for g in self._extrusion_groups:
+            if len(g) > 1:
+                out[g] = float(np.mean(out[g]))
         return out
 
     def protect_elements_near_nodes(
@@ -1083,8 +1217,10 @@ class SIMPSolver:
             self._gcmma_reset_state(x)
             self._gcmma_capped = False
         for it in range(max_iterations):
-            compliance, dc = self._compliance_and_sensitivities(x)
-            dc_f = self._apply_filter(dc, x)
+            beta_it = self._beta_at(it)
+            x_phys = self._physical_density(x, beta=beta_it)
+            compliance, dc_phys = self._compliance_and_sensitivities(x_phys)
+            dc_f = self._design_sensitivity(x, dc_phys, beta=beta_it)
             inner_iters = 0
             if optimizer == "mma":
                 if fscale is None:
@@ -1098,6 +1234,7 @@ class SIMPSolver:
             else:
                 xnew = self._oc_update(x, dc_f, self._volumes)
             xnew = self._mirror_average(xnew)
+            xnew = self._apply_extrusion(xnew)
             if min_thickness is not None:
                 xnew = self._apply_min_thickness(xnew, min_thickness)
             if overhang_constraint:
@@ -1207,8 +1344,11 @@ class SIMPSolver:
         optimizer: str,
     ) -> Dict[str, Any]:
         """Análisis final + dict de resultado (compartido OC/MMA/ESO)."""
-        final_us = self._solve_all(x)
-        weight = np.power(x, self.penalization)
+        # Densidad física (filtro+proyección/extrusión) para el análisis y el
+        # reporte. Sin esas opciones x_phys == x (bit-idéntico al histórico).
+        x_phys = self._apply_extrusion(self._physical_density(x))
+        final_us = self._solve_all(x_phys)
+        weight = np.power(x_phys, self.penalization)
         ke_term = np.zeros(self.num_elements)
         compliance_final = 0.0
         cases = getattr(self, "_load_cases", None) or []
@@ -1247,14 +1387,22 @@ class SIMPSolver:
             "tolerance": tolerance,
             "final_volume_fraction": float(np.dot(x[self._active], self._volumes[self._active]) / max(self._vol0_free, 1e-12)),
             "physical_volume_fraction": float(
-                np.dot(x, self._volumes) / max(self._vol0, 1e-12)
+                np.dot(x_phys, self._volumes) / max(self._vol0, 1e-12)
+            ),
+            "projected_volume_fraction": float(
+                np.dot(x_phys, self._volumes) / max(self._vol0, 1e-12)
             ),
             "target_volume_fraction": float(self.volfrac),
             "final_compliance": float(compliance_final),
             "compliance_history": [h["compliance"] for h in history],
             "volume_fraction_history": [h["volume_fraction"] for h in history],
             "max_density_change": float(np.max(np.abs(x - self.x))),
-            "densities": x.tolist(),
+            "densities": x_phys.tolist(),
+            "heaviside_projection": bool(self._heaviside),
+            "heaviside_beta": float(self._heaviside_beta),
+            "heaviside_eta": float(self._heaviside_eta),
+            "extrusion_axis": (None if self._extrusion_axis is None
+                               else int(self._extrusion_axis)),
             "preserved_elements": (self._preserved.tolist() if self._preserved is not None else None),
             "void_elements": (self._void.tolist() if self._void is not None else None),
             "displacements": final_u.tolist(),

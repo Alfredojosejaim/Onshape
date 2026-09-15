@@ -747,6 +747,15 @@ class GenerativeDesignEngine:
             solver.set_preserved_elements(preserved)
         if void.size:
             solver.set_void_elements(void)
+        # Proyección Heaviside + extrusión 2D (opt-in, fail-loud en el setter).
+        if kwargs.get("heaviside_projection"):
+            solver.set_heaviside_projection(
+                beta=kwargs.get("heaviside_beta", 1.0),
+                eta=kwargs.get("heaviside_eta", 0.5),
+                continuation=kwargs.get("heaviside_continuation", False),
+            )
+        if kwargs.get("extrusion_axis") is not None:
+            solver.set_extrusion_filter(kwargs.get("extrusion_axis"))
 
         # Halo alrededor de nodos de carga/soporte (Punto 1 auditoría
         # prompt.md): las cargas/fijaciones solo generaban forces/fixed_dofs,
@@ -851,6 +860,13 @@ def run_generative_design(
     legacy_force: Optional[np.ndarray] = None,
     legacy_fixed_dofs: Optional[np.ndarray] = None,
     halo_radius: Optional[float] = 0.0,
+    heaviside_projection: bool = False,
+    heaviside_beta: float = 1.0,
+    heaviside_eta: float = 0.5,
+    heaviside_continuation: bool = False,
+    extrusion_axis=None,
+    smoothing_method: str = "laplacian",
+    brep_style: str = "faceted",
 ) -> Dict[str, Any]:
     """High-level entry: run the generative design pipeline (A or B).
 
@@ -900,6 +916,11 @@ def run_generative_design(
         optimizer=_opt_map[_opt],
         legacy_force=legacy_force,
         legacy_fixed_dofs=legacy_fixed_dofs,
+        heaviside_projection=heaviside_projection,
+        heaviside_beta=heaviside_beta,
+        heaviside_eta=heaviside_eta,
+        heaviside_continuation=heaviside_continuation,
+        extrusion_axis=extrusion_axis,
     )
 
     if study.scenario == "A":
@@ -924,7 +945,9 @@ def run_generative_design(
     else:  # pragma: no cover
         raise ValueError(f"Unsupported scenario '{study.scenario}'")
 
-    reconstruction = _reconstruct(result, engine, step_path=step_path)
+    reconstruction = _reconstruct(
+        result, engine, step_path=step_path,
+        smoothing_method=smoothing_method, brep_style=brep_style)
     result["reconstruction"] = reconstruction
     return result
 
@@ -935,6 +958,8 @@ def _reconstruct(
     step_path: Optional[str] = None,
     frozen_elements: Optional[List[int]] = None,
     preserved_elements: Optional[List[int]] = None,
+    smoothing_method: str = "laplacian",
+    brep_style: str = "faceted",
 ):
     from core.cad_reconstruction import (
         ReconstructionPipeline,
@@ -947,9 +972,18 @@ def _reconstruct(
         result.get("_frozen_elements", []) or [])
     preserved = (list(preserved_elements) if preserved_elements is not None
                  else list(result.get("_preserved_elements", []) or []))
+    fitter = None
+    if brep_style == "bspline":
+        from core.cad_reconstruction import OCPBSplineFitter
+        fitter = OCPBSplineFitter(step_path=step_path)
+    elif brep_style != "faceted":
+        raise ValueError(
+            f"brep_style={brep_style!r} no soportado (usar 'faceted' o 'bspline').")
     pipe = ReconstructionPipeline(
         surface_extractor=MarchingTetrahedraExtractor(),
+        brep_fitter=fitter,
         step_path=step_path,
+        smoothing_method=smoothing_method,
     )
     final = pipe.run(
         engine.mesh_nodes,

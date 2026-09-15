@@ -266,8 +266,59 @@ def smooth_surface_mesh(
     return work, tris
 
 
+def taubin_smooth(
+    vertices: np.ndarray,
+    triangles: np.ndarray,
+    iterations: int = 10,
+    lambda_: float = 0.5,
+    mu: float = -0.53,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Suavizado Taubin (λ|μ): pasa-bajos sin encogimiento global.
+
+    Alterna un paso de contracción (λ > 0) con uno de expansión (μ < 0),
+    eliminando el ruido de alta frecuencia de la isosuperficie sin el
+    encogimiento que introduce el Laplaciano puro. Los vértices de borde se
+    mantienen fijos (igual que :func:`smooth_surface_mesh`).
+
+    Estabilidad típica: λ ≈ 0.5, μ ≈ −0.53 (|μ| > λ). Fail-loud si λ ≤ 0
+    o μ ≥ 0 (sería un Laplaciano puro encogedor, no Taubin).
+    """
+    verts = np.asarray(vertices, dtype=float)
+    tris = np.asarray(triangles, dtype=int)
+    if verts.shape[0] == 0 or tris.shape[0] == 0:
+        return verts, tris
+    lam = float(lambda_)
+    m = float(mu)
+    if not np.isfinite(lam) or lam <= 0:
+        raise ValueError(f"taubin lambda_={lambda_!r} inválido (debe ser > 0).")
+    if not np.isfinite(m) or m >= 0:
+        raise ValueError(f"taubin mu={mu!r} inválido (debe ser < 0).")
+    adj = _triangle_adjacency(tris, verts.shape[0])
+    fixed = _boundary_vertices(adj, tris)
+
+    def _step(w: np.ndarray, factor: float) -> np.ndarray:
+        new = w.copy()
+        for i in range(verts.shape[0]):
+            if i in fixed or not adj[i]:
+                continue
+            neigh = np.asarray([w[j] for j in adj[i]], dtype=float)
+            new[i] = w[i] + factor * (np.mean(neigh, axis=0) - w[i])
+        return new
+
+    work = verts.copy()
+    for _ in range(max(int(iterations), 0)):
+        work = _step(work, lam)
+        work = _step(work, m)
+    return work, tris
+
+
 class MeshSmoother:
-    """Post-process smoothing of the extracted isosurface mesh."""
+    """Post-process smoothing of the extracted isosurface mesh.
+
+    ``method`` selecciona "laplacian" (histórico, default) o "taubin"
+    (sin encogimiento). Con "laplacian" el comportamiento es idéntico al
+    histórico (regresión garantizada).
+    """
 
     def smooth(
         self,
@@ -275,14 +326,28 @@ class MeshSmoother:
         triangles: np.ndarray,
         iterations: int = 3,
         alpha: float = 0.5,
+        method: str = "laplacian",
+        mu: Optional[float] = None,
     ) -> ReconstructionResult:
-        smv, smt = smooth_surface_mesh(vertices, triangles, iterations, alpha)
+        if method == "laplacian":
+            smv, smt = smooth_surface_mesh(vertices, triangles, iterations, alpha)
+            meta = {"iterations": int(iterations), "alpha": float(alpha),
+                    "method": "laplacian", "triangles": int(smt.shape[0])}
+        elif method == "taubin":
+            m = -0.53 if mu is None else float(mu)
+            smv, smt = taubin_smooth(vertices, triangles, iterations, alpha, m)
+            meta = {"iterations": int(iterations), "alpha": float(alpha),
+                    "mu": m, "method": "taubin",
+                    "triangles": int(smt.shape[0])}
+        else:
+            raise ValueError(
+                f"smoothing method={method!r} no soportado "
+                f"(usar 'laplacian' o 'taubin').")
         return ReconstructionResult(
             stage=ReconstructionStage.SMOOTHED_MESH,
             status=ReconstructionStatus.COMPLETED,
             data={"vertices": smv, "triangles": smt},
-            metadata={"iterations": int(iterations), "alpha": float(alpha),
-                      "triangles": int(smt.shape[0])},
+            metadata=meta,
         )
 
 
@@ -1437,6 +1502,146 @@ class OCPBRepFitter(BRepFitter):
         metadata["step_status"] = int(status)
 
 
+class OCPBSplineFitter(OCPBRepFitter):
+    """B-Rep suave B-spline: une caras coplanares, convierte superficies a
+    B-spline y sube la continuidad a C1/C2 antes de exportar STEP.
+
+    Aprobado explícitamente por el usuario (fuera de plan, confirm-gate
+    Fase 0.5). Reutiliza el cosido + validación de :class:`OCPBRepFitter`;
+    sobre el sólido válido aplica, en orden y validando cada paso:
+
+    1. ``ShapeUpgrade_UnifySameDomain`` — fusiona caras coplanares (la
+       isosuperficie de marching-tets trae cientos de triángulos planos que
+       colapsan a una sola cara).
+    2. ``ShapeCustom_BSplineRestriction`` — convierte superficies/curvas a
+       B-spline con tolerancia.
+    3. ``ShapeUpgrade_ShapeDivideContinuity`` — eleva la continuidad de
+       borde a C1/C2.
+
+    Si OCC no soporta o falla un paso, se registra en ``metadata`` y se
+    conserva el último sólido válido (nunca silencioso, nunca crash).
+    """
+
+    def __init__(
+        self,
+        step_path: Optional[str] = None,
+        unify_tolerance: float = 1e-4,
+        bspline_tolerance: float = 1e-3,
+        continuity: str = "C1",
+    ) -> None:
+        super().__init__(step_path=None)  # la exportación se hace aquí
+        self._out_step_path = step_path
+        self._unify_tolerance = float(unify_tolerance)
+        self._bspline_tolerance = float(bspline_tolerance)
+        if continuity not in ("C0", "C1", "C2"):
+            raise ValueError(f"continuity={continuity!r} inválida (C0|C1|C2).")
+        self._continuity = continuity
+
+    @staticmethod
+    def _valid(shape) -> bool:
+        try:
+            from OCP.BRepCheck import BRepCheck_Analyzer
+            return bool(BRepCheck_Analyzer(shape).IsValid())
+        except Exception:
+            return False
+
+    def fit(self, vertices: np.ndarray, triangles: np.ndarray) -> ReconstructionResult:
+        base = super().fit(vertices, triangles)
+        if base.status != ReconstructionStatus.COMPLETED or base.data is None:
+            return base
+        meta: Dict[str, Any] = dict(base.metadata or {})
+        meta["brep_style"] = "bspline"
+        meta["continuity_target"] = self._continuity
+        solid = base.data
+        solid = self._step_unify(solid, meta)
+        solid = self._step_bspline(solid, meta)
+        solid = self._step_continuity(solid, meta)
+        try:
+            self._write_step(solid, meta)
+        except Exception as exc:  # pragma: no cover - defensive
+            meta["step_export_error"] = str(exc)
+        return ReconstructionResult(
+            stage=ReconstructionStage.BREP_SOLID,
+            status=ReconstructionStatus.COMPLETED,
+            data=solid,
+            metadata=meta,
+        )
+
+    def _step_unify(self, solid, meta: Dict[str, Any]):
+        try:
+            from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
+            unify = ShapeUpgrade_UnifySameDomain(solid, True, True, False)
+            unify.SetLinearTolerance(self._unify_tolerance)
+            unify.SetAngularTolerance(1e-3)
+            unify.Build()
+            cand = unify.Shape()
+            if not cand.IsNull() and self._valid(cand):
+                meta["unify_same_domain"] = "applied"
+                return cand
+            meta["unify_same_domain"] = "skipped_invalid"
+        except Exception as exc:
+            meta["unify_same_domain_error"] = str(exc)
+        return solid
+
+    def _step_bspline(self, solid, meta: Dict[str, Any]):
+        try:
+            from OCP.BRepTools import BRepTools_Modifier
+            from OCP.ShapeCustom import ShapeCustom_BSplineRestriction
+            from OCP.GeomAbs import GeomAbs_Shape
+            conv = ShapeCustom_BSplineRestriction()
+            conv.SetTol3d(self._bspline_tolerance)
+            conv.SetTol2d(self._bspline_tolerance)
+            conv.SetContinuity3d(GeomAbs_Shape.GeomAbs_C1)
+            conv.SetContinuity2d(GeomAbs_Shape.GeomAbs_C1)
+            conv.SetMaxDegree(8)
+            conv.SetMaxNbSegments(16)
+            conv.SetConvRational(True)
+            mod = BRepTools_Modifier(solid)
+            mod.Perform(conv)
+            if not mod.IsDone():
+                meta["bspline_restriction"] = "not_done"
+                return solid
+            cand = mod.ModifiedShape(solid)
+            if not cand.IsNull() and self._valid(cand):
+                meta["bspline_restriction"] = "applied"
+                return cand
+            meta["bspline_restriction"] = "skipped_invalid"
+        except Exception as exc:
+            meta["bspline_restriction_error"] = str(exc)
+        return solid
+
+    def _step_continuity(self, solid, meta: Dict[str, Any]):
+        try:
+            from OCP.ShapeUpgrade import ShapeUpgrade_ShapeDivideContinuity
+            from OCP.GeomAbs import GeomAbs_Shape
+            target = {"C0": GeomAbs_Shape.GeomAbs_C0,
+                      "C1": GeomAbs_Shape.GeomAbs_C1,
+                      "C2": GeomAbs_Shape.GeomAbs_C2}[self._continuity]
+            sd = ShapeUpgrade_ShapeDivideContinuity(solid)
+            sd.SetTolerance(self._bspline_tolerance)
+            sd.SetSurfaceCriterion(target)
+            sd.SetPCurveCriterion(target)
+            sd.Perform()
+            cand = sd.Result()
+            if not cand.IsNull() and self._valid(cand):
+                meta["continuity_upgrade"] = self._continuity
+                return cand
+            meta["continuity_upgrade"] = "skipped_invalid"
+        except Exception as exc:
+            meta["continuity_upgrade_error"] = str(exc)
+        return solid
+
+    def _write_step(self, solid, meta: Dict[str, Any]) -> None:
+        if not self._out_step_path:
+            return
+        from OCP.STEPControl import STEPControl_Writer, STEPControl_AsIs
+        writer = STEPControl_Writer()
+        writer.Transfer(solid, STEPControl_AsIs)
+        status = writer.Write(self._out_step_path)
+        meta["step_path"] = self._out_step_path
+        meta["step_status"] = int(status)
+
+
 class DummyBRepFitter(OCPBRepFitter):
     """Alias kept for backward compatibility; fitter is now real via OCP."""
 
@@ -1464,12 +1669,18 @@ class ReconstructionPipeline:
         step_path: Optional[str] = None,
         mesh_repair: Optional["MeshRepair"] = None,
         decimate_fraction: Optional[float] = None,
+        smoothing_method: str = "laplacian",
     ) -> None:
         self._surface_extractor = surface_extractor or MarchingTetrahedraExtractor()
         self._brep_fitter = brep_fitter or OCPBRepFitter(step_path=step_path)
         self._mesh_smoother = mesh_smoother
         self._hole_filler = hole_filler
         self._mesh_repair = mesh_repair
+        if smoothing_method not in ("laplacian", "taubin"):
+            raise ValueError(
+                f"smoothing_method={smoothing_method!r} no soportado "
+                f"(usar 'laplacian' o 'taubin').")
+        self._smoothing_method = smoothing_method
         if decimate_fraction is not None and not 0.0 < float(decimate_fraction) <= 1.0:
             raise ValueError(
                 f"decimate_fraction={decimate_fraction!r} fuera de rango (0, 1]."
@@ -1598,7 +1809,8 @@ class ReconstructionPipeline:
                         self._stages[ReconstructionStage.SMOOTHED_MESH] = rep_result
                     if self._mesh_smoother is None:
                         self._mesh_smoother = MeshSmoother()
-                    smooth_result = self._mesh_smoother.smooth(rep_verts, rep_tris)
+                    smooth_result = self._mesh_smoother.smooth(
+                        rep_verts, rep_tris, method=self._smoothing_method)
                     if self._decimate_fraction is not None:
                         dec_result = MeshDecimator(self._decimate_fraction).decimate(
                             np.asarray(smooth_result.data["vertices"]),

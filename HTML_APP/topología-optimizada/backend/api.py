@@ -744,6 +744,25 @@ class Api:
             if ls_hole_period < 1:
                 return {"ok": False,
                         "error": f"ls_hole_period={ls_hole_period!r} debe ser >= 1."}
+            heaviside_projection = bool(p.get("heaviside_projection", False))
+            try:
+                heaviside_beta = float(p.get("heaviside_beta", 1.0))
+                heaviside_eta = float(p.get("heaviside_eta", 0.5))
+            except (TypeError, ValueError):
+                return {"ok": False,
+                        "error": "heaviside_beta/heaviside_eta deben ser float"}
+            if heaviside_projection and (heaviside_beta <= 0
+                                         or not 0.0 < heaviside_eta < 1.0):
+                return {"ok": False,
+                        "error": "heaviside_beta debe ser > 0 y heaviside_eta en (0, 1)."}
+            extrusion_axis = p.get("extrusion_axis")
+            if extrusion_axis is not None:
+                if isinstance(extrusion_axis, str):
+                    extrusion_axis = {"x": 0, "y": 1, "z": 2}.get(
+                        extrusion_axis.lower(), -1)
+                if extrusion_axis not in (0, 1, 2):
+                    return {"ok": False,
+                            "error": "extrusion_axis debe ser 0/1/2 o 'x'/'y'/'z'."}
             kwargs = dict(
                 volume_fraction=float(p.get("volume_fraction", 0.3)),
                 max_iterations=int(p.get("max_iterations", 30)),
@@ -761,7 +780,12 @@ class Api:
                 overhang_penalty=float(p.get("overhang_penalty", 0.5)),
                 objective=str(p.get("objective", "min_compliance")).lower(),
                 compliance_limit=p.get("compliance_limit", None),
-                min_thickness=p.get("min_thickness", None))
+                min_thickness=p.get("min_thickness", None),
+                heaviside_projection=heaviside_projection,
+                heaviside_beta=heaviside_beta,
+                heaviside_eta=heaviside_eta,
+                heaviside_continuation=bool(p.get("heaviside_continuation", False)),
+                extrusion_axis=extrusion_axis)
             if kwargs["min_thickness"] is not None:
                 kwargs["min_thickness"] = float(kwargs["min_thickness"])
             if kwargs["compliance_limit"] is not None:
@@ -977,7 +1001,13 @@ class Api:
                                study, c.conditions, engine,
                                progress_cb=_prog_g, step_path=step_path,
                                legacy_force=legacy_force,
-                               legacy_fixed_dofs=legacy_fixed_dofs)
+                               legacy_fixed_dofs=legacy_fixed_dofs,
+                               heaviside_projection=bool(p.get("heaviside_projection", False)),
+                               heaviside_beta=float(p.get("heaviside_beta", 1.0)),
+                               heaviside_continuation=bool(p.get("heaviside_continuation", False)),
+                               extrusion_axis=p.get("extrusion_axis"),
+                               brep_style=str(p.get("brep_style", "faceted")).lower(),
+                               smoothing_method=str(p.get("smoothing_method", "laplacian")).lower())
             holder_g["jid"] = jid
             return {"ok": True, "jobId": jid}
         except Exception as exc:  # noqa: BLE001
@@ -1431,6 +1461,11 @@ class Api:
                 return {"ok": False,
                         "error": "optimizer='gcmma' solo en núcleo (runOptimization): "
                                  "el path vendored está congelado (Fase 4.5b)."}
+            if p.get("heaviside_projection") or p.get("extrusion_axis") is not None:
+                return {"ok": False,
+                        "error": "heaviside_projection/extrusion_axis solo en núcleo "
+                                 "(runOptimization): el path vendored está congelado "
+                                 "(Fase 4.5b)."}
             if optimizer not in ("oc", "mma", "eso", "level_set"):
                 return {"ok": False,
                         "error": f"optimizer={optimizer!r} no soportado (usar 'oc', 'mma', 'eso' o 'level_set')"}

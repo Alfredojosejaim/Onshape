@@ -372,8 +372,6 @@ def problem_to_solver_inputs(
         raise TopOptError(
             f"Objective.{problem.objective.type.name} no soportado."
         )
-    if problem.filter_settings.use_heaviside_projection:
-        raise TopOptError("Heaviside projection no soportada (Fase 3).")
     if problem.filter_settings.filter_type != "density":
         raise TopOptError(
             f"filter_type={problem.filter_settings.filter_type!r} no "
@@ -516,6 +514,8 @@ def problem_to_solver_inputs(
         "volfrac": float(vc.target_fraction),
         "volfrac_mode": vc.mode.value,  # siempre "active_domain" en Fase 1
         "filter_radius": float(problem.filter_settings.filter_radius),
+        "heaviside_projection": bool(problem.filter_settings.use_heaviside_projection),
+        "heaviside_beta": float(problem.filter_settings.heaviside_beta),
         "preserved_elements": sorted(preserved),
         "void_elements": sorted(void),
         "frozen_elements": sorted(frozen),

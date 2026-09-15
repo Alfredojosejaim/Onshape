@@ -303,6 +303,10 @@ export default function App() {
     // PERF-DEFAULT (reversible): 100 iteraciones era un default caro (con
     // malla fina, minutos). 50 alcanza la convergencia típica de SIMP.
     maxIterations: 50,
+    heaviside: false,
+    heavisideBeta: 8.0,
+    extrusionAxis: 'off',
+    brepStyle: 'faceted',
   });
   // OPT-TYPE (reversible): estructural (SIMP) vs generativa (escenario A).
   const [optType, setOptType] = useState<OptimizationType>('estructural');
@@ -866,6 +870,12 @@ export default function App() {
               penalization: st.simpParams.penalization,
               filter_radius: st.simpParams.filterRadius,
               convergence_tolerance: st.simpParams.tolerance,
+              heaviside_projection: st.simpParams.heaviside,
+              heaviside_beta: st.simpParams.heavisideBeta,
+              heaviside_continuation: true,
+              extrusion_axis: st.simpParams.extrusionAxis === 'off' ? null : st.simpParams.extrusionAxis,
+              brep_style: st.simpParams.brepStyle,
+              smoothing_method: st.simpParams.brepStyle === 'bspline' ? 'taubin' : 'laplacian',
             })
           : await backend.runOptimization({
               condition_ids: condIds.length > 0 ? condIds : undefined,
@@ -874,6 +884,10 @@ export default function App() {
               penalization: st.simpParams.penalization,
               filter_radius: st.simpParams.filterRadius,
               tolerance: st.simpParams.tolerance,
+              heaviside_projection: st.simpParams.heaviside,
+              heaviside_beta: st.simpParams.heavisideBeta,
+              heaviside_continuation: true,
+              extrusion_axis: st.simpParams.extrusionAxis === 'off' ? null : st.simpParams.extrusionAxis,
             });
         if (r.ok && r.jobId) {
           setSimpJobId(r.jobId);

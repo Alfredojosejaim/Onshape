@@ -43,6 +43,7 @@ import { V2_ENABLED } from './lib/v2flags';
 import { V2Panel } from './components/v2/V2Panel';
 // V2-NEW-END
 import {
+  decodeCleanArray,
   mapFeaResult,
   mapLoadToBoundaries,
   mapMaterials,
@@ -583,6 +584,17 @@ export default function App() {
   });
 
   const simpPoll = useJobPoll(simpJobId, (result) => {
+    // UNSUPPORTED-SURFACE (reversible): condiciones degradadas/no mapeadas
+    // que el backend marcó (fallbacks bbox/base-Z). Se muestran en vez de
+    // quedar solo en el log. Para volver atrás: borrar helper + usos.
+    const unsOf = (res: unknown): string[] => {
+      const u = (res as { _unsupported_conditions?: unknown })._unsupported_conditions;
+      return Array.isArray(u) ? u.map(String) : [];
+    };
+    const unsText = (res: unknown): string | null => {
+      const list = unsOf(res);
+      return list.length ? `Condiciones degradadas: ${list.join(', ')}.` : null;
+    };
     setOptimizationState((prev) => {
       const st = stateRef.current;
       // UI-CLEAN (reversible): guard sin modelo.
@@ -606,11 +618,13 @@ export default function App() {
           const vals = (r as unknown as { values?: unknown }).values;
           const pos = (r as unknown as { positions?: unknown }).positions;
           const idx = (r as unknown as { indices?: unknown }).indices;
-          if (r.ok && Array.isArray(vals) && Array.isArray(pos) && Array.isArray(idx) && vals.length > 0) {
-            const nums = (a: unknown[]) => a.map((x) => Number(x)).filter((x) => Number.isFinite(x));
-            const values = nums(vals as unknown[]);
-            const positions = nums(pos as unknown[]);
-            const indices = (idx as unknown[]).map((x) => Math.round(Number(x)));
+          // Los arrays viajan como listas planas o {__ndarray__: true, data}
+          // (ver decodeCleanArray): Array.isArray solo no alcanza.
+          const values = decodeCleanArray(vals);
+          const positions = decodeCleanArray(pos);
+          const rawIdx = decodeCleanArray(idx);
+          if (r.ok && values.length > 0) {
+            const indices = rawIdx.map((x) => Math.round(x));
             const dmin = (r as unknown as { min?: unknown }).min;
             const dmax = (r as unknown as { max?: unknown }).max;
             if (values.length > 0 && positions.length >= 9 && indices.length >= 3) {
@@ -620,9 +634,14 @@ export default function App() {
                 max: typeof dmax === 'number' ? dmax : Math.max(...values),
               });
               setShowDensity(true);
+              const uns = unsText(result);
+              if (uns) setOptNotice({ text: `${uns} Se muestra el campo igual, pero revisa compliance/volumen.` });
             }
           } else {
-            setOptNotice({ text: 'SIMP calculado, pero sin campo de densidades para visualizar (sin resultado SIMP en el backend).' });
+            const parts = ['SIMP calculado, pero sin campo de densidades para visualizar.'];
+            const uns = unsText(result);
+            if (uns) parts.push(uns);
+            setOptNotice({ text: parts.join(' ') });
           }
         } catch {
           setOptNotice({ text: 'SIMP calculado, pero falló la lectura del campo de densidades.' });
@@ -640,7 +659,7 @@ export default function App() {
         try {
           const rr = (await backend.registerReconstruction(gj)) as unknown as {
             ok: boolean; registered?: { model_id?: string; model_name?: string };
-            snapshot?: ApiSnapshot; error?: string;
+            snapshot?: ApiSnapshot; error?: string; reason?: unknown;
           };
           const reg = rr.ok ? rr.registered : undefined;
           if (reg && (reg.model_id || reg.model_name) && rr.snapshot) {
@@ -648,9 +667,19 @@ export default function App() {
             applySnapshotToModel(rr.snapshot, nm, nm);
             void fetchSurface(nm);
             void fetchSolids(nm);
-            setOptNotice({ text: `Diseño generativo listo: "${nm}" cargada como modelo activo.` });
+            const parts = [`Diseño generativo listo: "${nm}" cargada como modelo activo.`];
+            const uns = unsText(result);
+            if (uns) parts.push(uns);
+            setOptNotice({ text: parts.join(' ') });
           } else {
-            setOptNotice({ text: 'Generativa calculada, pero sin geometría registrable (mira compliance/volumen).' });
+            const parts = ['Generativa calculada, pero sin geometría registrable.'];
+            const reason = typeof rr.reason === 'string' && rr.reason ? rr.reason
+              : (typeof (rr as { error?: unknown }).error === 'string' ? String((rr as { error?: unknown }).error) : null);
+            if (reason) parts.push(`Motivo: ${reason}.`);
+            const uns = unsText(result);
+            if (uns) parts.push(uns);
+            parts.push('(mira compliance/volumen).');
+            setOptNotice({ text: parts.join(' ') });
           }
         } catch {
           setOptNotice({ text: 'Generativa calculada, pero falló el registro de la geometría.' });

@@ -830,8 +830,12 @@ class Api:
             # El solido crudo no viaja en _clean (serializado a str); se
             # re-ejecuta la reconstruccion solo si hay densidades.
             info = self._ctrl._register_reconstruction_model(recon)
+            reason = None
+            if not info.get("model_id"):
+                from desktop.pipeline.controller import reconstruction_failure_reason
+                reason = reconstruction_failure_reason(recon)
             return {"ok": True, "registered": _clean(info),
-                    "snapshot": self._snapshot()}
+                    "snapshot": self._snapshot(), "reason": reason}
         except Exception as exc:  # noqa: BLE001
             return _err(exc)
 

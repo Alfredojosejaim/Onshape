@@ -37,6 +37,25 @@ class PipelineError(Exception):
     pass
 
 
+def reconstruction_failure_reason(reconstruction: Dict[str, Any]) -> str:
+    """Motivo explícito cuando no quedó sólido reconstruido registrado.
+
+    Fuente única para controller (registration_error), desktop Qt y
+    ``api.registerReconstruction``: el dict final solo trae la mejor etapa
+    (stage/status/error_message) más ``brep_error``/``registration_error``
+    cuando existen. Nunca devuelve vacío.
+    """
+    if not isinstance(reconstruction, dict) or not reconstruction:
+        return "sin información de reconstrucción"
+    for key in ("registration_error", "brep_error", "error_message"):
+        msg = reconstruction.get(key)
+        if msg:
+            return str(msg)
+    stage = reconstruction.get("stage", "?")
+    status = reconstruction.get("status", "?")
+    return f"etapa alcanzada: {stage} ({status})"
+
+
 class PipelineController:
     def __init__(self) -> None:
         self.cad = CADService()
@@ -52,6 +71,11 @@ class PipelineController:
         self.result_densities: Optional[np.ndarray] = None
         self.mesh_nodes: Optional[np.ndarray] = None
         self.mesh_elements: Optional[np.ndarray] = None
+        # Último motivo (si lo hubo) por el que la reconstrucción B-Rep de un
+        # estudio generativo NO quedó registrada como CADModel activo. None
+        # cuando el último registro fue exitoso o no hubo reconstrucción.
+        # Explícito y consultable -- nunca solo un log de consola.
+        self.last_reconstruction_warning: Optional[str] = None
 
         self._bot_nodes = []
         self._load_nodes = []
@@ -1122,6 +1146,84 @@ class PipelineController:
                   "model_name": self.model_name},
         )
 
+    # VALIDATE-BEFORE-STORE (reversible): umbral relativo del chequeo de
+    # volumen degenerado. Un SIMP legítimo conserva >= volfrac del volumen
+    # (típico >= 10% + preservados); por debajo del 1% es un sliver de
+    # sewing, no un diseño. Para volver atrás: borrar el atributo + su uso
+    # en _validate_reconstruction_solid.
+    _RECON_MIN_VOLUME_FRACTION = 0.01
+
+    def _mesh_volume(self) -> Optional[float]:
+        """Volumen total de la malla Tet4 activa (mm³), o None si no hay malla.
+
+        Suma de valores absolutos por tetraedro: robusto ante mallas con
+        orientación mixta (p. ej. la triangulación de Kuhn de los tests, cuya
+        suma signada se cancela a ~0 y no sirve como referencia de escala).
+        """
+        try:
+            import numpy as np
+            nd = np.asarray(self.mesh_nodes, dtype=float).reshape(-1, 3)
+            el = np.asarray(self.mesh_elements, dtype=int).reshape(-1, 4)
+            if len(nd) == 0 or len(el) == 0:
+                return None
+            p = nd[el[:, :4]]
+            mat = np.stack([p[:, 1] - p[:, 0], p[:, 2] - p[:, 0],
+                            p[:, 3] - p[:, 0]], axis=-1)
+            return float(np.abs(np.linalg.det(mat) / 6.0).sum())
+        except Exception:  # noqa: BLE001 - sin malla legible no hay referencia
+            return None
+
+    def _validate_reconstruction_solid(self, shape) -> Tuple[object, Optional[str], bool]:
+        """Valida el sólido cosido ANTES de registrarlo como CADModel.
+
+        Returns ``(shape_to_store, reason, flipped)``: ``reason`` None = apto.
+        Si el volumen es negativo pero el sólido es topológicamente válido se
+        intenta UNA reparación determinista (``Reversed()``): el sewing de
+        marching-tetrahedra puede dejar la orientación invertida (caso real:
+        Volume() = -231 con IsValid() = True). Solo se acepta si el reverso
+        queda válido y con volumen positivo; queda registrado en ``flipped``
+        (nunca silencioso). Volumen insignificante frente a la malla (< 1%:
+        el "cuerpo de 0,0 cm³") se rechaza siempre. Nunca lanza: un chequeo
+        que falla es motivo, no excepción.
+        """
+        try:
+            from OCP.BRepCheck import BRepCheck_Analyzer
+            if not BRepCheck_Analyzer(shape.wrapped).IsValid():
+                return None, ("el sólido reconstruido no pasa BRepCheck_Analyzer "
+                              "(sólido inválido)"), False
+        except Exception as exc:  # noqa: BLE001
+            return None, f"no se pudo validar el sólido reconstruido (BRepCheck): {exc}", False
+        try:
+            vol = float(shape.Volume())
+        except Exception as exc:  # noqa: BLE001
+            return None, f"no se pudo medir el volumen del sólido reconstruido: {exc}", False
+        flipped = False
+        if vol < 0.0:
+            # Reparación de orientación: solo si el reverso queda válido y
+            # con volumen positivo; si no, se rechaza como invertido.
+            try:
+                import cadquery as cq
+                rev = cq.Shape(shape.wrapped.Reversed())
+                rev_vol = float(rev.Volume())
+                if rev_vol > 0.0 and BRepCheck_Analyzer(rev.wrapped).IsValid():
+                    shape, vol, flipped = rev, rev_vol, True
+                else:
+                    return None, (f"volumen del sólido reconstruido negativo "
+                                  f"({vol:.3g} mm³) y el reverso tampoco es apto "
+                                  f"({rev_vol:.3g} mm³)"), False
+            except Exception as exc:  # noqa: BLE001
+                return None, (f"volumen del sólido reconstruido negativo "
+                              f"({vol:.3g} mm³) y falló la reparación: {exc}"), False
+        if not vol > 0.0:
+            return None, (f"volumen del sólido reconstruido no positivo ({vol:.3g} mm³; "
+                          "sólido degenerado)"), False
+        ref = self._mesh_volume()
+        if ref is not None and ref > 0.0 \
+                and vol < self._RECON_MIN_VOLUME_FRACTION * ref:
+            return None, (f"volumen del sólido reconstruido degenerado ({vol:.3g} mm³ < "
+                          f"1% del volumen de malla {ref:.3g} mm³)"), False
+        return shape, None, flipped
+
     def _register_reconstruction_model(self, reconstruction: Dict[str, Any]) -> Dict[str, Any]:
         """Best-effort: register a reconstructed OCP solid back as the active CADModel.
 
@@ -1135,12 +1237,35 @@ class PipelineController:
         the reconstruction produced no usable solid or the CAD layer cannot store
         it (e.g. in tests using a minimal fake CAD service).  Never raises: the
         reconstruction result is a bonus on top of the SIMP/density result.
+
+        Whenever ``{}`` is returned, ``self.last_reconstruction_warning`` is set
+        to an explicit, human-readable reason (never left to a console-only log)
+        and, when the reconstruction dict is still writable at that point,
+        ``reconstruction["registration_error"]`` carries the same message so the
+        UI layer can surface it without reaching into controller internals.
+
+        Before storing, the sewn solid is validated (BRepCheck + positive and
+        non-trivial volume vs the active mesh): a degenerate/inverted solid is
+        rejected with an explicit reason instead of registering a "0,0 cm³ body".
         """
+        self.last_reconstruction_warning = None
         solid = reconstruction.get("data")
         if solid is None:
+            reason = reconstruction_failure_reason(reconstruction)
+            if reason == "sin información de reconstrucción":
+                reason = (
+                    "la reconstrucción no alcanzó la etapa de sólido B-Rep "
+                    f"(status: {reconstruction.get('status', 'desconocido')})"
+                )
+            self.last_reconstruction_warning = reason
+            logger.warning("Reconstrucción sin sólido utilizable: %s", reason)
             return {}
         store = getattr(self.cad, "store_computed_shape", None)
         if store is None:
+            reason = "la capa CAD activa no soporta registrar sólidos computados (store_computed_shape ausente)"
+            self.last_reconstruction_warning = reason
+            reconstruction["registration_error"] = reason
+            logger.warning("No se pudo registrar la reconstrucción: %s", reason)
             return {}
         try:
             import cadquery as cq
@@ -1148,6 +1273,24 @@ class PipelineController:
             # CadQuery Shape; cq.Shape only re-wraps a raw TopoDS object.
             wrapped = getattr(solid, "wrapped", solid)
             shape = cq.Shape(wrapped)
+            # VALIDATE-BEFORE-STORE: no registrar sólidos inválidos,
+            # invertidos irreparables o degenerados (el "cuerpo de 0,0 cm³").
+            # Una inversión simple se repara con Reverse() explícito. El
+            # rechazo viaja por el mismo camino explícito que los otros fallos.
+            shape, invalid_reason, flipped = self._validate_reconstruction_solid(shape)
+            if invalid_reason is not None:
+                self.last_reconstruction_warning = invalid_reason
+                reconstruction.pop("data", None)
+                reconstruction["registration_error"] = invalid_reason
+                logger.warning("Reconstrucción rechazada antes de registrar: %s",
+                               invalid_reason)
+                return {}
+            if flipped:
+                logger.warning(
+                    "Sólido reconstruido con orientación invertida: se aplicó "
+                    "Reverse() (volumen ahora positivo); queda registrado en "
+                    "reconstruction['orientation_fixed'].")
+                reconstruction["orientation_fixed"] = True
             model_name = reconstruction.get("metadata", {}).get("step_path") \
                 or "Reconstrucción Topológica"
             model_id = store(shape, model_name=model_name)
@@ -1198,7 +1341,16 @@ class PipelineController:
             reconstruction["model_name"] = model_name
             return {"model_id": model_id, "model_name": model_name}
         except Exception as exc:
-            logger.warning("No se pudo registrar la reconstrucción como CADModel: %s", exc)
+            reason = f"error al registrar el sólido reconstruido como CADModel: {exc}"
+            self.last_reconstruction_warning = reason
+            # Never leak the raw OCP object into the result dict once we know
+            # it could not be registered; keep only the explicit reason.
+            reconstruction.pop("data", None)
+            reconstruction["registration_error"] = reason
+            logger.error(
+                "No se pudo registrar la reconstrucción como CADModel: %s", exc,
+                exc_info=True,
+            )
             return {}
 
     def _execute_transform(self, command) -> "CommandResult":

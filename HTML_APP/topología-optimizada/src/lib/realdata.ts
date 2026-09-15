@@ -202,7 +202,9 @@ export interface RealSurface {
   ranges: FaceRange[];
 }
 
-function decodeCleanArray(v: unknown): number[] {
+// DENSITY-VIEW (reversible): exportado para decodificar el campo de
+// getSurfaceMesh (mismo formato __ndarray__ que el teselado).
+export function decodeCleanArray(v: unknown): number[] {
   if (Array.isArray(v)) return (v as unknown[]).filter((x) => typeof x === 'number' && Number.isFinite(x)) as number[];
   if (v && typeof v === 'object') {
     const o = v as { __ndarray__?: boolean; data?: unknown };

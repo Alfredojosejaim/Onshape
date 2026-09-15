@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QFileDialog, QMessageBox, QInputDialog,
 )
 
-from desktop.pipeline.controller import PipelineController, launch_qt
+from desktop.pipeline.controller import PipelineController, launch_qt, reconstruction_failure_reason
 from desktop.ui.components.menus import MenuBuilder
 from desktop.ui.components.workspace import WorkspaceBuilder
 from desktop.ui.components.overlays import OverlayBuilder
@@ -766,7 +766,38 @@ class MainWindow(QMainWindow):
             )
             self.rb_viz.setEnabled(True)
             self.rb_export.setEnabled(True)
+        # --- Reconstrucción generativa: reflejar el sólido nuevo en el
+        # viewport, o avisar explícitamente si no se pudo registrar. ---
+        reconstruction = data.get("reconstruction") or {}
+        recon_msg = None
+        if reconstruction:
+            if reconstruction.get("model_id"):
+                tess = self.controller.current_tessellation
+                if tess and tess.get("vertices"):
+                    self._show_tessellation(tess)
+                    self.placeholder.hide()
+                self.design_tree.set_bodies(
+                    self.controller.cad.list_solids(self.controller.model_id)
+                )
+                self.timeline.set_features(self.controller.feature_history.features)
+                recon_msg = "Sólido reconstruido y actualizado en el viewport."
+            else:
+                reason = reconstruction_failure_reason(reconstruction)
+                recon_msg = (
+                    f"Reconstrucción a sólido NO completada. Motivo: {reason}. "
+                    "Se muestra únicamente la malla de análisis coloreada por densidad."
+                )
+                QMessageBox.warning(
+                    self, "Reconstrucción incompleta",
+                    "La optimización generativa terminó, pero no se pudo generar "
+                    "un sólido B-Rep válido a partir del resultado.\n\n"
+                    f"Motivo: {reason}\n\n"
+                    "El cuerpo sólido del viewport NO fue reemplazado; solo se "
+                    "actualizó la visualización de densidades sobre la malla FEM.",
+                )
         msg = f"Estudio '{study.name}' completado."
+        if recon_msg:
+            msg += f" {recon_msg}"
         if unsupported:
             msg += f" Condiciones no soportadas: {', '.join(unsupported)}."
             QMessageBox.warning(

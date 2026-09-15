@@ -298,10 +298,18 @@ class GenerativeDesignEngine:
                 ))
         return sorted(nodes)
 
-    def _protected_elements(self, conditions: List[ProtectedRegion]) -> np.ndarray:
-        """Element indices that must keep material (protected regions)."""
+    def _protected_elements(self, conditions: List[ProtectedRegion],
+                             ) -> Tuple[np.ndarray, bool]:
+        """Element indices that must keep material (protected regions).
+
+        Returns ``(elements, used_bbox_fallback)``. ``used_bbox_fallback`` is
+        True when at least one face was selected but NONE resolved to mesh
+        nodes within tolerance (i.e. the geometric heuristic below was used
+        instead of the actual selected faces) -- the caller must surface this
+        as an unsupported/degraded condition, never silently.
+        """
         if self.mesh_elements is None:
-            return np.array([], dtype=int)
+            return np.array([], dtype=int), False
         node_set: set = set()
         face_one = set()
         for region in conditions:
@@ -319,11 +327,15 @@ class GenerativeDesignEngine:
         # Fallback: protect elements touching the model bounding box ends.
         # Explicit heuristic (not a CAD-face mapping): only applies when no
         # protected-region face resolved to nodes.
+        used_fallback = False
         if not node_set and self.mesh_nodes is not None:
+            used_fallback = bool(face_one)
             logger.warning(
-                "ProtectedRegion: no face mapped to mesh nodes; protecting "
-                "bbox-end elements explicitly (heuristic fallback, not a "
-                "CAD-face mapping).")
+                "ProtectedRegion: no face mapped to mesh nodes (caras=%s, "
+                "tolerance=0.5mm); protecting bbox-end elements explicitly "
+                "(heuristic fallback, NOT the CAD faces the user selected). "
+                "Likely cause: mesh element size too coarse relative to the "
+                "0.5mm tolerance on a curved/small face.", sorted(face_one))
             lo = self.mesh_nodes.min(axis=0)
             hi = self.mesh_nodes.max(axis=0)
             axis = int(np.argmax(hi - lo))
@@ -336,7 +348,7 @@ class GenerativeDesignEngine:
             e for e in range(self.mesh_elements.shape[0])
             if set(self.mesh_elements[e].tolist()) & node_set
         }
-        return np.array(sorted(elems), dtype=int)
+        return np.array(sorted(elems), dtype=int), used_fallback
 
     def _void_elements(self, conditions: List[ObstructionCondition]) -> np.ndarray:
         """Element indices that must stay empty (obstructions).
@@ -439,6 +451,20 @@ class GenerativeDesignEngine:
         idx = self._node_indices_for_load(load)
         if not idx and load.faces.entities and raise_on_unmapped_face:
             return None, [], "load"
+        fallback_flag = None
+        if not idx and load.faces.entities:
+            # Cara real seleccionada sin nodos (tolerance 0.5mm): en modo
+            # permisivo se aplica el fallback de extremo del eje pero se
+            # marca explícito (misma familia que elasticity(fallback_base_Z)).
+            logger.warning(
+                "LoadCondition %s: caras %s no mapearon a ningun nodo de "
+                "malla (tolerance=0.5mm); usando fallback de extremo del eje "
+                "en su lugar. La carga real seleccionada por el usuario NO "
+                "fue aplicada donde corresponde.",
+                getattr(load, "name", "?"),
+                [int(e.face_index) for e in load.faces.entities
+                 if e.face_index is not None])
+            fallback_flag = "load(fallback_bbox)"
         if not idx:
             axis = int(np.argmax(np.abs(vec)))
             coord = nodes[:, axis].max() if vec[axis] > 0 else nodes[:, axis].min()
@@ -462,7 +488,7 @@ class GenerativeDesignEngine:
         else:
             for ni in idx:
                 single[ni * 3: ni * 3 + 3] += vec * (mag / max(len(idx), 1))
-        return single, idx, None
+        return single, idx, fallback_flag
 
     def _map_conditions_to_load_cases(self, conditions, raise_on_unmapped_face=True):
         """MULTICARGA: una entrada por LoadCondition (o grupo load_case_id).
@@ -487,7 +513,11 @@ class GenerativeDesignEngine:
             single, _idx, uns = self._force_vector_for_load(load, raise_on_unmapped_face)
             if uns:
                 unsupported.append(uns)
-                continue
+                # Flags duros ("load", presión sin área) descartan el caso;
+                # los de fallback ("load(fallback_bbox)") conservan el caso
+                # aplicado (modo permisivo) pero quedan registrados.
+                if "fallback" not in uns:
+                    continue
             if gid not in grouped:
                 grouped[gid] = single
                 group_weight[gid] = w
@@ -585,6 +615,19 @@ class GenerativeDesignEngine:
             if not target_nodes and face_indices and raise_on_unmapped_face:
                 unsupported.append("elasticity")
                 continue
+            if not target_nodes and face_indices:
+                # A real face WAS selected but mapped to zero mesh nodes
+                # (likely: 0.5mm tolerance too tight for the mesh element
+                # size on this face). Never substitute the base of the part
+                # in silence -- flag it explicitly so the UI/study result
+                # shows it, even though we still proceed with the fallback
+                # below in permissive SIMP mode.
+                logger.warning(
+                    "ElasticityCondition: caras %s no mapearon a ningun nodo "
+                    "de malla (tolerance=0.5mm); usando fallback de base del "
+                    "eje Z en su lugar. La fijacion real seleccionada por el "
+                    "usuario NO fue aplicada.", face_indices)
+                unsupported.append("elasticity(fallback_base_Z)")
             if not target_nodes:
                 # no face selected (or permissive SIMP mode): default to the
                 # min-axis nodes (base of the part).
@@ -597,7 +640,10 @@ class GenerativeDesignEngine:
             for ni in target_nodes:
                 fixed_dofs.extend([ni * 3, ni * 3 + 1, ni * 3 + 2])
 
-        preserved = self._protected_elements(conditions.get(ConditionType.PROTECTED_REGION, []))
+        preserved, preserved_fallback = self._protected_elements(
+            conditions.get(ConditionType.PROTECTED_REGION, []))
+        if preserved_fallback:
+            unsupported.append("protected_region(fallback_bbox)")
         obstructions = conditions.get(ConditionType.OBSTRUCTION, [])
         void = self._void_elements(obstructions)
 
@@ -833,6 +879,7 @@ def _reconstruct(
     from core.cad_reconstruction import (
         ReconstructionPipeline,
         ReconstructionStage,
+        ReconstructionStatus,
         MarchingTetrahedraExtractor,
     )
     densities = np.asarray(result.get("densities", []), dtype=float)
@@ -853,6 +900,15 @@ def _reconstruct(
         preserved_elements=preserved or None,
     )
     out = final.to_dict()
+    # Motivo explícito cuando no se llegó a sólido: el dict final solo trae
+    # la mejor etapa disponible (stage/status/error_message); el error de la
+    # etapa BREP se perdería y la UI diría "sin detalle". Se expone aparte.
+    if final.stage != ReconstructionStage.BREP_SOLID:
+        brep_res = pipe._stages.get(ReconstructionStage.BREP_SOLID)
+        if brep_res is not None and brep_res.error_message:
+            out["brep_error"] = brep_res.error_message
+        elif final.error_message:
+            out["brep_error"] = final.error_message
     if frozen:
         out["metadata"] = {**(out.get("metadata", {}) or {}),
                            "frozen_elements": sorted(int(i) for i in frozen),

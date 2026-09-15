@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
-import { ActiveTab, ActiveTool, BoundaryCondition, Material, OptimizationState } from '../types';
+import { ActiveTab, ActiveTool, BoundaryCondition, Material, OptimizationState, type DensityField } from '../types';
 // NAV-VIEW-START (reversible: quitar imports + prop surface + efectos/camara marcados)
 import { dollyCamera, fitCamera, orbitCamera, panCamera, viewCamera } from '../lib/camera3d';
 import {
@@ -51,6 +51,9 @@ interface CadViewportProps {
   selectedFaces: number[];
   onToggleFace: (faceIndex: number) => void;
   facePickEnabled: boolean;
+  // DENSITY-VIEW (reversible): overlay del campo SIMP (solo visual).
+  densityField: DensityField | null;
+  showDensity: boolean;
 }
 
 export const CadViewport: React.FC<CadViewportProps> = ({
@@ -76,6 +79,9 @@ export const CadViewport: React.FC<CadViewportProps> = ({
   selectedFaces,
   onToggleFace,
   facePickEnabled,
+  // DENSITY-VIEW (reversible)
+  densityField,
+  showDensity,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -585,6 +591,78 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     };
   }, [surfaces, activeFilename, selectedFaces]);
   // FACES-END
+
+  // DENSITY-VIEW-START (reversible): overlay del campo nodal de densidades
+  // SIMP sobre la malla de superficie FEA (backend getSurfaceMesh
+  // field=density). Solo visual: no modifica geometría ni resultados.
+  // Para volver atrás: borrar props + este efecto + uso en App/RightPanel.
+  const densityOverlayRef = useRef<THREE.Mesh | null>(null);
+  useEffect(() => {
+    const group = modelGroupRef.current;
+    if (densityOverlayRef.current) {
+      if (group) group.remove(densityOverlayRef.current);
+      densityOverlayRef.current.geometry.dispose();
+      (densityOverlayRef.current.material as THREE.Material).dispose();
+      densityOverlayRef.current = null;
+    }
+    if (!group || !showDensity || !densityField) return;
+    const { positions, indices, values } = densityField;
+    const nv = Math.floor(positions.length / 3);
+    if (nv < 1 || values.length !== nv || indices.length < 3) {
+      console.warn('[viewport] campo de densidades inconsistente, se omite el overlay');
+      return;
+    }
+    for (const i of indices) {
+      if (!Number.isInteger(i) || i < 0 || i >= nv) {
+        console.warn('[viewport] campo de densidades con índices fuera de rango, se omite');
+        return;
+      }
+    }
+    const span = densityField.max - densityField.min > 1e-12
+      ? densityField.max - densityField.min : 1;
+    const cVoid = new THREE.Color(0x1e3a8a);
+    const cSolid = new THREE.Color(0xf97316);
+    const colors = new Float32Array(nv * 3);
+    const tmp = new THREE.Color();
+    for (let i = 0; i < nv; i += 1) {
+      const t = Math.min(1, Math.max(0, (values[i] - densityField.min) / span));
+      tmp.copy(cVoid).lerp(cSolid, t);
+      colors[i * 3] = tmp.r; colors[i * 3 + 1] = tmp.g; colors[i * 3 + 2] = tmp.b;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geo.setIndex(indices);
+    // ORIENT: misma conversión CAD Z-up -> three Y-up que las mallas.
+    geo.rotateX(-Math.PI / 2);
+    geo.computeVertexNormals();
+    const mat = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      metalness: 0.2,
+      roughness: 0.6,
+      side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+    });
+    if (showSection && clipPlaneRef.current) {
+      mat.clippingPlanes = [clipPlaneRef.current];
+    }
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.visible = isModelVisible;
+    mesh.raycast = () => undefined; // el overlay no intercepta picks
+    group.add(mesh);
+    densityOverlayRef.current = mesh;
+    return () => {
+      if (densityOverlayRef.current) {
+        group.remove(densityOverlayRef.current);
+        densityOverlayRef.current.geometry.dispose();
+        (densityOverlayRef.current.material as THREE.Material).dispose();
+        densityOverlayRef.current = null;
+      }
+    };
+  }, [densityField, showDensity, isModelVisible, showSection,
+    surfaces, bodies, activeFilename, hiddenBodies, meshByFile, showMesh]);
+  // DENSITY-VIEW-END
 
   // LOAD-ARROWS-START (reversible): flechas de carga (vastago + cono) sobre
   // cada cara con carga activa, orientadas segun el vector de la condicion.

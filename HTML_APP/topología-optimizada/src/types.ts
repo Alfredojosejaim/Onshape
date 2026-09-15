@@ -110,6 +110,18 @@ export interface OptimizationState {
   volumeHistory: number[];
 }
 
+// DENSITY-VIEW (reversible): campo nodal de densidades SIMP sobre la malla
+// de superficie FEA (backend getSurfaceMesh field=density). Solo visual:
+// no modifica geometría ni el resultado. Para volver atrás: borrar + uso en
+// App/CadViewport/RightPanel.
+export interface DensityField {
+  positions: number[];
+  indices: number[];
+  values: number[];
+  min: number;
+  max: number;
+}
+
 export interface FeaResults {
   // PROMPT-FIX (reversible): null = "sin resultados" (la UI muestra "—").
   // mapFeaResult solo asigna numeros reales; el estado inicial es todo null.

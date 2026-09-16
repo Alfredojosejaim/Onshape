@@ -1655,11 +1655,18 @@ export default function App() {
     setEditingCondition((prev) => (prev?.id === id ? null : prev));
     setSelectedCondId((prev) => (prev === id ? null : prev));
   };
-  // TREE-SELECT: clic simple marca la fila (sin abrir la herramienta). El
-  // borrado se hace con Supr sobre la fila marcada (o el modal de edicion).
-  const handleSelectCondition = (id: string) => setSelectedCondId(id);
-  // TREE-BODY-SELECT: clic en cuerpo/malla marca la fila y activa su modelo.
+  // TREE-SELECT: clic marca, re-clic desmarca (toggle como las caras del
+  // viewport y los cuerpos). El borrado es con Supr sobre la fila marcada.
+  const handleSelectCondition = (id: string) =>
+    setSelectedCondId((prev) => (prev === id ? null : id));
+  // TREE-BODY-SELECT: clic marca, re-clic desmarca (toggle como las
+  // caras del viewport). Al marcar también activa su modelo; al desmarcar
+  // el modelo queda como está.
   const handleSelectBody = (key: string, m: CadModelPreset) => {
+    if (selectedBodyKey === key) {
+      setSelectedBodyKey(null);
+      return;
+    }
     setSelectedBodyKey(key);
     handleSelectModelReal(m);
   };

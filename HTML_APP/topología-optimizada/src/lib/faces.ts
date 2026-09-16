@@ -93,12 +93,13 @@ export function selectionSet(
   };
 }
 
-export type FaceTool = 'carga' | 'fijacion' | 'preservada';
+export type FaceTool = 'carga' | 'fijacion' | 'preservada' | 'keepout';
 
 /** JSON de condicion con caras, mismas claves que core/conditions.py::to_dict().
  *  El backend lo acepta via createCondition -> condition_from_dict.
- *  keepout NO esta aqui: en el core la obstruccion referencia CUERPOS
- *  (bodies), no caras — su seleccion queda local en la UI (ver App). */
+ *  keepout viaja como type 'obstruction' con caras (faces): el core las
+ *  mapea a elementos vacíos (rho=xmin). Antes quedaba solo local en la UI
+ *  y la optimización lo ignoraba en silencio. */
 export function buildConditionJson(
   tool: FaceTool,
   name: string,
@@ -157,6 +158,16 @@ export function buildConditionJson(
       metadata: {},
     };
   }
+  if (tool === 'keepout') {
+    return {
+      type: 'obstruction',
+      name,
+      bodies: selectionSet('Cuerpos de obstrucción', [], modelId, null),
+      faces: selectionSet('Caras de obstrucción', faceIndices, modelId, metas),
+      offset_mm: null,
+      metadata: {},
+    };
+  }
   return {
     type: 'protected_region',
     name,
@@ -165,7 +176,6 @@ export function buildConditionJson(
     metadata: {},
   };
 }
-
 /** Etiqueta corta para el arbol: SOLO el numero de caras ("3 caras").
  *  La lista de que caras estan seleccionadas (face_0, face_2...) se muestra
  *  unicamente al abrir la herramienta en el menu (ToolParamsPanel). */

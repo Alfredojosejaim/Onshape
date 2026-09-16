@@ -92,6 +92,31 @@ export function mapSnapshotToModel(
 }
 
 /** Resultado FEA real (unidades SI del core) -> panel de analisis. */
+export type ResultStatus = 'pending' | 'completed' | 'invalid' | 'error';
+
+export interface FeaOutcome {
+  status: ResultStatus;
+  data: FeaResults | null;
+  detail?: string;
+}
+
+/** Clasifica un payload FEA sin inventar cifras: distingue estudio en curso,
+ *  resultado completo, payload incompleto y error explícito. */
+export function mapFeaOutcome(res: unknown, yieldMpa: number): FeaOutcome {
+  const r = (res ?? {}) as Record<string, unknown>;
+  if (typeof r.error === 'string' && r.error) {
+    return { status: 'error', data: null, detail: r.error };
+  }
+  if (r.state === 'running' || r.state === 'pending' || r.state === 'queued') {
+    return { status: 'pending', data: null };
+  }
+  const mapped = mapFeaResult(res, yieldMpa);
+  if (!mapped) {
+    return { status: 'invalid', data: null, detail: 'métricas FEA mínimas ausentes' };
+  }
+  return { status: 'completed', data: mapped };
+}
+
 export function mapFeaResult(res: unknown, yieldMpa: number): FeaResults | null {
   const r = (res ?? {}) as Record<string, unknown>;
   const nodal = Array.isArray(r.nodal_von_mises) ? (r.nodal_von_mises as number[]) : [];
@@ -111,6 +136,33 @@ export function mapFeaResult(res: unknown, yieldMpa: number): FeaResults | null 
 }
 
 /** Resultado SIMP real (historiales del core) -> estado de optimizacion. */
+export interface SimpOutcome {
+  status: ResultStatus;
+  data: OptimizationState | null;
+  detail?: string;
+}
+
+/** Clasifica un payload SIMP: pending (job en curso), error, invalid
+ *  (terminó sin métricas utilizables) o completed. No cambia mapSimpResult. */
+export function mapSimpOutcome(
+  res: unknown,
+  prev: OptimizationState,
+  initialMassKg: number,
+): SimpOutcome {
+  const r = (res ?? {}) as Record<string, unknown>;
+  if (typeof r.error === 'string' && r.error) {
+    return { status: 'error', data: null, detail: r.error };
+  }
+  if (r.state === 'running' || r.state === 'pending' || r.state === 'queued') {
+    return { status: 'pending', data: null };
+  }
+  const mapped = mapSimpResult(res, prev, initialMassKg);
+  if (!mapped) {
+    return { status: 'invalid', data: null, detail: 'métricas SIMP mínimas ausentes' };
+  }
+  return { status: 'completed', data: mapped };
+}
+
 export function mapSimpResult(
   res: unknown,
   prev: OptimizationState,
@@ -122,7 +174,13 @@ export function mapSimpResult(
     ? (r.volume_fraction_history as number[])
     : [];
   const iters = num(r.iterations) ?? compHist.length;
-  const finalVol = num(r.final_volume_fraction) ?? volHist[volHist.length - 1];
+  // PHYS-VOL (auditoría punto 5): con regiones preservadas/obstrucciones el
+  // volumen ocupado real es physical_volume_fraction (rho-ponderado sobre
+  // activos), no el target final_volume_fraction. La UI consume el físico
+  // cuando existe para no mostrar 0.40 cuando la pieza ocupa 0.65.
+  const targetVol = num(r.final_volume_fraction) ?? volHist[volHist.length - 1];
+  const physVol = num(r.physical_volume_fraction);
+  const finalVol = physVol ?? targetVol;
   const finalComp = num(r.final_compliance) ?? compHist[compHist.length - 1];
   if (finalVol === undefined || finalComp === undefined || !iters) return null;
   const total = Math.max(1, Math.round(iters));

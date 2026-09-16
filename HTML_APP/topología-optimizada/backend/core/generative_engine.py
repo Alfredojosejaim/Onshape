@@ -312,6 +312,15 @@ class GenerativeDesignEngine:
         """Map the load's selected faces to mesh node indices."""
         if self.mesh_nodes is None:
             return []
+        face_indices = [
+            int(e.face_index) for e in load.faces.entities
+            if e.entity_type == EntityType.FACE and e.face_index is not None
+        ]
+        if face_indices:
+            # FSE-FIRST: nodos exactos sin necesidad del shape CAD.
+            exact = self._fse_nodes_for_faces(face_indices)
+            if exact:
+                return exact
         if self.model_shape is None or not load.faces.entities:
             # No CAD shape: select the node with max coordinate along load dir.
             if not load.faces.entities:
@@ -323,10 +332,6 @@ class GenerativeDesignEngine:
                 return [i for i in range(self.mesh_nodes.shape[0])
                         if abs(float(self.mesh_nodes[i, axis]) - coord) <= tol]
             return []
-        face_indices = [
-            int(e.face_index) for e in load.faces.entities
-            if e.entity_type == EntityType.FACE and e.face_index is not None
-        ]
         if not face_indices:
             return []
         return self._select_nodes_for_faces(face_indices)
@@ -385,6 +390,41 @@ class GenerativeDesignEngine:
             self.mesh_nodes, region.to_dict(),
             cad_shape=self.model_shape, default_tolerance=tol))
 
+    def _fse_nodes_for_faces(self, face_indices: List[int]) -> List[int]:
+        """Nodos exactos de la malla para caras CAD (vía face_surface_elements).
+
+        FSE-FIRST: la malla Gmsh trae la triangulación de superficie por cara
+        (grupos físicos nombrados + claves deterministas ``face_<i>``) con
+        los índices de nodo REALES de esta malla. Es exacta y no depende de
+        tolerancias geométricas, así que TODA cara marcada en las
+        herramientas mapea a sus nodos verdaderos sin heurísticos.
+
+        Solo válida cuando la malla es la del modelo
+        (``_surface_matches_mesh``); con envelope/puente se devuelve [] para
+        no indexar nodos de otra malla (ahí rige el fallback declarado).
+        """
+        if not self._surface_matches_mesh or not self.face_surface_elements:
+            return []
+        if self.mesh_nodes is None:
+            return []
+        n = int(np.asarray(self.mesh_nodes).shape[0])
+        out: set = set()
+        groups = getattr(self, "_face_index_to_groups", None) or {}
+        for fi in face_indices or []:
+            fi = int(fi)
+            for grp in groups.get(fi, []):
+                for tri in self.face_surface_elements.get(grp, []):
+                    for t in tri:
+                        t = int(t)
+                        if 0 <= t < n:
+                            out.add(t)
+            for tri in self.face_surface_elements.get(f"face_{fi}", []):
+                for t in tri:
+                    t = int(t)
+                    if 0 <= t < n:
+                        out.add(t)
+        return sorted(out)
+
     def _select_nodes_for_faces(self, face_indices: List[int]) -> List[int]:
         """Mapea caras CAD a nodos con tolerancia adaptativa + reintento.
 
@@ -394,8 +434,17 @@ class GenerativeDesignEngine:
         optimización colapsaba. Aquí, si el mapeo estricto es DISPERSO (menos de
         la mitad de los nodos esperados por área = A/h²), se reintenta con
         `2·h_elemento` y se conserva el que más nodos mapea.
+
+        FSE-FIRST: antes de cualquier tolerancia se prueban los nodos
+        exactos de face_surface_elements (misma malla). Si existen, TODA
+        cara marcada mapea sin error geométrico.
         """
-        if not face_indices or self.model_shape is None:
+        if not face_indices:
+            return []
+        exact = self._fse_nodes_for_faces(face_indices)
+        if exact:
+            return exact
+        if self.model_shape is None:
             return []
         strict = self._map_faces_with_tolerance(face_indices, self._face_tolerance)
         h = self._mean_edge_length()
@@ -525,16 +574,35 @@ class GenerativeDesignEngine:
         Body-based obstructions are mapped to mesh elements through the CAD
         shape: for each obstructing solid body we collect the elements whose
         centroid lies inside the solid (optionally expanded by ``offset_mm``).
+        Face-based obstructions (keep-out por caras de la UI) se mapean a los
+        elementos que tocan los nodos de esas caras (misma tolerancia
+        adaptativa que la región protegida) y se unen al conjunto void.
         Without a CAD shape no reliable mapping can be computed, so an empty
         set is returned and the condition is explicitly flagged as
         *unsupported* by the caller (never a silent wrong result).
         """
         if self.mesh_elements is None or self.mesh_nodes is None or not conditions:
             return np.array([], dtype=int)
+        face_elems: set = set()
+        for cond in conditions:
+            face_indices = [
+                int(e.face_index) for e in cond.faces.entities
+                if e.entity_type == EntityType.FACE and e.face_index is not None
+            ]
+            if face_indices and self.model_shape is not None:
+                nodes = set(self._select_nodes_for_faces(face_indices))
+                if nodes:
+                    for e in range(self.mesh_elements.shape[0]):
+                        if set(self.mesh_elements[e].tolist()) & nodes:
+                            face_elems.add(int(e))
+                else:
+                    logger.warning(
+                        "Obstruction: caras %s no mapearon a nodos de malla; "
+                        "esas caras keep-out no generan vacío.", face_indices)
         if self.model_shape is None:
             logger.warning(
                 "Obstruction mapping requires the CAD shape; marking as unsupported.")
-            return np.array([], dtype=int)
+            return np.asarray(sorted(face_elems), dtype=int)
 
         centroids = self._element_centroids()
         n_elems = self.mesh_elements.shape[0]
@@ -567,7 +635,8 @@ class GenerativeDesignEngine:
                         inside[i] = True
                     else:
                         inside[i] = self._point_in_solid(solid, c)
-        return np.asarray(np.nonzero(inside)[0], dtype=int)
+        body_void = set(int(i) for i in np.nonzero(inside)[0].tolist())
+        return np.asarray(sorted(body_void | face_elems), dtype=int)
 
     def _element_centroids(self) -> np.ndarray:
         nodes = self.mesh_nodes
@@ -822,6 +891,61 @@ class GenerativeDesignEngine:
 
         return forces, fixed_dofs, preserved, void, sorted(set(unsupported))
 
+    def _condition_mapping_report(self, conditions) -> List[Dict[str, Any]]:
+        """Por condición: caras pedidas vs nodos/elementos mapeados reales."""
+        report: List[Dict[str, Any]] = []
+
+        def _face_ids(selection) -> List[int]:
+            return [int(e.face_index) for e in selection.entities
+                    if e.entity_type == EntityType.FACE
+                    and e.face_index is not None]
+
+        def _touching_elements(node_ids) -> int:
+            ns = set(int(i) for i in node_ids)
+            if not ns or self.mesh_elements is None:
+                return 0
+            return sum(1 for e in range(self.mesh_elements.shape[0])
+                       if ns.intersection(self.mesh_elements[e].tolist()))
+
+        for load in conditions.get(ConditionType.LOAD, []):
+            if not isinstance(load, LoadCondition):
+                continue
+            fi = _face_ids(load.faces)
+            idx = self._node_indices_for_load(load)
+            report.append({"id": load.id, "name": getattr(load, "name", "?"),
+                           "type": "load", "faces": fi,
+                           "mapped_nodes": len(idx),
+                           "fallback": bool(fi) and not idx})
+        for cond in conditions.get(ConditionType.ELASTICITY, []):
+            if not isinstance(cond, ElasticityCondition):
+                continue
+            fi = _face_ids(cond.faces)
+            idx = self._select_nodes_for_faces(fi) if fi else []
+            report.append({"id": cond.id, "name": getattr(cond, "name", "?"),
+                           "type": "elasticity", "faces": fi,
+                           "mapped_nodes": len(idx),
+                           "fallback": bool(fi) and not idx})
+        for region in conditions.get(ConditionType.PROTECTED_REGION, []):
+            fi = _face_ids(region.faces)
+            els, fb = self._protected_elements([region])
+            report.append({"id": region.id,
+                           "name": getattr(region, "name", "?"),
+                           "type": "protected_region", "faces": fi,
+                           "mapped_nodes": 0, "mapped_elements": int(len(els)),
+                           "fallback": bool(fb)})
+        for cond in conditions.get(ConditionType.OBSTRUCTION, []):
+            sel = getattr(cond, "faces", None)
+            fi = _face_ids(sel) if sel is not None else []
+            nb = sum(1 for b in cond.bodies.entities
+                     if b.entity_type == EntityType.SOLID)
+            els = self._void_elements([cond])
+            report.append({"id": cond.id, "name": getattr(cond, "name", "?"),
+                           "type": "obstruction", "faces": fi,
+                           "bodies": int(nb),
+                           "mapped_elements": int(len(els)),
+                           "fallback": bool(fi or nb) and not len(els)})
+        return report
+
     def build_fea_problem(self, conditions):
         """Build a quasi-static FE problem from reusable conditions.
 
@@ -999,6 +1123,15 @@ class GenerativeDesignEngine:
         result["_consumed_protected_conditions"] = len(conditions.get(ConditionType.PROTECTED_REGION, []))
         result["_consumed_obstruction_conditions"] = len(conditions.get(ConditionType.OBSTRUCTION, []))
         result["_unsupported_conditions"] = sorted(unsupported)
+        # MAP-REPORT (diagnóstico fail-loud): por cada condición, caras
+        # pedidas vs nodos/elementos mapeados REALMENTE. Si una cara mapea
+        # 0 nodos, el solver usó un fallback (ver _unsupported_conditions)
+        # y la zona preservada/vaciada NO es la seleccionada: esto explica
+        # un resultado "al revés". La UI lo muestra junto al aviso.
+        try:
+            result["_condition_mapping"] = self._condition_mapping_report(conditions)
+        except Exception:  # noqa: BLE001 - diagnóstico, nunca rompe el solve
+            result["_condition_mapping"] = []
         # Snapshot real de preserved DESPUÉS del halo (el solver une el
         # halo con lo previo; reportar `preserved` pre-halo ocultaría la
         # preservación de cargas/soportes en la reconstrucción).
@@ -1149,7 +1282,43 @@ def run_generative_design(
         )
         engine.mesh_nodes = bridge.nodes
         engine.mesh_elements = bridge.elements
+        # GEN-B-MAP: la triangulación de superficie original referencia la
+        # malla del modelo, no la puente. Se invalida explícitamente para no
+        # indexar nodos/triángulos de otra malla (cae a fallback uniforme, que
+        # es correcto en índices). Además se ancla cada target a los nodos
+        # puente de sus extremos para un mapeo determinista.
+        engine._surface_matches_mesh = False
+        try:
+            engine._face_tolerance = 1.5 * float(engine._mean_edge_length())
+        except Exception:  # noqa: BLE001 - defensivo
+            pass
+        try:
+            bnodes = np.asarray(bridge.nodes, dtype=float)
+            span = bnodes.max(axis=0) - bnodes.min(axis=0)
+            axis = int(np.argmax(span))
+            lo_c = float(bnodes[:, axis].min())
+            hi_c = float(bnodes[:, axis].max())
+            tol = 1e-3 * max(float(np.ptp(bnodes[:, axis])), 1e-9)
+            lo_set = [i for i in range(bnodes.shape[0])
+                      if abs(float(bnodes[i, axis]) - lo_c) <= tol]
+            hi_set = [i for i in range(bnodes.shape[0])
+                      if abs(float(bnodes[i, axis]) - hi_c) <= tol]
+            bridge.target_node_sets = {
+                f"target_{i}": (lo_set if i == 0 else hi_set if i == len(study.connection_targets) - 1 else hi_set)
+                for i in range(len(study.connection_targets))
+            }
+        except Exception:  # noqa: BLE001 - defensivo
+            bridge.target_node_sets = {}
         result = engine.solve_simp(conditions, **solve_kwargs)
+        try:
+            result["_bridge"] = {
+                "num_nodes": int(np.asarray(bridge.nodes).shape[0]),
+                "num_elements": int(np.asarray(bridge.elements).shape[0]),
+                "surface_matches_mesh": False,
+                "target_node_sets": {k: len(v) for k, v in bridge.target_node_sets.items()},
+            }
+        except Exception:  # noqa: BLE001 - defensivo
+            pass
     else:  # pragma: no cover
         raise ValueError(f"Unsupported scenario '{study.scenario}'")
 

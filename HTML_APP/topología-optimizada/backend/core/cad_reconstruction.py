@@ -1967,14 +1967,15 @@ class ReconstructionPipeline:
         if surface_result.status == ReconstructionStatus.COMPLETED and surface_result.data:
             mesh_data = surface_result.data
             candidates = []
-            # Prefer hole-filled mesh first, then smoothed, then raw.
-            if hole_fill_data is not None and hole_fill_data.get("vertices") is not None:
-                candidates.append(hole_fill_data)
+            # Smoothed primero (ya incluye fill): el STEP sale del resultado
+            # suavizado; filled y raw son solo fallback si el fitter lo rechaza.
             if smoothed_data is not None and smoothed_data.get("vertices") is not None:
-                candidates.append(smoothed_data)
+                candidates.append((smoothed_data, "smoothed"))
+            if hole_fill_data is not None and hole_fill_data.get("vertices") is not None:
+                candidates.append((hole_fill_data, "filled"))
             if mesh_data.get("vertices") is not None:
-                candidates.append(mesh_data)
-            for cand in candidates:
+                candidates.append((mesh_data, "raw"))
+            for cand, source in candidates:
                 if cand.get("vertices") is None or cand.get("triangles") is None:
                     continue
                 try:
@@ -1990,6 +1991,7 @@ class ReconstructionPipeline:
                 if r.status == ReconstructionStatus.COMPLETED:
                     r.metadata.setdefault("frozen_elements", frozen_list)
                     r.metadata.setdefault("preserved_elements", preserved_list)
+                    r.metadata.setdefault("brep_source", source)
                     if frozen_list:
                         r.metadata.setdefault(
                             "frozen_passthrough", "frozen_face_as_keep_in@1.0")

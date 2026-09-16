@@ -43,6 +43,7 @@ import {
   mapFeaResult,
   mapLoadToBoundaries,
   mapMaterials,
+  mapSimpOutcome,
   mapSimpResult,
   mapSnapshotToModel,
   prettyName,
@@ -219,8 +220,8 @@ export default function App() {
       return [...prev, updated];
     });
     // Condicion reutilizable en el backend (mismo id = sobrescribe, no duplica).
-    // keepout queda local: en el core la obstruccion referencia CUERPOS, no caras.
-    if (backend.hasBridge() && tool !== 'keepout' && next.length > 0) {
+    // keepout viaja como obstruction con caras (void en el core).
+    if (backend.hasBridge() && next.length > 0) {
       const cur = stateRef.current.currentModel;
       const mag = tool === 'carga'
         ? (prevCond?.magnitude ?? list.find((c) => c.type === 'carga')?.magnitude ?? null)
@@ -281,7 +282,7 @@ export default function App() {
   // carga). Las caras ya se sincronizan al picar (handleToggleFace).
   const pushFaceCondition = (cond: BoundaryCondition) => {
     if (!backend.hasBridge()) return;
-    if (cond.type !== 'carga' && cond.type !== 'fijacion' && cond.type !== 'preservada') return;
+    if (cond.type !== 'carga' && cond.type !== 'fijacion' && cond.type !== 'preservada' && cond.type !== 'keepout') return;
     const cur = stateRef.current.currentModel;
     // LOAD-DIR2 (reversible): vector unitario final (sentido aplicado).
     let dirVec: [number, number, number] | null = null;
@@ -325,7 +326,7 @@ export default function App() {
     if (!backend.hasBridge()) return [];
     const faceCount = surface?.faces?.length ?? 0;
     const actives = stateRef.current.boundaryConditions.filter(
-      (c) => (c.type === 'carga' || c.type === 'fijacion' || c.type === 'preservada') &&
+      (c) => (c.type === 'carga' || c.type === 'fijacion' || c.type === 'preservada' || c.type === 'keepout') &&
         (c.faceIndices?.length ?? 0) > 0,
     );
     const stale: string[] = [];
@@ -468,6 +469,10 @@ export default function App() {
   // Jobs reales del backend (solo con bridge; sin bridge sigue la simulacion)
   const [feaJobId, setFeaJobId] = useState<string | null>(null);
   const [simpJobId, setSimpJobId] = useState<string | null>(null);
+  // MOCK-FALLBACK-STATE: true mientras los números visibles provienen del
+  // timer local sin bridge (tras Iniciar). Se limpia al recibir un resultado
+  // real (mapSimpResult) o al resetear. La etiqueta persiste junto a optNotice.
+  const [isMockFallback, setIsMockFallback] = useState(false);
   // DENSITY-VIEW (reversible): campo nodal de densidades del último SIMP
   // estructural para colorear la malla (solo visual). null = sin campo.
   // Para volver atrás: borrar estado + usos en simpPoll/CadViewport/RightPanel.
@@ -719,13 +724,47 @@ export default function App() {
       const list = unsOf(res);
       return list.length ? `Condiciones degradadas: ${list.join(', ')}.` : null;
     };
+    // MAP-REPORT (reversible): detalle por condición (caras pedidas vs
+    // nodos/elementos mapeados) para diagnosticar un resultado "al revés".
+    // Solo se muestra lo degradado (fallback o 0 mapeados con caras).
+    const mapText = (res: unknown): string | null => {
+      const m = (res as { _condition_mapping?: unknown })._condition_mapping;
+      if (!Array.isArray(m)) return null;
+      const bad = (m as Record<string, unknown>[])
+        .filter((e) => e && (e.fallback === true ||
+          (Array.isArray(e.faces) && (e.faces as unknown[]).length > 0 &&
+            ((e.mapped_nodes as number) ?? 1) === 0 &&
+            ((e.mapped_elements as number) ?? 1) === 0)))
+        .map((e) => {
+          const nm = typeof e.name === 'string' ? e.name : '?';
+          const fc = Array.isArray(e.faces) ? (e.faces as unknown[]).length : 0;
+          const nn = typeof e.mapped_nodes === 'number' ? e.mapped_nodes : null;
+          const ne = typeof e.mapped_elements === 'number' ? e.mapped_elements : null;
+          const got = nn !== null && ne !== null ? `${nn} nodos/${ne} elems`
+            : nn !== null ? `${nn} nodos` : `${ne ?? 0} elems`;
+          return `${nm} (caras ${fc} → ${got})`;
+        });
+      return bad.length ? `Mapeo: ${bad.join('; ')}. La zona afectada NO es la seleccionada.` : null;
+    };
     setOptimizationState((prev) => {
       const st = stateRef.current;
       // UI-CLEAN (reversible): guard sin modelo.
       const baseMass = ((st.currentModel?.volumeCm3 ?? 0) * st.selectedMaterial.density) / 1000;
-      // JOB-NULL (reversible): si el resultado no mapea, avisar en vez de
-      // parar en silencio.
-      const mapped = mapSimpResult(result, prev, parseFloat(baseMass.toFixed(2)));
+      // JOB-NULL (reversible): resultado discriminado pending/completed/
+      // invalid/error en el límite bridge/UI (nunca cifras inventadas).
+      const outcome = mapSimpOutcome(result, prev, parseFloat(baseMass.toFixed(2)));
+      if (outcome.status === 'pending') {
+        return { ...prev, isRunning: true };
+      }
+      if (outcome.status === 'error') {
+        setOptNotice({ text: `El cálculo falló: ${outcome.detail ?? 'error del backend'}.` });
+      } else if (outcome.status !== 'completed' || !outcome.data) {
+        setOptNotice({ text: 'El cálculo terminó pero sin resultados utilizables (revisa malla y condiciones).' });
+      } else {
+        // Resultado real recibido: ya no es fallback mock.
+        setIsMockFallback(false);
+      }
+      const mapped = outcome.data ?? mapSimpResult(result, prev, parseFloat(baseMass.toFixed(2)));
       if (!mapped) {
         setOptNotice({ text: 'El cálculo terminó pero sin resultados utilizables (revisa malla y condiciones).' });
       }
@@ -759,7 +798,11 @@ export default function App() {
               });
               setShowDensity(true);
               const uns = unsText(result);
-              if (uns) setOptNotice({ text: `${uns} Se muestra el campo igual, pero revisa compliance/volumen.` });
+              const parts0: string[] = [];
+              if (uns) parts0.push(uns);
+              const mp0 = mapText(result);
+              if (mp0) parts0.push(mp0);
+              if (parts0.length) setOptNotice({ text: `${parts0.join(' ')} Se muestra el campo igual, pero revisa compliance/volumen.` });
             }
           } else {
             const parts = ['SIMP calculado, pero sin campo de densidades para visualizar.'];
@@ -800,6 +843,8 @@ export default function App() {
             const parts = [`Diseño generativo listo: "${nm}" cargada como modelo activo.`];
             const uns = unsText(result);
             if (uns) parts.push(uns);
+            const mp = mapText(result);
+            if (mp) parts.push(mp);
             setOptNotice({ text: parts.join(' ') });
           } else {
             const parts = ['Generativa calculada, pero sin geometría registrable.'];
@@ -1056,6 +1101,7 @@ export default function App() {
     setSimpJobId(null);
     if (!backend.hasBridge()) {
       if (timerRef.current) clearInterval(timerRef.current);
+      setIsMockFallback(false);
       // UI-CLEAN (reversible): guard sin modelo.
       const baseMass = ((currentModel?.volumeCm3 ?? 0) * selectedMaterial.density) / 1000;
       setOptimizationState({
@@ -1087,6 +1133,7 @@ export default function App() {
   const MOCK_TARGET_RATIO = 41.2 / 148.5;
   useEffect(() => {
     if (optimizationState.isRunning && !backend.hasBridge()) {
+      setIsMockFallback(true);
       timerRef.current = window.setInterval(() => {
         setOptimizationState((prev) => {
           if (prev.currentIteration >= prev.totalIterations) {
@@ -1521,7 +1568,7 @@ export default function App() {
     setBoundaryConditions((prev) =>
       prev.filter(
         (c) =>
-          (c.type !== 'carga' && c.type !== 'fijacion' && c.type !== 'preservada') ||
+          (c.type !== 'carga' && c.type !== 'fijacion' && c.type !== 'preservada' && c.type !== 'keepout') ||
           ids.has(c.id),
       ),
     );
@@ -1791,6 +1838,13 @@ export default function App() {
               biblioteca de materiales). Para volver atras: sacar el aviso de
               aqui y devolverlo a nivel de etapa. */}
           <div className="relative flex-1 min-w-0 flex flex-col">
+          {/* MOCK-FALLBACK-BADGE: etiqueta persistente del fallback local
+              sin bridge (solo tras Iniciar). Nunca cifras reales. */}
+          {isMockFallback && (
+            <div className="absolute top-space-sm left-space-sm z-40 rounded-md border border-dashed border-fea-stress-yield/60 bg-surface-container-lowest/90 px-2 py-1 text-[10px] font-mono font-semibold tracking-wide text-fea-stress-yield" role="status">
+              MOCK-FALLBACK — animación local, no resultado científico
+            </div>
+          )}
           {/* OPT-NOTICE (reversible): aviso de pre-vuelo/errores. */}
           {optNotice && (
             <div className="absolute top-space-sm left-space-sm right-space-sm z-30 flex items-center gap-2 rounded-lg border border-fea-stress-yield/50 bg-fea-stress-yield/10 px-3 py-2 text-[11px] text-text-primary shadow-lg" role="alert">

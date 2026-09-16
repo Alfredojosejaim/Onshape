@@ -229,8 +229,13 @@ class ObstructionCondition(Condition):
     Configuration stored:
     - one or more selected solid bodies (``bodies``);
     - optional offset in mm (``offset_mm``).
+    - optional selected faces (``faces``): keep-out por caras desde la UI
+      (zonas que deben quedar vacías). Se mapea a elementos que tocan los
+      nodos de esas caras (rho=xmin), igual que la región protegida pero
+      en vacío. Bodies y faces se unen; al menos uno debe traer entidades.
     """
     bodies: SelectionSet = field(default_factory=lambda: SelectionSet(name="Cuerpos de obstrucción"))
+    faces: SelectionSet = field(default_factory=lambda: SelectionSet(name="Caras de obstrucción"))
     offset_mm: Optional[float] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -239,7 +244,7 @@ class ObstructionCondition(Condition):
         return ConditionType.OBSTRUCTION
 
     def selection(self) -> Optional[SelectionSet]:
-        return self.bodies
+        return self.bodies if self.bodies.entities else self.faces
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -247,16 +252,22 @@ class ObstructionCondition(Condition):
             "id": self.id,
             "name": self.name,
             "bodies": self.bodies.to_dict(),
+            "faces": self.faces.to_dict(),
             "offset_mm": self.offset_mm,
             "metadata": self.metadata,
         }
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "ObstructionCondition":
+        bodies_d = d.get("bodies") or {"name": "Cuerpos de obstrucción",
+                                       "entities": [], "mode": "multi"}
+        faces_d = d.get("faces") or {"name": "Caras de obstrucción",
+                                     "entities": [], "mode": "multi"}
         return cls(
             id=d.get("id", str(uuid.uuid4())),
             name=d.get("name", "Obstrucción"),
-            bodies=SelectionSet.from_dict(d["bodies"]),
+            bodies=SelectionSet.from_dict(bodies_d),
+            faces=SelectionSet.from_dict(faces_d),
             offset_mm=d.get("offset_mm"),
             metadata=d.get("metadata", {}),
         )

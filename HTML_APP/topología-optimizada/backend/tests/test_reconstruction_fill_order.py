@@ -132,3 +132,39 @@ def test_filler_metadata_direct_and_invalid_cap():
         ReconstructionPipeline(max_hole_edges=2)
     with pytest.raises(ValueError):
         ReconstructionPipeline(max_hole_edges="muchos")  # type: ignore[arg-type]
+
+
+class _SpyFitter:
+    """Fitter espía: acepta todo y registra copias de cada candidato."""
+
+    def __init__(self):
+        self.seen = []
+
+    def fit(self, vertices, triangles):
+        v = np.asarray(vertices, dtype=float).copy()
+        self.seen.append(v)
+        return ReconstructionResult(
+            stage=ReconstructionStage.BREP_SOLID,
+            status=ReconstructionStatus.COMPLETED,
+            data={"vertices": v, "triangles": np.asarray(triangles)},
+            metadata={},
+        )
+
+
+def test_brep_prefers_smoothed_over_filled():
+    """El STEP debe salir de la malla suavizada, no de la rellenada."""
+    v, t = _open_box()
+    spy = _SpyFitter()
+    pipe = ReconstructionPipeline(
+        surface_extractor=_HoledBoxExtractor(v, t),
+        brep_fitter=spy,
+    )
+    out = pipe.run(*_dummy_inputs())
+    assert out.status == ReconstructionStatus.COMPLETED, out.error_message
+    smoothed = pipe.get_stage_result(ReconstructionStage.SMOOTHED_MESH)
+    s_verts = np.asarray(smoothed.data["vertices"], dtype=float)
+    assert spy.seen, "el fitter no recibió ningún candidato"
+    # El primer candidato recibido debe ser smoothed_data (mismos vértices).
+    assert len(spy.seen[0]) == len(s_verts)
+    assert np.allclose(spy.seen[0], s_verts)
+    assert out.metadata.get("brep_source") == "smoothed"

@@ -428,3 +428,45 @@ def test_registration_exposes_reconstructed_tessellation():
     r = api.redo()
     assert r["ok"] and r["activeKey"] == reg["key"]
 
+
+def test_scenario_b_bridge_invalidates_surface_and_maps_targets():
+    """GEN-B-MAP: la malla puente invalida la triangulación original y ancla targets.
+
+    Dos targets + carga + fijación: el engine debe marcar
+    _surface_matches_mesh=False, exponer _bridge con target_node_sets no
+    vacíos, y el resultado debe traer densidades finitas, halo y
+    reconstrucción sin indexar la malla vieja.
+    """
+    from core.cad_entity import CadEntityRef
+
+    nodes, els, _ = _mesh()
+    mgr = ConditionManager()
+    load = _load_condition()
+    supp = _elasticity_condition()
+    mgr.add(load)
+    mgr.add(supp)
+    study = GenerativeDesignStudy(name="gb")
+    study.scenario = "B"
+    study.conditions = [load.id, supp.id]
+    study.connection_targets = [
+        CadEntityRef(entity_type="solid", solid_id="A"),
+        CadEntityRef(entity_type="solid", solid_id="B"),
+    ]
+    op = TopOptParameters()
+    op.volume_fraction = 0.4
+    op.max_iterations = 3
+    op.filter_radius = 0.6
+    study.optimization_params = op
+    eng = _engine(nodes, els, mgr)
+    result = run_generative_design(study, mgr, eng)
+    assert eng._surface_matches_mesh is False
+    bridge_meta = result.get("_bridge")
+    assert bridge_meta and bridge_meta.get("surface_matches_mesh") is False
+    assert len(bridge_meta.get("target_node_sets", {})) == 2
+    assert all(v > 0 for v in bridge_meta["target_node_sets"].values())
+    x = np.asarray(result["densities"], dtype=float)
+    assert x.size > 0 and np.all(np.isfinite(x))
+    assert np.isfinite(result["final_compliance"])
+    assert "_halo_nodes" in result and "_preserved_elements" in result
+    assert "reconstruction" in result
+

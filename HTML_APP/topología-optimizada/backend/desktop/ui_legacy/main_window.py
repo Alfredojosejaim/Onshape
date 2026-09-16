@@ -23,11 +23,11 @@ from PySide6.QtWidgets import (
 )
 
 from desktop.pipeline.controller import PipelineController, launch_qt, reconstruction_failure_reason
-from desktop.ui.components.menus import MenuBuilder
-from desktop.ui.components.workspace import WorkspaceBuilder
-from desktop.ui.components.overlays import OverlayBuilder
-from desktop.ui.components.main_workspace import MainWorkspaceBuilder
-from desktop.ui.components.widgets import repolish
+from desktop.ui_legacy.components.menus import MenuBuilder
+from desktop.ui_legacy.components.workspace import WorkspaceBuilder
+from desktop.ui_legacy.components.overlays import OverlayBuilder
+from desktop.ui_legacy.components.main_workspace import MainWorkspaceBuilder
+from desktop.ui_legacy.components.widgets import repolish
 from core.user_preferences import UserPreferences
 from core.navigation import NavigationManager
 from core.cad_entity import EntityType
@@ -215,7 +215,7 @@ class MainWindow(QMainWindow):
 
     def _sync_architecture_tree(self) -> None:
         """Push the feature history, conditions and study list into the design tree panel."""
-        from desktop.ui.panels.condition_groups import (
+        from desktop.ui_legacy.panels.condition_groups import (
             condition_label,
             group_conditions_by_part,
         )
@@ -686,7 +686,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
     def _on_create_study(self) -> None:
         """Open the StudyPanel to build a fully configured topology study."""
-        from desktop.ui.panels.study_panel import StudyPanel
+        from desktop.ui_legacy.panels.study_panel import StudyPanel
 
         if not self.controller.model_id:
             QMessageBox.warning(self, "Sin modelo", "Importe un modelo STEP primero.")
@@ -845,7 +845,7 @@ class MainWindow(QMainWindow):
 
     def _on_create_generative_study(self) -> None:
         """Open the GenerativeStudyPanel (scenario A/B) and register the study."""
-        from desktop.ui.panels.study_panel import GenerativeStudyPanel
+        from desktop.ui_legacy.panels.study_panel import GenerativeStudyPanel
 
         if not self.controller.model_id:
             QMessageBox.warning(self, "Sin modelo", "Importe un modelo STEP primero.")
@@ -988,7 +988,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Boolean", "El modelo no contiene cuerpos seleccionables.")
             return
 
-        from desktop.ui.panels.boolean_panel import BooleanPanel
+        from desktop.ui_legacy.panels.boolean_panel import BooleanPanel
 
         panel = BooleanPanel(
             parent=self,
@@ -1049,7 +1049,7 @@ class MainWindow(QMainWindow):
         *Aceptar* is a condition Command built and executed through the
         pipeline (registering the reusable condition + recording a Feature).
         """
-        from desktop.ui.panels.condition_panel import ConditionPanel
+        from desktop.ui_legacy.panels.condition_panel import ConditionPanel
 
         if not self.controller.model_id:
             QMessageBox.warning(self, "Sin modelo", "Importe un modelo STEP primero.")
@@ -1135,7 +1135,7 @@ class MainWindow(QMainWindow):
         *Aceptar* is a TransformCommand built and executed through the
         pipeline; *Cancelar* leaves the model untouched.
         """
-        from desktop.ui.panels.transform_panel import TransformPanel
+        from desktop.ui_legacy.panels.transform_panel import TransformPanel
         if not self.controller.model_id:
             QMessageBox.warning(self, "Sin modelo", "Importe un modelo STEP primero.")
             return
@@ -1155,7 +1155,7 @@ class MainWindow(QMainWindow):
         )
 
     def _on_mirror_op(self) -> None:
-        from desktop.ui.panels.mirror_panel import MirrorPanel
+        from desktop.ui_legacy.panels.mirror_panel import MirrorPanel
         if not self.controller.model_id:
             QMessageBox.warning(self, "Sin modelo", "Importe un modelo STEP primero.")
             return
@@ -1175,7 +1175,7 @@ class MainWindow(QMainWindow):
         )
 
     def _on_pattern_op(self) -> None:
-        from desktop.ui.panels.pattern_panel import PatternPanel
+        from desktop.ui_legacy.panels.pattern_panel import PatternPanel
         if not self.controller.model_id:
             QMessageBox.warning(self, "Sin modelo", "Importe un modelo STEP primero.")
             return

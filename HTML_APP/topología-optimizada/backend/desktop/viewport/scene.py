@@ -240,7 +240,7 @@ class Scene:
                         s.update(int(v) for v in triangles[cid].tolist())
                 self._face_vertex_cache = {f: sorted(s) for f, s in _vids.items()}
 
-        from desktop.ui.style import PALETTE, hex_to_rgb_float
+        from desktop.ui_legacy.style import PALETTE, hex_to_rgb_float
 
         actor = self._renderer.make_triangle_actor(
             vertices,

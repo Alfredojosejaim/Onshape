@@ -50,7 +50,11 @@ function mock<T>(method: string): Ok<T> {
     },
     setNavProfile: { ok: true },
   };
-  return { ok: true, ...((base[method] as Record<string, unknown> | undefined) ?? {}) } as unknown as Ok<T>;
+  // P-A (reversible): toda respuesta mock va marcada con mock:true para que
+  // la UI pueda etiquetarla MOCK-FALLBACK (AGENTS.md) en vez de confundirla
+  // con un éxito real. Para volver atrás: quitar la bandera + su chequeo
+  // en jobs.ts.
+  return { ok: true, mock: true, ...((base[method] as Record<string, unknown> | undefined) ?? {}) } as unknown as Ok<T>;
 }
 
 export const backend = {

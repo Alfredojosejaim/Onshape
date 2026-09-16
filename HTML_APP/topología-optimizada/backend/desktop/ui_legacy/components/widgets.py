@@ -15,7 +15,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import QPushButton, QLabel, QVBoxLayout
 from PySide6.QtCore import Qt
 
-from desktop.ui.style import TEXT_DIM
+from desktop.ui_legacy.style import TEXT_DIM
 
 
 def repolish(widget) -> None:

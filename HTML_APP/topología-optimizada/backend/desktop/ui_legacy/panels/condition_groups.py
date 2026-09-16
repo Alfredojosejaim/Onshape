@@ -24,7 +24,7 @@ from core.cad_entity import CadEntityRef, EntityType
 from core.conditions import ConditionType
 
 try:
-    from desktop.ui.style import FORCE, CONSTRAINT
+    from desktop.ui_legacy.style import FORCE, CONSTRAINT
 except Exception:  # pragma: no cover - style siempre disponible en la app
     FORCE, CONSTRAINT = "#f59e0b", "#8b5cf6"
 

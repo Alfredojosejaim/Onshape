@@ -37,7 +37,11 @@ export const V2Panel: React.FC = () => {
     if (!backend.hasBridge()) return;
     void backend.getLicense().then((x) => {
       if (x.ok) setLicense(`${(x as { state: string }).state}`);
-    }).catch(() => undefined);
+      // P-B (reversible): fail-loud en la insignia. Para volver atrás:
+      // .catch(() => undefined).
+    }).catch(() => {
+      setLicense('error de lectura');
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

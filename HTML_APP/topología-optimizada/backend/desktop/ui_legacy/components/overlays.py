@@ -16,8 +16,8 @@ from __future__ import annotations
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton
 from PySide6.QtCore import Qt
 
-from desktop.ui.style import PALETTE, TEXT_FAINT
-from desktop.ui.components.widgets import repolish
+from desktop.ui_legacy.style import PALETTE, TEXT_FAINT
+from desktop.ui_legacy.components.widgets import repolish
 
 
 def viewer_button(text: str, checked: bool = False, command=None) -> QPushButton:
@@ -63,7 +63,7 @@ class OverlayBuilder:
     """Construye los overlays del viewport sobre un host.
 
     ``owner`` es MainWindow (provee handlers ``_on_*`` y referencia al viewport).
-    ``host`` es el ViewportHost (desktop.ui.components.main_workspace) que
+    ``host`` es el ViewportHost (desktop.ui_legacy.components.main_workspace) que
     expone .place() y .viewport.
     Las referencias resultantes (ctrl_*, _viewer_info, placeholder) se
     registran en el owner.

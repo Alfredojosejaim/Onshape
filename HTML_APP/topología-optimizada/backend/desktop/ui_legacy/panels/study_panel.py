@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
-from desktop.ui.style import ERROR
+from desktop.ui_legacy.style import ERROR
 from core.cad_entity import CadEntityRef, EntityType
 from core.conditions import Condition, ConditionManager
 from core.optimization_studies import TopologyOptimizationStudy

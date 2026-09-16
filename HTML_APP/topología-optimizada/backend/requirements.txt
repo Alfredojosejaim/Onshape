@@ -6,8 +6,11 @@ numpy>=1.24.0
 scipy>=1.11.0
 cadquery>=2.3.0
 gmsh>=4.13.0
-# PipelineController importa PySide6.QtCore al arrancar (obligatorio):
-PySide6>=6.6.0
+# P-D (reversible): PipelineController ya no importa PySide6 al arrancar
+# (QtCore perezoso solo para launch_qt con GUI Qt). PySide6 queda opcional:
+# solo la UI Qt legacy (desktop/app.py, desktop/ui_legacy) y sus tests.
+# Para volver atrás: descomentar la línea.
+# PySide6>=6.6.0
 # El flujo importar+mallar carga vtkmodules via cadquery (obligatorio):
 vtk>=9.2.0
 # Shell nativo (ventana WebView2, sin navegador):

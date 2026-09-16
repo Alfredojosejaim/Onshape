@@ -378,7 +378,7 @@ class SoftwareViewport(QWidget):
         self._mesh_color = QColor("#9a9ba0")
 
         try:
-            from desktop.ui.style import PALETTE
+            from desktop.ui_legacy.style import PALETTE
             self._bg_top = QColor(PALETTE.get("bg_viewport_top", "#3c3d41"))
             self._bg_bottom = QColor(PALETTE.get("bg_viewport_bottom", "#333437"))
             self._model_color = QColor(PALETTE.get("solid_cad", "#3b82f6"))

@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Signal
 
-from desktop.ui.style import PALETTE
+from desktop.ui_legacy.style import PALETTE
 
 
 def _section_title(text: str) -> QLabel:

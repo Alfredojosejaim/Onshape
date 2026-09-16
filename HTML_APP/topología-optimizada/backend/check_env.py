@@ -4,8 +4,8 @@ Sustituye los 4x `pip show` + 3x `python -c "import ..."` del .bat, que
 costaban ~10s en cada arranque. Aqui todo corre en UN proceso:
 - Requeridos (import rapido, <1s): webview, numpy, scipy.
 - Requeridos pesados (SOLO version via importlib.metadata, sin importar
-  las DLLs de OCC/VTK/Qt que tardarian segundos): PySide6, vtk.
-- Opcionales (idem, sin importar): cadquery, gmsh.
+  las DLLs de OCC/VTK que tardarian segundos): vtk.
+- Opcionales (idem, sin importar): cadquery, gmsh, PySide6 (UI Qt legacy).
 
 Salida: lineas [OK]/[FALTA]/[AVISO] para el usuario.
 Exit 0 = requeridos presentes (opcionales pueden faltar).
@@ -42,7 +42,7 @@ def main() -> int:
         else:
             print(f'  [FALTA] {mod} no importable.')
             missing.append(mod)
-    for dist in ('PySide6', 'vtk'):
+    for dist in ('vtk',):
         ver = _have_dist(dist)
         if ver:
             print(f'  OK: {dist} {ver} (instalado, sin importar DLLs).')
@@ -56,7 +56,7 @@ def main() -> int:
         print('    python -m pip install -r backend\\requirements.txt')
         print('    python -m pip install "pywebview>=4.4" "numpy>=1.24.0" "scipy>=1.11.0"')
         return 1
-    print('  OK: pywebview + numpy + scipy + PySide6 + vtk.')
+    print('  OK: pywebview + numpy + scipy + vtk.')
 
     print()
     print('[4/6] Paquetes Python opcionales (STEP y malla)...')
@@ -68,6 +68,10 @@ def main() -> int:
         print('    python -m pip install "cadquery>=2.3.0" "gmsh>=4.13.0"')
     else:
         print('  OK: cadquery + gmsh.')
+    # P-D (reversible): PySide6 solo para la UI Qt legacy + sus tests.
+    if _have_dist('PySide6') is None:
+        print('  [AVISO] PySide6 ausente: la ventana pywebview funciona igual;'
+              ' solo la UI Qt legacy (desktop/app.py) lo necesita.')
     return 0
 
 

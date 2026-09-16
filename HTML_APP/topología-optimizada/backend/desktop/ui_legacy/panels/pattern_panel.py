@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox, QWidget,
 )
 
-from desktop.ui.style import ERROR
+from desktop.ui_legacy.style import ERROR
 from core.cad_entity import CadEntityRef, EntityType
 from core.commands import PatternCommand, PatternType
 

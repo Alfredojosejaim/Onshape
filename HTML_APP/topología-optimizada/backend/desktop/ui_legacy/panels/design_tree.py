@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 
-from desktop.ui.panels.condition_groups import (
+from desktop.ui_legacy.panels.condition_groups import (
     condition_color_hex,
     condition_label,
     group_conditions_by_part,
@@ -150,7 +150,7 @@ class DesignTreePanel(QWidget):
 
     @staticmethod
     def _empty_icon():
-        from desktop.ui.style import ACCENT
+        from desktop.ui_legacy.style import ACCENT
         from PySide6.QtGui import QIcon, QPixmap, QColor
 
         pm = QPixmap(10, 10)

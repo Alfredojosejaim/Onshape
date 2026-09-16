@@ -39,7 +39,8 @@ export function orbitCamera(
   dy: number,
   sensitivity = ORBIT_SENSITIVITY,
 ): void {
-  const { forward, right, up, dist } = basis(camera, target);
+  // P-C: dist no se usa en la órbita; fuera del destructure.
+  const { forward, right, up } = basis(camera, target);
   const drag = right.clone().multiplyScalar(-dx).add(up.clone().multiplyScalar(dy));
   if (drag.length() < 1e-12) return;
   drag.normalize();

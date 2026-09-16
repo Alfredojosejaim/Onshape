@@ -37,6 +37,7 @@ export function useJobPoll(jobId: string | null, onDone?: (result: unknown) => v
       try {
         const r = (await backend.pollJob(jobId)) as {
           ok: boolean;
+          mock?: unknown;
           state?: string;
           progress?: number;
           result?: unknown;
@@ -45,6 +46,16 @@ export function useJobPoll(jobId: string | null, onDone?: (result: unknown) => v
         if (cancelled) return;
         if (!r.ok) {
           setError('pollJob falló en el backend');
+          setLoading(false);
+          stop();
+          return;
+        }
+        // P-A (reversible): el mock del bridge responde done/result:null con
+        // ok:true. Sin este chequeo, un jobId seteado sin bridge se daría por
+        // terminado con éxito y dispararía onDone(null). Para volver atrás:
+        // quitar este bloque + la bandera mock:true de bridge.ts.
+        if (r.mock) {
+          setError('sin bridge: el sondeo mock no es un resultado real');
           setLoading(false);
           stop();
           return;

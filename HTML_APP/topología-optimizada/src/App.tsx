@@ -1,8 +1,3 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   ActiveTab,
@@ -18,8 +13,9 @@ import {
   OptimizationType,
   SimpParameters,
   ViewBody,
-} from './types';import { MATERIALS } from './data/materials';
-import { CAD_PRESETS, INITIAL_CONDITIONS } from './data/models';
+} from './types';
+import { MATERIALS } from './data/materials';
+import { INITIAL_CONDITIONS } from './data/models';
 import { Header } from './components/Header';
 import { SecondaryNav } from './components/SecondaryNav';
 import { Toolbar } from './components/Toolbar';
@@ -192,7 +188,12 @@ export default function App() {
         prevCond?.loadWeight ?? null,
       );
       (condJson as Record<string, unknown>).id = condKey;
-      void backend.createCondition(JSON.stringify(condJson)).catch(() => undefined);
+      // P-B (reversible): fail-loud — el estado local ya se actualizó arriba;
+      // si el backend rechaza, la UI debe decirlo en vez de mostrar una carga
+      // que el core no tiene. Para volver atrás: .catch(() => undefined).
+      void backend.createCondition(JSON.stringify(condJson)).catch(() => {
+        setOptNotice({ text: 'No se pudo guardar la condición en el backend (revisa la conexión).' });
+      });
     }
   };
   // FACES-END
@@ -256,7 +257,10 @@ export default function App() {
       dirVec,
     );
     (condJson as Record<string, unknown>).id = cond.id;
-    return backend.createCondition(JSON.stringify(condJson)).catch(() => undefined);
+    // P-B (reversible): sin catch silencioso — el rechazo lo detecta
+    // syncConditionsForRun (aborta la corrida con aviso) en vez de correr
+    // sin esa condición. Para volver atrás: .catch(() => undefined).
+    return backend.createCondition(JSON.stringify(condJson));
   };
 
   // COND-SYNC (reversible): re-envía al backend todas las condiciones
@@ -290,9 +294,17 @@ export default function App() {
       });
     }
     const ids: string[] = [];
+    // P-B (reversible): una condición rechazada por el backend aborta la
+    // corrida (la maneja el catch del llamador con aviso) en vez de correr
+    // sin ella en silencio. Para volver atrás: no lanzar y solo filtrar.
+    const rejected: string[] = [];
     for (const c of valid) {
       const r = (await pushFaceCondition(c)) as unknown as { ok?: boolean; id?: string };
       if (r && r.ok !== false) ids.push(c.id);
+      else rejected.push(c.name);
+    }
+    if (rejected.length > 0) {
+      throw new Error(`backend rechazó condiciones: ${rejected.join(', ')}`);
     }
     return ids;
   };
@@ -378,9 +390,10 @@ export default function App() {
   const [showExport, setShowExport] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
 
-  // Undo / Redo history
-  const [history, setHistory] = useState<string[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
+  // Undo / Redo vía backend (undo()/redo()), sin historial local.
+  // P-C (reversible): el estado [history, historyIndex] quedó sin usos al
+  // migrar a undo del core; se elimina para que noUnusedLocals lo cubra.
+  // Para volver atrás: restaurar los dos useState.
 
   // Jobs reales del backend (solo con bridge; sin bridge sigue la simulacion)
   const [feaJobId, setFeaJobId] = useState<string | null>(null);
@@ -424,7 +437,8 @@ export default function App() {
   // "Cannot access 'solidsByFile' before initialization" al importar el
   // primer modelo (con models=[] el flatMap no se ejecutaba y no se veia).
   // SOLIDS-START (reversible): cuerpos reales del STEP (uno por objeto).
-  const [solids, setSolids] = useState<SolidInfo[]>([]);
+  // P-C: el valor no se lee (solo setSolids); elisión para noUnusedLocals.
+  const [, setSolids] = useState<SolidInfo[]>([]);
   // MULTI-START (reversible): arbol acumulativo — solidos y malla por archivo.
   // El core mantiene UN modelo activo; aqui se cachea lo ya importado para
   // listar todos los modelos sin re-importar. Clave: filename.
@@ -486,7 +500,8 @@ export default function App() {
   };
   // SOLIDS-END
   // UI-CLEAN2-START (reversible): malla volumetrica real presente.
-  const [hasMesh, setHasMesh] = useState(false);
+  // P-C: el valor no se lee (solo setHasMesh); elisión para noUnusedLocals.
+  const [, setHasMesh] = useState(false);
   // UI-CLEAN2-END
   // MALLA-IMPORT-START (reversible): modelo MESH (STL/OBJ/PLY/3MF, sin
   // B-Rep) -> panel de herramientas de malla. Para volver atras: quitar
@@ -536,7 +551,11 @@ export default function App() {
           if (real.length > 0) {
             setMaterials(real);
             setSelectedMaterial(real[0]);
-            void backend.setMaterial(real[0].name).catch(() => undefined);
+            // P-B (reversible): fail-loud en arranque. Para volver atrás:
+            // .catch(() => undefined).
+            void backend.setMaterial(real[0].name).catch(() => {
+              setOptNotice({ text: 'No se pudo aplicar el material inicial en el backend.' });
+            });
           }
         }
       } catch {
@@ -573,11 +592,9 @@ export default function App() {
 
   const pushBoundaries = async () => {
     const { load_dir, magnitude } = mapLoadToBoundaries(stateRef.current.boundaryConditions);
-    try {
-      await backend.setBoundaries({ bottom_axis: 2, load_dir, magnitude });
-    } catch {
-      /* el solve reportara el error */
-    }
+    // P-B (reversible): sin catch silencioso — el llamador aborta con aviso.
+    // Para volver atrás: try/catch con comentario "el solve reportará".
+    await backend.setBoundaries({ bottom_axis: 2, load_dir, magnitude });
   };
 
   // FEA real al entrar a la pestana de analisis (usa el control existente).
@@ -591,8 +608,8 @@ export default function App() {
     if (tab !== 'analizis' || !backend.hasBridge() || feaJobId) return;
     if (!snapRef.current?.has_mesh) return;
     void (async () => {
-      await pushBoundaries();
       try {
+        await pushBoundaries();
         const r = await backend.runFea({ backend: 'local' });
         if (r.ok && r.jobId) setFeaJobId(r.jobId);
       } catch {
@@ -613,7 +630,11 @@ export default function App() {
         // UI-CLEAN (reversible): guard sin modelo.
         if (cur) setCurrentModel({ ...cur, elementsTet4: Math.round(snap.num_elements ?? cur.elementsTet4) });
       }
-    }).catch(() => undefined);
+      // P-B (reversible): fail-loud — el FEA terminó pero el snapshot no se
+      // pudo leer. Para volver atrás: .catch(() => undefined).
+    }).catch(() => {
+      setOptNotice({ text: 'FEA calculado, pero falló la lectura del snapshot.' });
+    });
   });
 
   const simpPoll = useJobPoll(simpJobId, (result) => {
@@ -753,7 +774,11 @@ export default function App() {
   // Sin backend, solo estado local (simulacion intacta).
   const handleSelectMaterial = (m: Material) => {
     setSelectedMaterial(m);
-    if (backend.hasBridge()) void backend.setMaterial(m.name).catch(() => undefined);
+    if (backend.hasBridge()) void backend.setMaterial(m.name).catch(() => {
+      // P-B (reversible): fail-loud al cambiar material. Para volver atrás:
+      // .catch(() => undefined).
+      setOptNotice({ text: 'No se pudo aplicar el material en el backend.' });
+    });
   };
   useEffect(() => {
     // UI-CLEAN (reversible): guard sin modelo.
@@ -889,9 +914,11 @@ export default function App() {
         setOptNotice({ text: 'No se pudieron sincronizar las condiciones con el backend.' });
         return;
       }
-      await pushBoundaries();
       const st = stateRef.current;
       try {
+        // P-B: pushBoundaries dentro del try — si setBoundaries falla, se
+        // aborta con aviso en vez de correr con condiciones legacy ausentes.
+        await pushBoundaries();
         // OPT-TYPE (reversible): generativa = escenario A (pieza existente)
         // con los mismos parámetros SIMP; el job se sondea igual.
         const r = st.optType === 'generativa'

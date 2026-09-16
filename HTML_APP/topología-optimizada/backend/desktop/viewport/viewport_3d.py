@@ -284,7 +284,7 @@ class Viewport3D(QWidget):
         self._install_observers()
 
         # Background matches the native viewport palette (theme-driven)
-        from desktop.ui.style import PALETTE, hex_to_rgb_float
+        from desktop.ui_legacy.style import PALETTE, hex_to_rgb_float
         self.renderer.set_background(
             hex_to_rgb_float(PALETTE["bg_viewport_top"]),
             hex_to_rgb_float(PALETTE["bg_viewport_bottom"]),

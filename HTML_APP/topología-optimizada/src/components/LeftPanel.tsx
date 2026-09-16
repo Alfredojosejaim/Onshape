@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { ActiveTool, BoundaryCondition, CadModelPreset, MeshToolAction, SolidInfo } from '../types';
 // MULTI-VIEW (reversible): clave de cuerpo para ver/ocultar.
 import { bodyKey } from '../lib/faces';

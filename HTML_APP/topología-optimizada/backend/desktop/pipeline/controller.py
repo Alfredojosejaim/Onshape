@@ -20,7 +20,10 @@ import os
 import threading
 from typing import Any, Callable, Dict, Optional
 
-from PySide6.QtCore import QObject, Qt, Signal
+# P-D (reversible): sin import top-level de PySide6. El controller solo usa
+# QtCore para _GuiDispatcher (launch_qt), con import perezoso dentro de
+# _make_dispatcher. La ruta pywebview (server.py) no necesita Qt instalado.
+# Para volver atrás: restaurar `from PySide6.QtCore import ...` aquí.
 
 import numpy as np
 
@@ -1918,17 +1921,47 @@ def launch_qt(cb: Callable[[], None]) -> None:
         cb()
 
 
-class _GuiDispatcher(QObject):
-    invoke = Signal(object)
+class _GuiDispatcher:  # type: ignore[no-redef]
+    """Sustituto sin Qt: launch_qt ejecuta el callback directo."""
+
+    def __init__(self) -> None:
+        self.invoke = _DirectSignal()
+        self.invoke.connect(lambda fn: fn())
+
+
+class _DirectSignal:
+    """Señal mínima compatible: connect() no-op, emit() ejecuta directo."""
+
+    def __init__(self) -> None:
+        self._slots: list[Callable[[], None]] = []
+
+    def connect(self, slot: Callable[[], None], *args: Any, **kwargs: Any) -> None:
+        self._slots.append(slot)
+
+    def emit(self, *args: Any, **kwargs: Any) -> None:
+        for slot in list(self._slots):
+            slot(*args, **kwargs)
 
 
 def _make_dispatcher() -> Optional[_GuiDispatcher]:
+    # P-D (reversible): QtCore solo se importa aquí y solo si está instalado.
+    # Sin PySide6 (ruta pywebview) se usa el sustituto directo: launch_qt
+    # ejecuta cb() en el hilo llamante, igual que el fallback anterior.
+    # Para volver atrás: import top-level + clase QObject original.
     try:
-        disp = _GuiDispatcher()
-        disp.invoke.connect(lambda fn: fn(), Qt.QueuedConnection)
-        return disp
+        from PySide6.QtCore import QObject, Qt, Signal  # noqa: F401
+
+        class _QtDispatcher(QObject):  # type: ignore[no-redef]
+            invoke = Signal(object)
+
+        try:
+            disp = _QtDispatcher()
+            disp.invoke.connect(lambda fn: fn(), Qt.QueuedConnection)
+            return disp  # type: ignore[return-value]
+        except Exception:
+            return None
     except Exception:
-        return None
+        return _GuiDispatcher()
 
 
 # Created at import time so its thread affinity is the main (GUI) thread; the

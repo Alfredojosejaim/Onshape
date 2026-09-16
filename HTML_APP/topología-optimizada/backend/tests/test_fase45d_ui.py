@@ -172,7 +172,7 @@ def _qapp():
 
 def test_results_modal_section_visibility():
     _qapp()
-    from desktop.ui.panels.results import ResultsPanel
+    from desktop.ui_legacy.panels.results import ResultsPanel
     r = ResultsPanel()
     assert r._anim_section.isHidden()
     r.set_modal_modes(["Modo 1 — 10.0 Hz", "Modo 2 — 25.0 Hz"])
@@ -185,7 +185,7 @@ def test_results_modal_section_visibility():
 
 def test_properties_thermal_toggle_gating():
     _qapp()
-    from desktop.ui.panels.properties import PropertiesPanel
+    from desktop.ui_legacy.panels.properties import PropertiesPanel
     p = PropertiesPanel()
     p.set_thermal_studies([])
     assert not p._thermal_enable.isEnabled()

@@ -19,8 +19,8 @@ def run() -> int:
     logging.getLogger("core.kratos_adapter").setLevel(logging.CRITICAL)
 
     from PySide6.QtWidgets import QApplication, QMessageBox
-    from desktop.ui.style import DARK_QSS
-    from desktop.ui.main_window import MainWindow
+    from desktop.ui_legacy.style import DARK_QSS
+    from desktop.ui_legacy.main_window import MainWindow
 
     app = QApplication(sys.argv)
     app.setApplicationName("Topologia Optimizada")

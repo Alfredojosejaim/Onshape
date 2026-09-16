@@ -25,8 +25,8 @@ Auditoría directa del código (`backend/core`, `backend/api.py`, `backend/deskt
 | Composición booleana (∪ ∩ −) | ✅ | `selection.py: CompositionRegion` |
 | Material (mecánico) | ✅ | `materials.py: Material` (E, ν, ρ, σy) |
 | Material (térmico, opcional) | ✅ | `materials.py`: `thermal_conductivity`, `specific_heat`, `thermal_expansion` — mismo objeto `Material`, no uno aparte |
-| Design tree / árbol de piezas | ✅ | `desktop/ui/panels/design_tree.py` |
-| Timeline por pieza | ✅ (parcial) | `desktop/ui/panels/timeline.py` — ramificación en paralelo por pieza sigue pendiente (confirmado en tus notas) |
+| Design tree / árbol de piezas | ✅ | `desktop/ui_legacy/panels/design_tree.py` |
+| Timeline por pieza | ✅ (parcial) | `desktop/ui_legacy/panels/timeline.py` — ramificación en paralelo por pieza sigue pendiente (confirmado en tus notas) |
 
 ---
 
@@ -90,7 +90,7 @@ Hallazgo importante que corrige al chat de ChatGPT: **tanto Térmico como Modal 
 | Análisis estructural estático (Tet4 + Kratos) | ✅ | `cae_studies.py: StructuralAnalysis`, conectado y con UI (`study_panel.py`) |
 | Análisis térmico estacionario | 🔶 | `thermal.py: solve_thermal_study()` completo (temp impuesta, flujo, convección); `cae_studies.py: ThermalAnalysis.execute_on_mesh()` lo invoca; llamado desde `api.py:689` y `controller.py:1446` — **pero sin UI** |
 | Análisis modal (autovalores) | 🔶 — *corrección al chat* | `fea.py: solve_modal()` completo (ensambla K y M, `scipy.sparse.linalg.eigsh`, filtro de ventana de frecuencia); `ModalAnalysis.execute_on_mesh()` lo invoca; llamado desde `api.py:720` y `controller.py:1475`. **No es "arquitectura preparada sin solver" — el solver ya existe y corre.** Solo falta exponerlo |
-| Resultados: von Mises, tensión principal, deformación | 🔶 | Presentes en el pipeline de `StructuralAnalysis`, visualización en `desktop/ui/panels/results.py` — confirmar cobertura completa de mapas de tensión |
+| Resultados: von Mises, tensión principal, deformación | 🔶 | Presentes en el pipeline de `StructuralAnalysis`, visualización en `desktop/ui_legacy/panels/results.py` — confirmar cobertura completa de mapas de tensión |
 | Factor de seguridad como herramienta de postproceso | 🔲 | No hay clase/función dedicada; sería cálculo derivado (σy / σ_von_Mises) no implementado aún |
 | Comparación de resultados (original vs. optimizado, o A vs B vs C) | 🔲 | No existe en el core |
 | `execute()` sin malla para Térmico/Modal | ⚪ (intencional) | Ambos lanzan `StudyNotImplementedError` a propósito cuando se invoca sin mesh — es el contrato "explícito, nunca fallback silencioso" que ya usás en el resto del proyecto |

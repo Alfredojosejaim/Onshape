@@ -88,9 +88,8 @@ export const CadViewport: React.FC<CadViewportProps> = ({
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const modelGroupRef = useRef<THREE.Group | null>(null);
-  const triadRendererRef = useRef<THREE.WebGLRenderer | null>(null);
-  const triadSceneRef = useRef<THREE.Scene | null>(null);
-  const triadCameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  // P-C (reversible): refs del triad sin asignar ni leer; eliminados para
+  // noUnusedLocals. Para volver atrás: restaurar las tres líneas.
   const clipPlaneRef = useRef<THREE.Plane | null>(null);
   // PLANES-VIS (reversible): refs a los 4 planos en el 0 absoluto para
   // ver/ocultar uno por uno o todos. Para volver atras: borrar ref + estado
@@ -113,10 +112,11 @@ export const CadViewport: React.FC<CadViewportProps> = ({
   // Para volver atras: borrar ref + bloque FIT-ONCE y restaurar fitToAll().
   const fitKeysRef = useRef<string>('');
 
-  const [isOrbiting, setIsOrbiting] = useState(false);
-  const [isPanning, setIsPanning] = useState(false);
+  // P-C: valores no leídos (solo setters); elisión para noUnusedLocals.
+  const [, setIsOrbiting] = useState(false);
+  const [, setIsPanning] = useState(false);
   const [isOrthographic, setIsOrthographic] = useState(false);
-  const [measurePoint, setMeasurePoint] = useState<string | null>(null);
+  // P-C: estado de medición sin usos; eliminado para noUnusedLocals.
   // PLANES-VIS (reversible): visibilidad por plano + todos.
   const [visiblePlanes, setVisiblePlanes] = useState({ xy: true, xz: true, yz: true });
   // BLACKSCREEN-FIX: si WebGL no esta disponible, se muestra el motivo en
@@ -147,8 +147,12 @@ export const CadViewport: React.FC<CadViewportProps> = ({
             /* sin localStorage */
           }
         }
+        // P-B (reversible): el perfil es preferencia con fallback local, pero
+        // el fallo ya no es invisible. Para volver atrás: .catch(() => undefined).
       })
-      .catch(() => undefined);
+      .catch(() => {
+        console.warn('[viewport] no se pudo leer el perfil de navegación del backend; se usa el local.');
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -159,7 +163,13 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     } catch {
       /* sin localStorage */
     }
-    if (backend.hasBridge()) void backend.setNavProfile(name).catch(() => undefined);
+    // P-B (reversible): la escritura del perfil ya no es invisible.
+    // Para volver atrás: .catch(() => undefined).
+    if (backend.hasBridge()) {
+      void backend.setNavProfile(name).catch(() => {
+        console.warn('[viewport] no se pudo persistir el perfil de navegación en el backend.');
+      });
+    }
   };
 
   // MULTI-VIEW (reversible): encuadra TODAS las superficies visibles del
@@ -481,7 +491,7 @@ export const CadViewport: React.FC<CadViewportProps> = ({
       geo.rotateX(-Math.PI / 2);
       geo.computeVertexNormals();
 
-      const isActive = body.filename === activeFilename;
+      // P-C: isActive calculado pero nunca leído; eliminado para noUnusedLocals.
       const mat = new THREE.MeshStandardMaterial({
         color: bodyColor(body),
         metalness: 0.55,
@@ -795,7 +805,8 @@ export const CadViewport: React.FC<CadViewportProps> = ({
       const hit = hits[0];
       const triMap = (hit.object.userData.triMap ?? []) as number[];
       const localTri = hit.faceIndex;
-      if (localTri === undefined || localTri >= triMap.length) return;
+      // P-C (strict): faceIndex puede ser null; == null cubre null+undefined.
+      if (localTri == null || localTri >= triMap.length) return;
       const face = triangleToFace(triMap[localTri], activeSurf.ranges);
       if (face === null) return; // hueco sin cara: conserva la seleccion
       onToggleFace(face);

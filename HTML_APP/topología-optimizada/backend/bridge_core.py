@@ -4,7 +4,7 @@ SOLO capa de presentacion: expone el core maduro (topo_problem, solvers,
 PipelineController, pipeline VTK) a la UI HTML via QWebChannel.
 
 NO copia ni reescribe el core: todo se importa por sys.path desde
-../Topologia_Optimizada. No toca desktop.ui (ribbon, design_tree) — los
+../Topologia_Optimizada. No toca desktop.ui_legacy (ribbon, design_tree) — los
 reemplaza la UI HTML en Web_App/html.
 """
 from __future__ import annotations

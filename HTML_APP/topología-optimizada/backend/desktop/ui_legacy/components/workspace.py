@@ -26,8 +26,8 @@ from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt
 
 from desktop.viewport.camera import StandardView
-from desktop.ui.style import TEXT_FAINT, PALETTE
-from desktop.ui.components.widgets import glyph_label, RibbonTool, repolish
+from desktop.ui_legacy.style import TEXT_FAINT, PALETTE
+from desktop.ui_legacy.components.widgets import glyph_label, RibbonTool, repolish
 
 
 class WorkspaceBuilder:

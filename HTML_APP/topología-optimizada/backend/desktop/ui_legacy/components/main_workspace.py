@@ -30,10 +30,10 @@ from PySide6.QtCore import Qt
 
 from desktop.viewport.viewport_3d import Viewport3D, is_gl_available
 from desktop.viewport.software_viewport import SoftwareViewport
-from desktop.ui.panels.design_tree import DesignTreePanel
-from desktop.ui.panels.properties import PropertiesPanel
-from desktop.ui.panels.results import ResultsPanel
-from desktop.ui.panels.timeline import TimelinePanel
+from desktop.ui_legacy.panels.design_tree import DesignTreePanel
+from desktop.ui_legacy.panels.properties import PropertiesPanel
+from desktop.ui_legacy.panels.results import ResultsPanel
+from desktop.ui_legacy.panels.timeline import TimelinePanel
 
 
 class ViewportHost(QFrame):

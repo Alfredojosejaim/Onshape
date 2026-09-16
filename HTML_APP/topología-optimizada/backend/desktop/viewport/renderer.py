@@ -144,7 +144,7 @@ class Renderer:
             self.remove_actor(self._grid_actor)
             self._grid_actor = None
         try:
-            from desktop.ui.style import PALETTE, hex_to_rgb_float
+            from desktop.ui_legacy.style import PALETTE, hex_to_rgb_float
             color = hex_to_rgb_float(PALETTE.get("grid", "#47484c"))
         except Exception:
             color = (0.28, 0.29, 0.32)

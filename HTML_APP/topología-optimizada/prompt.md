@@ -1,391 +1,152 @@
-Procesó durante 17s
-
-Sí. La auditoría cambia bastante el diagnóstico: el problema que describís no parece ser que el generador "no conozca" las condiciones; el código tiene mecanismos explícitos para consumir cargas, fijaciones, regiones protegidas y obstrucciones. El problema está en cómo esas condiciones terminan afectando el campo de densidad y, sobre todo, cómo se reconstruye la geometría.
-
-Hay dos problemas separados.
-
-1. El modelo no sale suavizado
-
-Esto está claramente contemplado en cad_reconstruction.py: existe una etapa SMOOTHED_MESH y una función smooth_surface_mesh() mediante Laplacian smoothing.
-
-Pero hay una diferencia crítica entre:
-
-> tener implementado el algoritmo de smoothing
-
-
-
-y
-
-> que el flujo generativo realmente lo ejecute antes de generar el B-Rep final.
-
-
-
-La documentación del pipeline dice:
-
-density field
-→ surface mesh
-→ smoothing
-→ B-Rep
-→ STEP
-
-pero la auditoría del código generativo muestra que el motor declara directamente:
-
-conditions / optimization
-→ volumetric result
-→ B-Rep reconstruction
-
-y necesitamos comprobar el punto exacto donde GenerativeDesignEngine invoca la reconstrucción para determinar si MeshSmoother está efectivamente en el camino ejecutado.
-
-Conclusión provisional: el smoothing existe, pero hay una alta probabilidad de que el flujo generativo esté saltándose esa etapa o que sus parámetros no estén siendo aplicados.
-
-
----
-
-2. El problema de las cargas/fijaciones es más importante
-
-Acá encontré algo muy concreto.
-
-El propio generative_engine.py dice que el motor debería convertir:
-
-loads
-→ forces
-
-elasticity
-→ constraints
-
-protected regions
-→ preserved elements
-
-obstructions
-→ void elements
-
-Es decir, conceptualmente sí debería respetarlas.
-
-Y existen funciones específicas:
-
-_node_indices_for_load()
-
-_load_node_indices()
-
-_support_node_indices()
-
-_protected_elements()
-
-_void_elements()
-
-
-Por lo tanto, no estamos ante un generador que simplemente ignore todas las herramientas.
-
-
----
-
-3. Encontré una posible causa concreta: las condiciones están mapeadas a la malla
-
-Para las cargas, el código intenta hacer:
-
-cara seleccionada
-      ↓
-face_index
-      ↓
-NodeSelectionEngine
-      ↓
-nodos de la malla
-      ↓
-carga
-
-Y para las fijaciones hace algo equivalente.
-
-Eso es correcto en principio.
-
-Pero el problema está en que la geometría generativa del escenario B se crea mediante una malla nueva.
-
-generate_bridge_mesh() construye una malla de vóxeles/tetraedros para el espacio entre las piezas.
-
-Y acá aparece el posible fallo fundamental:
-
-La malla generada no necesariamente conserva la correspondencia geométrica con las caras originales donde el usuario puso las condiciones.
-
-En otras palabras:
-
-PIEZA ORIGINAL
-   │
-   ├── cara carga
-   ├── cara fijación
-   └── otras regiones
-        ↓
-   generación del espacio
-        ↓
-   NUEVA MALLA
-        ↓
-   optimización
-
-Si la condición estaba asociada a una cara de la pieza original, esa cara no necesariamente existe como entidad de la nueva malla generativa.
-
-Entonces el programa puede tener perfectamente:
-
-> "LoadCondition: cara X"
-
-
-
-pero después no tener una correspondencia válida:
-
-> "cara X → elementos/nodos del bridge mesh".
-
-
-
-
----
-
-4. Esto explica exactamente lo que estás observando
-
-Lo que describís:
-
-> "las partes seleccionadas como cargas, fijación, etc. no salen en el modelo"
-
-
-
-es particularmente compatible con un problema de preservación geométrica de las regiones de condición durante la reconstrucción, no simplemente con un problema del solver.
-
-Porque hay dos cosas diferentes:
-
-Para FEA
-
-Una carga puede ser aplicada a nodos:
-
-cara → nodos → fuerza
-
-Eso sirve para resolver el problema físico.
-
-Para reconstrucción
-
-Si queremos que esa región siga existiendo físicamente:
-
-cara seleccionada
-       ↓
-región protegida
-       ↓
-densidad = 1
-       ↓
-isosuperficie
-       ↓
-geometría final
-
-Son procesos diferentes.
-
-Aplicar una carga al solver no garantiza que esa región quede preservada en la geometría final.
-
-
----
-
-5. El código ya tiene precisamente un mecanismo para esto
-
-Esto es lo más interesante de la auditoría.
-
-cad_reconstruction.py tiene:
-
-apply_frozen_passthrough()
-
-que fuerza determinadas celdas a:
-
-density = 1.0
-
-para que sean incluidas en la geometría reconstruida.
-
-Eso significa que la arquitectura ya contempla exactamente la solución que necesitamos:
-
-región crítica
-      ↓
-elementos congelados
-      ↓
-densidad 1
-      ↓
-reconstrucción
-      ↓
-región permanece
-
-Por eso no recomiendo crear otro sistema de "preservar cargas".
-
-Lo correcto es conectar correctamente las condiciones existentes con el sistema de frozen/preserved elements.
-
-
----
-
-6. Hay además un problema peligroso en _protected_elements()
-
-Encontré esto:
-
-Si la región protegida no consigue mapearse a nodos, el código hace un:
-
-> fallback heurístico basado en los extremos del bounding box.
-
-
-
-El propio código lo describe como:
-
-> heuristic fallback, not a CAD-face mapping
-
-
-
-Esto es importante.
-
-Si una cara seleccionada no logra mapearse correctamente:
-
-selección real
-      ↓
-mapping falla
-      ↓
-fallback bbox
-
-Eso no representa la cara que seleccionó el usuario.
-
-Para un software de optimización esto es peligroso porque puede producir exactamente el comportamiento que estás viendo.
-
-
----
-
-7. Obstrucciones tienen otro comportamiento
-
-El código es más estricto con ObstructionCondition.
-
-Si no existe model_shape, devuelve un conjunto vacío y registra que el mapeo no puede hacerse.
-
-Eso es correcto conceptualmente porque evita fingir que una obstrucción fue aplicada cuando no puede mapearse.
-
-Pero las cargas/protecciones tienen caminos de fallback que pueden ocultar el problema.
-
-
----
-
-8. Diagnóstico actual
-
-Yo clasificaría el problema así:
-
-Problema	Estado
-
-Optimización generativa ejecuta	✅
-Escenario A	✅
-Escenario B	✅
-Condiciones llegan al generador	✅
-Cargas tienen función de mapping	✅
-Fijaciones tienen función de mapping	✅
-Regiones protegidas tienen función de mapping	✅
-Mecanismo de densidad congelada	✅
-Reconstrucción B-Rep	✅
-Smoothing implementado	✅
-Smoothing garantizado en flujo generativo	⚠️ verificar/corregir
-Condiciones preservadas en geometría final	❌ comportamiento incorrecto
-Correspondencia condición → nueva malla generativa	⚠️ principal sospechoso
-Fallback heurístico de protección	⚠️ problemático
-
-
-
----
-
-9. Qué NO haría
-
-No haría un parche del tipo:
-
-> "si hay una carga, conservar automáticamente toda la cara".
-
-
-
-Porque eso puede deformar la lógica física.
-
-Tampoco:
-
-❌ rehacer el generador.
-
-❌ cambiar el solver SIMP.
-
-❌ cambiar la arquitectura.
-
-❌ eliminar ConditionManager.
-
-❌ crear otro sistema paralelo de condiciones.
-
-❌ simplemente bajar/subir el threshold.
-
-❌ aplicar smoothing indiscriminadamente al final.
-
-
-La infraestructura necesaria ya existe.
-
-
----
-
-10. Qué hay que corregir
-
-La corrección debería ser quirúrgica:
-
-CONDICIÓN DEL USUARIO
-        ↓
-ENTIDAD CAD ORIGINAL
-        ↓
-MAPEO A ELEMENTOS DE LA MALLA
-        ↓
-CLASIFICACIÓN
-        ├── Load
-        ├── Fixation
-        ├── Protected
-        └── Obstruction
-        ↓
-SIMP
-        ↓
-DENSITY FIELD
-        ↓
-REAPLICAR / VERIFICAR REGIONES FROZEN
-        ↓
-Marching Tetrahedra
-        ↓
-SMOOTHING
-        ↓
-HOLE REPAIR
-        ↓
-B-Rep
-        ↓
-VALIDACIÓN
-        ↓
-RESULTADO
-
-Y especialmente:
-
-Las regiones que deben permanecer físicamente deben convertirse en elementos congelados antes de la reconstrucción, no solamente utilizarse como condiciones del solver.
-
-
----
-
-Hay una prueba que considero obligatoria
-
-Antes de tocar código, hay que comprobar un caso extremadamente sencillo:
-
-Pieza existente
-
-┌───────────────────────┐
-│                       │
-│                       │
-│                       │
-└───────────────────────┘
-▲                       ▼
-FIJACIÓN              CARGA
-
-Optimizar.
-
-El resultado debe conservar:
-
-████                  ████
-██████████████████████████
-      estructura
-
-y las zonas de fijación y aplicación de carga deben seguir físicamente conectadas al resultado.
-
-Si desaparecen, podemos demostrar objetivamente que el problema está en la cadena:
-
-condición → malla → frozen/preserved → density → reconstrucción.
-
-Conclusión de la auditoría
-
-Sí, encontré una causa arquitectónicamente plausible y bastante concreta para lo que estás viendo: el sistema conoce las condiciones, pero la preservación física de las regiones durante la generación/reconstrucción no está garantizada, especialmente cuando se trabaja sobre la nueva malla generativa. Además, existe un fallback geométrico que puede ocultar un fallo de mapeo.
-
-Y el segundo problema es independiente: el smoothing está implementado, pero hay que verificar que el flujo generativo realmente pase por MeshSmoother antes del B-Rep.
-
-No implementaría nada todavía. El siguiente paso correcto es auditar las funciones exactas que ejecutan el run() generativo y el tramo densities → reconstruction, porque ahí podemos confirmar exactamente dónde se pierden las regiones y dónde se está saltando el suavizado.
+# Auditoría técnica del proyecto
+
+**Fecha:** 2026-09-16
+**Alcance:** `HTML_APP/topología-optimizada`
+**Estado del árbol al auditar:** limpio antes de la auditoría; no se modificó
+la lógica de la aplicación.
+
+## Veredicto
+
+El proyecto tiene una arquitectura funcional y una base de regresión saludable:
+la UI React se compila, el núcleo Python ejecuta SIMP/FEA y la suite existente
+cubre el flujo estructural, el mapeo degradado de condiciones, el halo de
+preservación y la reconstrucción básica. La documentación anterior de este
+archivo estaba desactualizada respecto de esos cambios.
+
+El riesgo principal sigue estando en la **reconstrucción CAD**: el suavizado
+se calcula, pero el `BRepFitter` prueba primero la malla rellenada sin
+suavizar. Por tanto, que exista una etapa `SMOOTHED_MESH` no garantiza que el
+STEP final sea el resultado suavizado. El escenario B y el fallback visual
+también necesitan una prueba/certificación adicional antes de considerarlos
+equivalentes al flujo real.
+
+## Evidencia ejecutada
+
+| Check | Resultado |
+|---|---|
+| `npm run lint` | OK (`tsc --noEmit`) |
+| `npm run build` | OK; Vite produjo `dist/` |
+| `python -m pytest backend\tests -q --disable-warnings --maxfail=1` | **75 passed**, 3 warnings |
+| Dependencias científicas | Kratos fue detectable durante la suite; el flujo local mantiene fallback explícito |
+
+## Hallazgos
+
+### 1. Alto — el B-Rep puede ignorar el suavizado
+
+**Evidencia:** `backend/core/cad_reconstruction.py:1965-1975`.
+
+`ReconstructionPipeline.run()` ejecuta `fill -> smooth`, pero construye
+`candidates` en este orden:
+
+1. `hole_fill_data` (relleno, sin suavizado);
+2. `smoothed_data`;
+3. malla cruda.
+
+El primer candidato válido que el fitter acepta corta el bucle en
+`1989-1997`. Así, el STEP normalmente puede salir de la malla rellenada, pese
+a que el comentario afirma “prefer smoothed”. Esto contradice el contrato
+documentado del pipeline y explica por qué una superficie final puede seguir
+facetada o contener el escalonado previo al suavizado.
+
+**Acción recomendada:** invertir el orden a `smoothed -> filled -> raw` y
+añadir una prueba con un fitter espía que verifique que el primer candidato
+recibido es `smoothed_data`. Mantener `fill_before_smooth` y el metadata actual.
+
+### 2. Medio — escenario B no tiene cobertura de regresión suficiente
+
+**Evidencia:** `backend/core/generative_engine.py:1137-1152`; las pruebas
+generativas existentes (`backend/tests/test_generativa_flujo.py`) cubren
+escenario A y fallback legacy, pero no escenario B.
+
+El escenario B reemplaza `engine.mesh_nodes` y `engine.mesh_elements` por la
+malla puente. Sin embargo, la instancia conserva referencias creadas para la
+malla original (`face_surface_elements` y
+`_surface_matches_mesh=True`). La protección existente para no usar índices
+de superficie incompatibles solo se activa explícitamente en el camino
+`design_space="envelope"` (`347-352`, `1120-1123`), no en el camino B.
+
+Esto deja un riesgo de mapeo de cargas/fijaciones/protecciones a nodos o
+triángulos de otra malla. El código puede degradar a una distribución
+uniforme/fallback, pero la equivalencia geométrica con las caras seleccionadas
+no está demostrada.
+
+**Acción recomendada:** al construir la malla puente, marcar explícitamente
+que la triangulación de superficie original no coincide con la malla nueva y
+definir un mapeo de targets a nodos puente; después añadir un test B con dos
+targets, una carga y una fijación que compruebe `_halo_nodes`,
+`_preserved_elements`, densidades finitas y reconstrucción.
+
+### 3. Medio — fallback mock permitido en desarrollo no queda visible como
+`MOCK-FALLBACK` en la UI principal
+
+**Evidencia:** `src/lib/bridge.ts:19-20,36-57` marca respuestas mock con
+`mock: true`, y `src/lib/jobs.ts:53-58` rechaza el sondeo mock. No obstante,
+`src/App.tsx:1079-1118` ejecuta un timer local tras pulsar Iniciar cuando no
+hay bridge y genera compliance/volumen sintéticos, incluyendo
+`MOCK_BASE_COMPLIANCE = 148.5`.
+
+La regla del proyecto permite este fallback únicamente después de Iniciar,
+anclado al estado propio y etiquetado. En el código revisado la etiqueta está
+en comentarios, pero no se encontró una marca de interfaz visible
+`MOCK-FALLBACK`. Esto puede hacer que un usuario interprete la animación como
+un resultado científico real.
+
+**Acción recomendada:** establecer un estado explícito `isMockFallback` al
+entrar en ese timer, mostrar una etiqueta persistente junto a los resultados y
+limpiar esa marca al recibir un resultado de `mapSimpResult` del backend.
+
+### 4. Bajo — los contratos de resultado dependen de señales opcionales
+
+`mapFeaResult` y `mapSimpResult` (`src/lib/realdata.ts:95-137`) devuelven
+`null` cuando faltan métricas mínimas, lo cual es preferible a inventar
+cifras. Sin embargo, el contrato no distingue entre “estudio aún no
+terminado”, “resultado incompleto” y “error”; esa distinción queda repartida
+entre polling, `optNotice` y el estado React.
+
+**Acción recomendada:** tipar un resultado discriminado (`pending`,
+`completed`, `invalid`, `error`) en el límite bridge/UI. No es bloqueante para
+la ejecución actual, pero reduciría estados ambiguos en WebView2.
+
+## Aspectos confirmados como correctos
+
+- El proyecto separa el host pywebview del proceso científico para evitar
+  conflictos con DLL nativas.
+- El bridge devuelve error explícito si un método no está expuesto
+  (`src/lib/bridge.ts:21-32`) y marca las respuestas mock.
+- La generativa falla explícitamente sin cargas/fijaciones reutilizables ni BC
+  legacy (`backend/core/generative_engine.py`, `GEN-NOCOND`).
+- Las cargas y fijaciones se convierten en un halo preservado por defecto en
+  `solve_simp`; el caso de cobertura total se revierte y se reporta como
+  `full_coverage`.
+- La reconstrucción aplica `preserved_elements`/`frozen_elements` a densidades
+  elementales y nodales antes de extraer la isosuperficie.
+- El orden `fill -> smooth` está cubierto por
+  `backend/tests/test_reconstruction_fill_order.py`.
+- La UI no muestra resultados reales por defecto: los mapeadores exigen
+  métricas mínimas y el flujo backend se sondea mediante job.
+- `backend/vendored/simp.py` permanece congelado; las opciones avanzadas viven
+  en `core/topopt.py`, conforme a `AGENTS.md`.
+
+## Cobertura faltante priorizada
+
+1. Verificar con un fitter espía que el STEP use la malla suavizada.
+2. Añadir regresión del escenario B con condiciones sobre los dos sólidos
+   objetivo.
+3. Ejecutar una prueba de integración WebView2/pywebview que confirme que el
+   fallback local muestra `MOCK-FALLBACK` y nunca cifras antes de Iniciar.
+4. Probar exportación y reimportación del STEP generado, incluyendo
+   `registerReconstruction`, no solo el diccionario de reconstrucción.
+5. Medir que el `physical_volume_fraction` reportado sea el que consume la UI
+   cuando hay regiones preservadas y obstrucciones.
+
+## Orden de trabajo recomendado
+
+1. Corregir la prioridad de candidatos del fitter y añadir la regresión
+   unitaria.
+2. Cerrar el contrato de mapeo de la malla puente y cubrir escenario B.
+3. Hacer visible el estado `MOCK-FALLBACK`.
+4. Repetir lint, build y la suite completa; después validar una corrida real
+   con STEP, carga, fijación, exportación y reimportación.
+
+No se implementaron estas correcciones en esta auditoría: este documento
+registra el estado observado, la evidencia y el backlog verificable.

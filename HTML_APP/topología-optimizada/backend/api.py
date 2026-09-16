@@ -27,6 +27,19 @@ if not os.path.isdir(os.path.join(_HERE, "core")):
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
+
+def _uploads_dir() -> str:
+    """Directorio de subidos y piezas computed.
+
+    TMP-PATH (reversible): los tests fijan ``TOPOOPT_UPLOADS`` a un ``tmp_path``
+    para no ensuciar el árbol (antes cada corrida dejaba
+    ``backend/uploads/computed_*.step`` sin trackear, indistinguibles de los
+    fixtures versionados). En producción la variable no existe y se usa
+    ``backend/uploads`` como siempre. Para volver atrás: hardcodear
+    ``os.path.join(_HERE, "uploads")`` en los 4 usos.
+    """
+    return os.environ.get("TOPOOPT_UPLOADS") or os.path.join(_HERE, "uploads")
+
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logging.getLogger("core.kratos_adapter").setLevel(logging.CRITICAL)
@@ -564,7 +577,7 @@ class Api:
             if not filename:
                 return {"ok": False, "error": "filename requerido"}
             upload_id = f"{uuid.uuid4().hex}"
-            updir = os.path.join(_HERE, "uploads")
+            updir = _uploads_dir()
             os.makedirs(updir, exist_ok=True)
             part = os.path.join(updir, f".part-{upload_id}.bin")
             with open(part, "wb"):
@@ -633,7 +646,7 @@ class Api:
                     return {"ok": False, "error": "malla mayor a 512 MB"}
                 if not filename.lower().endswith((".stl", ".obj", ".ply", ".3mf")):
                     filename += ".stl"
-                updir = os.path.join(_HERE, "uploads")
+                updir = _uploads_dir()
                 os.makedirs(updir, exist_ok=True)
                 dest = os.path.join(updir, filename)
                 with open(dest, "wb") as fh:
@@ -649,7 +662,7 @@ class Api:
                                  f"Usar STEP (.step/.stp) o malla (.stl/.obj/.ply/.3mf)"}
             if len(raw) > self._STEP_UPLOAD_MAX_BYTES:
                 return {"ok": False, "error": "archivo mayor a 50 MB"}
-            updir = os.path.join(_HERE, "uploads")
+            updir = _uploads_dir()
             os.makedirs(updir, exist_ok=True)
             dest = os.path.join(updir, filename)
             with open(dest, "wb") as fh:
@@ -1051,7 +1064,7 @@ class Api:
             # re-importa: close_model() limpia malla/condiciones del modelo
             # anterior, dejando el pipeline listo para otra corrida.
             model_id = str(info["model_id"])
-            updir = os.path.join(_HERE, "uploads")
+            updir = _uploads_dir()
             os.makedirs(updir, exist_ok=True)
             step_path = os.path.join(updir, f"computed_{model_id[:8]}.step")
             exported = False

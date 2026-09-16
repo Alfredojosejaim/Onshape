@@ -186,6 +186,9 @@ export interface SolidOpRowProps {
   visible?: boolean;
   onToggleVisibility?: () => void;
   visibilityTitle?: string;
+  // TREE-BODY-SELECT (reversible): resaltado como las herramientas.
+  // Para volver atras: quitar prop + clase.
+  selected?: boolean;
 }
 
 export const SolidOpRow: React.FC<SolidOpRowProps> = ({
@@ -196,13 +199,14 @@ export const SolidOpRow: React.FC<SolidOpRowProps> = ({
   visible = true,
   onToggleVisibility,
   visibilityTitle = 'Mostrar / ocultar cuerpo',
+  selected = false,
 }) => {
   const volCm3 =
     typeof solid.volume === 'number' && Number.isFinite(solid.volume)
       ? (solid.volume / 1000).toFixed(1)
       : '—';
   return (
-    <div className={`flex items-center justify-between px-2 py-1.5 rounded cursor-pointer transition-colors border border-border-subtle/20 bg-surface-container-high/40 hover:bg-surface-elevated ${visible ? '' : 'opacity-50'}`}>
+    <div className={`flex items-center justify-between px-2 py-1.5 rounded cursor-pointer transition-colors border ${selected ? 'border-secondary/70 ring-1 ring-secondary/40' : 'border-border-subtle/20'} bg-surface-container-high/40 hover:bg-surface-elevated ${visible ? '' : 'opacity-50'}`}>
       <div className="flex items-center gap-2">
         <div className="w-5 h-5 rounded flex items-center justify-center bg-secondary/10">
           <span className="material-symbols-outlined text-[14px] text-secondary">

@@ -140,6 +140,10 @@ export default function App() {
   // TREE-SELECT-DELETE (reversible): fila marcada con clic simple (solo
   // resalta; doble clic abre la herramienta). Supr/papelera la eliminan.
   const [selectedCondId, setSelectedCondId] = useState<string | null>(null);
+  // TREE-BODY-SELECT (reversible): cuerpo/malla marcado con clic simple en
+  // el árbol (misma estética de resaltado que las herramientas). Solo
+  // marca + activa el modelo; Supr no lo borra. null = sin marca.
+  const [selectedBodyKey, setSelectedBodyKey] = useState<string | null>(null);
   // FACES-START (reversible): caras B-Rep seleccionadas por ARCHIVO,
   // HERRAMIENTA y CONDICION (face_index del core). Cada herramienta tiene su
   // cubeta y cada condicion aplicada (Carga 1, Carga 2...) la suya: al
@@ -1654,12 +1658,12 @@ export default function App() {
   // TREE-SELECT: clic simple marca la fila (sin abrir la herramienta). El
   // borrado se hace con Supr sobre la fila marcada (o el modal de edicion).
   const handleSelectCondition = (id: string) => setSelectedCondId(id);
+  // TREE-BODY-SELECT: clic en cuerpo/malla marca la fila y activa su modelo.
+  const handleSelectBody = (key: string, m: CadModelPreset) => {
+    setSelectedBodyKey(key);
+    handleSelectModelReal(m);
+  };
   const handleDeleteSelected = async () => {
-    if (!backend.hasBridge()) return;
-    if (stateRef.current.currentModel == null && !editingCondition) {
-      setOptNotice({ text: 'Nada que eliminar: importá una pieza o aplicá una herramienta.' });
-      return;
-    }
     const tool = stateRef.current.activeTool;
     // TREE-SELECT-DELETE: la fila marcada con clic simple tiene prioridad.
     const condId =
@@ -1673,16 +1677,24 @@ export default function App() {
       condId !== 'faces_seleccionar' &&
       boundaryConditions.some((c) => c.id === condId);
     if (isCond && condId) {
-      const r = (await backend.deleteCondition(condId)) as unknown as { ok?: boolean; error?: unknown };
-      if (!r.ok) {
-        setOptNotice({ text: `No se pudo eliminar la herramienta: ${String(r.error ?? 'backend')}.` });
-        return;
+      // DELETE-TOLERANT: si el backend no conoce el id (herramienta solo
+      // local, o backend reiniciado/modelo cerrado), se elimina igual en
+      // local: el objetivo es quitar la herramienta, y el backend no tiene
+      // nada que guardar. Solo se aborta ante un error real distinto.
+      if (backend.hasBridge()) {
+        const r = (await backend.deleteCondition(condId)) as unknown as { ok?: boolean; error?: unknown };
+        const err = String(r.error ?? 'backend');
+        if (!r.ok && !/desconocida|unknown/i.test(err)) {
+          setOptNotice({ text: `No se pudo eliminar la herramienta: ${err}.` });
+          return;
+        }
       }
       removeLocalCondition(condId);
       setActiveTool('seleccionar');
       setOptNotice({ text: 'Herramienta eliminada (Ctrl+Z para deshacer).' });
       return;
     }
+    if (!backend.hasBridge()) return;
     const m = stateRef.current.currentModel;
     if (m?.key) {
       const r = (await backend.removeModel(m.key)) as unknown as {
@@ -1830,6 +1842,9 @@ export default function App() {
             // TREE-SELECT (reversible): clic simple marca (Supr borra).
             selectedConditionId={selectedCondId}
             onSelectCondition={handleSelectCondition}
+            // TREE-BODY-SELECT (reversible): marca de cuerpo/malla.
+            selectedBodyKey={selectedBodyKey}
+            onSelectBody={handleSelectBody}
           />
 
           {/* CENTRAL 3D CAD VIEWPORT */}

@@ -62,3 +62,16 @@ def test_keepout_faces_reach_backend():
     # "al revés": caras pedidas vs nodos/elementos mapeados).
     assert "_condition_mapping" in app
     assert "mapText" in app
+
+
+def test_tree_body_select_and_tolerant_delete():
+    app = (ROOT / "src" / "App.tsx").read_text(encoding="utf-8")
+    # TREE-BODY-SELECT: cuerpos/mallas se marcan como las herramientas.
+    assert "selectedBodyKey" in app
+    assert "onSelectBody" in app
+    # DELETE-TOLERANT: id desconocido en backend se elimina igual en local.
+    assert "desconocida|unknown" in app
+    left = (ROOT / "src" / "components" / "LeftPanel.tsx").read_text(encoding="utf-8")
+    assert "selectedBodyKey" in left
+    ops = (ROOT / "src" / "components" / "OperationRow.tsx").read_text(encoding="utf-8")
+    assert "TREE-BODY-SELECT" in ops

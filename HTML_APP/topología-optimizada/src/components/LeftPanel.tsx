@@ -50,6 +50,10 @@ interface LeftPanelProps {
   // Para volver atras: quitar estas 2 props.
   selectedConditionId?: string | null;
   onSelectCondition?: (id: string) => void;
+  // TREE-BODY-SELECT (reversible): marca de cuerpo/malla. Para volver atras:
+  // quitar estas 2 props + usos en las filas.
+  selectedBodyKey?: string | null;
+  onSelectBody?: (key: string, m: CadModelPreset) => void;
 }
 
 export const LeftPanel: React.FC<LeftPanelProps> = ({
@@ -87,6 +91,9 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
   // TREE-SELECT (reversible)
   selectedConditionId,
   onSelectCondition,
+  // TREE-BODY-SELECT (reversible)
+  selectedBodyKey,
+  onSelectBody,
 }) => {
   // UI-CLEAN2 (reversible): sin nodo archivo no hay picker local.
   // models/onSelectModel/isModelVisible/onToggleModelVisibility se conservan
@@ -143,9 +150,10 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
                 for (const s of mSolids) {
                   const key = bodyKey(m.filename, s.solid_id);
                   rows.push(
-                    <div key={key} onClick={() => onSelectModel(m)}>
+                    <div key={key} onClick={() => (onSelectBody ? onSelectBody(key, m) : onSelectModel(m))}>
                       <SolidOpRow
                         solid={s}
+                        selected={selectedBodyKey === key}
                         visible={!hiddenBodies[key]}
                         onToggleVisibility={() => onToggleBodyVisibility(key)}
                         visibilityTitle={`Mostrar / ocultar ${s.name}`}
@@ -156,8 +164,9 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
               } else {
                 const key = bodyKey(m.filename, 'solid_0');
                 rows.push(
-                  <div key={key} onClick={() => onSelectModel(m)}>
+                  <div key={key} onClick={() => (onSelectBody ? onSelectBody(key, m) : onSelectModel(m))}>
                     <SolidOpRow
+                      selected={selectedBodyKey === key}
                       solid={{
                         solid_id: 'solid_0',
                         index: 0,
@@ -176,10 +185,11 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
               if (mHasMesh) {
                 const key = bodyKey(m.filename, 'mesh_tet4');
                 rows.push(
-                  <div key={key} onClick={() => onSelectModel(m)}>
+                  <div key={key} onClick={() => (onSelectBody ? onSelectBody(key, m) : onSelectModel(m))}>
                     <SolidOpRow
                       icon="grid_on"
                       badge="MESH"
+                      selected={selectedBodyKey === key}
                       details={`${m.elementsTet4.toLocaleString()} tets • ${m.nodes.toLocaleString()} nodos`}
                       solid={{
                         solid_id: 'mesh_tet4',

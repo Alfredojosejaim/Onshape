@@ -69,6 +69,39 @@ repo):
 
 ## 6. Pendiente tras esta sesión
 
-- Fase propia de fitting NURBS (diseño en §4).
+- Fase propia de fitting NURBS (diseño en §8).
 - `brep_style: 'plate'` NO se cableó (sin fitter no hay qué cablear).
 - Commits de esta sesión (esta acta va en el tercero).
+
+## 7. Decisiones registradas (respuestas explícitas del usuario, 16-sep)
+
+1. **Punto 3 → fitting real por parches** (no camino honesto-barato, no
+   "no tocar"). Con cláusula de fallback: si el spike no cerraba, camino A.
+   El spike cerró a medias (§4) → se aplicó el fallback: sin fitter en el
+   árbol + nota honesta en `OCPBSplineFitter`.
+2. **Motores → panel avanzado completo** (no mínimo viable, no "solo Qt").
+   Implementado en esta sesión (§3).
+
+## 8. Métricas del spike (reproducibles, scripts fuera del repo)
+
+| Caso | Resultado | Números |
+|---|---|---|
+| Placa 1 región (casquete 80 tris, loop 20) | Cara válida | desv. 1.31 en r=10, 0.2 s |
+| 2 regiones, edge compartido, caras recortadas | Shell cerrado, `BRepCheck_NoError` | 2 caras, 1 shell, sew 1e-4 |
+| Caras sin recortar | 0 shells | Causa del fallo previo |
+| Placa 2 bordes | Crash OCC sin traceback | No usar multi-loop |
+| Settings densos (NbPts 64, 10 iters) | Cuelga >10 min | Límite superior conocido |
+| Esfera biseccionada (caso liso, 2×40 tris) | No cierra (borde 0.73, interior 5.05) | Curva borde exacta (0.0); la placa no converge |
+| Cubo (6 planos) | 6 caras exactas vía shortcut planar | Rápido, válido |
+
+## 9. Fase propuesta: fitting NURBS real (no iniciada)
+
+Precondiciones aprendidas del spike: un solo loop por placa, wires de
+edges compartidos (no curvas por loop vecino), settings (3,12,5) +
+`MakeApprox(tol 1e-3, 64, 8, dmax 2.0)` — no "apretar" sin re-medir.
+Alcance: segmentación por diedro, curvas compartidas G1, tolerancias
+medidas, crash-hardening (la placa de 2 bordes crashea), métricas de
+desviación por región, fallback facetado garantizado. Sin fase de
+`plan.md` asignada todavía (confirm-gate: requiere decisión explícita
+antes de implementar).
+

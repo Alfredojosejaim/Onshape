@@ -478,12 +478,27 @@ class MeshHoleFiller:
         triangles: np.ndarray,
         max_hole_edges: Optional[int] = None,
     ) -> ReconstructionResult:
-        verts, tris, n = fill_holes(vertices, triangles, max_hole_edges)
+        verts0 = np.asarray(vertices, dtype=float)
+        tris0 = np.asarray(triangles, dtype=int)
+        loops_before = _boundary_loops(tris0)
+        sizes_before = sorted(len(loop) for loop in loops_before)
+        verts, tris, n = fill_holes(verts0, tris0, max_hole_edges)
+        loops_after = _boundary_loops(tris)
+        # FILL-REPORT (reversible): lo no tapado queda explícito en metadata
+        # (antes un loop grande se sellaba —o se omitía con tope— sin avisar).
+        # Para volver atrás: devolver solo holes_filled/triangles_after.
+        skipped = 0
+        if max_hole_edges is not None:
+            skipped = sum(1 for size in sizes_before if size > max_hole_edges)
         return ReconstructionResult(
             stage=ReconstructionStage.SMOOTHED_MESH,
             status=ReconstructionStatus.COMPLETED,
             data={"vertices": verts, "triangles": tris},
             metadata={"holes_filled": int(n),
+                      "holes_skipped": int(skipped),
+                      "open_loops_before": int(len(loops_before)),
+                      "open_loops_after": int(len(loops_after)),
+                      "largest_hole_edges": int(max(sizes_before)) if sizes_before else 0,
                       "triangles_after": int(tris.shape[0]),
                       "vertices_after": int(verts.shape[0])},
         )
@@ -1567,6 +1582,15 @@ class OCPBSplineFitter(OCPBRepFitter):
     """B-Rep suave B-spline: une caras coplanares, convierte superficies a
     B-spline y sube la continuidad a C1/C2 antes de exportar STEP.
 
+    NOTA HONESTA (16-sep-2026, spike PLATE-FIT medido): esto NO ajusta
+    superficies NURBS sobre la malla — parte de una cara plana por triángulo
+    y solo convierte representación + continuidad. El STEP sigue siendo un
+    poliedro (ver test_bspline_fitter_unifies_and_exports_step: 12 tris →
+    6 caras). Fitting real por parches (placa multi-región) se spikeó:
+    cara individual válida y rápida, pero el cosido multi-región no cierra
+    en el caso liso representativo y el solver placa es lento/cuelga con
+    restricciones densas. Fase propia si se retoma, no este estilo.
+
     Aprobado explícitamente por el usuario (fuera de plan, confirm-gate
     Fase 0.5). Reutiliza el cosido + validación de :class:`OCPBRepFitter`;
     sobre el sólido válido aplica, en orden y validando cada paso:
@@ -1703,6 +1727,8 @@ class OCPBSplineFitter(OCPBRepFitter):
         meta["step_status"] = int(status)
 
 
+
+
 class DummyBRepFitter(OCPBRepFitter):
     """Alias kept for backward compatibility; fitter is now real via OCP."""
 
@@ -1713,7 +1739,9 @@ class ReconstructionPipeline:
     Stages:
     1. density_field  -- the raw optimisation result (per-element densities)
     2. surface_mesh   -- isosurface extraction (marching cubes, etc.)
-    3. smoothed_mesh  -- mesh smoothing / decimation
+    3. smoothed_mesh  -- repair, hole-fill, smoothing, decimation (in that
+       order: FILL-SMOOTH-ORDER — el tapado corre ANTES del suavizado para
+       que el parche se suavice con el resto)
     4. brep_solid     -- B-Rep fitting (CadQuery/OCC)
     5. step_file      -- STEP export
 
@@ -1731,6 +1759,7 @@ class ReconstructionPipeline:
         mesh_repair: Optional["MeshRepair"] = None,
         decimate_fraction: Optional[float] = None,
         smoothing_method: str = "laplacian",
+        max_hole_edges: Optional[int] = None,
     ) -> None:
         self._surface_extractor = surface_extractor or MarchingTetrahedraExtractor()
         self._brep_fitter = brep_fitter or OCPBRepFitter(step_path=step_path)
@@ -1746,6 +1775,18 @@ class ReconstructionPipeline:
             raise ValueError(
                 f"decimate_fraction={decimate_fraction!r} fuera de rango (0, 1]."
             )
+        # FILL-CAP (reversible): tope de aristas por loop para fill_holes
+        # (None = tapar todo, comportamiento histórico). Un loop necesita al
+        # menos 3 aristas; un tope menor lo deja todo abierto.
+        if max_hole_edges is not None and (
+            not isinstance(max_hole_edges, int)
+            or isinstance(max_hole_edges, bool)
+            or max_hole_edges < 3
+        ):
+            raise ValueError(
+                f"max_hole_edges={max_hole_edges!r} inválido "
+                f"(usar None o entero >= 3).")
+        self._max_hole_edges = max_hole_edges
         self._decimate_fraction = float(decimate_fraction) if decimate_fraction is not None else None
         self._step_path = step_path
         self._stages: Dict[ReconstructionStage, ReconstructionResult] = {}
@@ -1853,10 +1894,21 @@ class ReconstructionPipeline:
             self._stages[ReconstructionStage.SURFACE_MESH] = result
             return result
 
-        # Stage 3: mesh smoothing (post-process of noisy isosurfaces)
-        # Fase 5a (opt-in): reparación antes del suavizado + decimación
-        # después. Sin mesh_repair/decimate_fraction el flujo es idéntico.
+        # Stage 3: repair -> fill -> smooth -> decimate.
+        # FILL-SMOOTH-ORDER (reversible): el tapado corre ANTES del suavizado.
+        # Antes era al revés (Etapa 3.5 posterior al smooth): smooth fija los
+        # vértices de borde, y en ese momento "borde" eran los loops abiertos
+        # del marching — quedaban congelados con el escalonado crudo mientras
+        # el interior se suavizaba, y el abanico plano se pegaba sobre
+        # superficie lisa. Ahora la malla llega cerrada al suavizado
+        # (_boundary_vertices vacío salvo bordes reales) y el parche se
+        # suaviza con el resto. Para volver atrás: restaurar el bloque
+        # "Stage 3.5" posterior al suavizado.
+        # Fase 5a (opt-in): reparación antes + decimación después. Sin
+        # mesh_repair/decimate_fraction el flujo es idéntico salvo el orden
+        # fill→smooth (ver FILL-SMOOTH-ORDER).
         smoothed_data = None
+        hole_fill_data = None
         if surface_result.status == ReconstructionStatus.COMPLETED and surface_result.data:
             mesh_data = surface_result.data
             if isinstance(mesh_data, dict) and mesh_data.get("vertices") is not None:
@@ -1867,11 +1919,21 @@ class ReconstructionPipeline:
                         rep_result = self._mesh_repair.repair(rep_verts, rep_tris)
                         rep_verts = np.asarray(rep_result.data["vertices"])
                         rep_tris = np.asarray(rep_result.data["triangles"])
-                        self._stages[ReconstructionStage.SMOOTHED_MESH] = rep_result
+                    filler = self._hole_filler
+                    if filler is None:
+                        hf_result = MeshHoleFiller().fill(
+                            rep_verts, rep_tris,
+                            max_hole_edges=self._max_hole_edges)
+                    else:
+                        hf_result = filler.fill(rep_verts, rep_tris)
+                    hole_fill_data = hf_result.data
+                    fill_meta = dict(hf_result.metadata)
+                    fv = np.asarray(hole_fill_data["vertices"])
+                    ft = np.asarray(hole_fill_data["triangles"])
                     if self._mesh_smoother is None:
                         self._mesh_smoother = MeshSmoother()
                     smooth_result = self._mesh_smoother.smooth(
-                        rep_verts, rep_tris, method=self._smoothing_method)
+                        fv, ft, method=self._smoothing_method)
                     if self._decimate_fraction is not None:
                         dec_result = MeshDecimator(self._decimate_fraction).decimate(
                             np.asarray(smooth_result.data["vertices"]),
@@ -1881,7 +1943,13 @@ class ReconstructionPipeline:
                             np.asarray(smooth_result.data["triangles"]).shape[0])
                         smooth_result = dec_result
                     smoothed_data = smooth_result.data
-                    self._stages[ReconstructionStage.SMOOTHED_MESH] = smooth_result
+                    self._stages[ReconstructionStage.SMOOTHED_MESH] = ReconstructionResult(
+                        stage=ReconstructionStage.SMOOTHED_MESH,
+                        status=ReconstructionStatus.COMPLETED,
+                        data=smoothed_data,
+                        metadata={**smooth_result.metadata, **fill_meta,
+                                  "fill_before_smooth": True},
+                    )
                 except Exception as exc:  # pragma: no cover - defensive
                     self._stages[ReconstructionStage.SMOOTHED_MESH] = ReconstructionResult(
                         stage=ReconstructionStage.SMOOTHED_MESH,
@@ -1894,35 +1962,7 @@ class ReconstructionPipeline:
                 status=ReconstructionStatus.NOT_STARTED,
             )
 
-        # Stage 3.5: hole-filling (close open boundary loops before B-Rep)
-        hole_fill_data = None
-        mesh_for_brep = smoothed_data if smoothed_data is not None else (
-            surface_result.data if surface_result.data else None
-        )
-        if (
-            mesh_for_brep is not None
-            and isinstance(mesh_for_brep, dict)
-            and mesh_for_brep.get("vertices") is not None
-        ):
-            try:
-                fv = np.asarray(mesh_for_brep["vertices"])
-                ft = np.asarray(mesh_for_brep["triangles"])
-                if self._hole_filler is None:
-                    self._hole_filler = MeshHoleFiller()
-                hf_result = self._hole_filler.fill(fv, ft)
-                holes_filled = hf_result.metadata.get("holes_filled", 0)
-                if holes_filled > 0:
-                    hole_fill_data = hf_result.data
-                    self._stages[ReconstructionStage.SMOOTHED_MESH] = ReconstructionResult(
-                        stage=ReconstructionStage.SMOOTHED_MESH,
-                        status=ReconstructionStatus.COMPLETED,
-                        data=hole_fill_data,
-                        metadata={**hf_result.metadata, "hole_filling": True},
-                    )
-            except Exception as exc:  # pragma: no cover - defensive
-                pass  # proceed without hole-fill; B-Rep may still succeed or fail gracefully
-
-        # Stage 4: B-Rep fitting (prefer filled mesh > smoothed > raw)
+        # Stage 4: B-Rep fitting (prefer smoothed [ya incluye fill] > filled > raw)
         brep_result = None
         if surface_result.status == ReconstructionStatus.COMPLETED and surface_result.data:
             mesh_data = surface_result.data

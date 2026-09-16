@@ -99,6 +99,29 @@ export interface SimpParameters {
   extrusionAxis: 'off' | 'x' | 'y' | 'z'; // extrusión 2D (densidad constante por eje)
   brepStyle: 'faceted' | 'bspline'; // reconstrucción STEP facetada vs B-spline
   designSpace: 'part' | 'envelope'; // generativa: pieza original vs caja de diseño
+  // ADV-OPT (reversible): motores y restricciones avanzadas del core, antes
+  // solo accesibles vía Qt desktop. Solo la rama estructural (runOptimization)
+  // los envía; la generativa los ignora. Para volver atrás: borrar bloque +
+  // src/components/AdvancedOptPanel.tsx + uso en RightPanel/App.
+  optimizer: 'oc' | 'mma' | 'gcmma' | 'eso' | 'level_set';
+  esoCriterion: 'compliance' | 'stress';
+  evolutionaryRate: number; // ESO: fracción a remover por iteración
+  lsCfl: number; // level-set: número CFL
+  lsHolePeriod: number; // level-set: nucleación cada N iters
+  symX: boolean; symXVal: number;
+  symY: boolean; symYVal: number;
+  symZ: boolean; symZVal: number;
+  minThickness: number; // mm, 0 = desactivado
+  overhangEnabled: boolean;
+  overhangBuildDir: [number, number, number];
+  overhangAngleDeg: number;
+  overhangPenalty: number;
+  objective: 'min_compliance' | 'min_volume';
+  complianceLimit: number | null; // solo con min_volume; null = sin límite
+  thermalEnabled: boolean;
+  thermalAlpha: number; // CTE 1/K
+  thermalTemperatures: string; // "300, 400" K, separado por comas
+  thermalRefTemp: number; // K
 }
 
 export interface OptimizationState {

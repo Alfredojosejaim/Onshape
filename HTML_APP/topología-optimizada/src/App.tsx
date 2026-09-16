@@ -67,6 +67,55 @@ import type { SolidInfo } from './types';
 import { mapMeshPreview, placeholderSurface, type RealSurface } from './lib/realdata';
 // NAV-VIEW-END
 
+// ADV-OPT (reversible): traduce SimpParameters avanzados al dict que espera
+// api.runOptimization. Solo envía lo activado; con defaults equivale al
+// request histórico (OC sin restricciones). El backend valida y rechaza
+// explícito (el aviso llega por el notice existente). Para volver atrás:
+// quitar función + spread en runOptimization.
+function buildAdvancedOptParams(sp: SimpParameters): Record<string, unknown> {
+  const out: Record<string, unknown> = { optimizer: sp.optimizer };
+  if (sp.optimizer === 'eso') {
+    out.eso_criterion = sp.esoCriterion;
+    out.evolutionary_rate = sp.evolutionaryRate;
+  }
+  if (sp.optimizer === 'level_set') {
+    out.ls_cfl = sp.lsCfl;
+    out.ls_hole_period = Math.max(1, Math.round(sp.lsHolePeriod));
+  }
+  const sym: [string, number][] = [];
+  if (sp.symX && Number.isFinite(sp.symXVal)) sym.push(['x', sp.symXVal]);
+  if (sp.symY && Number.isFinite(sp.symYVal)) sym.push(['y', sp.symYVal]);
+  if (sp.symZ && Number.isFinite(sp.symZVal)) sym.push(['z', sp.symZVal]);
+  if (sym.length > 0) out.symmetry_planes = sym;
+  if (Number.isFinite(sp.minThickness) && sp.minThickness > 0) {
+    out.min_thickness = sp.minThickness;
+  }
+  if (sp.overhangEnabled) {
+    out.overhang_constraint = true;
+    out.build_direction = [...sp.overhangBuildDir];
+    out.overhang_angle_deg = sp.overhangAngleDeg;
+    out.overhang_penalty = sp.overhangPenalty;
+  }
+  out.objective = sp.objective;
+  if (sp.objective === 'min_volume' && sp.complianceLimit !== null) {
+    out.compliance_limit = sp.complianceLimit;
+  }
+  if (sp.thermalEnabled) {
+    const temps = sp.thermalTemperatures
+      .split(',')
+      .map((s) => parseFloat(s.trim()))
+      .filter((n) => Number.isFinite(n));
+    if (temps.length > 0) out.thermal_temperatures = temps;
+    if (Number.isFinite(sp.thermalAlpha) && sp.thermalAlpha > 0) {
+      out.thermal_alpha = sp.thermalAlpha;
+    }
+    if (Number.isFinite(sp.thermalRefTemp)) {
+      out.thermal_reference_temperature = sp.thermalRefTemp;
+    }
+  }
+  return out;
+}
+
 export default function App() {
   // Navigation & Tools
   const [activeTab, setActiveTab] = useState<ActiveTab>('optimizacion');
@@ -327,6 +376,27 @@ export default function App() {
     extrusionAxis: 'off',
     brepStyle: 'bspline',
     designSpace: 'part',
+    // ADV-OPT (reversible): defaults = comportamiento histórico (OC sin
+    // restricciones extra). Para volver atrás: quitar bloque + panel + spread.
+    optimizer: 'oc',
+    esoCriterion: 'compliance',
+    evolutionaryRate: 0.02,
+    lsCfl: 0.5,
+    lsHolePeriod: 3,
+    symX: false, symXVal: 0,
+    symY: false, symYVal: 0,
+    symZ: false, symZVal: 0,
+    minThickness: 0,
+    overhangEnabled: false,
+    overhangBuildDir: [0, 0, 1],
+    overhangAngleDeg: 45,
+    overhangPenalty: 0.5,
+    objective: 'min_compliance',
+    complianceLimit: null,
+    thermalEnabled: false,
+    thermalAlpha: 0.00001,
+    thermalTemperatures: '300, 400',
+    thermalRefTemp: 293,
   });
   // OPT-TYPE (reversible): estructural (SIMP) vs generativa (escenario A).
   const [optType, setOptType] = useState<OptimizationType>('estructural');
@@ -949,6 +1019,9 @@ export default function App() {
               heaviside_beta: st.simpParams.heavisideBeta,
               heaviside_continuation: true,
               extrusion_axis: st.simpParams.extrusionAxis === 'off' ? null : st.simpParams.extrusionAxis,
+              // ADV-OPT (reversible): solo rama estructural (la generativa
+              // ignora estas claves). Para volver atrás: quitar el spread.
+              ...buildAdvancedOptParams(st.simpParams),
             });
         if (r.ok && r.jobId) {
           setSimpJobId(r.jobId);

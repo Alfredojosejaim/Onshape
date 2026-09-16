@@ -10,6 +10,10 @@ import { CompareTable } from './CompareTable';
 // rama 'malla' + props.
 import { MeshResultsPanel } from './MeshResultsPanel';
 // MALLA-TOOLS-END
+// ADV-OPT-START (reversible): motores y restricciones avanzadas. Para volver
+// atrás: quitar import + render <AdvancedOptPanel/>.
+import { AdvancedOptPanel } from './AdvancedOptPanel';
+// ADV-OPT-END
 
 interface RightPanelProps {
   activeTab: ActiveTab;
@@ -296,6 +300,14 @@ export const RightPanel: React.FC<RightPanelProps> = ({
                 </select>
               </label>
             </div>
+
+            {/* ADV-OPT (reversible): motores/restricciones del core. Para
+                volver atrás: quitar bloque + import + tipos + spread. */}
+            <AdvancedOptPanel
+              simpParams={simpParams}
+              onChangeSimpParams={onChangeSimpParams}
+              disabled={optimizationState.isRunning}
+            />
 
             <div className="grid grid-cols-2 gap-1.5">
               <div className="flex items-center justify-between px-2 py-1 rounded bg-surface-elevated/40 border border-border-subtle/30 text-[10px] font-mono">

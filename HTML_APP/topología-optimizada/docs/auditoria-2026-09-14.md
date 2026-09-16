@@ -50,7 +50,7 @@ el usuario); el resto queda como backlog documentado en §7.
 | 5 | Medio | ~236 `except Exception: pass` | backlog |
 | 6 | Medio | API HTTP local sin auth ni whitelist en servidor | backlog |
 | 7 | Deuda | Multicarga: UI envía 1 carga, backend soporta N | backlog |
-| 8 | Bajo | Residuos del template AI Studio + deps muertas | backlog |
+| 8 | Bajo | Residuos del template AI Studio + deps muertas | **CORREGIDO** (15-sep-2026, acta `docs/sesion-2026-09-15-limpieza-andamiaje-aistudio.md`) |
 | 9 | Bajo | Cobertura de tests fina (19 tests / 27,5k líneas) | backlog |
 
 ---

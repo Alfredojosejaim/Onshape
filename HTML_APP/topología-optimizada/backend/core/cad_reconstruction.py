@@ -1651,7 +1651,15 @@ class OCPBSplineFitter(OCPBRepFitter):
         meta["continuity_target"] = self._continuity
         solid = base.data
         if self._fit_patches:
-            fitted, applied = self._fit_patches_solid(solid, meta)
+            # FAIL-SAFE: el ajuste por parches es experimental; NUNCA debe
+            # tumbar el job. Cualquier excepción inesperada de OCP cae a la
+            # cadena facetada con el motivo en metadata (nunca silencio).
+            try:
+                fitted, applied = self._fit_patches_solid(solid, meta)
+            except Exception as exc:  # noqa: BLE001 - defensivo
+                meta["bspline_fit"] = "error"
+                meta["bspline_fit_error"] = f"{type(exc).__name__}: {exc}"
+                applied, fitted = False, solid
             if applied:
                 try:
                     self._write_step(fitted, meta)

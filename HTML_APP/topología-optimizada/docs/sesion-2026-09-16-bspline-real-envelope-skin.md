@@ -92,3 +92,6 @@ histórica unify→restriction→continuidad y exporta igual el STEP facetado.
 - Fase dedicada para aplicar B-spline a isosuperficies TO ruidosos
   (limpieza/segmentación del isosuperficie o mayor suavizado del campo SIMP).
 - El envelope con skin subió el tiempo de corrida (~250–300 s en 30 iters).
+- Ver el reporte posterior en
+  `sesion-2026-09-16-generativa-envelope-bspline-error.md`.
+

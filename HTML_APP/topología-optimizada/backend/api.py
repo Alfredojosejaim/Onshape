@@ -1594,8 +1594,14 @@ class Api:
             j = self._jobs.get(job_id)
             if j is None:
                 return {"ok": False, "error": f"job desconocido: {job_id}"}
+            # JOB-ERR-STR: el error del job se guarda como dict (_err). La UI
+            # solo muestra el detalle si es string; antes quedaba en el
+            # genérico "El job terminó con error" y la causa real se perdía.
+            err = j.get("error")
+            if isinstance(err, dict):
+                err = err.get("error") or str(err)
             return {"ok": True, "state": j["state"], "progress": j["progress"],
-                    "result": j["result"], "error": j["error"]}
+                    "result": j["result"], "error": err}
 
     def getMeshPreview(self) -> dict:
         """Teselado actual diezmado para three.js (vertices + caras)."""

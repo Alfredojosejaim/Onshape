@@ -61,6 +61,18 @@ class Bridge:
     def __init__(self, base_url: str) -> None:
         self._base = base_url
 
+    # BRIDGE-TIMEOUTS (reversible): llamadas científicas bloqueantes
+    # (fit B-Rep + export + reimport de registerReconstruction, mallados
+    # Gmsh, STEP grandes) superan los 120s base y el puente devolvía
+    # "TimeoutError: timed out" aunque el cálculo iba bien. Presupuesto
+    # amplio solo para ellas; el polling y el resto siguen en 120s.
+    _LONG_TIMEOUT = 1200.0
+    _LONG_METHODS = frozenset({
+        "registerReconstruction", "exportStep", "importStep",
+        "importStepBytes", "generateMesh", "generateAdaptiveMesh",
+        "getSurfaceMesh", "getMeshPreview", "remeshMesh",
+    })
+
     def _call(self, method: str, *args: object) -> dict:
         data = json.dumps({"method": method, "args": list(args)}).encode("utf-8")
         req = urllib.request.Request(
@@ -70,8 +82,10 @@ class Bridge:
         # timeout), devolver un error legible en vez de propagar la excepcion de
         # urllib (que en la UI se veia como "error de url / falta de conexion"
         # y dejaba la app sin poder seguir). Para volver atras: quitar el try.
+        timeout = (self._LONG_TIMEOUT if method in self._LONG_METHODS
+                   else 120.0)
         try:
-            with urllib.request.urlopen(req, timeout=120) as res:
+            with urllib.request.urlopen(req, timeout=timeout) as res:
                 body = json.loads(res.read().decode("utf-8"))
         except Exception as exc:  # noqa: BLE001 - el error viaja al frontend
             logger.error("backend no responde en %s: %s", method, exc)

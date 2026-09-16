@@ -1017,6 +1017,7 @@ class Api:
                                legacy_fixed_dofs=legacy_fixed_dofs,
                                heaviside_projection=bool(p.get("heaviside_projection", False)),
                                heaviside_beta=float(p.get("heaviside_beta", 1.0)),
+                               heaviside_eta=float(p.get("heaviside_eta", 0.5)),
                                heaviside_continuation=bool(p.get("heaviside_continuation", False)),
                                extrusion_axis=p.get("extrusion_axis"),
                                brep_style=str(p.get("brep_style", "faceted")).lower(),

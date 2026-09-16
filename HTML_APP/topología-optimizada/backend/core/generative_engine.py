@@ -973,6 +973,17 @@ class GenerativeDesignEngine:
 
         forces, fixed_dofs, preserved, void, unsupported = \
             self._map_conditions_to_problem(conditions, raise_on_unmapped_face=False)
+        # ENV-SKIN: capa de vacío en el borde del dominio de diseño. Sin ella
+        # el material del envelope crece HASTA la pared de la caja, el
+        # isosuperficie queda ABIERTO y la reconstrucción B-Rep falla
+        # ("isosuperficie abierta/degenerada"). Forzar el borde a vacío
+        # garantiza una superficie cerrada. La calcula run_generative_design
+        # para el envelope; con 'part' no interviene.
+        _skin = kwargs.get("void_skin")
+        if _skin is not None:
+            _s = np.asarray(_skin, dtype=int).ravel()
+            if _s.size:
+                void = np.union1d(np.asarray(void, dtype=int), _s)
         # MULTICARGA: casos separados (misma fisica que el vector sumado).
         cases, weights, unsupported_cases = \
             self._map_conditions_to_load_cases(conditions, raise_on_unmapped_face=False)
@@ -1255,11 +1266,34 @@ def run_generative_design(
             # y la tolerancia debe ser mesh-adaptativa para mapear las caras.
             engine._surface_matches_mesh = False
             engine._face_tolerance = 1.5 * eff_res
+            # ENV-SKIN: elementos que tocan la pared de la caja de diseño se
+            # fuerzan a vacío (una capa) para que el isosuperficie cierre.
+            _en = np.asarray(env.nodes, dtype=float)
+            _lo = _en.min(axis=0)
+            _hi = _en.max(axis=0)
+            _skin_tol = float(eff_res)
+            _cent = np.asarray(
+                [_en[el].mean(axis=0) for el in np.asarray(env.elements, dtype=int)],
+                dtype=float)
+            _skin_mask = np.any(
+                (_cent <= (_lo + _skin_tol)) | (_cent >= (_hi - _skin_tol)), axis=1)
+            _skin = np.nonzero(_skin_mask)[0]
+            solve_kwargs["void_skin"] = _skin
+            # ORGANIC-FILTER: el filtro debe cubrir ~1.5 voxels para ramificar
+            # suave (hueso) en vez de fragmentar en checkerboard. Si el usuario
+            # pidió menos, se sube al mínimo y se declara en el meta.
+            req_filter = float(solve_kwargs.get("filter_radius", 1.5) or 1.5)
+            auto_filter = max(req_filter, 1.5 * eff_res)
+            solve_kwargs["filter_radius"] = auto_filter
             env_meta = {
                 "design_space": "envelope",
                 "resolution": eff_res,
                 "voxels": int(env.target_node_sets["voxels"][0]),
                 "num_elements": int(env.elements.shape[0]),
+                "filter_radius": auto_filter,
+                "filter_auto": bool(auto_filter > req_filter),
+                "filter_requested": req_filter,
+                "void_skin_elements": int(_skin.size),
             }
         elif design_space != "part":
             raise ValueError(
@@ -1337,6 +1371,7 @@ def _reconstruct(
     preserved_elements: Optional[List[int]] = None,
     smoothing_method: str = "laplacian",
     brep_style: str = "faceted",
+    max_brep_triangles: Optional[int] = 6000,
 ):
     from core.cad_reconstruction import (
         ReconstructionPipeline,
@@ -1361,6 +1396,7 @@ def _reconstruct(
         brep_fitter=fitter,
         step_path=step_path,
         smoothing_method=smoothing_method,
+        max_brep_triangles=max_brep_triangles,
     )
     final = pipe.run(
         engine.mesh_nodes,

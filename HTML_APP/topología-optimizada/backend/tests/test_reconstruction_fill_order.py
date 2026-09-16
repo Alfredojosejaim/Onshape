@@ -151,6 +151,39 @@ class _SpyFitter:
         )
 
 
+def test_brep_triangle_cap_decimates_before_fit():
+    """BREPCAP: isosuperficies enormes se diezman al tope antes del fit."""
+    v, t = _open_box()
+    seen = []
+
+    class _RecFitter:
+        def fit(self, vertices, triangles):
+            seen.append((np.asarray(vertices).shape[0],
+                         np.asarray(triangles).shape[0]))
+            return ReconstructionResult(
+                stage=ReconstructionStage.BREP_SOLID,
+                status=ReconstructionStatus.COMPLETED,
+                data={"vertices": np.asarray(vertices),
+                      "triangles": np.asarray(triangles)},
+                metadata={},
+            )
+
+    pipe = ReconstructionPipeline(
+        surface_extractor=_HoledBoxExtractor(v, t),
+        brep_fitter=_RecFitter(),
+        max_brep_triangles=4,
+    )
+    out = pipe.run(*_dummy_inputs())
+    assert out.status == ReconstructionStatus.COMPLETED, out.error_message
+    assert seen and seen[0][1] <= 4
+    assert out.metadata.get("brep_decimated_from", 0) >= seen[0][1]
+    assert out.metadata.get("brep_triangle_cap") == 4
+    with pytest.raises(ValueError):
+        ReconstructionPipeline(max_brep_triangles=3)
+    with pytest.raises(ValueError):
+        ReconstructionPipeline(max_brep_triangles="muchos")  # type: ignore[arg-type]
+
+
 def test_brep_prefers_smoothed_over_filled():
     """El STEP debe salir de la malla suavizada, no de la rellenada."""
     v, t = _open_box()

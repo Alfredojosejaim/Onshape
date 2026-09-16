@@ -75,3 +75,12 @@ def test_tree_body_select_and_tolerant_delete():
     assert "selectedBodyKey" in left
     ops = (ROOT / "src" / "components" / "OperationRow.tsx").read_text(encoding="utf-8")
     assert "TREE-BODY-SELECT" in ops
+
+
+def test_bridge_long_timeouts_cover_blocking_calls():
+    desk = (ROOT / "backend" / "app_desktop.py").read_text(encoding="utf-8")
+    assert "_LONG_METHODS" in desk
+    assert "_LONG_TIMEOUT" in desk
+    for m in ("registerReconstruction", "exportStep", "generateMesh",
+              "importStep"):
+        assert m in desk

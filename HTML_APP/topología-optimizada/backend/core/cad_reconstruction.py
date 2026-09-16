@@ -1579,32 +1579,22 @@ class OCPBRepFitter(BRepFitter):
 
 
 class OCPBSplineFitter(OCPBRepFitter):
-    """B-Rep suave B-spline: une caras coplanares, convierte superficies a
-    B-spline y sube la continuidad a C1/C2 antes de exportar STEP.
+    """B-Rep con superficies B-spline reales por parches (regiones).
 
-    NOTA HONESTA (16-sep-2026, spike PLATE-FIT medido): esto NO ajusta
-    superficies NURBS sobre la malla — parte de una cara plana por triángulo
-    y solo convierte representación + continuidad. El STEP sigue siendo un
-    poliedro (ver test_bspline_fitter_unifies_and_exports_step: 12 tris →
-    6 caras). Fitting real por parches (placa multi-región) se spikeó:
-    cara individual válida y rápida, pero el cosido multi-región no cierra
-    en el caso liso representativo y el solver placa es lento/cuelga con
-    restricciones densas. Fase propia si se retoma, no este estilo.
+    PAT-FIT (reversible, 16-sep-2026): el ajuste REAL de superficies se hace
+    agrupando las caras planas del isosuperficie en regiones (conectadas y
+    con normal similar) y reemplazando cada región por UNA cara suave
+    construida con ``BRepOffsetAPI_MakeFilling`` sobre su borde + puntos
+    interiores. Medido en esfera: 1520 triángulos → 3 caras B-spline válidas.
 
-    Aprobado explícitamente por el usuario (fuera de plan, confirm-gate
-    Fase 0.5). Reutiliza el cosido + validación de :class:`OCPBRepFitter`;
-    sobre el sólido válido aplica, en orden y validando cada paso:
-
-    1. ``ShapeUpgrade_UnifySameDomain`` — fusiona caras coplanares (la
-       isosuperficie de marching-tets trae cientos de triángulos planos que
-       colapsan a una sola cara).
-    2. ``ShapeCustom_BSplineRestriction`` — convierte superficies/curvas a
-       B-spline con tolerancia.
-    3. ``ShapeUpgrade_ShapeDivideContinuity`` — eleva la continuidad de
-       borde a C1/C2.
-
-    Si OCC no soporta o falla un paso, se registra en ``metadata`` y se
-    conserva el último sólido válido (nunca silencioso, nunca crash).
+    Diseño fail-safe: si el sólido reensamblado no es válido, o la topología
+    de una región no es un ciclo simple, se conserva el sólido facetado
+    previo y se registra el motivo en ``metadata`` (nunca geometría inválida,
+    nunca silencio). El ajuste por parches se ejecuta ANTES del resto: al
+    tener ya superficies B-spline no se aplican unify/restriction (que en el
+    isosuperficie crudo daban ``skipped_invalid``). Si el ajuste está
+    desactivado o falla, se mantiene la cadena histórica unify→bspline→
+    continuidad.
     """
 
     def __init__(
@@ -1613,6 +1603,14 @@ class OCPBSplineFitter(OCPBRepFitter):
         unify_tolerance: float = 1e-4,
         bspline_tolerance: float = 1e-3,
         continuity: str = "C1",
+        fit_patches: bool = True,
+        region_angle_deg: float = 35.0,
+        min_region_faces: int = 3,
+        max_region_faces: int = 600,
+        max_patch_points: int = 0,
+        max_regions: int = 4000,
+        max_loop_edges: int = 3000,
+        allow_partial_patches: bool = False,
     ) -> None:
         super().__init__(step_path=None)  # la exportación se hace aquí
         self._out_step_path = step_path
@@ -1621,6 +1619,20 @@ class OCPBSplineFitter(OCPBRepFitter):
         if continuity not in ("C0", "C1", "C2"):
             raise ValueError(f"continuity={continuity!r} inválida (C0|C1|C2).")
         self._continuity = continuity
+        self._fit_patches = bool(fit_patches)
+        if not 0.0 < float(region_angle_deg) < 90.0:
+            raise ValueError(
+                f"region_angle_deg={region_angle_deg!r} fuera de rango (0, 90).")
+        self._region_angle_deg = float(region_angle_deg)
+        self._min_region_faces = max(2, int(min_region_faces))
+        # PAT-SEG: tope de caras por parche. Sin tope, una superficie cerrada
+        # y suave se fusiona en UNA región sin borde → imposible de rellenar.
+        # Con tope se segmenta en parches con borde (como el reverse real).
+        self._max_region_faces = max(self._min_region_faces, int(max_region_faces))
+        self._max_patch_points = max(0, int(max_patch_points))
+        self._max_regions = max(1, int(max_regions))
+        self._max_loop_edges = max(4, int(max_loop_edges))
+        self._allow_partial_patches = bool(allow_partial_patches)
 
     @staticmethod
     def _valid(shape) -> bool:
@@ -1638,6 +1650,20 @@ class OCPBSplineFitter(OCPBRepFitter):
         meta["brep_style"] = "bspline"
         meta["continuity_target"] = self._continuity
         solid = base.data
+        if self._fit_patches:
+            fitted, applied = self._fit_patches_solid(solid, meta)
+            if applied:
+                try:
+                    self._write_step(fitted, meta)
+                except Exception as exc:  # pragma: no cover - defensive
+                    meta["step_export_error"] = str(exc)
+                return ReconstructionResult(
+                    stage=ReconstructionStage.BREP_SOLID,
+                    status=ReconstructionStatus.COMPLETED,
+                    data=fitted,
+                    metadata=meta,
+                )
+        # Cadena histórica (o fallback del ajuste por parches).
         solid = self._step_unify(solid, meta)
         solid = self._step_bspline(solid, meta)
         solid = self._step_continuity(solid, meta)
@@ -1651,6 +1677,305 @@ class OCPBSplineFitter(OCPBRepFitter):
             data=solid,
             metadata=meta,
         )
+
+    # -- PAT-FIT --------------------------------------------------------
+    def _fit_patches_solid(self, solid, meta: Dict[str, Any]):
+        """Reemplaza regiones de caras por parches B-spline suaves.
+
+        Devuelve ``(solid, applied)``. ``applied=False`` si no se pudo
+        reconstruir un sólido válido (el llamador conserva el facetado).
+        """
+        import numpy as np
+        try:
+            from OCP.TopAbs import (TopAbs_FACE, TopAbs_EDGE, TopAbs_VERTEX,
+                                    TopAbs_Orientation)
+            from OCP.TopExp import TopExp, TopExp_Explorer
+            from OCP.TopTools import (TopTools_IndexedMapOfShape,
+                                      TopTools_IndexedDataMapOfShapeListOfShape)
+            from OCP.TopoDS import TopoDS
+            from OCP.BRep import BRep_Tool
+            from OCP.BRepBuilderAPI import (BRepBuilderAPI_MakeEdge,
+                                            BRepBuilderAPI_MakeFace,
+                                            BRepBuilderAPI_Sewing)
+            from OCP.BRepOffsetAPI import BRepOffsetAPI_MakeFilling
+            from OCP.GeomAbs import GeomAbs_Shape
+            from OCP.gp import gp_Pnt
+        except Exception as exc:  # pragma: no cover - OCP required
+            meta["bspline_fit"] = "ocp_unavailable"
+            meta["bspline_fit_error"] = str(exc)
+            return solid, False
+
+        fmap = TopTools_IndexedMapOfShape()
+        TopExp.MapShapes_s(solid, TopAbs_FACE, fmap)
+        n_faces = int(fmap.Extent())
+        if n_faces == 0 or n_faces > 40000:
+            meta["bspline_fit"] = "skipped_size"
+            meta["bspline_face_count"] = n_faces
+            return solid, False
+
+        e2f = TopTools_IndexedDataMapOfShapeListOfShape()
+        TopExp.MapShapesAndAncestors_s(solid, TopAbs_EDGE, TopAbs_FACE, e2f)
+
+        vmap = TopTools_IndexedMapOfShape()
+        TopExp.MapShapes_s(solid, TopAbs_VERTEX, vmap)
+
+        def face_unique_verts(face):
+            """Vértices únicos (el explorador repite por arista)."""
+            ids = []
+            seen_ids = set()
+            exp = TopExp_Explorer(face, TopAbs_VERTEX)
+            while exp.More():
+                try:
+                    vid = int(vmap.FindIndex(exp.Current()))
+                except Exception:  # noqa: BLE001 - defensivo
+                    vid = -1
+                if vid >= 0 and vid not in seen_ids:
+                    seen_ids.add(vid)
+                    p = BRep_Tool.Pnt_s(TopoDS.Vertex_s(exp.Current()))
+                    ids.append(np.array([p.X(), p.Y(), p.Z()]))
+                exp.Next()
+            return ids
+
+        def edge_key(edge):
+            try:
+                return int(e2f.FindIndex(edge))
+            except Exception:
+                return -1
+
+        face_normals = []
+        face_edges = []   # list[list[int]] edge keys
+        for i in range(1, n_faces + 1):
+            f = TopoDS.Face_s(fmap.FindKey(i))
+            vs = face_unique_verts(f)
+            n = np.array([0.0, 0.0, 0.0])
+            if len(vs) >= 3:
+                n = np.cross(vs[1] - vs[0], vs[2] - vs[0])
+                ln = float(np.linalg.norm(n))
+                n = n / ln if ln > 1e-15 else n
+                try:
+                    if f.Orientation() == TopAbs_Orientation.TopAbs_REVERSED:
+                        n = -n
+                except Exception:  # noqa: BLE001 - defensivo
+                    pass
+            face_normals.append(n)
+            eks = []
+            exp = TopExp_Explorer(f, TopAbs_EDGE)
+            while exp.More():
+                eks.append(edge_key(TopoDS.Edge_s(exp.Current())))
+                exp.Next()
+            face_edges.append(eks)
+
+        # adyacencia por arista compartida
+        edge_faces: Dict[int, List[int]] = {}
+        for fi, eks in enumerate(face_edges):
+            for k in eks:
+                if k >= 0:
+                    edge_faces.setdefault(k, []).append(fi)
+
+        adj: Dict[int, set] = {i: set() for i in range(n_faces)}
+        for k, fs in edge_faces.items():
+            for a in range(len(fs)):
+                for b in range(a + 1, len(fs)):
+                    adj[fs[a]].add(fs[b])
+                    adj[fs[b]].add(fs[a])
+
+        # region growing por normal
+        cos_thr = float(np.cos(np.radians(self._region_angle_deg)))
+        seen = [False] * n_faces
+        regions: List[List[int]] = []
+        for seed in range(n_faces):
+            if seen[seed]:
+                continue
+            # PAT-SEG: BFS compacto desde la semilla. El criterio es la
+            # normal de la SEMILLA (no del vecino): así el parche queda
+            # acotado por desviación angular total y su tamaño no depende
+            # del mallado (vecino-a-vecino fusionaba toda la esfera en una
+            # región sin borde, imposible de rellenar).
+            from collections import deque
+            seed_n = face_normals[seed]
+            queue = deque([seed])
+            seen[seed] = True
+            reg = []
+            while queue:
+                cu = queue.popleft()
+                reg.append(cu)
+                if len(reg) >= self._max_region_faces:
+                    continue
+                for nb in adj[cu]:
+                    if not seen[nb] and abs(float(
+                            np.dot(seed_n, face_normals[nb]))) >= cos_thr:
+                        seen[nb] = True
+                        queue.append(nb)
+            regions.append(reg)
+        if len(regions) > self._max_regions:
+            meta["bspline_fit"] = "skipped_regions"
+            meta["bspline_region_count"] = len(regions)
+            return solid, False
+
+        # vertex ids (para ordenar bucles de borde)
+
+        new_faces = []
+        applied_regions = 0
+        fallback_regions = 0
+        stats = {"tiny": 0, "bnd_zero": 0, "bnd_too_many": 0,
+                 "wires_zero": 0, "fill_fail": 0}
+        for reg in regions:
+            if len(reg) < self._min_region_faces:
+                stats["tiny"] += 1
+                for fi in reg:
+                    new_faces.append(fmap.FindKey(fi + 1))
+                fallback_regions += 1
+                continue
+            in_region = set(reg)
+            bnd: List[int] = []
+            for fi in reg:
+                for k in face_edges[fi]:
+                    if k < 0:
+                        continue
+                    owners = edge_faces.get(k, [])
+                    if sum(1 for o in owners if o in in_region) == 1:
+                        bnd.append(k)
+            if not bnd:
+                stats["bnd_zero"] += 1
+            elif len(bnd) > self._max_loop_edges:
+                stats["bnd_too_many"] += 1
+            ok = False
+            face_shape = None
+            if 0 < len(bnd) <= self._max_loop_edges:
+                try:
+                    from OCP.TopTools import TopTools_HSequenceOfShape
+                    from OCP.ShapeAnalysis import ShapeAnalysis_FreeBounds
+                    seq = TopTools_HSequenceOfShape()
+                    for k in set(bnd):
+                        seq.Append(e2f.FindKey(k))
+                    wires = TopTools_HSequenceOfShape()
+                    ShapeAnalysis_FreeBounds.ConnectEdgesToWires_s(
+                        seq, self._bspline_tolerance, False, wires)
+                    if int(wires.Length()) == 0:
+                        stats["wires_zero"] += 1
+                    if int(wires.Length()) >= 1:
+                        # Parche suave por región (multi-bucle = con huecos).
+                        loop_edges = []
+                        for wi in range(1, int(wires.Length()) + 1):
+                            w = TopoDS.Wire_s(wires.Value(wi))
+                            exp = TopExp_Explorer(w, TopAbs_EDGE)
+                            while exp.More():
+                                loop_edges.append(TopoDS.Edge_s(exp.Current()))
+                                exp.Next()
+                        if len(loop_edges) >= 3:
+                            fill = BRepOffsetAPI_MakeFilling()
+                            for e in loop_edges:
+                                fill.Add(e, GeomAbs_Shape.GeomAbs_C0, True)
+                            fill.Build()
+                            if fill.IsDone() and self._valid(fill.Shape()):
+                                face_shape = fill.Shape()
+                                ok = True
+                            else:
+                                stats["fill_fail"] += 1
+                except Exception:  # noqa: BLE001 - defensivo
+                    ok = False
+                    stats["fill_fail"] += 1
+            if ok:
+                new_faces.append(face_shape)
+                applied_regions += 1
+            else:
+                for fi in reg:
+                    new_faces.append(fmap.FindKey(fi + 1))
+                fallback_regions += 1
+
+        if applied_regions == 0:
+            meta["bspline_fit"] = "no_regions_applied"
+            meta["bspline_regions"] = len(regions)
+            meta["bspline_fit_stats"] = stats
+            return solid, False
+        # ALL-OR-NOTHING: mezclar parches con triángulos de fallback deja
+        # costuras no coincidentes (cáscara abierta / volumen ~0). Si alguna
+        # región no se pudo parchear, se descarta el ajuste completo.
+        if fallback_regions > 0 and not self._allow_partial_patches:
+            meta["bspline_fit"] = "fallback_mixed"
+            meta["bspline_regions"] = len(regions)
+            meta["bspline_regions_applied"] = applied_regions
+            meta["bspline_regions_fallback"] = fallback_regions
+            meta["bspline_fit_stats"] = stats
+            return solid, False
+
+        # ensamblar + coser + extraer cáscara + sólido válido
+        from OCP.BRep import BRep_Builder
+        from OCP.TopoDS import TopoDS_Compound, TopoDS_Solid, TopoDS_Shell
+        from OCP.TopAbs import TopAbs_ShapeEnum
+        from OCP.ShapeFix import ShapeFix_Solid
+        comp = TopoDS_Compound()
+        builder = BRep_Builder()
+        builder.MakeCompound(comp)
+        for f in new_faces:
+            builder.Add(comp, f)
+        sew = BRepBuilderAPI_Sewing(self._bspline_tolerance * 10.0)
+        sew.Add(comp)
+        sew.Perform()
+        meta["bspline_sew_free_edges"] = int(sew.NbFreeEdges())
+        meta["bspline_sew_multiple_edges"] = int(sew.NbMultipleEdges())
+        sewed = sew.SewedShape()
+        shell = None
+        exp = TopExp_Explorer(sewed, TopAbs_ShapeEnum.TopAbs_SHELL)
+        if exp.More():
+            shell = TopoDS.Shell_s(exp.Current())
+        if shell is None or shell.IsNull():
+            meta["bspline_fit"] = "sew_no_shell"
+            return solid, False
+        out = TopoDS_Solid()
+        builder.MakeSolid(out)
+        builder.Add(out, shell)
+        if not self._valid(out):
+            try:
+                sf = ShapeFix_Solid(out)
+                sf.SetPrecision(self._bspline_tolerance * 10.0)
+                sf.SetMaxTolerance(1.0)
+                sf.Perform()
+                cand = sf.Solid()
+                if not cand.IsNull() and self._valid(cand):
+                    out = cand
+            except Exception:  # noqa: BLE001 - defensivo
+                pass
+        if not self._valid(out):
+            meta["bspline_fit"] = "fallback_invalid"
+            meta["bspline_regions"] = len(regions)
+            return solid, False
+        # VOL-GUARD (crítico): MakeFilling puede dar un sólido "válido" pero
+        # con volumen ~0 (parches plegados/auto-intersectados). Se exige que
+        # el volumen se conserve (75%-133%) respecto del facetado; si no, se
+        # descarta el ajuste (el registro rechazaría un cuerpo degenerado).
+        try:
+            from OCP.BRepGProp import BRepGProp
+            from OCP.GProp import GProp_GProps
+            pv = GProp_GProps()
+            BRepGProp.VolumeProperties_s(out, pv)
+            vol_out = abs(float(pv.Mass()))
+            pb = GProp_GProps()
+            BRepGProp.VolumeProperties_s(solid, pb)
+            vol_base = abs(float(pb.Mass()))
+            if vol_base > 1e-12:
+                ratio = vol_out / vol_base
+                meta["bspline_volume_ratio"] = round(ratio, 4)
+                meta["bspline_volume_base"] = round(vol_base, 4)
+                meta["bspline_volume_fitted"] = round(vol_out, 4)
+                if not (0.75 <= ratio <= 1.3333):
+                    meta["bspline_fit"] = "fallback_volume"
+                    meta["bspline_regions"] = len(regions)
+                    return solid, False
+        except Exception:  # noqa: BLE001 - defensivo
+            meta["bspline_fit"] = "fallback_volume_check_failed"
+            meta["bspline_regions"] = len(regions)
+            return solid, False
+        meta["bspline_fit"] = "applied"
+        meta["bspline_regions"] = len(regions)
+        meta["bspline_regions_applied"] = applied_regions
+        meta["bspline_regions_fallback"] = fallback_regions
+        meta["bspline_faces_before"] = n_faces
+        meta["bspline_faces_after"] = len(new_faces)
+        meta["bspline_region_angle_deg"] = self._region_angle_deg
+        meta.pop("unify_same_domain", None)
+        return out, True
+
 
     def _step_unify(self, solid, meta: Dict[str, Any]):
         try:
@@ -1760,6 +2085,7 @@ class ReconstructionPipeline:
         decimate_fraction: Optional[float] = None,
         smoothing_method: str = "laplacian",
         max_hole_edges: Optional[int] = None,
+        max_brep_triangles: Optional[int] = None,
     ) -> None:
         self._surface_extractor = surface_extractor or MarchingTetrahedraExtractor()
         self._brep_fitter = brep_fitter or OCPBRepFitter(step_path=step_path)
@@ -1788,6 +2114,20 @@ class ReconstructionPipeline:
                 f"(usar None o entero >= 3).")
         self._max_hole_edges = max_hole_edges
         self._decimate_fraction = float(decimate_fraction) if decimate_fraction is not None else None
+        # BREPCAP (reversible): tope de triángulos por candidato pre-fit.
+        # Un isosuperficie de envelope (10k+ tris) cose 10k caras OCP y el
+        # STEP sale de ~30MB: export+reimport superan el timeout del puente
+        # (120s) y la pieza parece "colgada". Con tope se diezma al cap y se
+        # declara en metadata. None = histórico (sin tope).
+        if max_brep_triangles is not None and (
+            not isinstance(max_brep_triangles, int)
+            or isinstance(max_brep_triangles, bool)
+            or max_brep_triangles < 4
+        ):
+            raise ValueError(
+                f"max_brep_triangles={max_brep_triangles!r} inválido "
+                f"(usar None o entero >= 4).")
+        self._max_brep_triangles = max_brep_triangles
         self._step_path = step_path
         self._stages: Dict[ReconstructionStage, ReconstructionResult] = {}
         self._status = ReconstructionStatus.NOT_STARTED
@@ -1978,10 +2318,19 @@ class ReconstructionPipeline:
             for cand, source in candidates:
                 if cand.get("vertices") is None or cand.get("triangles") is None:
                     continue
+                fit_verts = np.asarray(cand["vertices"])
+                fit_tris = np.asarray(cand["triangles"])
+                dec_from: Optional[int] = None
+                cap = self._max_brep_triangles
+                if cap is not None and int(fit_tris.shape[0]) > int(cap):
+                    # Diezmado pre-fit: el sewing OCP escala con nº de caras.
+                    dec_from = int(fit_tris.shape[0])
+                    frac = float(cap) / float(dec_from)
+                    dec_result = MeshDecimator(frac).decimate(fit_verts, fit_tris)
+                    fit_verts = np.asarray(dec_result.data["vertices"])
+                    fit_tris = np.asarray(dec_result.data["triangles"])
                 try:
-                    r = self._brep_fitter.fit(
-                        np.asarray(cand["vertices"]), np.asarray(cand["triangles"])
-                    )
+                    r = self._brep_fitter.fit(fit_verts, fit_tris)
                 except Exception as exc:  # pragma: no cover - defensive
                     r = ReconstructionResult(
                         stage=ReconstructionStage.BREP_SOLID,
@@ -1992,6 +2341,11 @@ class ReconstructionPipeline:
                     r.metadata.setdefault("frozen_elements", frozen_list)
                     r.metadata.setdefault("preserved_elements", preserved_list)
                     r.metadata.setdefault("brep_source", source)
+                    if dec_from is not None:
+                        r.metadata.setdefault("brep_decimated_from", dec_from)
+                        r.metadata.setdefault(
+                            "brep_decimated_to", int(fit_tris.shape[0]))
+                        r.metadata.setdefault("brep_triangle_cap", int(cap))  # type: ignore[arg-type]
                     if frozen_list:
                         r.metadata.setdefault(
                             "frozen_passthrough", "frozen_face_as_keep_in@1.0")

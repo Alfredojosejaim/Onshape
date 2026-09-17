@@ -79,7 +79,16 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        self.wfile.write(data)
+        # WRITE-ABORT (reversible): con el servidor monohilo, un handler
+        # bloqueante (register/export) deja polls encolados; si el cliente
+        # aborta por timeout mientras se escribe, el write lanza
+        # ConnectionAbortedError y ensucia el log. No es un fallo del
+        # cálculo: se ignora. Para volver atrás: quitar el try.
+        try:
+            self.wfile.write(data)
+        except (ConnectionAbortedError, ConnectionResetError,
+                BrokenPipeError):  # noqa: BLE001 - cliente ya se fue
+            pass
 
     def log_message(self, *args: object) -> None:
         pass
@@ -87,10 +96,34 @@ class _Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
+    # JOB-STATUS (reversible/obligatorio): el host de la UI (otro proceso,
+    # stdlib puro) responde `pollJob` leyendo job_status_<puerto>.json, porque
+    # este proceso NO puede contestar mientras una llamada nativa con el GIL
+    # retenido (reconstruccion OCP, minutos) esta en curso. Arranque limpio:
+    # se borra el snapshot anterior para no dejar estados rancios de una sesion
+    # muerta. Para volver atrás: quitar el import, el unlink y el setattr.
+    import job_status
+    _status = job_status.status_path(port)
+    try:
+        os.remove(_status)
+    except OSError:
+        pass
+    # Litter: snapshots de sesiones anteriores ya muertas (una app = un puerto =
+    # un archivo). Nunca se borra el propio.
+    job_status.cleanup_stale(_status)
+    _API.status_port = port
+    _API._publish_jobs()
     # HTTPServer MONO-HILO (reversible/obligatorio): Gmsh usa `signal`, que
     # solo funciona en el hilo principal. Con ThreadingHTTPServer los handlers
     # corren en hilos y `generateMesh` fallaba con "signal only works in main
     # thread", cayendo al ProvisionalTet4Mesher (malla NO conforme) -> BCs
     # degradadas y resultado colapsado (85 cm3 -> 1.7 cm3). NO volver a
     # ThreadingHTTPServer sin sacar gmsh del handler. Ver server_error.log.
-    HTTPServer(("127.0.0.1", port), _Handler).serve_forever()
+    # BACKLOG (reversible): la UI sondea cada 1s (varios hooks a la vez) y los
+    # handlers bloqueantes (register/export, minutos) llenaban la cola TCP de
+    # 5 -> los polls nuevos eran RECHAZADOS (WinError 10061) aunque el servidor
+    # seguía vivo. 64 da margen sin cambiar el modelo monohilo. Para volver
+    # atrás: quitar request_queue_size.
+    httpd = HTTPServer(("127.0.0.1", port), _Handler)
+    httpd.request_queue_size = 64
+    httpd.serve_forever()

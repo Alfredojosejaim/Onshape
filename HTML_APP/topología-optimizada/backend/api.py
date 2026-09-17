@@ -27,6 +27,13 @@ if not os.path.isdir(os.path.join(_HERE, "core")):
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
+# JOB-STATUS (reversible): publicacion del estado minimo de los jobs en un
+# archivo compartido, para que el host de la UI sondee sin depender del GIL de
+# este proceso. Se importa DESPUES de asegurar _HERE en sys.path: es un modulo
+# hermano stdlib puro (no arrastra VTK/OCC/Kratos). Para volver atrás: quitar
+# este import y `Api._publish_jobs`.
+import job_status  # noqa: E402  (depende del sys.path de arriba)
+
 
 def _uploads_dir() -> str:
     """Directorio de subidos y piezas computed.
@@ -155,6 +162,11 @@ class Api:
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="solver")
         self._jobs: dict[str, dict] = {}
         self._lock = threading.Lock()
+        # JOB-STATUS (reversible): puerto del servidor HTTP que publica el
+        # estado de los jobs en `job_status_<puerto>.json` (lo asigna
+        # server.py al arrancar). Sin puerto no se publica nada (tests, CLI).
+        # Para volver atrás: dejar el atributo en None.
+        self.status_port: int | None = None
         # MULTI (reversible): libreria de archivos importados en la sesion.
         # El core mantiene UN modelo activo; aqui se acumula el registro
         # {key: {filename, displayName, path}} y switch re-importa del disco
@@ -311,12 +323,42 @@ class Api:
         except Exception as exc:  # noqa: BLE001
             return _err(exc)
 
+    def _publish_jobs(self) -> None:
+        """JOB-STATUS (reversible): publica el estado MINIMO de los jobs para
+        que el host de la UI (otro proceso, stdlib puro) pueda responder
+        `pollJob` mientras este proceso esta dentro de una llamada nativa con
+        el GIL retenido (reconstruccion OCP, minutos). Sin esto la UI declaraba
+        "backend no responde" con el calculo sano. Ver backend/job_status.py.
+
+        No se publica `result` (puede pesar MB): el puente reenvia el sondeo
+        cuando el estado es terminal y este proceso ya esta libre.
+        Nunca lanza (publicar es best-effort) y NUNCA se llama con el lock
+        tomado (el Lock no es reentrante). Para volver atrás: quitar el metodo
+        y sus 4 llamadas.
+        """
+        if not self.status_port:
+            return
+        try:
+            with self._lock:
+                snap = {}
+                for jid, j in self._jobs.items():
+                    err = j.get("error")
+                    if isinstance(err, dict):
+                        err = err.get("error") or str(err)
+                    snap[jid] = {"state": j.get("state"),
+                                 "progress": j.get("progress"),
+                                 "error": err}
+            job_status.write_snapshot(
+                job_status.status_path(self.status_port), snap,
+                port=self.status_port)
+        except Exception:  # noqa: BLE001 - best-effort
+            pass
+
     def _submit(self, kind: str, fn, *args, **kwargs) -> str:
         jid = f"{kind}_{uuid.uuid4().hex[:8]}"
-        fut = self._pool.submit(fn, *args, **kwargs)
         with self._lock:
             self._jobs[jid] = {"state": "running", "progress": 0.0,
-                               "future": fut, "result": None, "error": None}
+                               "future": None, "result": None, "error": None}
 
             def _done(f):
                 try:
@@ -333,7 +375,19 @@ class Api:
                     logger.warning("job %s fallo: %s", jid, exc)
                     with self._lock:
                         self._jobs[jid].update(state="error", error=_err(exc))
-            fut.add_done_callback(_done)
+                # JOB-STATUS: estado terminal publicado FUERA del lock, cuando
+                # `result` ya esta materializado (el que lo pida por reenvio lo
+                # recibe completo en el mismo instante en que ve `done`).
+                self._publish_jobs()
+        fut = self._pool.submit(fn, *args, **kwargs)
+        with self._lock:
+            self._jobs[jid]["future"] = fut
+        # JOB-DEADLOCK (reversible): add_done_callback FUERA del lock. Si el
+        # future ya terminó, concurrent.futures ejecuta el callback en este
+        # mismo hilo y _done toma self._lock (no reentrante) -> deadlock.
+        # Para volver atrás: meter esta línea dentro del with de arriba.
+        fut.add_done_callback(_done)
+        self._publish_jobs()  # "running" visible ya para el sondeo local
         return jid
 
     # -- llamadas desde el HTML -----------------------------------------
@@ -835,6 +889,9 @@ class Api:
                         j = api_ref._jobs.get(jid_in)
                         if j is not None and j.get("state") == "running":
                             j["progress"] = max(0.0, min(1.0, it / total))
+                    # JOB-STATUS: avance visible para el sondeo local (fuera del
+                    # lock; el snapshot no lleva el resultado).
+                    api_ref._publish_jobs()
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -1007,6 +1064,10 @@ class Api:
                         j = api_ref_g._jobs.get(jid_in)
                         if j is not None and j.get("state") == "running":
                             j["progress"] = max(0.0, min(1.0, it / total_g))
+                    # JOB-STATUS: avance visible para el sondeo local (el solve
+                    # puede durar minutos y el hilo HTTP no siempre puede
+                    # contestar; ver job_status.py).
+                    api_ref_g._publish_jobs()
                 except Exception:  # noqa: BLE001
                     pass
 

@@ -21,6 +21,14 @@ import time
 import urllib.request
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+# JOB-STATUS (reversible): snapshot de jobs que publica el proceso pesado
+# (backend/job_status.py, stdlib puro). Este host NO importa VTK/OCC/Kratos, asi
+# que puede leerlo aunque el backend este bloqueado en una llamada nativa.
+# Para volver atrás: quitar este import + Bridge._job_snapshot/pollJob.
+import job_status  # noqa: E402  (depende del sys.path de arriba)
+
 DIST_INDEX = os.path.abspath(os.path.join(_HERE, "..", "dist", "index.html"))
 DEV_URL = "http://localhost:3000/"
 
@@ -55,11 +63,31 @@ def _free_port() -> int:
         return int(s.getsockname()[1])
 
 
+# JOB-STATUS (reversible): segundos sin publicar avance a partir de los cuales
+# el sondeo local marca `stale` (el backend está dentro de una llamada nativa
+# larga). Es un AVISO, nunca un fallo. Para volver atrás: 10**9.
+_STALE_AFTER_S = 45.0
+
+
 class Bridge:
     """Forwarder ligero: cada metodo POSTea al server.py y devuelve el dict."""
 
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, is_alive=None) -> None:
         self._base = base_url
+        # DEAD-SERVER (reversible): callable que devuelve None si el proceso
+        # server.py sigue vivo o su exit code si terminó. Permite distinguir
+        # "proceso muerto (crash nativo/OOM)" de "proceso ocupado". Para
+        # volver atrás: __init__(self, base_url) e is_alive=None siempre.
+        self._is_alive = is_alive
+        # JOB-STATUS (reversible): puerto del backend -> ruta del snapshot de
+        # jobs. Para volver atrás: quitar este bloque y _job_snapshot/pollJob.
+        try:
+            from urllib.parse import urlsplit
+            self._port = urlsplit(base_url).port
+        except Exception:  # noqa: BLE001 - sin puerto no hay via rapida
+            self._port = None
+        # Ultimo snapshot de jobs leido con exito (ver _job_snapshot).
+        self._last_snap = None
 
     # BRIDGE-TIMEOUTS (reversible): llamadas científicas bloqueantes
     # (fit B-Rep + export + reimport de registerReconstruction, mallados
@@ -89,6 +117,27 @@ class Bridge:
                 body = json.loads(res.read().decode("utf-8"))
         except Exception as exc:  # noqa: BLE001 - el error viaja al frontend
             logger.error("backend no responde en %s: %s", method, exc)
+            # DEAD-SERVER (reversible): connection refused = nada escucha en
+            # el puerto = el proceso server.py murió (crash nativo/OOM: no
+            # deja traceback, solo se corta server_stdout.log). Antes viajaba
+            # el texto crudo de urllib ("WinError 10061") y la UI no podía
+            # distinguirlo de un timeout con el proceso ocupado. Para volver
+            # atrás: devolver siempre el mensaje genérico de abajo.
+            dead_code = None
+            refused = (isinstance(exc, ConnectionRefusedError)
+                       or "10061" in str(exc) or "refused" in str(exc).lower())
+            if refused:
+                try:
+                    dead_code = self._is_alive() if self._is_alive else "desconocido"
+                except Exception:  # noqa: BLE001 - best-effort
+                    dead_code = "desconocido"
+                if dead_code is None:
+                    # Proceso VIVO pero no acepta: handler bloqueante (register/
+                    # export, minutos) con la cola llena. No es un fallo del
+                    # job: la UI debe seguir sondeando (ver jobs.ts).
+                    return {"ok": False,
+                            "error": f"backend ocupado (proceso vivo, {method} en curso) — reintentando sondeo"}
+                return self._dead_payload(method, dead_code)
             return {"ok": False,
                     "error": f"backend no responde ({method}): {type(exc).__name__}: {exc}"}
         if isinstance(body, dict) and body.get("ok") and "result" in body:
@@ -96,9 +145,94 @@ class Bridge:
             return result if isinstance(result, dict) else {"ok": True, "value": result}
         return body if isinstance(body, dict) else {"ok": False, "error": str(body)}
 
+    # -- JOB-STATUS (reversible): sondeo sin depender del GIL del backend ----
+    def _dead_payload(self, method: str, exit_code) -> dict:
+        """Error accionable cuando el proceso backend ya no existe."""
+        return {"ok": False,
+                "error": f"el proceso backend terminó (exit {exit_code}) durante {method}. "
+                         "Crash nativo u OOM probable: revisa backend/server_stdout.log "
+                         "(últimas líneas) y backend/server_error.log. El job en curso se perdió; "
+                         "reabre la app y reintenta con malla más gruesa si se repite."}
 
-def _make_bridge(base_url: str) -> Bridge:
-    bridge = Bridge(base_url)
+    def _process_exit_code(self):
+        """None si el proceso sigue vivo; su exit code si terminó."""
+        if self._is_alive is None:
+            return None
+        try:
+            return self._is_alive()
+        except Exception:  # noqa: BLE001 - best-effort
+            return None
+
+    def _job_snapshot(self, job_id: str):
+        """(registro, edad_s) del job publicado por el backend, o None.
+
+        SNAP-CACHE (reversible): si una lectura falla (en Windows el publicador
+        reemplaza el archivo y `open` puede dar PermissionError transitorio
+        aunque se reintente), se responde con el ULTIMO snapshot valido. La edad
+        se calcula de la marca `written` que trae el propio snapshot, asi que
+        sigue creciendo con el tiempo real y la señal `stale` no se falsea. Sin
+        esto, un fallo de lectura caia al camino HTTP y con el backend ocupado
+        reaparecia el falso "backend no responde". Para volver atrás: quitar
+        `_last_snap` y devolver None cuando la lectura falla.
+        """
+        snap = None
+        if self._port:
+            try:
+                snap = job_status.read_snapshot(job_status.status_path(self._port))
+            except Exception:  # noqa: BLE001 - se usa el cache
+                snap = None
+        if snap is None:
+            snap = self._last_snap
+        else:
+            self._last_snap = snap
+        if not snap:
+            return None
+        rec = (snap.get("jobs") or {}).get(job_id)
+        if not isinstance(rec, dict):
+            return None
+        return rec, job_status.snapshot_age(snap)
+
+    def pollJob(self, job_id: str) -> dict:
+        """Sondeo del job con vía rápida local (JOB-STATUS).
+
+        El backend pesado publica estado/progreso en `job_status_<puerto>.json`
+        mientras el job avanza. Mientras siga `running` se contesta con ese
+        snapshot: el backend puede estar dentro de una llamada nativa con el GIL
+        retenido (reconstrucción B-Rep/OCP, minutos) sin poder atender HTTP, y
+        eso NO es un fallo — antes la UI lo interpretaba como "la optimización
+        terminó con error" con el cálculo sano (prompt.md addendum 6).
+
+        Con estado terminal se reenvía al backend: el `result` completo solo
+        existe allí (y en ese momento el proceso ya está libre). Si no hay
+        snapshot (arranque, test, sesión vieja) todo sigue por el camino normal.
+        Para volver atrás: `def pollJob(self, job_id): return self._call("pollJob", job_id)`.
+        """
+        snap = self._job_snapshot(str(job_id))
+        if snap is not None:
+            rec, age = snap
+            state = rec.get("state")
+            if state == "running":
+                dead = self._process_exit_code()
+                if dead is not None:
+                    return self._dead_payload("pollJob", dead)
+                out = {"ok": True, "state": "running",
+                       "progress": rec.get("progress"), "result": None,
+                       "error": None}
+                if age is not None and age > _STALE_AFTER_S:
+                    # Señal honesta: el backend no publica avance (llamada
+                    # nativa larga). No es error: la UI avisa y sigue sondeando.
+                    out["stale"] = True
+                    out["stale_sec"] = round(float(age), 1)
+                return out
+            if state in ("error", "failed"):
+                return {"ok": True, "state": state,
+                        "progress": rec.get("progress"), "result": None,
+                        "error": rec.get("error") or "el job terminó con error"}
+        return self._call("pollJob", job_id)
+
+
+def _make_bridge(base_url: str, is_alive=None) -> Bridge:
+    bridge = Bridge(base_url, is_alive=is_alive)
 
     def _wrap(name: str):
         def _fn(*args: object) -> dict:
@@ -107,6 +241,11 @@ def _make_bridge(base_url: str) -> Bridge:
         return _fn
 
     for _name in _METHODS:
+        # JOB-STATUS (reversible): `pollJob` NO se envuelve: tiene método propio
+        # con vía rápida local (snapshot) para no depender del GIL del backend.
+        # Para volver atrás: quitar el `if` (el wrapper genérico lo cubría).
+        if _name == "pollJob":
+            continue
         setattr(bridge, _name, _wrap(_name))
     return bridge
 
@@ -164,7 +303,8 @@ def main(dev: bool = False) -> None:
         webview.create_window(
             "Topología Optimizada",
             url=url,
-            js_api=_make_bridge(base),
+            # DEAD-SERVER: server.poll() -> None (vivo) o exit code (muerto).
+            js_api=_make_bridge(base, is_alive=server.poll),
             width=1500,
             height=900,
         )

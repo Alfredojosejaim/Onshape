@@ -40,7 +40,7 @@ import { V2Panel } from './components/v2/V2Panel';
 // V2-NEW-END
 import {
   decodeCleanArray,
-  mapFeaResult,
+  mapFeaOutcome,
   mapLoadToBoundaries,
   mapMaterials,
   mapSimpOutcome,
@@ -67,6 +67,12 @@ import type { SolidInfo } from './types';
 // NAV-VIEW-START (reversible: quitar import + estado surface + fetchSurface + prop)
 import { mapMeshPreview, placeholderSurface, type RealSurface } from './lib/realdata';
 // NAV-VIEW-END
+
+// POLL-STALL-UI (reversible): prefijo estable del aviso de "backend ocupado"
+// (el efecto correspondiente solo borra SU aviso, comparando por prefijo, para
+// no pisar un mensaje de resultado). Para volver atrás: quitar constante + efecto.
+const POLL_STALL_TEXT =
+  'El backend sigue calculando (solve/reconstrucción en curso) y aún no reporta avance nuevo';
 
 // ADV-OPT (reversible): traduce SimpParameters avanzados al dict que espera
 // api.runOptimization. Solo envía lo activado; con defaults equivale al
@@ -700,8 +706,17 @@ export default function App() {
   };
 
   const feaPoll = useJobPoll(feaJobId, (result) => {
-    const mapped = mapFeaResult(result, stateRef.current.selectedMaterial.yieldStrength);
-    if (mapped) setFeaResults(mapped);
+    // JOB-NULL-FEA (reversible): resultado FEA discriminado
+    // pending/completed/invalid/error; nunca cifras inventadas.
+    const outcome = mapFeaOutcome(result, stateRef.current.selectedMaterial.yieldStrength);
+    if (outcome.status === 'pending') return;
+    if (outcome.status === 'error') {
+      setOptNotice({ text: `El análisis FEA falló: ${outcome.detail ?? 'error del backend'}.` });
+    } else if (outcome.status !== 'completed' || !outcome.data) {
+      setOptNotice({ text: 'El FEA terminó pero sin resultados utilizables (revisa malla y condiciones).' });
+    } else {
+      setFeaResults(outcome.data);
+    }
     setFeaJobId(null);
     void backend.getSnapshot().then((s) => {
       const snap = (s as unknown as { snapshot?: ApiSnapshot }).snapshot;
@@ -877,6 +892,27 @@ export default function App() {
       setOptimizationState((prev) => (prev.isRunning ? { ...prev, currentIteration: it } : prev));
     }
   }, [simpPoll.progress, simpJobId]);
+
+  // POLL-STALL-UI (reversible): el backend monohilo no puede contestar pollJob
+  // mientras corre una llamada nativa larga (OCP retiene el GIL en la
+  // reconstrucción B-Rep/bspline, minutos). El job sigue vivo: se avisa en vez
+  // de dar la corrida por fallida (antes: "terminó con error" con el cálculo
+  // sano, ver backend/server_stdout.log). Se limpia solo cuando el backend
+  // vuelve a reportar avance —y solo si el aviso vigente es este, para no pisar
+  // un mensaje de resultado—. Para volver atrás: quitar este efecto.
+  useEffect(() => {
+    if (!simpJobId) return;
+    if (simpPoll.stalled && !simpPoll.error) {
+      const s = simpPoll.stalledSec;
+      const hace = s >= 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s} s`;
+      setOptNotice({
+        text: `${POLL_STALL_TEXT} (${hace}): no es un error. `
+          + 'Esperá sin relanzar la optimización.',
+      });
+    } else if (!simpPoll.stalled) {
+      setOptNotice((prev) => (prev && prev.text.startsWith(POLL_STALL_TEXT) ? null : prev));
+    }
+  }, [simpPoll.stalled, simpPoll.stalledSec, simpPoll.error, simpJobId]);
 
   // Si un job real falla, se libera para reintentar (sin tocar la UI).
   useEffect(() => {

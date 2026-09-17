@@ -5,3 +5,7 @@ coverage/
 .DS_Store
 *.log
 .env*
+# Artefactos de ejecución (uploads drag&drop): no versionar.
+backend/uploads/
+# JOB-STATUS: snapshot de jobs publicado en runtime (backend/job_status.py).
+backend/job_status_*.json

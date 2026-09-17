@@ -302,6 +302,13 @@ class GenerativeDesignEngine:
         # malla del MODELO. Con un envelope (malla distinta) dejan de ser
         # válidos y se cae a distribución uniforme en vez de indexar mal.
         self._surface_matches_mesh = bool(surface_matches_mesh)
+        # ENV-BAND (reversible): resolución (voxel) del design space envelope.
+        # La fija run_generative_design al construir el envelope; con 'part'
+        # queda None y el grosor de banda cae al tamaño de arista de malla.
+        self._env_resolution: Optional[float] = None
+        # Memo de la clasificación cara->elementos (capa fina). La malla y el
+        # shape no cambian durante un solve, así que se puede cachear.
+        self._band_cache: Dict[Tuple[Tuple[int, ...], str], Tuple[int, ...]] = {}
         self._face_index_to_groups: Dict[int, List[str]] = {}
         if physical_groups:
             for grp_name, face_indices in physical_groups.items():
@@ -534,12 +541,24 @@ class GenerativeDesignEngine:
             return np.array([], dtype=int), False
         if not conditions:
             return np.array([], dtype=int), False
-        node_set: set = set()
         face_one = set()
         for region in conditions:
             for e in region.faces.entities:
                 if e.entity_type == EntityType.FACE and e.face_index is not None:
                     face_one.add(int(e.face_index))
+        # ENV-BAND (reversible): con envelope/bridge la malla no es la del
+        # modelo, así que se preserva una capa FINA del lado del material
+        # (centroide dentro del sólido CAD y cerca de la cara) en vez de la
+        # losa simétrica gruesa del mapeo por tolerancia. Para volver atrás:
+        # quitar este bloque (cae al mapeo por nodos histórico).
+        if face_one and not self._surface_matches_mesh and self.model_shape is not None:
+            banded = self._band_elements_for_faces(sorted(face_one), "inside")
+            if banded:
+                logger.info(
+                    "ProtectedRegion envelope: %d cara(s) -> %d elementos "
+                    "en capa fina del lado del material.", len(face_one), len(banded))
+                return np.array(sorted(banded), dtype=int), False
+        node_set: set = set()
         if self.model_shape is not None and face_one:
             node_set |= set(self._select_nodes_for_faces(sorted(face_one)))
         # Fallback: protect elements touching the model bounding box ends.
@@ -590,6 +609,13 @@ class GenerativeDesignEngine:
                 if e.entity_type == EntityType.FACE and e.face_index is not None
             ]
             if face_indices and self.model_shape is not None:
+                # ENV-BAND (reversible): envelope/bridge -> capa fina del lado
+                # LIBRE (cavidad/espacio libre junto a la cara) en vez de la
+                # losa simétrica gruesa. Para volver atrás: quitar esta rama.
+                if not self._surface_matches_mesh:
+                    face_elems |= self._band_elements_for_faces(
+                        face_indices, "outside")
+                    continue
                 nodes = set(self._select_nodes_for_faces(face_indices))
                 if nodes:
                     for e in range(self.mesh_elements.shape[0]):
@@ -674,6 +700,143 @@ class GenerativeDesignEngine:
             return bool(solid.isInside((float(point[0]), float(point[1]), float(point[2]))))
         except Exception:  # pragma: no cover - defensive OCP/geometry errors
             return False
+
+    # -- ENV-BAND: capa fina cara->elementos en envelope/bridge -----------------
+    def _env_band(self) -> float:
+        """Grosor de la capa fina (~0.75 voxel) alrededor de una cara CAD."""
+        res = getattr(self, "_env_resolution", None)
+        if res is not None and float(res) > 0:
+            return 0.75 * float(res)
+        return max(0.5 * self._mean_edge_length(), 1e-9)
+
+    def _point_inside_shape(self, point: Any) -> bool:
+        """True si el punto cae dentro del sólido CAD del modelo."""
+        if self.model_shape is None:
+            return False
+        coords = (float(point[0]), float(point[1]), float(point[2]))
+        try:
+            return bool(self.model_shape.isInside(coords))
+        except Exception:  # noqa: BLE001 - shape compuesto puede no soportarlo
+            pass
+        try:
+            solids = list(self.model_shape.Solids())
+        except Exception:  # noqa: BLE001
+            return False
+        for solid in solids:
+            if self._point_in_solid(solid, coords):
+                return True
+        return False
+
+    def _band_once(self, face_indices: List[int], side: str, band: float) -> set:
+        import cadquery as cq
+
+        faces = self.model_shape.Faces()
+        centroids = self._element_centroids()
+        out: set = set()
+        for fi in face_indices:
+            fi = int(fi)
+            if fi < 0 or fi >= len(faces):
+                continue
+            face = faces[fi]
+            try:
+                bb = face.BoundingBox()
+            except Exception:  # noqa: BLE001 - defensivo
+                bb = None
+            for i in range(centroids.shape[0]):
+                if i in out:
+                    continue
+                c = centroids[i]
+                if bb is not None and not (
+                        (bb.xmin - band) <= c[0] <= (bb.xmax + band)
+                        and (bb.ymin - band) <= c[1] <= (bb.ymax + band)
+                        and (bb.zmin - band) <= c[2] <= (bb.zmax + band)):
+                    continue
+                try:
+                    v = cq.Vertex.makeVertex(float(c[0]), float(c[1]), float(c[2]))
+                    if float(face.distance(v)) > band:
+                        continue
+                except Exception:  # noqa: BLE001 - defensivo OCP
+                    continue
+                inside = self._point_inside_shape(c)
+                if (side == "inside") == inside:
+                    out.add(i)
+        return out
+
+    def _band_elements_for_faces(self, face_indices: List[int], side: str) -> set:
+        """Elementos de una capa FINA (~1 voxel) junto a las caras, de un lado.
+
+        Envelope/bridge: la malla NO es la del modelo (sin ``face_surface_elements``)
+        y el mapeo por tolerancia marcaba una losa simétrica de ~2-3 voxels por
+        cara (medido: la cara lateral del cono marcaba 34% del dominio), lo que
+        dejaba al optimizador sin dominio libre y producía un "bulto cuadrado".
+        Aquí se clasifica el centroide de cada elemento por distancia a la cara
+        y por lado respecto al sólido CAD:
+
+        - ``side="inside"``  (región preservada): material del sólido detrás de
+          la cara -> la cara se conserva.
+        - ``side="outside"`` (keep-out): volumen libre/cavidad junto a la cara
+          -> se vacía (paso de tornillo, holgura).
+
+        Si la banda nominal queda vacía (rejilla desplazada respecto a la cara)
+        se reintenta con el doble de grosor por cara.
+        """
+        if (self.mesh_elements is None or self.mesh_nodes is None
+                or self.model_shape is None or not face_indices):
+            return set()
+        key = (tuple(sorted(int(f) for f in face_indices)), str(side))
+        cached = self._band_cache.get(key)
+        if cached is not None:
+            return set(int(i) for i in cached)
+        band = self._env_band()
+        out: set = set()
+        for fi in face_indices:
+            got = self._band_once([int(fi)], side, band)
+            if not got:
+                got = self._band_once([int(fi)], side, 2.0 * band)
+            out |= got
+        self._band_cache[key] = tuple(sorted(out))
+        return out
+
+    def _bc_face_indices(self, conditions) -> List[int]:
+        """Caras CAD referenciadas por cargas y fijaciones."""
+        faces: set = set()
+        for kind in (ConditionType.LOAD, ConditionType.ELASTICITY):
+            for cond in conditions.get(kind, []):
+                sel = getattr(cond, "faces", None)
+                if sel is None:
+                    continue
+                for e in sel.entities:
+                    if e.entity_type == EntityType.FACE and e.face_index is not None:
+                        faces.add(int(e.face_index))
+        return sorted(faces)
+
+    def _halo_layer_envelope(self, conditions) -> Optional[np.ndarray]:
+        """Capa fina (~1 voxel) del lado del material junto a caras de carga/
+        fijación en envelope/bridge.
+
+        Sustituye el halo topológico (elementos que tocan los nodos BC), que
+        con el mapeo por tolerancia cubría una losa de ~2 voxels y consumía el
+        dominio. Los nodos BC sin cara (fallback de extremo de eje) conservan
+        la capa topológica clásica.
+        """
+        if self.mesh_elements is None:
+            return None
+        faces = self._bc_face_indices(conditions)
+        layer: set = set()
+        if faces:
+            layer |= self._band_elements_for_faces(faces, "inside")
+        face_nodes: set = set()
+        if faces:
+            face_nodes |= set(self._select_nodes_for_faces(faces))
+        fallback_nodes = (set(self._load_node_indices(conditions))
+                          | set(self._support_node_indices(conditions))) - face_nodes
+        if fallback_nodes:
+            for e in range(self.mesh_elements.shape[0]):
+                if set(self.mesh_elements[e].tolist()) & fallback_nodes:
+                    layer.add(int(e))
+        if not layer:
+            return None
+        return np.asarray(sorted(layer), dtype=int)
 
     def _force_vector_for_load(self, load, raise_on_unmapped_face=True):
         """Vector de fuerza de UNA LoadCondition (un caso de carga).
@@ -1089,12 +1252,23 @@ class GenerativeDesignEngine:
                 _pre = (None if solver._preserved is None
                         else _np.asarray(solver._preserved).copy())
                 if float(halo_radius) <= 0:
-                    halo_mode = "topological_1layer"
-                    _hn = set(int(i) for i in halo_nodes)
-                    _layer = np.array([
-                        e for e in range(self.mesh_elements.shape[0])
-                        if _hn.intersection(self.mesh_elements[e].tolist())
-                    ], dtype=int)
+                    # ENV-BAND (reversible): en envelope/bridge el halo
+                    # topológico sobre una losa de nodos BC de ~2 voxels
+                    # consumía el dominio. Se usa una capa fina del lado del
+                    # material junto a las caras de carga/fijación. Para
+                    # volver atrás: quitar esta rama (cae al halo clásico).
+                    _env_layer = (None if self._surface_matches_mesh
+                                  else self._halo_layer_envelope(conditions))
+                    if _env_layer is not None:
+                        halo_mode = "band_1voxel_inside"
+                        _layer = _env_layer
+                    else:
+                        halo_mode = "topological_1layer"
+                        _hn = set(int(i) for i in halo_nodes)
+                        _layer = np.array([
+                            e for e in range(self.mesh_elements.shape[0])
+                            if _hn.intersection(self.mesh_elements[e].tolist())
+                        ], dtype=int)
                     _union = (np.union1d(
                         _layer, np.nonzero(_pre)[0])
                         if _pre is not None else _layer)
@@ -1286,6 +1460,10 @@ def run_generative_design(
             # y la tolerancia debe ser mesh-adaptativa para mapear las caras.
             engine._surface_matches_mesh = False
             engine._face_tolerance = 1.5 * eff_res
+            # ENV-BAND (reversible): resolución del dominio para la capa fina
+            # cara->elementos de preservada/keep-out/halo (ver _env_band).
+            engine._env_resolution = eff_res
+            engine._band_cache.clear()
             # ENV-SKIN: elementos que tocan la pared de la caja de diseño se
             # fuerzan a vacío (una capa) para que el isosuperficie cierre.
             _en = np.asarray(env.nodes, dtype=float)
@@ -1384,6 +1562,11 @@ def run_generative_design(
             engine._face_tolerance = 1.5 * float(engine._mean_edge_length())
         except Exception:  # noqa: BLE001 - defensivo
             pass
+        try:
+            engine._env_resolution = float(study.design_space.resolution)
+        except Exception:  # noqa: BLE001 - defensivo
+            engine._env_resolution = None
+        engine._band_cache.clear()
         try:
             bnodes = np.asarray(bridge.nodes, dtype=float)
             span = bnodes.max(axis=0) - bnodes.min(axis=0)

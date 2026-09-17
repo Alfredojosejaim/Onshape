@@ -634,6 +634,15 @@ class SIMPSolver:
         xmin = self.rho_min
         xmax = 1.0
         target_vol = self.volfrac * self._vol0_free
+        # OC-BISECTION-FLOOR (reversible): el piso era ABSOLUTO (1e-12) y rompía
+        # la invariancia de escala del OC. Con mallas rígidas (compliance ~1e-6)
+        # las sensibilidades filtradas quedan ~1e-14, `mid` no podía bajar lo
+        # suficiente para que x creciera y la bisección devolvía volumen <<
+        # objetivo (colapso: densidades ~rho_min salvo lo preservado -> el
+        # "bulto cuadrado" era solo los slabs preservados). Un piso relativo a
+        # la máquina restaura la invariancia (dc y lambda escalan juntos).
+        # Para volver atrás: restaurar el piso 1e-12.
+        _den_floor = float(np.finfo(np.float64).tiny)
         for _ in range(100):
             mid = 0.5 * (l1 + l2)
             xnew[active] = np.maximum(
@@ -643,7 +652,7 @@ class SIMPSolver:
                     np.maximum(
                         xmin,
                         x[active] * np.sqrt(
-                            np.abs(-dc[active]) / np.maximum(np.abs(mid * dv[active]), 1e-12)
+                            np.abs(-dc[active]) / np.maximum(np.abs(mid * dv[active]), _den_floor)
                         ),
                     ),
                 ),

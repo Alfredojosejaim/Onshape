@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
@@ -1182,6 +1182,7 @@ def run_generative_design(
     design_space: str = "part",
     design_space_resolution: Optional[float] = None,
     design_space_padding: Optional[float] = None,
+    max_hole_edges: Optional[Union[int, str]] = None,
 ) -> Dict[str, Any]:
     """High-level entry: run the generative design pipeline (A or B).
 
@@ -1197,6 +1198,16 @@ def run_generative_design(
     ``halo_radius``: 0.0/auto topológico (defecto, una capa de elementos
     que tocan nodos de carga/soporte), > 0 manual geométrico (radio en
     unidades de malla), None desactiva la preservación (opt-out).
+    ``max_hole_edges``: tope de aristas por loop abierto para
+    ``fill_holes()`` en la reconstrucción B-Rep. ``None`` (default,
+    histórico) tapa todos los loops -- incluye agujeros de diseño
+    intencionales (anclajes, keep-out) junto con el ruido del marching-tets.
+    Un entero >= 3 tapa solo loops con esa cantidad de aristas o menos.
+    ``"auto"`` deriva el tope de la mediana de loops de la malla resultante
+    (ver ``MeshHoleFiller.AUTO_FACTOR``); no es el default todavía porque no
+    tiene backfill test contra una pieza real con agujero de anclaje (Fase
+    4.5c). Lo no tapado queda explícito en ``reconstruction.metadata``
+    (``holes_skipped``, ``max_hole_edges_resolved``).
     """
     conditions = consume_conditions(condition_manager, study.conditions)
 
@@ -1277,6 +1288,27 @@ def run_generative_design(
                 dtype=float)
             _skin_mask = np.any(
                 (_cent <= (_lo + _skin_tol)) | (_cent >= (_hi - _skin_tol)), axis=1)
+            # ENV-SKIN-BC-GUARD: si una cara de carga/fijación del modelo
+            # queda cerca de la pared de la caja (padding chico), el skin
+            # geométrico la vaciaba (rho ~= rho_min) sin distinguir su rol.
+            # Con penalización SIMP, la rigidez local cae a ~rho_min**p y la
+            # carga/fijación queda apoyada en material casi inexistente:
+            # el sistema K_ff·u=F puede quedar mal condicionado o singular
+            # y `apply_bc_and_solve` (core/fea.py) no tiene try/except propio,
+            # así que la excepción de scipy sube como error genérico del job
+            # (ver sesion-2026-09-16-generativa-envelope-bspline-error.md).
+            # Fix: los elementos que tocan un nodo de carga o soporte NUNCA
+            # entran al skin, aunque toquen la pared del envelope (mismo
+            # criterio que ya usa el halo topológico con `preserved`).
+            _bc_nodes = set(engine._load_node_indices(conditions)) | \
+                set(engine._support_node_indices(conditions))
+            _bc_element_mask = np.zeros(env.elements.shape[0], dtype=bool)
+            if _bc_nodes:
+                _elems_arr = np.asarray(env.elements, dtype=int)
+                _bc_element_mask = np.array(
+                    [bool(_bc_nodes.intersection(e.tolist())) for e in _elems_arr],
+                    dtype=bool)
+                _skin_mask = _skin_mask & ~_bc_element_mask
             _skin = np.nonzero(_skin_mask)[0]
             solve_kwargs["void_skin"] = _skin
             # ORGANIC-FILTER: el filtro debe cubrir ~1.5 voxels para ramificar
@@ -1294,6 +1326,7 @@ def run_generative_design(
                 "filter_auto": bool(auto_filter > req_filter),
                 "filter_requested": req_filter,
                 "void_skin_elements": int(_skin.size),
+                "void_skin_bc_excluded": int(_bc_element_mask.sum()),
             }
         elif design_space != "part":
             raise ValueError(
@@ -1358,7 +1391,8 @@ def run_generative_design(
 
     reconstruction = _reconstruct(
         result, engine, step_path=step_path,
-        smoothing_method=smoothing_method, brep_style=brep_style)
+        smoothing_method=smoothing_method, brep_style=brep_style,
+        max_hole_edges=max_hole_edges)
     result["reconstruction"] = reconstruction
     return result
 
@@ -1372,6 +1406,7 @@ def _reconstruct(
     smoothing_method: str = "laplacian",
     brep_style: str = "faceted",
     max_brep_triangles: Optional[int] = 6000,
+    max_hole_edges: Optional[Union[int, str]] = None,
 ):
     from core.cad_reconstruction import (
         ReconstructionPipeline,
@@ -1397,6 +1432,7 @@ def _reconstruct(
         step_path=step_path,
         smoothing_method=smoothing_method,
         max_brep_triangles=max_brep_triangles,
+        max_hole_edges=max_hole_edges,
     )
     final = pipe.run(
         engine.mesh_nodes,

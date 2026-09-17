@@ -1024,7 +1024,12 @@ class Api:
                                smoothing_method=str(p.get("smoothing_method", "laplacian")).lower(),
                                design_space=str(p.get("design_space", "part")).lower(),
                                design_space_resolution=p.get("design_space_resolution"),
-                               design_space_padding=p.get("design_space_padding"))
+                               design_space_padding=p.get("design_space_padding"),
+                               # HOLEFILL-WIRE: antes se ignoraba por completo
+                               # (el pipeline sellaba TODO loop abierto, sin
+                               # importar tamaño -- agujeros de anclaje
+                               # incluidos). None = histórico si no se manda.
+                               max_hole_edges=p.get("max_hole_edges"))
             holder_g["jid"] = jid
             return {"ok": True, "jobId": jid}
         except Exception as exc:  # noqa: BLE001

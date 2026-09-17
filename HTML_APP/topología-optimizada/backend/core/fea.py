@@ -354,9 +354,11 @@ class FEASolver:
             )
             self.cg_iterations = iters[0]
             if info == 0:
+                u_free = np.asarray(u_free)
+                self._check_finite_solution(u_free, "cg")
                 self.linear_solver_used = "cg"
                 self.solver_fallback = False
-                return np.asarray(u_free)
+                return u_free
             logger.warning(
                 "CG linear solver did not converge (info=%s, %d iters); "
                 "falling back to direct spsolve explicitly.",
@@ -364,7 +366,40 @@ class FEASolver:
             )
             self.solver_fallback = True
         self.linear_solver_used = "direct"
-        return spla.spsolve(Kff, Ff)
+        # SOLVE-GUARD: SuperLU (vía spsolve) no siempre lanza excepción con
+        # una matriz (casi) singular -- puede emitir solo un RuntimeWarning
+        # ("Matrix is exactly singular") y devolver un vector con NaN/Inf en
+        # silencio. Eso rompía la regla "sin fallbacks silenciosos": el job
+        # terminaba con un error genérico de scipy más abajo en la cadena, o
+        # peor, con un resultado inválido sin excepción. Se captura la
+        # excepción real (si la hay) y se valida explícitamente que la
+        # solución sea finita antes de devolverla.
+        try:
+            u_free = spla.spsolve(Kff, Ff)
+        except Exception as exc:  # noqa: BLE001 - relanzado con contexto
+            raise FEAError(
+                "El solver lineal directo (spsolve) falló al resolver "
+                "K_ff*u=F: {}. Causa típica: una región cargada o fijada "
+                "quedó conectada al resto del dominio solo por elementos "
+                "casi vacíos (rho ~= rho_min), dejando la matriz de "
+                "rigidez reducida mal condicionada o singular.".format(exc)
+            ) from exc
+        u_free = np.asarray(u_free)
+        self._check_finite_solution(u_free, "direct")
+        return u_free
+
+    def _check_finite_solution(self, u_free: np.ndarray, solver_name: str) -> None:
+        """Fail loud si el solver devolvió NaN/Inf sin excepción propia."""
+        if not np.all(np.isfinite(u_free)):
+            n_bad = int(np.count_nonzero(~np.isfinite(u_free)))
+            raise FEAError(
+                "El solver lineal ({}) devolvió {} valor(es) no finito(s) "
+                "(NaN/Inf) sin lanzar excepción -- la matriz de rigidez "
+                "reducida está mal condicionada o es singular. Causa "
+                "típica: una zona de carga/fijación quedó rodeada de "
+                "elementos casi vacíos (revisar void/void_skin vs. "
+                "condiciones de carga y soporte).".format(solver_name, n_bad)
+            )
 
     # ------------------------------------------------------------------ #
     # Post-processing

@@ -28,7 +28,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -472,24 +472,53 @@ def fill_holes(
 class MeshHoleFiller:
     """Fill open boundary loops on a triangle mesh before B-Rep fitting."""
 
+    # AUTO-HOLE-CAP: factor multiplicativo sobre la mediana de aristas por
+    # loop abierto de ESTA malla. El conteo de aristas de un loop ya es
+    # invariante de escala (circunferencia en "unidades de elemento", no en
+    # mm), así que no hace falta longitud de arista/bbox: un loop de ruido
+    # de marching-tets ronda la mediana de la malla; un agujero de diseño
+    # real (anclaje, keep-out) suele ser sensiblemente más grande que el
+    # resto de los bordes abiertos de esa misma pieza. factor=4.0 y
+    # min_edges=12 son de partida (no medidos contra malla real todavía:
+    # requiere backfill test antes de exponer en UI, ver Fase 4.5).
+    AUTO_FACTOR = 4.0
+    AUTO_MIN_EDGES = 12
+
     def fill(
         self,
         vertices: np.ndarray,
         triangles: np.ndarray,
-        max_hole_edges: Optional[int] = None,
+        max_hole_edges: Optional[Union[int, str]] = None,
     ) -> ReconstructionResult:
         verts0 = np.asarray(vertices, dtype=float)
         tris0 = np.asarray(triangles, dtype=int)
         loops_before = _boundary_loops(tris0)
         sizes_before = sorted(len(loop) for loop in loops_before)
-        verts, tris, n = fill_holes(verts0, tris0, max_hole_edges)
+
+        resolved_cap: Optional[int] = None
+        auto_used = False
+        if isinstance(max_hole_edges, str):
+            if max_hole_edges != "auto":
+                raise ValueError(
+                    f"max_hole_edges={max_hole_edges!r} inválido "
+                    f"(usar None, un entero >= 3, o 'auto').")
+            auto_used = True
+            if sizes_before:
+                import statistics
+                median_size = statistics.median(sizes_before)
+                resolved_cap = max(
+                    self.AUTO_MIN_EDGES, int(round(median_size * self.AUTO_FACTOR)))
+        else:
+            resolved_cap = max_hole_edges
+
+        verts, tris, n = fill_holes(verts0, tris0, resolved_cap)
         loops_after = _boundary_loops(tris)
         # FILL-REPORT (reversible): lo no tapado queda explícito en metadata
         # (antes un loop grande se sellaba —o se omitía con tope— sin avisar).
         # Para volver atrás: devolver solo holes_filled/triangles_after.
         skipped = 0
-        if max_hole_edges is not None:
-            skipped = sum(1 for size in sizes_before if size > max_hole_edges)
+        if resolved_cap is not None:
+            skipped = sum(1 for size in sizes_before if size > resolved_cap)
         return ReconstructionResult(
             stage=ReconstructionStage.SMOOTHED_MESH,
             status=ReconstructionStatus.COMPLETED,
@@ -500,7 +529,9 @@ class MeshHoleFiller:
                       "open_loops_after": int(len(loops_after)),
                       "largest_hole_edges": int(max(sizes_before)) if sizes_before else 0,
                       "triangles_after": int(tris.shape[0]),
-                      "vertices_after": int(verts.shape[0])},
+                      "vertices_after": int(verts.shape[0]),
+                      "max_hole_edges_auto": bool(auto_used),
+                      "max_hole_edges_resolved": resolved_cap},
         )
 
 
@@ -2092,7 +2123,7 @@ class ReconstructionPipeline:
         mesh_repair: Optional["MeshRepair"] = None,
         decimate_fraction: Optional[float] = None,
         smoothing_method: str = "laplacian",
-        max_hole_edges: Optional[int] = None,
+        max_hole_edges: Optional[Union[int, str]] = None,
         max_brep_triangles: Optional[int] = None,
     ) -> None:
         self._surface_extractor = surface_extractor or MarchingTetrahedraExtractor()
@@ -2110,16 +2141,22 @@ class ReconstructionPipeline:
                 f"decimate_fraction={decimate_fraction!r} fuera de rango (0, 1]."
             )
         # FILL-CAP (reversible): tope de aristas por loop para fill_holes
-        # (None = tapar todo, comportamiento histórico). Un loop necesita al
-        # menos 3 aristas; un tope menor lo deja todo abierto.
-        if max_hole_edges is not None and (
-            not isinstance(max_hole_edges, int)
-            or isinstance(max_hole_edges, bool)
-            or max_hole_edges < 3
+        # (None = tapar todo, comportamiento histórico; "auto" = mediana de
+        # loops de ESTA malla x MeshHoleFiller.AUTO_FACTOR, ver esa clase).
+        # Un loop necesita al menos 3 aristas; un tope menor lo deja todo
+        # abierto.
+        if (
+            max_hole_edges is not None
+            and max_hole_edges != "auto"
+            and (
+                not isinstance(max_hole_edges, int)
+                or isinstance(max_hole_edges, bool)
+                or max_hole_edges < 3
+            )
         ):
             raise ValueError(
                 f"max_hole_edges={max_hole_edges!r} inválido "
-                f"(usar None o entero >= 3).")
+                f"(usar None, 'auto', o entero >= 3).")
         self._max_hole_edges = max_hole_edges
         self._decimate_fraction = float(decimate_fraction) if decimate_fraction is not None else None
         # BREPCAP (reversible): tope de triángulos por candidato pre-fit.
@@ -2267,13 +2304,16 @@ class ReconstructionPipeline:
                         rep_result = self._mesh_repair.repair(rep_verts, rep_tris)
                         rep_verts = np.asarray(rep_result.data["vertices"])
                         rep_tris = np.asarray(rep_result.data["triangles"])
-                    filler = self._hole_filler
-                    if filler is None:
-                        hf_result = MeshHoleFiller().fill(
-                            rep_verts, rep_tris,
-                            max_hole_edges=self._max_hole_edges)
-                    else:
-                        hf_result = filler.fill(rep_verts, rep_tris)
+                    # HOLEFILL-CAP-FIX: un hole_filler inyectado (custom, hoy
+                    # solo vía tests) perdía el tope del pipeline porque no
+                    # se le pasaba max_hole_edges -- quedaba en el default de
+                    # MeshHoleFiller.fill() (None = tapar todo), ignorando en
+                    # silencio lo que el llamador configuró. Ambas ramas usan
+                    # ahora el mismo tope.
+                    filler = self._hole_filler or MeshHoleFiller()
+                    hf_result = filler.fill(
+                        rep_verts, rep_tris,
+                        max_hole_edges=self._max_hole_edges)
                     hole_fill_data = hf_result.data
                     fill_meta = dict(hf_result.metadata)
                     fv = np.asarray(hole_fill_data["vertices"])

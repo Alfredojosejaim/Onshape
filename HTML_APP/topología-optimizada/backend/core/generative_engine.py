@@ -1183,6 +1183,7 @@ def run_generative_design(
     design_space_resolution: Optional[float] = None,
     design_space_padding: Optional[float] = None,
     max_hole_edges: Optional[Union[int, str]] = None,
+    threshold: float = 0.5,
 ) -> Dict[str, Any]:
     """High-level entry: run the generative design pipeline (A or B).
 
@@ -1208,6 +1209,14 @@ def run_generative_design(
     tiene backfill test contra una pieza real con agujero de anclaje (Fase
     4.5c). Lo no tapado queda explícito en ``reconstruction.metadata``
     (``holes_skipped``, ``max_hole_edges_resolved``).
+    ``threshold``: umbral de isosuperficie en (0, 1) para la extracción
+    marching-tets (default 0.5, histórico). Con volfrac bajo (p.ej. 0.3 por
+    defecto) y SIMP sin proyección Heaviside, gran parte de la densidad
+    queda en intermedios: un umbral 0.5 puede encerrar mucho menos volumen
+    que el objetivo y la isosuperficie sale fragmentada/abierta (fallo
+    BREP "not valid"). Bajarlo (p.ej. 0.3 ≈ volfrac) rescata la pieza a
+    costa de ramas más gruesas. No se adapta solo a propósito: el umbral
+    usado queda registrado en metadata para trazabilidad.
     """
     conditions = consume_conditions(condition_manager, study.conditions)
 
@@ -1331,7 +1340,23 @@ def run_generative_design(
         elif design_space != "part":
             raise ValueError(
                 f"design_space={design_space!r} no soportado (usar 'part' o 'box').")
+        # GEN-MILESTONES (reversible): hitos INFO con flush (el handler de
+        # logging hace flush por registro y el server corre con python -u).
+        # Si el proceso muere por código nativo (segfault/OOM en OCC/Kratos/
+        # SuperLU), el traceback no existe y la última línea del log es lo
+        # único que ubica la fase (solve vs reconstrucción). Para volver
+        # atrás: quitar estos logger.info.
+        logger.info(
+            "GEN solve start: design_space=%s volfrac=%s max_iter=%s "
+            "voxels/tets=%s threshold=%s",
+            design_space, solve_kwargs.get("volume_fraction"),
+            solve_kwargs.get("max_iterations"),
+            (int(env.elements.shape[0]) if design_space in ("box", "envelope")
+             and study.scenario == "A" else
+             int(np.asarray(engine.mesh_elements).shape[0])),
+            threshold)
         result = engine.solve_simp(conditions, **solve_kwargs)
+        logger.info("GEN solve done")
         if env_meta is not None:
             result["_design_space"] = env_meta
     elif study.scenario == "B":
@@ -1392,7 +1417,7 @@ def run_generative_design(
     reconstruction = _reconstruct(
         result, engine, step_path=step_path,
         smoothing_method=smoothing_method, brep_style=brep_style,
-        max_hole_edges=max_hole_edges)
+        max_hole_edges=max_hole_edges, threshold=threshold)
     result["reconstruction"] = reconstruction
     return result
 
@@ -1407,6 +1432,7 @@ def _reconstruct(
     brep_style: str = "faceted",
     max_brep_triangles: Optional[int] = 6000,
     max_hole_edges: Optional[Union[int, str]] = None,
+    threshold: float = 0.5,
 ):
     from core.cad_reconstruction import (
         ReconstructionPipeline,
@@ -1426,6 +1452,10 @@ def _reconstruct(
     elif brep_style != "faceted":
         raise ValueError(
             f"brep_style={brep_style!r} no soportado (usar 'faceted' o 'bspline').")
+    thr = float(threshold)
+    if not 0.0 < thr < 1.0:
+        raise ValueError(
+            f"threshold={threshold!r} fuera de rango (0, 1).")
     pipe = ReconstructionPipeline(
         surface_extractor=MarchingTetrahedraExtractor(),
         brep_fitter=fitter,
@@ -1434,15 +1464,28 @@ def _reconstruct(
         max_brep_triangles=max_brep_triangles,
         max_hole_edges=max_hole_edges,
     )
-    final = pipe.run(
-        engine.mesh_nodes,
-        engine.mesh_elements,
-        densities,
-        threshold=0.5,
-        frozen_elements=frozen or None,
-        preserved_elements=preserved or None,
-    )
+    final = None
+    try:
+        logger.info(
+            "GEN reconstruct start: style=%s threshold=%s densities=%d",
+            brep_style, thr, int(np.asarray(densities).size))
+        final = pipe.run(
+            engine.mesh_nodes,
+            engine.mesh_elements,
+            densities,
+            threshold=thr,
+            frozen_elements=frozen or None,
+            preserved_elements=preserved or None,
+        )
+        logger.info("GEN reconstruct done: stage=%s", final.stage)
+    finally:
+        # Si pipe.run mata el proceso (código nativo), el "start" sin "done"
+        # en el log ubica la muerte dentro de la reconstrucción (OCC).
+        if final is None:
+            logger.info("GEN reconstruct: pipe.run no devolvió control")
     out = final.to_dict()
+    out["metadata"] = {**(out.get("metadata", {}) or {}),
+                       "reconstruction_threshold": thr}
     # Motivo explícito cuando no se llegó a sólido: el dict final solo trae
     # la mejor etapa disponible (stage/status/error_message); el error de la
     # etapa BREP se perdería y la UI diría "sin detalle". Se expone aparte.
@@ -1452,6 +1495,43 @@ def _reconstruct(
             out["brep_error"] = brep_res.error_message
         elif final.error_message:
             out["brep_error"] = final.error_message
+        # THRESHOLD-DIAG (reversible): el aviso de la UI dice "mira
+        # compliance/volumen" pero el fallo no traía ningún número. Se
+        # adjuntan los stats que distinguen las causas: si casi nada supera
+        # el umbral -> umbral demasiado alto para este volfrac (reintentar
+        # con threshold menor); si hay material sobre el umbral pero el
+        # sólido no cose -> fragmentación/desconexión (revisar BC y halo).
+        # Solo diagnóstico, no cambia el resultado. Para volver atrás:
+        # quitar este bloque.
+        try:
+            d = np.asarray(densities, dtype=float).ravel()
+            d = d[np.isfinite(d)]
+            above = float(np.count_nonzero(d > thr)) / max(d.size, 1)
+            diag = {
+                "density_min": float(d.min()) if d.size else None,
+                "density_max": float(d.max()) if d.size else None,
+                "density_mean": float(d.mean()) if d.size else None,
+                "frac_above_threshold": round(above, 4),
+                "target_volume_fraction": result.get("target_volume_fraction",
+                    result.get("volume_fraction")),
+                "final_volume_fraction": result.get("final_volume_fraction"),
+                "final_compliance": result.get("final_compliance",
+                    (result.get("compliance_history") or [None])[-1]
+                    if isinstance(result.get("compliance_history"), list)
+                    and result.get("compliance_history") else None),
+                "unsupported_conditions": result.get("_unsupported_conditions"),
+            }
+            out["metadata"] = {**(out.get("metadata", {}) or {}),
+                               **{f"brep_fail_{k}": v for k, v in diag.items()}}
+            out["brep_error"] = (
+                f"{out.get('brep_error', 'reconstrucción sin sólido')} "
+                f"[threshold={thr}, sobre-umbral={above:.1%} de elementos, "
+                f"dens media={diag['density_min']}/{diag['density_mean']}/"
+                f"{diag['density_max']} (min/media/max), "
+                f"volfrac objetivo={diag['target_volume_fraction']}, "
+                f"compliance final={diag['final_compliance']}]")
+        except Exception:  # noqa: BLE001 - diagnóstico, nunca rompe el reporte
+            pass
     if frozen:
         out["metadata"] = {**(out.get("metadata", {}) or {}),
                            "frozen_elements": sorted(int(i) for i in frozen),

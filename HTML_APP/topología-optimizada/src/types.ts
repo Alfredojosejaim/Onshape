@@ -99,6 +99,12 @@ export interface SimpParameters {
   extrusionAxis: 'off' | 'x' | 'y' | 'z'; // extrusión 2D (densidad constante por eje)
   brepStyle: 'faceted' | 'bspline'; // reconstrucción STEP facetada vs B-spline
   designSpace: 'part' | 'envelope'; // generativa: pieza original vs caja de diseño
+  // RECON-UI (reversible): exponen los parámetros del backend que la llamada
+  // runGenerativeDesign acepta pero la UI nunca enviaba (threshold fijo 0.5 y
+  // max_hole_edges None = cableado muerto). Defaults = histórico.
+  // Para volver atrás: borrar + defaults + controles + envío en App.
+  reconThreshold: number; // umbral isosuperficie en (0,1), default 0.5
+  holeCap: 'all' | 'auto'; // fill_holes: 'all' = tapar todo (histórico), 'auto' = conservar agujeros grandes
   // ADV-OPT (reversible): motores y restricciones avanzadas del core, antes
   // solo accesibles vía Qt desktop. Solo la rama estructural (runOptimization)
   // los envía; la generativa los ignora. Para volver atrás: borrar bloque +

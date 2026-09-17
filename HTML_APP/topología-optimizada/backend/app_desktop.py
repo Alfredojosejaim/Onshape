@@ -115,11 +115,24 @@ def main(dev: bool = False) -> None:
     import webview
 
     port = _free_port()
+    # SERVER-OUT-LOG (reversible): antes stdout/stderr del server iban a
+    # DEVNULL y una muerte del proceso (segfault/OOM en OCC/Kratos durante
+    # un solve pesado) no dejaba rastro: la UI solo mostraba "connection
+    # refused" y el job se perdía sin diagnóstico. Ahora quedan en
+    # backend/server_stdout.log (*.log está en .gitignore). Para volver
+    # atrás: stdout/stderr=subprocess.DEVNULL.
+    log_path = os.path.join(_HERE, "server_stdout.log")
+    log_fh = open(log_path, "w", encoding="utf-8", errors="replace")
+    logger.info("backend log: %s (puerto %d)", log_path, port)
+    # UNBUFFERED (reversible): sin -u, stdout a archivo es block-buffered
+    # (~4-8KB) y una muerte nativa pierde las últimas líneas: justo las que
+    # ubican la fase del crash. Con -u cada registro llega a disco.
+    # Para volver atrás: quitar "-u".
     server = subprocess.Popen(
-        [sys.executable, os.path.join(_HERE, "server.py"), str(port)],
+        [sys.executable, "-u", os.path.join(_HERE, "server.py"), str(port)],
         cwd=_HERE,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=log_fh,
+        stderr=subprocess.STDOUT,
     )
     base = f"http://127.0.0.1:{port}/"
     try:
@@ -158,6 +171,10 @@ def main(dev: bool = False) -> None:
         webview.start(debug=dev)
     finally:
         server.terminate()
+        try:
+            log_fh.close()
+        except Exception:  # noqa: BLE001 - cierre best-effort
+            pass
 
 
 if __name__ == "__main__":

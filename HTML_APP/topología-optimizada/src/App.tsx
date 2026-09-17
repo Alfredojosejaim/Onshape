@@ -381,6 +381,8 @@ export default function App() {
     extrusionAxis: 'off',
     brepStyle: 'bspline',
     designSpace: 'part',
+    reconThreshold: 0.5,
+    holeCap: 'all',
     // ADV-OPT (reversible): defaults = comportamiento histórico (OC sin
     // restricciones extra). Para volver atrás: quitar bloque + panel + spread.
     optimizer: 'oc',
@@ -1056,6 +1058,10 @@ export default function App() {
               brep_style: st.simpParams.brepStyle,
               smoothing_method: st.simpParams.brepStyle === 'bspline' ? 'taubin' : 'laplacian',
               design_space: st.simpParams.designSpace,
+              // RECON-UI: antes no se enviaban (backend los acepta desde
+              // las sesiones de sep-2026 pero llegaban defaults: 0.5/None).
+              threshold: st.simpParams.reconThreshold,
+              max_hole_edges: st.simpParams.holeCap === 'auto' ? 'auto' : null,
             })
           : await backend.runOptimization({
               condition_ids: condIds.length > 0 ? condIds : undefined,

@@ -299,6 +299,38 @@ export const RightPanel: React.FC<RightPanelProps> = ({
                   <option value="bspline">B-spline</option>
                 </select>
               </label>
+              {/* RECON-UI (reversible): umbral de isosuperficie y tope de
+                  agujeros. Con volfrac bajo, 0.5 fragmenta la pieza (fallo
+                  BREP "not valid"): bajar a ~volfrac la rescata. 'auto'
+                  conserva agujeros grandes (anclajes). Defaults = histórico. */}
+              <label className="flex items-center justify-between pl-2">
+                <span className="text-text-secondary" title="Densidad mínima para sólido (0.5 histórico; con volfrac bajo probar ~volfrac)">Umbral sólido (ρ)</span>
+                <input
+                  type="number"
+                  min={0.05}
+                  max={0.95}
+                  step={0.05}
+                  value={simpParams.reconThreshold}
+                  disabled={optimizationState.isRunning}
+                  onChange={(e) => {
+                    const v = parseFloat(e.target.value);
+                    onChangeSimpParams({ ...simpParams, reconThreshold: Number.isFinite(v) ? Math.min(0.95, Math.max(0.05, v)) : 0.5 });
+                  }}
+                  className="w-16 bg-surface-container-lowest border border-border-subtle/40 rounded px-1 py-0.5 text-text-primary text-right"
+                />
+              </label>
+              <label className="flex items-center justify-between pl-2">
+                <span className="text-text-secondary" title="Tapar todos los bordes abiertos (histórico) o conservar agujeros grandes de diseño">Agujeros grandes</span>
+                <select
+                  value={simpParams.holeCap}
+                  disabled={optimizationState.isRunning}
+                  onChange={(e) => onChangeSimpParams({ ...simpParams, holeCap: e.target.value as SimpParameters['holeCap'] })}
+                  className="bg-surface-container-lowest border border-border-subtle/40 rounded px-1 py-0.5 text-text-primary"
+                >
+                  <option value="all">Tapar todo</option>
+                  <option value="auto">Conservar (auto)</option>
+                </select>
+              </label>
             </div>
 
             {/* ADV-OPT (reversible): motores/restricciones del core. Para

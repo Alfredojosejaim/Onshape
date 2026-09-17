@@ -1029,7 +1029,13 @@ class Api:
                                # (el pipeline sellaba TODO loop abierto, sin
                                # importar tamaño -- agujeros de anclaje
                                # incluidos). None = histórico si no se manda.
-                               max_hole_edges=p.get("max_hole_edges"))
+                               max_hole_edges=p.get("max_hole_edges"),
+                               # THRESHOLD: umbral de isosuperficie (default
+                               # 0.5 histórico). Con volfrac bajo, 0.5 puede
+                               # dejar la pieza fragmentada (fallo BREP).
+                               threshold=(p.get("threshold")
+                                          if p.get("threshold") is not None
+                                          else 0.5))
             holder_g["jid"] = jid
             return {"ok": True, "jobId": jid}
         except Exception as exc:  # noqa: BLE001

@@ -45,7 +45,13 @@ export function useJobPoll(jobId: string | null, onDone?: (result: unknown) => v
         };
         if (cancelled) return;
         if (!r.ok) {
-          setError('pollJob falló en el backend');
+          // POLL-ERR-STR (reversible): el backend SÍ trae el detalle en
+          // `error` ("job desconocido: ...", "método no expuesto: ...",
+          // excepción del puente). Antes se descartaba y la UI mostraba
+          // solo el genérico, perdiendo la causa real. Para volver atrás:
+          // mensaje fijo sin sufijo.
+          const detail = typeof r.error === 'string' && r.error ? `: ${r.error}` : '';
+          setError(`pollJob falló en el backend${detail}`);
           setLoading(false);
           stop();
           return;

@@ -75,3 +75,14 @@ En caso de conflicto o múltiples alternativas, prioriza en este orden exacto:
 5. Mantenibilidad.
 6. Rendimiento.
 7. Complejidad mínima.
+
+---
+
+## 8. CEREBRO AGÉNTICO (MEMORIA EXTERNA DEL PROYECTO)
+El proyecto mantiene memoria externa en `cerebro_agentico/` (6 capas: `inbox/`, `raw/`, `wiki/`, `verdad/`, `proyectos/`, `log/`).
+Su manual canónico es `cerebro_agentico/AGENTS.md` — NO lo dupliques ni lo reescribas aquí; léelo y obedécelo cuando operes sobre el cerebro.
+
+- **Al iniciar una sesión:** lee `cerebro_agentico/AGENTS.md` (si vas a usar el cerebro), revisa `cerebro_agentico/inbox/` por material pendiente, y carga `cerebro_agentico/proyectos/topologia-optimizada/estado.md` para contexto del proyecto.
+- **Al cerrar (o cuando corresponda):** actualiza `estado.md`, procesa lo que quede en `inbox/`, y deja constancia en `cerebro_agentico/log/` (un archivo por mes, append-only).
+- **`cerebro_agentico/verdad/` es sagrada:** nada entra ni se edita ahí sin confirmación explícita del usuario.
+- **Conflicto de instrucciones:** el repo (secciones 1–7) manda sobre física, geometría y arquitectura; el cerebro manda sobre dónde y cómo registrar memoria. Si colisionan, aplica el criterio de decisión (sección 7) y `verdad/` solo con aval del usuario.

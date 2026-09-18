@@ -63,6 +63,31 @@ def test_heaviside_end_to_end():
     assert 0.0 < r["physical_volume_fraction"] <= 1.0
 
 
+def test_heaviside_projection_conserva_el_volumen_pedido():
+    """VOL-PRESERVE: el campo FÍSICO debe pesar lo pedido, no más.
+
+    Regresión del "infla todo" (18-sep-2026): con `eta` fijo en 0.5 la
+    proyección Heaviside no conserva volumen y el usuario pedía 0.4 y obtenía
+    ~0.48 de material (+20%): el optimizador rellenaba en vez de vaciar. Ahora
+    `eta` se resuelve por bisección cada iteración (el filtro ya es
+    conservativo, así que diseño → filtrado → proyectado mantienen el mismo
+    volumen). Sin elementos preservados/void, V0 == V_libre, así que
+    `physical_volume_fraction` debe quedar pegado al objetivo.
+    """
+    volfrac = 0.4
+    s = _cantilever(volfrac=volfrac)
+    s.set_heaviside_projection(beta=8.0, eta=0.5, continuation=True)
+    r = s.optimize(max_iterations=12, tolerance=1e-4)
+    assert r["volume_preserving_projection"] is True
+    assert r["final_volume_fraction"] == pytest.approx(volfrac, abs=1e-6)
+    fisico = float(r["physical_volume_fraction"])
+    assert abs(fisico - volfrac) < 0.03, (
+        f"campo fisico {fisico:.4f} vs objetivo {volfrac} (proyeccion sin "
+        f"conservar volumen)")
+    # y el eta deja de ser el 0.5 fijo una vez que el campo se vuelve bimodal
+    assert r["heaviside_eta"] != pytest.approx(0.5, abs=1e-9)
+
+
 def test_heaviside_sharpens_midrange_field():
     """La proyección aleja el campo filtrado de 0.5 (menos grises)."""
     s = _cantilever()

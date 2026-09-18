@@ -264,3 +264,100 @@ Verificación (Fase E):
 Segundo bug real encontrado al verificar (y corregido): la lectura del snapshot no era robusta en Windows. Mientras un hilo publica, `open` puede fallar transitoriamente con `PermissionError` (violación de compartición durante `os.replace`; **medido: 381 fallos en 3 s con 3 publicadores y 3 lectores**), y el lector lo interpretaba como "no hay snapshot" → caía al camino HTTP → con el backend ocupado reaparecía el falso "backend no responde" (así falló la suite: `105 passed, 1 failed`, y después `106 passed, 2 failed`, hasta cerrarlo). Arreglos: temporal **único por escritura** (dos publicadores simultáneos son normales: hilo del solver por progreso + hilo HTTP al crear otro job), **reintentos** de lectura y **cache del último snapshot válido** en el puente (la edad se calcula de la marca `written` del propio snapshot, así que la señal `stale` no se falsea). Regresión: `test_read_snapshot_survives_concurrent_publishers` y `test_transient_read_failure_uses_last_valid_snapshot`.
 
 Nota de alcance: el proceso pesado sigue sin poder atender *otros* endpoints síncronos mientras una llamada nativa retiene el GIL (`registerReconstruction`, `exportStep`, `getSurfaceMesh`). Eso no es una regresión (ya era así) y ocurre después del job, cuando la UI no sondea; si alguna vez molesta, el siguiente paso es el worker con IPC real.
+
+## Addendum 2026-09-18 (8) — "el modelo no es generativo, infla todo": marching-tets roto y presupuesto de material
+
+Síntoma: el sólido generativo sale como un bloque inflado (sin miembros ni canales), no como estructura orgánica.
+
+**Causa raíz medida (HECHO) — el extractor de isosuperficie estaba roto.** Dos defectos independientes en `core/cad_reconstruction.py`:
+
+1. **Orientación mezclada.** `_voxel_tet_mesh` (dominio de diseño del generativo) emite **5 de cada 6 tets con volumen negativo** (medido: `53125/63750` en un envelope de 63 750 tets), y `_tet_iso_triangles` heredaba ese volteo: el caso 1-abajo salía invertido y el segundo triángulo del caso 2-2 también. Medición sobre una esfera sintética (material dentro de la caja, malla `_voxel_tet_mesh`): **4082 normales hacia afuera vs 4094 hacia adentro**, integral de volumen **−1392 mm³ en vez de +167 260** (cancelación ~100%). Es decir: normales visuales invertidas en la mitad de la superficie, volumen sin sentido y cosido/`ShapeFix` de OCC trabajando sobre una cáscara incoherente.
+2. **Vértices no soldados.** Cada tetraedro calculaba el corte de una arista compartida en su propio **orden local**, así que los dos floats diferían en los últimos bits y el soldado a 1e-9 no los fusionaba: la isosuperficie quedaba **abierta** (medido: 100 aristas abiertas en la esfera sintética, 400 en el envelope real). Ordenar por índice local no alcanza: la misma arista global aparece con índices locales distintos en cada tet.
+
+Fix (Fase D, mínimo y reversible, marcado `ORIENT-FIX` / `EDGE-CANON`):
+- `_tet_iso_triangles(..., gcon)`: los triángulos se orientan con la **dirección material del propio tet** (`dot(normal, centro_alto − centro_bajo)`), criterio geométrico que hace irrelevante el signo del tet — en lugar de análisis de casos.
+- `_lerp_edge(..., gcon)`: el par de nodos se ordena por **índice GLOBAL** antes de interpolar, así los dos tets que comparten arista producen bit a bit el mismo punto y el soldado los fusiona.
+- `MarchingTetrahedraExtractor.extract` pasa la conectividad global.
+
+Verificación (Fase E):
+| Prueba | Antes | Después |
+|---|---|---|
+| Normales hacia afuera (esfera sintética, t=0.3) | 4082/8176 | **8320/8320** |
+| Volumen por divergencia (analítico 167 260 mm³) | −1392 | **169 239 (+1.18 %)** |
+| Aristas abiertas (esfera que sobresale de la caja: corte real del dominio) | 100 | 100 (legítimas) |
+| `pytest backend/tests` | 108 passed | **110 passed** (2 nuevos) |
+
+Regresión nueva: `backend/tests/test_isosurface_orientation.py` (normales 100 % hacia afuera, malla cerrada cuando el material no toca la frontera, volumen positivo del orden correcto, y puntos de arista compartida idénticos entre tets con conectividad permutada).
+
+**Diagnóstico del "inflado" que NO era del extractor (medido, pendiente de decisión).** Reproducción con el pipeline real (cono + envelope 63 750 tets, volfrac 0.35, 50 iters, threshold 0.3), cadena de volúmenes:
+
+| Etapa | Volumen (% de la caja de diseño) |
+|---|---|
+| Pedido por el usuario (volfrac) | 35.0 % |
+| Campo físico del solver (`physical_volume_fraction`) | **41.9 %** |
+| Material del campo por umbral (`rho>0.5`) | 43.9 % |
+| Isosuperficie cruda + `fill_holes` | 27.7 % |
+| Tras Taubin | 24.7 % |
+| Tras decimar (≤6000 tris) | 22.5 % |
+
+1. **P1 — sobrellenado (+20 %):** la proyección Heaviside (`beta` 8, `eta` 0.5 **fijo**) no conserva volumen, así que el campo físico queda 20 % por encima del `volfrac` pedido. Arreglo estándar: actualizar `eta` por bisección cada iteración (volume-preserving projection) para que `Σ x̄·V` = objetivo. No implementado (toca el lazo del optimizador y las regresiones numéricas).
+2. **P2 — la extracción pierde ~40 % del material:** 43.9 % del campo → 27.7 % de malla. `_element_densities_to_nodes` promedia **sin pesos** y el resultado se corta por umbral, así que los miembros delgados se diluyen. Arreglo: umbral elegido por conservación de volumen (bisección sobre el volumen encerrado) o promedio ponderado por volumen de tet, y reportar `solid/field` en metadata.
+3. **P3 — el material se pega a la caja de diseño:** el guard `ENV-SKIN-BC-GUARD` quita del void-skin todo elemento que toque un nodo de BC; cuando la carga/fijación cae al **fallback** (toda una cara extrema o base-Z), cancela **7500 de 8640** elementos de skin. Medido: la capa de pared queda con **46.7 % de material** (debería ser ~0) y **27.5 % del dominio queda en 13 bolsas de vacío encerrado** (el "blob" no tiene canales abiertos). Con las caras bien mapeadas el efecto se acota, pero el fallback lo dispara. Arreglo propuesto: proyectar la cara CAD a los nodos del envelope (vecinos por KD-tree de los nodos de la cara en la malla del modelo) en vez de "todos los nodos del plano extremo", y/o que el material preservado gane al void del skin.
+4. **P4 — la cadena B-Rep histórica (`unify` → `ShapeCustom_BSplineRestriction` → `continuity`) no tiene guarda de volumen:** el `VOL-GUARD` (75 %–133 %) solo existe en el camino de parches B-spline. Si `BSplineRestriction` infla el sólido, nada lo detecta ni lo reporta.
+
+Nota: en el diseño `part` (malla del modelo) el pipeline sigue eligiendo `brep_source="smoothed"` (los tests de roundtrip STEP siguen pasando); en el envelope de la reproducción el fitter terminó aceptando la candidata `raw` (`brep_source="raw"`, `bspline_fit=fallback_mixed`) — comportamiento reportado en metadata, no silencioso.
+
+## Addendum 2026-09-18 (9) — "sigue inflando: tiene que quitar material": proyección conservativa
+
+Continuación del addendum 8, con la instrucción explícita del usuario: la optimización generativa debe **sacar** material, no rellenarlo. Se atacaron las dos causas medidas ahí (`P1` y `P3`).
+
+**P1 — el campo físico ya pesa lo pedido (`VOL-PRESERVE`).** Con `eta` fijo en 0.5 la proyección Heaviside no conserva volumen y el desvío va en **ambos** sentidos según el campo: en el envelope real el usuario pedía 0.35 y obtenía **0.419** (+20%, rellenaba); en una viga pequeña con `beta=8` la misma configuración daba **0.2517** con objetivo 0.40 (−37%, vaciaba de más). Control negativo medido (viga Kuhn 4x1x1, 12 iteraciones, `volfrac=0.4`):
+
+| | `final_volume_fraction` (diseño) | `physical_volume_fraction` | `eta` |
+|---|---|---|---|
+| Sin el fix (control) | 0.4000 | **0.2517** | 0.5000 (fijo) |
+| Con el fix | 0.4000 | **0.4000** | 0.4389 |
+
+Implementación (`core/topopt.py`, marcada `VOL-PRESERVE`, reversible): `_update_heaviside_eta(x, beta)` resuelve `eta` por bisección (50 pasos sobre `(1e-6, 1-1e-6)`, 60 evaluaciones vectorizadas) para que `Σ x̄·V` sobre el subdominio activo iguale el volumen del campo de diseño; se llama al inicio de cada iteración del lazo OC/MMA/GCMMA y otra vez en `_finalize_result` (el `eta` de la última iteración corresponde al `x` anterior). El filtro ya es conservativo, así que diseño → filtrado → proyectado mantienen el mismo volumen. `d(eta)/dx` se desprecia (aproximación estándar). Sin Heaviside es no-op bit a bit (lo cubre `test_heaviside_regression_no_projection`). Se reporta `volume_preserving_projection: true` y el `heaviside_eta` final en el resultado.
+
+Efecto medido en el envelope real (cono, 63 750 tets, `volfrac=0.35`, 50 iters): `physical_volume_fraction` **0.4193 → 0.3748**; volumen de tets con `rho>0.5` **43.9% → 39.3%**; `final_volume_fraction` 0.3500 (el pedido). Regresión nueva: `test_heaviside_projection_conserva_el_volumen_pedido`.
+
+**P3 — fallback de BC acotado (`FALLBACK-BOUND`).** Al medir el mapeo con **caras válidas** se aclaró el alcance real: el cono tiene **3 caras** (0,1,2), así que las sondas previas (con `face_index` 3 y 5, copiado de tests sintéticos) no mapeaban nunca y caían al fallback plano. Con caras reales el mapeo **sí funciona**: carga → 492 nodos (cara 2), fijación → 2444 nodos (cara 0), y el guard de BC sólo cancela **2 293 de 16 140** elementos de skin (14 %), no 7 500 de 8 640 (87 %). Aun así, cuando la cara pedida no existe o no mapea, el fallback histórico aplicaba la condición a **todos los nodos del plano extremo** del dominio; ahora se acota al bbox de las caras pedidas más 2·h de margen (`_fallback_face_mask`, aplicado en los tres fallbacks: `_resolved_load_nodes`, `_resolved_support_nodes`, `_force_vector_for_load`). Detalle de implementación: `model_shape` es una shape de **CadQuery** (no un `TopoDS` crudo) y OCP no expone `Face.Bnd()`; el bbox se saca con `BoundingBox()` y, si llegara una cara OCC cruda, con `BRepBndLib.Add_s(face.wrapped, box)`. Sin caras o sin shape CAD se mantiene el comportamiento histórico (None), así que no hay regresión. Limitación honesta: para caras cuyo bbox abarca toda la pieza (p. ej. la cara lateral de un cono) el acotado no restringe nada — el arreglo de fondo es proyectar la cara a los nodos del envelope por distancia, no por bbox.
+
+**Verificación (Fase E):** `pytest backend/tests` → **111 passed** (nuevas: `test_isosurface_orientation.py` ×2, `test_heaviside_projection_conserva_el_volumen_pedido`); el intérprete sigue cerrando con el crash nativo `0xC0000005` preexistente. Sigue pendiente `P2` (la extracción pierde ~30-40% del material del campo: 39.3% → ~27% de malla) y `P4` (la cadena B-Rep histórica no tiene guarda de volumen).
+
+## Addendum 2026-09-18 (10) — el "sólido" registrado era una CÁSCARA (`num_solids = 0`)
+
+Con la captura de la UI del usuario se reencuadró el problema: **el optimizador sí vacía** (la UI muestra `Masa 0.13 kg (-81%)`; en la reproducción, `volfrac=0.2` → `final_volume_fraction=0.2000`, material rho-ponderado 26.2% de la caja). Lo que falla es la **reconstrucción**, y de dos formas distintas:
+
+1. **El pipeline entrega una superficie etiquetada como sólido (HECHO, grave).** Medición directa con el pipeline real (cono + envelope 63 750 tets, `volfrac=0.2`, umbral 0.3, B-spline, `max_hole_edges='auto'`): `reconstruction.stage = brep_solid / completed`, pero al registrar y reimportar, el **snapshot de la app reporta `num_solids = 0`** con 5 619 caras y 5 624 triángulos (STEP de 15 MB). Causa: `BRepCheck_Analyzer` considera **válida** una cáscara (`TopAbs_SHELL`), y los pasos de la cadena B-Rep (`ShapeUpgrade_UnifySameDomain`, `ShapeCustom_BSplineRestriction`, `ShapeUpgrade_ShapeDivideContinuity` — este último devuelve un COMPOUND por diseño) podían degradar el sólido a cáscara sin que nadie lo verificara: `unify_same_domain = applied` y el resultado guardado ya no era un sólido. La app registraba y mostraba una **superficie**, no un sólido CAD.
+   **Fix (`SOLID-GUARD`, reversible):** `_shape_has_solid(shape)` exige `TopAbs_SOLID` (o un COMPOUND con al menos un sólido); los tres pasos de la cadena sólo se aceptan si la forma sigue siendo sólida (`skipped_not_solid` en metadata) y `OCPBSplineFitter.fit` devuelve el sólido facetado original si la cadena lo degradó (`brep_chain_downgraded = kept_faceted_solid`). Regresión: `backend/tests/test_brep_solid_guard.py` (sólido / cáscara suelta / compuesto con sólido / compuesto sólo con cáscaras).
+2. **La reconstrucción conserva sólo el 31% del material del campo.** `snapshot.volume_cm3 = 51.9` frente a `165.9 cm³` de material en el campo (rho-ponderado). Es `P2` del addendum 8, ahora cuantificado a nivel app: el sólido registrado no representa lo optimizado (y sobre eso actúa el suavizado B-spline, que redondea lo poco que queda). Pendiente.
+
+Números de la corrida (para trazabilidad): `final=0.2000`, `physical=0.2620` (el campo físico sigue arriba del objetivo cuando se mide sobre la caja completa: el objetivo del `VOL-PRESERVE` es el volumen del campo de diseño sobre el subdominio activo), `eta=0.5506`, `brep_source=raw`, `bspline_fit=fallback_mixed`, `brep_decimated_from=18516 → 5980`, `unify_same_domain=applied`.
+
+## Addendum 2026-09-18 (11) — por qué la app registraba una cáscara: el tapado invertía los parches
+
+Cerrando el addendum 10. Se implementó la extracción que conserva el material (`VOL-MATCH`) y, al verificarla contra los tests de generativa, quedó al descubierto la causa real del `num_solids = 0`:
+
+**`fill_holes` construía el abanico con el bobinado al revés.** Los parches de tapado quedaban con la normal opuesta a la superficie, así que la cáscara cerrada tenía caras invertidas y `BRepGProp.VolumeProperties` daba un volumen ~0 (**medido: 5.52 mm³ frente a 1.57e+05 mm³ de malla**). Consecuencias encadenadas: el guardia de volumen de `_register_reconstruction_model` **rechazaba** el sólido ("volumen del sólido reconstruido degenerado"), el registro caía a una cáscara y el STEP salía sin sólidos. Fix de una línea marcado `CAP-ORIENT` (`[new_idx, v1, v0]`), con el motivo escrito en el código.
+
+**VOL-MATCH (nuevo, activo por defecto).** `resolve_volume_threshold` busca por bisección el umbral de isosuperficie que hace que el volumen encerrado iguale el material que el umbral del usuario define en el campo de elementos, y lo reporta (`marching_threshold_requested/used`, `material_volume_target_mm3`, `material_volume_extracted_mm3`, `material_volume_ratio`, `volume_matching_error`) — en la etapa terminal también, para que la UI pueda decirlo. La medición durante la búsqueda se hace sobre la malla con los **cortes de dominio** tapados (`max_hole_edges=0` + `domain_lo/hi/tol`), porque una malla abierta no tiene volumen encerrado medible (sin esto la bisección divergía: `ratio 0.38`, `error 0.62`). Caso de placa delgada de 1 voxel: sin VOL-MATCH al umbral 0.5 se extraía **26.3%** del material del campo; con VOL-MATCH (**t\*=0.067**) se extrae **97.8%**.
+
+**DOMAIN-CUT.** Un loop abierto cuyos vértices caen todos sobre la frontera del dominio no es un agujero de diseño: es el corte de la isosuperficie contra la caja de diseño. Esos loops se tapan **siempre**, aunque superen `max_hole_edges` (si no, la cáscara queda abierta y no hay sólido); los agujeros interiores siguen sujetos al tope del usuario. Guardia añadido: con un dominio degenerado (nodos de prueba en cero) la regla NO aplica (antes marcaba cualquier agujero como corte).
+
+**SOLID-GUARD** queda como **detección reportada** (`unify_same_domain_not_solid`, `bspline_restriction_not_solid`, `continuity_upgrade_not_solid`, `brep_chain_not_solid`), no como sustitución: sustituir por el sólido facetado crudo resultó peor (ese shape tiene volumen degenerado para OCC y el registro lo rechaza).
+
+**Verificación (Fase E):** `pytest backend/tests` → **119 passed** (nuevas: `test_volume_matching.py` ×3, `test_brep_solid_guard.py` ×4, `test_isosurface_orientation.py` ×2, `test_heaviside_projection_conserva_el_volumen_pedido`, `test_loop_sobre_la_frontera_del_dominio_se_tapa_siempre`). Los tests de app (`test_generativa_flujo::test_registration_exposes_reconstructed_tessellation` y `test_generative_step_roundtrip`) —que registran el sólido, exportan el STEP y lo reimportan con `num_solids >= 1`— pasan de fallar por "volumen degenerado" a pasar con el fix de orientación de abanicos. Queda pendiente de re-medición E2E el caso envelope completo (la corrida de verificación se lanzó antes del `CAP-ORIENT`).
+
+## Addendum 2026-09-18 (12) — "sin geometría registrable": la cáscara quedaba abierta
+
+Captura del usuario tras el addendum 11: la forma ya es una **estructura de miembros finos** (lo que se buscaba) y el campo está en presupuesto (`sobre-umbral 20.6%` con `volfrac 0.25`), pero el registro falla con *"Reconstructed solid is not valid (isosuperficie abierta/degenerada…)"* → no se registra NADA.
+
+Causa: con "Agujeros grandes: Conservar (auto)" los loops que superan el tope se dejan abiertos y, si el material toca el borde del dominio, también quedan cortes; una cáscara abierta no puede convertirse en sólido y el fitter base devuelve FAILED (su guardia de validez es correcta).
+
+Fix (`CIERRE-FORZADO`, reversible): antes del ajuste B-Rep, si el candidato tiene loops abiertos se cierra **una copia** (`fill_holes(..., max_hole_edges=None)`) y se reporta `brep_forced_close_loops`. Justificación física, no conveniencia: un loop abierto **nunca** es un agujero de diseño — los agujeros reales (pernos, keep-out) son **túneles**, o sea superficies cerradas; un loop abierto es un corte contra el dominio o un artefacto del marching-tets. La metadata de la etapa de tapado sigue diciendo fielmente cuántos loops dejó el tope del usuario (no se falsea su ajuste). Regresión: `test_forced_close_when_user_cap_leaves_the_shell_open` (con un fitter que rechaza mallas abiertas, como OCC).
+
+**Verificación:** `pytest backend/tests` → **120 passed**.
+
+**A revisar del lado del usuario (no es reconstrucción):** su corrida reporta `compliance final = 3.03e-10`, es decir el trabajo de deformación es prácticamente nulo: la carga no está generando desplazamiento apreciable (estructura rígida u over-constrained). Con compliance ≈ 0 el optimizador no tiene sensibilidad útil, así que conviene revisar magnitud/dirección de la carga y qué caras quedaron fijas (si la fijación cubre casi toda la pieza, el problema es trivialmente rígido y el resultado deja de ser significativo).

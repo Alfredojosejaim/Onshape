@@ -462,6 +462,48 @@ class SIMPSolver:
             return np.asarray(x, dtype=float).ravel()
         return self._project(self._filtered_density(x), beta=beta)
 
+    def _update_heaviside_eta(self, x: np.ndarray,
+                              beta: Optional[float] = None) -> float:
+        """VOL-PRESERVE (reversible): elige el eta de la proyeccion Heaviside
+        para que el campo FISICO conserve el volumen del campo de diseno.
+
+        Motivo medido (18-sep-2026): con eta=0.5 fijo el usuario pedia
+        volfrac=0.35 y el campo proyectado terminaba en 0.419 de la caja
+        (+20% de material) -- el optimizador RELLENABA en vez de vaciar. La
+        proyeccion Heaviside no conserva volumen: con un campo bimodal (0/1
+        tras filtrar) empuja masa hacia el lado solido. Estandar: resolver eta
+        por biseccion en cada iteracion (el filtro ya es conservativo, asi que
+        diseno -> filtrado -> proyectado mantienen el mismo volumen objetivo).
+
+        eta NO se usa en la sensibilidad (d(eta)/dx se desprecia, aproximacion
+        estandar). Sin Heaviside no hace nada. Devuelve el eta aplicado.
+        """
+        if not self._heaviside:
+            return self._heaviside_eta
+        xt = self._filtered_density(x)
+        act = self._active
+        v = self._volumes[act]
+        objetivo = float(np.dot(np.asarray(x, dtype=float).ravel()[act], v))
+
+        def _vol(eta: float) -> float:
+            return float(np.dot(self._project(xt, beta=beta, eta=eta)[act], v))
+
+        lo, hi = 1e-6, 1.0 - 1e-6
+        if _vol(lo) <= objetivo:          # ni con el eta minimo se llega
+            self._heaviside_eta = lo
+            return lo
+        if _vol(hi) >= objetivo:          # el objetivo esta por debajo del minimo
+            self._heaviside_eta = hi
+            return hi
+        for _ in range(50):               # _vol(eta) decrece con eta
+            mid = 0.5 * (lo + hi)
+            if _vol(mid) > objetivo:
+                lo = mid
+            else:
+                hi = mid
+        self._heaviside_eta = 0.5 * (lo + hi)
+        return self._heaviside_eta
+
     def _design_sensitivity(self, x: np.ndarray, dc_phys: np.ndarray,
                             beta: Optional[float] = None) -> np.ndarray:
         """dc/dx a partir de dc/dx̄ (filtro de densidad + proyección).
@@ -1227,6 +1269,9 @@ class SIMPSolver:
             self._gcmma_capped = False
         for it in range(max_iterations):
             beta_it = self._beta_at(it)
+            # VOL-PRESERVE: el campo fisico debe pesar lo pedido (sin esto el
+            # usuario pide 0.35 y obtiene ~0.42). Solo con Heaviside activo.
+            self._update_heaviside_eta(x, beta=beta_it)
             x_phys = self._physical_density(x, beta=beta_it)
             compliance, dc_phys = self._compliance_and_sensitivities(x_phys)
             dc_f = self._design_sensitivity(x, dc_phys, beta=beta_it)
@@ -1355,6 +1400,10 @@ class SIMPSolver:
         """Análisis final + dict de resultado (compartido OC/MMA/ESO)."""
         # Densidad física (filtro+proyección/extrusión) para el análisis y el
         # reporte. Sin esas opciones x_phys == x (bit-idéntico al histórico).
+        # VOL-PRESERVE: el eta se recalcula para el campo FINAL (el de la última
+        # iteración corresponde al x anterior), si no el volumen reportado no
+        # coincide con lo pedido.
+        self._update_heaviside_eta(x)
         x_phys = self._apply_extrusion(self._physical_density(x))
         final_us = self._solve_all(x_phys)
         weight = np.power(x_phys, self.penalization)
@@ -1410,6 +1459,10 @@ class SIMPSolver:
             "heaviside_projection": bool(self._heaviside),
             "heaviside_beta": float(self._heaviside_beta),
             "heaviside_eta": float(self._heaviside_eta),
+            # VOL-PRESERVE: eta se resuelve por biseccion cada iteracion para
+            # que el campo fisico conserve el volumen pedido (antes quedaba
+            # +20% arriba). Se reporta para que la UI/metadata lo digan.
+            "volume_preserving_projection": bool(self._heaviside),
             "extrusion_axis": (None if self._extrusion_axis is None
                                else int(self._extrusion_axis)),
             "preserved_elements": (self._preserved.tolist() if self._preserved is not None else None),

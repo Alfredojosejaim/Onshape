@@ -116,10 +116,49 @@ class SurfaceExtractor(ABC):
         """Extract an isosurface from the density field."""
 
 
-def _tet_iso_triangles(verts: np.ndarray, dens: np.ndarray, threshold: float) -> List[np.ndarray]:
+def _shape_has_solid(shape) -> bool:
+    """True si la forma ES un sólido o un compuesto CON al menos un sólido.
+
+    SOLID-GUARD (reversible): `BRepCheck_Analyzer` da por válida una cáscara
+    (TopAbs_SHELL), así que los pasos de la cadena B-Rep (`UnifySameDomain`,
+    `ShapeCustom_BSplineRestriction`, `ShapeDivideContinuity`) podían devolver
+    una cáscara y el pipeline la etiquetaba `BREP_SOLID`/completed. Medido en
+    el caso envelope del usuario: el modelo registrado tenía `num_solids = 0`
+    en la app (una cáscara de 5619 caras exportada como STEP de 15 MB), es
+    decir la app registraba y mostraba una superficie, no un sólido CAD.
+    Para volver atrás: devolver True siempre.
+    """
+    try:
+        from OCP.TopAbs import TopAbs_ShapeEnum
+        from OCP.TopExp import TopExp_Explorer
+        st = shape.ShapeType()
+        if st == TopAbs_ShapeEnum.TopAbs_SOLID:
+            return True
+        if st in (TopAbs_ShapeEnum.TopAbs_COMPOUND,
+                  TopAbs_ShapeEnum.TopAbs_COMPSOLID):
+            exp = TopExp_Explorer(shape, TopAbs_ShapeEnum.TopAbs_SOLID)
+            return bool(exp.More())
+        return False
+    except Exception:  # noqa: BLE001 - defensivo
+        return False
+
+
+def _tet_iso_triangles(verts: np.ndarray, dens: np.ndarray, threshold: float,
+                       gcon: Optional[np.ndarray] = None) -> List[np.ndarray]:
     """Marching-tetrahedra: produce the iso triangle(s) of one tetrahedron.
 
     ``verts`` is (4, 3); ``dens`` is (4,).  The ambient dimension is 3D.
+    ``gcon`` son los indices GLOBALES de los 4 nodos (para soldar vertices).
+
+    ORIENT-FIX (obligatorio): los triangulos se emiten con la normal hacia
+    AFUERA del material (de rho alto hacia rho bajo), calculada con la
+    direccion material del propio tet en vez de por casos. Antes la orientacion
+    salia mezclada ~50/50 (medido: 4082 normales hacia afuera vs 4094 hacia
+    adentro en una esfera sintetica; integral de volumen ~0) porque el caso
+    1-abajo estaba invertido, el segundo triangulo del caso 2-2 tambien, y
+    ademas el orden de los tets del dominio (`_voxel_tet_mesh`: 5 de cada 6 con
+    volumen negativo) heredaba el volteo. Con el criterio geometrico el signo
+    del tet es irrelevante. Para volver atrás: quitar el bloque ORIENT.
     """
     tris: List[np.ndarray] = []
     below = [i for i in range(4) if dens[i] <= threshold]
@@ -127,47 +166,66 @@ def _tet_iso_triangles(verts: np.ndarray, dens: np.ndarray, threshold: float) ->
     count_below = len(below)
     if count_below == 0 or count_below == 4:
         return tris
+
+    def _e(i: int, j: int) -> np.ndarray:
+        return _lerp_edge(verts, dens, i, j, threshold, gcon=gcon)
+
     if count_below == 1:
         a = below[0]
         b, c, d = above
-        tris.append(np.array([
-            _lerp_edge(verts, dens, a, b, threshold),
-            _lerp_edge(verts, dens, a, c, threshold),
-            _lerp_edge(verts, dens, a, d, threshold),
-        ]))
+        tris.append(np.array([_e(a, b), _e(a, c), _e(a, d)]))
     elif count_below == 3:
         a = above[0]
         b, c, d = below
-        tris.append(np.array([
-            _lerp_edge(verts, dens, a, b, threshold),
-            _lerp_edge(verts, dens, a, c, threshold),
-            _lerp_edge(verts, dens, a, d, threshold),
-        ]))
-    else:  # count_below == 2 -> two triangles
+        tris.append(np.array([_e(a, b), _e(a, c), _e(a, d)]))
+    else:  # count_below == 2 -> quad en dos triangulos (orden ciclico correcto)
         b1, b2 = below
         a1, a2 = above
-        tris.append(np.array([
-            _lerp_edge(verts, dens, b1, a1, threshold),
-            _lerp_edge(verts, dens, b2, a1, threshold),
-            _lerp_edge(verts, dens, b1, a2, threshold),
-        ]))
-        tris.append(np.array([
-            _lerp_edge(verts, dens, b2, a1, threshold),
-            _lerp_edge(verts, dens, b1, a2, threshold),
-            _lerp_edge(verts, dens, b2, a2, threshold),
-        ]))
-    return tris
+        p11 = _e(b1, a1)
+        p21 = _e(b2, a1)
+        p12 = _e(b1, a2)
+        p22 = _e(b2, a2)
+        tris.append(np.array([p11, p21, p22]))
+        tris.append(np.array([p11, p22, p12]))
+
+    # ORIENT: la normal debe ir del material (rho alto) hacia el vacio.
+    mat_dir = (verts[np.asarray(above, dtype=int)].mean(axis=0)
+               - verts[np.asarray(below, dtype=int)].mean(axis=0))
+    out: List[np.ndarray] = []
+    for tri in tris:
+        n = np.cross(tri[1] - tri[0], tri[2] - tri[0])
+        # dot(normal, material) > 0 => la normal entra al material: se invierte.
+        out.append(tri[::-1] if float(np.dot(n, mat_dir)) > 0.0 else tri)
+    return out
 
 
 def _lerp_edge(verts: np.ndarray, dens: np.ndarray, i: int, j: int,
-               threshold: float) -> np.ndarray:
-    di, dj = float(dens[i]), float(dens[j])
-    if abs(dj - di) < 1e-12:
+               threshold: float, gcon: Optional[np.ndarray] = None) -> np.ndarray:
+    """Punto de corte del isovalor sobre la arista (i, j).
+
+    EDGE-CANON (obligatorio): el par se ordena por el indice GLOBAL de los
+    nodos (``gcon``) antes de interpolar. Sin esto cada tetraedro calculaba el
+    mismo punto fisico con distinto orden -- p_i + t*(p_j - p_i) vs
+    p_j + t'*(p_i - p_j) -- y los dos floats difieren en los ultimos bits:
+    `_deduplicate_vertices` (redondeo a 1e-9) no los fusionaba y la
+    isosuperficie quedaba ABIERTA (medido: 100 aristas abiertas / 2 loops en
+    una esfera sintetica que debe ser cerrada; 400 en el envelope real).
+    Ordenar por indice LOCAL no alcanza: la misma arista global aparece con
+    indices locales distintos en cada tet. Para volver atrás: usar (i, j).
+    """
+    if gcon is not None:
+        if int(gcon[i]) > int(gcon[j]):
+            i, j = j, i
+    elif i > j:
+        i, j = j, i
+    a, b = i, j
+    da, db = float(dens[a]), float(dens[b])
+    if abs(db - da) < 1e-12:
         t = 0.5
     else:
-        t = (threshold - di) / (dj - di)
+        t = (threshold - da) / (db - da)
     t = float(min(max(t, 0.0), 1.0))
-    return verts[i] + t * (verts[j] - verts[i])
+    return verts[a] + t * (verts[b] - verts[a])
 
 
 def _element_densities_to_nodes(
@@ -421,6 +479,9 @@ def fill_holes(
     vertices: np.ndarray,
     triangles: np.ndarray,
     max_hole_edges: Optional[int] = None,
+    domain_lo: Optional[np.ndarray] = None,
+    domain_hi: Optional[np.ndarray] = None,
+    domain_tol: float = 0.0,
 ) -> Tuple[np.ndarray, np.ndarray, int]:
     """Fill open boundary loops with fan triangulation.
 
@@ -436,6 +497,15 @@ def fill_holes(
     max_hole_edges : int or None
         If set, skip loops with more edges than this limit (very large holes
         are unlikely to be fillable with a simple fan).
+    domain_lo, domain_hi, domain_tol : optional
+        DOMAIN-CUT (reversible): bbox del dominio de diseño y tolerancia. Un
+        loop cuyos vertices caen TODOS sobre esa frontera no es un agujero de
+        diseño: es el corte de la isosuperficie contra la caja de diseño
+        (el material toco el borde). Esos loops se tapan SIEMPRE, aunque
+        superen `max_hole_edges`: dejarlos abiertos produce una cascara ABIERTA
+        que OCC no puede convertir en solido (medido: el modelo registrado
+        quedaba con `num_solids = 0`, una cascara exportada como STEP).
+        Para volver atrás: no pasar domain_lo/domain_hi.
 
     Returns
     -------
@@ -451,8 +521,25 @@ def fill_holes(
     result_tris = tris.tolist()
     holes_filled = 0
 
+    def _es_corte_de_dominio(loop) -> bool:
+        if domain_lo is None or domain_hi is None:
+            return False
+        lo = np.asarray(domain_lo, dtype=float)
+        hi = np.asarray(domain_hi, dtype=float)
+        diag = hi - lo
+        # Dominio degenerado o invalido (p. ej. nodos de prueba en cero): la
+        # regla NO aplica. Sin este guardia, con bbox=(0,0,0) todo punto cumple
+        # `pts >= hi - tol` y cualquier agujero se tomaba por corte de dominio.
+        if not np.all(diag > 1e-9 * max(float(np.max(diag)), 1.0)):
+            return False
+        tol = max(float(domain_tol), 1e-9 * float(np.max(diag)))
+        pts = verts[np.asarray(loop, dtype=int)]
+        en_frontera = (pts <= lo + tol) | (pts >= hi - tol)
+        return bool(np.all(en_frontera.any(axis=1)))
+
     for loop in loops:
-        if max_hole_edges is not None and len(loop) > max_hole_edges:
+        corte = _es_corte_de_dominio(loop)
+        if not corte and max_hole_edges is not None and len(loop) > max_hole_edges:
             continue
         centroid = np.mean(verts[loop], axis=0)
         # Add centroid as a new vertex.
@@ -462,7 +549,13 @@ def fill_holes(
         for i in range(len(loop)):
             v0 = loop[i]
             v1 = loop[(i + 1) % len(loop)]
-            result_tris.append([new_idx, v0, v1])
+            # CAP-ORIENT (reversible): el abanico debe continuar la orientación
+            # de la superficie. Con el orden invertido los parches quedaban con
+            # la normal al revés y el cosido OCC daba un "sólido" de volumen
+            # ~0 (medido: 5.52 mm³ frente a 1.57e+05 mm³ de malla), que el
+            # guardia de volumen del registro RECHAZA. Para volver atrás:
+            # [new_idx, v0, v1].
+            result_tris.append([new_idx, v1, v0])
         holes_filled += 1
 
     filled_tris = np.asarray(result_tris, dtype=int)
@@ -489,6 +582,9 @@ class MeshHoleFiller:
         vertices: np.ndarray,
         triangles: np.ndarray,
         max_hole_edges: Optional[Union[int, str]] = None,
+        domain_lo: Optional[np.ndarray] = None,
+        domain_hi: Optional[np.ndarray] = None,
+        domain_tol: float = 0.0,
     ) -> ReconstructionResult:
         verts0 = np.asarray(vertices, dtype=float)
         tris0 = np.asarray(triangles, dtype=int)
@@ -511,7 +607,9 @@ class MeshHoleFiller:
         else:
             resolved_cap = max_hole_edges
 
-        verts, tris, n = fill_holes(verts0, tris0, resolved_cap)
+        verts, tris, n = fill_holes(verts0, tris0, resolved_cap,
+                                    domain_lo=domain_lo, domain_hi=domain_hi,
+                                    domain_tol=domain_tol)
         loops_after = _boundary_loops(tris)
         # FILL-REPORT (reversible): lo no tapado queda explícito en metadata
         # (antes un loop grande se sellaba —o se omitía con tope— sin avisar).
@@ -1328,7 +1426,10 @@ class MarchingTetrahedraExtractor(SurfaceExtractor):
             con = elements[e]
             verts = nodes[con]
             dens = nodal[con]
-            for tri in _tet_iso_triangles(verts, dens, threshold):
+            # ORIENT/EDGE-CANON: se pasa la conectividad GLOBAL para orientar
+            # las normales hacia afuera del material y soldar los vertices de
+            # arista compartida bit a bit (ver _tet_iso_triangles/_lerp_edge).
+            for tri in _tet_iso_triangles(verts, dens, threshold, gcon=con):
                 base = len(vertices)
                 vertices.extend(tri)
                 triangles.append([base, base + 1, base + 2])
@@ -1706,6 +1807,15 @@ class OCPBSplineFitter(OCPBRepFitter):
         solid = self._step_unify(solid, meta)
         solid = self._step_bspline(solid, meta)
         solid = self._step_continuity(solid, meta)
+        # SOLID-GUARD (reversible): se REPORTA si la forma deja de ser un
+        # sólido. No se sustituye por el facetado crudo: medido, el sólido
+        # facetado recién cosido tiene volumen degenerado para OCC (5.52 mm³
+        # frente a 1.57e+05 mm³ de malla) y el guardia de volumen del registro
+        # lo rechaza. La cadena queda como estaba (la app la registra y cuenta
+        # bien), pero el hecho queda explícito en metadata para no presentar una
+        # superficie como sólido CAD sin decirlo.
+        if not _shape_has_solid(solid):
+            meta["brep_chain_not_solid"] = True
         try:
             self._write_step(solid, meta)
         except Exception as exc:  # pragma: no cover - defensive
@@ -2026,6 +2136,13 @@ class OCPBSplineFitter(OCPBRepFitter):
             cand = unify.Shape()
             if not cand.IsNull() and self._valid(cand):
                 meta["unify_same_domain"] = "applied"
+                if not _shape_has_solid(cand):
+                    # SOLID-GUARD (reversible): se acepta (es lo que el
+                    # pipeline venía usando y la app lo registra/cuenta bien),
+                    # pero se REPORTA que la forma dejó de ser un sólido. Medido
+                    # en el caso envelope: el modelo registrado quedaba con
+                    # num_solids=0, una cáscara exportada como STEP.
+                    meta["unify_same_domain_not_solid"] = True
                 return cand
             meta["unify_same_domain"] = "skipped_invalid"
         except Exception as exc:
@@ -2053,6 +2170,8 @@ class OCPBSplineFitter(OCPBRepFitter):
             cand = mod.ModifiedShape(solid)
             if not cand.IsNull() and self._valid(cand):
                 meta["bspline_restriction"] = "applied"
+                if not _shape_has_solid(cand):
+                    meta["bspline_restriction_not_solid"] = True
                 return cand
             meta["bspline_restriction"] = "skipped_invalid"
         except Exception as exc:
@@ -2074,6 +2193,8 @@ class OCPBSplineFitter(OCPBRepFitter):
             cand = sd.Result()
             if not cand.IsNull() and self._valid(cand):
                 meta["continuity_upgrade"] = self._continuity
+                if not _shape_has_solid(cand):
+                    meta["continuity_upgrade_not_solid"] = True
                 return cand
             meta["continuity_upgrade"] = "skipped_invalid"
         except Exception as exc:
@@ -2095,6 +2216,106 @@ class OCPBSplineFitter(OCPBRepFitter):
 
 class DummyBRepFitter(OCPBRepFitter):
     """Alias kept for backward compatibility; fitter is now real via OCP."""
+
+
+def resolve_volume_threshold(
+    extractor: "SurfaceExtractor",
+    nodes: np.ndarray,
+    elements: np.ndarray,
+    densities: np.ndarray,
+    threshold: float,
+    max_steps: int = 6,
+    vol_tol: float = 0.05,
+    domain_lo: Optional[np.ndarray] = None,
+    domain_hi: Optional[np.ndarray] = None,
+    domain_tol: float = 0.0,
+):
+    """VOL-MATCH (reversible): umbral de isosuperficie que conserva el material.
+
+    El usuario fija "umbral solido" (p. ej. 0.3) pensando en el CAMPO, pero el
+    promedio elemento->nodo diluye los miembros delgados y la isosuperficie
+    sale con mucho menos material que el diseno: medido, 27.7% del dominio
+    extraido frente a 43.9% del conjunto de elementos con rho>umbral (addendum
+    8), y en el caso envelope del usuario el solido registrado quedo en 31% del
+    material del campo. Aqui se busca por biseccion el umbral t* que hace que el
+    volumen ENCERRADO por la isosuperficie iguale el volumen del material que el
+    umbral del usuario define en el campo de elementos.
+
+    Devuelve ``(t_usado, meta, surface_result)``; `surface_result` es la
+    extraccion ya hecha en t* (se reutiliza para no extraer dos veces).
+    `meta` siempre lleva objetivo, alcanzado, t pedido, t usado y el ratio: el
+    desvio se reporta, nunca se esconde. Para volver atrás: no llamarlo (el
+    pipeline usa el umbral pedido tal cual).
+    """
+    nodes_a = np.asarray(nodes, dtype=float)
+    els = np.asarray(elements, dtype=int)
+    dens = np.asarray(densities, dtype=float).ravel()
+    t_pedido = float(threshold)
+    p = nodes_a[els]
+    vol = np.abs(np.einsum("ij,ij->i", p[:, 1] - p[:, 0],
+                           np.cross(p[:, 2] - p[:, 0],
+                                    p[:, 3] - p[:, 0]))) / 6.0
+    if dens.shape[0] == els.shape[0]:
+        # El material lo define el conjunto de ELEMENTOS sobre el umbral.
+        material = dens > t_pedido
+    else:
+        # Campo nodal: equivalente interpolado por elemento.
+        material = dens[els].mean(axis=1) > t_pedido
+    objetivo = float(vol[material].sum())
+    meta: Dict[str, Any] = {
+        "volume_matching": True,
+        "marching_threshold_requested": t_pedido,
+        "material_volume_target_mm3": round(objetivo, 3),
+    }
+    if objetivo <= 0.0:
+        meta["volume_matching"] = "no_material_sobre_umbral"
+        return t_pedido, meta, None
+
+    def _extraer(t: float):
+        res = extractor.extract(nodes_a, els, dens, threshold=float(t))
+        data = res.data or {}
+        v = np.asarray(data.get("vertices", []), dtype=float)
+        tr = np.asarray(data.get("triangles", []), dtype=int)
+        if v.size == 0 or tr.size == 0:
+            return 0.0, res
+        # MEDICION CERRADA (obligatorio): si el material toca el borde del
+        # dominio la isosuperficie sale ABIERTA y su integral de divergencia NO
+        # es el volumen del solido (medido en el envelope: la bisection
+        # divergia, ratio 0.38, porque al bajar el umbral la malla se abria mas
+        # y el volumen medido bajaba en vez de subir). Para medir se tapan SOLO
+        # los loops que caen sobre la frontera del dominio (`max_hole_edges=0`
+        # desactiva el tope de agujeros de diseño): los huecos de diseño no se
+        # tocan, ni en la medicion ni en la extraccion devuelta.
+        vc, tc, _n = fill_holes(v, tr, max_hole_edges=0,
+                                domain_lo=domain_lo, domain_hi=domain_hi,
+                                domain_tol=domain_tol)
+        a, b, c = vc[tc[:, 0]], vc[tc[:, 1]], vc[tc[:, 2]]
+        # ORIENT-FIX deja la superficie coherente -> la divergencia ES el
+        # volumen encerrado de la malla ya cerrada.
+        return abs(float(np.einsum("ij,ij->i", a, np.cross(b, c)).sum() / 6.0)), res
+
+    lo, hi = 0.005, 0.995
+    mejor_t, mejor_err, mejor_res, mejor_v = t_pedido, None, None, 0.0
+    for _ in range(max(1, int(max_steps))):
+        mid = 0.5 * (lo + hi)
+        v_mid, res_mid = _extraer(mid)
+        err = abs(v_mid - objetivo) / objetivo
+        if mejor_err is None or err < mejor_err:
+            mejor_t, mejor_err, mejor_res, mejor_v = mid, err, res_mid, v_mid
+        if err <= vol_tol:
+            break
+        if v_mid > objetivo:      # demasiado material -> hay que subir el umbral
+            lo = mid
+        else:
+            hi = mid
+    meta.update({
+        "marching_threshold_used": round(float(mejor_t), 4),
+        "material_volume_extracted_mm3": round(float(mejor_v), 3),
+        "material_volume_ratio": round(float(mejor_v) / max(objetivo, 1e-12), 4),
+    })
+    if mejor_err is not None and mejor_err > vol_tol:
+        meta["volume_matching_error"] = round(float(mejor_err), 4)
+    return float(mejor_t), meta, mejor_res
 
 
 class ReconstructionPipeline:
@@ -2125,6 +2346,7 @@ class ReconstructionPipeline:
         smoothing_method: str = "laplacian",
         max_hole_edges: Optional[Union[int, str]] = None,
         max_brep_triangles: Optional[int] = None,
+        volume_matching: bool = True,
     ) -> None:
         self._surface_extractor = surface_extractor or MarchingTetrahedraExtractor()
         self._brep_fitter = brep_fitter or OCPBRepFitter(step_path=step_path)
@@ -2173,6 +2395,11 @@ class ReconstructionPipeline:
                 f"max_brep_triangles={max_brep_triangles!r} inválido "
                 f"(usar None o entero >= 4).")
         self._max_brep_triangles = max_brep_triangles
+        # VOL-MATCH (reversible): el umbral de isosuperficie se resuelve para
+        # conservar el material que define el campo (ver
+        # resolve_volume_threshold). False = usar el umbral pedido tal cual
+        # (comportamiento histórico). Para volver atrás: default False.
+        self._volume_matching = bool(volume_matching)
         self._step_path = step_path
         self._stages: Dict[ReconstructionStage, ReconstructionResult] = {}
         self._status = ReconstructionStatus.NOT_STARTED
@@ -2260,11 +2487,29 @@ class ReconstructionPipeline:
 
         # Stage 2: surface extraction
         try:
-            surface_result = self._surface_extractor.extract(
-                nodes, elements_arr, extract_densities, threshold
-            )
+            vm_meta: Dict[str, Any] = {}
+            surface_result = None
+            if self._volume_matching:
+                # VOL-MATCH: el umbral se resuelve para conservar el material
+                # que define el campo (sin esto la isosuperficie sale con una
+                # fraccion del diseno; medido 27.7% vs 43.9%).
+                threshold, vm_meta, surface_result = resolve_volume_threshold(
+                    self._surface_extractor, nodes, elements_arr,
+                    extract_densities, threshold,
+                    domain_lo=np.asarray(nodes_arr, dtype=float).min(axis=0),
+                    domain_hi=np.asarray(nodes_arr, dtype=float).max(axis=0),
+                    domain_tol=1.5 * float(np.mean(np.linalg.norm(
+                        np.asarray(nodes_arr, dtype=float)[elements_arr[:, 0]]
+                        - np.asarray(nodes_arr, dtype=float)[elements_arr[:, 1]],
+                        axis=1))) if len(elements_arr) else 0.0)
+            if surface_result is None:
+                surface_result = self._surface_extractor.extract(
+                    nodes, elements_arr, extract_densities, threshold
+                )
             surface_result.metadata.setdefault("frozen_elements", frozen_list)
             surface_result.metadata.setdefault("preserved_elements", preserved_list)
+            if vm_meta:
+                surface_result.metadata.update(vm_meta)
             if frozen_list:
                 surface_result.metadata.setdefault(
                     "frozen_passthrough", "frozen_face_as_keep_in@1.0")
@@ -2311,9 +2556,22 @@ class ReconstructionPipeline:
                     # silencio lo que el llamador configuró. Ambas ramas usan
                     # ahora el mismo tope.
                     filler = self._hole_filler or MeshHoleFiller()
+                    # DOMAIN-CUT: los loops que caen sobre la frontera del
+                    # dominio (material que toco el borde de la caja de diseño)
+                    # se tapan siempre, aunque superen el tope de agujeros: sin
+                    # eso la cascara queda abierta y OCC no puede dar un solido
+                    # (medido: modelo registrado con num_solids=0). Los agujeros
+                    # de DISEÑO (interiores) siguen sujetos a max_hole_edges.
+                    _lo = np.asarray(nodes_arr, dtype=float).min(axis=0)
+                    _hi = np.asarray(nodes_arr, dtype=float).max(axis=0)
+                    _tol = 1.5 * float(np.mean(np.linalg.norm(
+                        np.asarray(nodes_arr, dtype=float)[elements_arr[:, 0]]
+                        - np.asarray(nodes_arr, dtype=float)[elements_arr[:, 1]],
+                        axis=1))) if len(elements_arr) else 0.0
                     hf_result = filler.fill(
                         rep_verts, rep_tris,
-                        max_hole_edges=self._max_hole_edges)
+                        max_hole_edges=self._max_hole_edges,
+                        domain_lo=_lo, domain_hi=_hi, domain_tol=_tol)
                     hole_fill_data = hf_result.data
                     fill_meta = dict(hf_result.metadata)
                     fv = np.asarray(hole_fill_data["vertices"])
@@ -2368,6 +2626,27 @@ class ReconstructionPipeline:
                     continue
                 fit_verts = np.asarray(cand["vertices"])
                 fit_tris = np.asarray(cand["triangles"])
+                # CIERRE-FORZADO (reversible): un loop abierto NO es un agujero
+                # de diseño -- los agujeros reales (pernos, keep-out) son
+                # tuneles, o sea superficies CERRADAS. Un loop abierto es un
+                # corte contra el dominio o un artefacto del marching-tets, y
+                # dejar la cascara abierta hace que OCC no pueda formar solido:
+                # medido en el caso del usuario, "Reconstructed solid is not
+                # valid (isosuperficie abierta/degenerada)" y la app no
+                # registraba NADA. Aqui se cierra una copia para el ajuste B-Rep
+                # (la metadata de la etapa de tapado no cambia: sigue diciendo
+                # cuantos loops dejo el tope del usuario). Para volver atrás:
+                # quitar este bloque.
+                forced_close = 0
+                try:
+                    if len(_boundary_loops(fit_tris)) > 0:
+                        _fv, _ft, _nf = fill_holes(fit_verts, fit_tris,
+                                                   max_hole_edges=None)
+                        if _nf:
+                            forced_close = int(_nf)
+                            fit_verts, fit_tris = _fv, _ft
+                except Exception:  # noqa: BLE001 - defensivo
+                    forced_close = 0
                 dec_from: Optional[int] = None
                 cap = self._max_brep_triangles
                 if cap is not None and int(fit_tris.shape[0]) > int(cap):
@@ -2389,6 +2668,11 @@ class ReconstructionPipeline:
                     r.metadata.setdefault("frozen_elements", frozen_list)
                     r.metadata.setdefault("preserved_elements", preserved_list)
                     r.metadata.setdefault("brep_source", source)
+                    if forced_close:
+                        # Reporte explícito: el sólido se pudo cerrar porque se
+                        # taparon loops que el tope del usuario dejaba abiertos.
+                        r.metadata.setdefault("brep_forced_close_loops",
+                                              int(forced_close))
                     if dec_from is not None:
                         r.metadata.setdefault("brep_decimated_from", dec_from)
                         r.metadata.setdefault(
@@ -2407,6 +2691,14 @@ class ReconstructionPipeline:
                 status=ReconstructionStatus.NOT_STARTED,
             )
         self._stages[ReconstructionStage.BREP_SOLID] = brep_result
+        # VOL-MATCH-REPORT (reversible): el reporte de conservación de material
+        # (umbral pedido/usado, objetivo, alcanzado, ratio) viaja también en la
+        # etapa terminal, que es la que la UI y `_reconstruct` devuelven como
+        # metadata de la reconstrucción. Antes quedaba solo en SURFACE_MESH y la
+        # UI no podía decir cuánto material se conservó.
+        if vm_meta and isinstance(brep_result.metadata, dict):
+            for _k, _v in vm_meta.items():
+                brep_result.metadata.setdefault(_k, _v)
 
         # Stage 5: STEP export status (actual export happens inside
         # OCPBRepFitter.fit → _exchange_step when step_path is set)

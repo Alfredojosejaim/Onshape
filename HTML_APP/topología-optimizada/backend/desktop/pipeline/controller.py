@@ -1,4 +1,4 @@
-﻿"""PipelineController - orchestrates CAD import, meshing, FEA and topology
+"""PipelineController - orchestrates CAD import, meshing, FEA and topology
 optimization, reusing the existing project services (services.cad_service and
 the self-contained core solvers) while keeping heavy work off the UI thread.
 
@@ -40,6 +40,36 @@ class PipelineError(Exception):
     pass
 
 
+def _reconstruction_diag_suffix(reconstruction: Dict[str, Any]) -> str:
+    """Sufijo compacto con el diagnóstico de geometría de la reconstrucción.
+
+    DIAG-SURFACE (reversible): cuando la reconstrucción no llega a sólido, la UI
+    mostraba sólo el mensaje del fitter. Sin saber si la cáscara quedó abierta,
+    cuántos loops se cerraron a la fuerza o cuánto material se conservó, no hay
+    forma de distinguir "malla abierta" de "volumen degenerado" sin correr otra
+    sonda. Se anexan las claves que el pipeline ya calcula (nunca silencioso).
+    Para volver atrás: devolver "" siempre.
+    """
+    meta = reconstruction.get("metadata")
+    if not isinstance(meta, dict):
+        return ""
+    partes = []
+    for clave, etiqueta in (
+        ("brep_forced_close_loops", "loops cerrados a la fuerza"),
+        ("open_loops_after", "loops abiertos tras tapar"),
+        ("holes_skipped", "loops saltados por el tope"),
+        ("material_volume_ratio", "volumen extraído/campo"),
+        ("volume_matching_error", "error vol-match"),
+        ("sewed_shells", "cáscaras cosidas"),
+        ("sew_free_edges", "aristas libres"),
+        ("brep_chain_not_solid", "cadena sin sólido"),
+    ):
+        valor = meta.get(clave)
+        if valor not in (None, "", 0, False):
+            partes.append(f"{etiqueta}={valor}")
+    return (" [" + ", ".join(partes) + "]") if partes else ""
+
+
 def reconstruction_failure_reason(reconstruction: Dict[str, Any]) -> str:
     """Motivo explícito cuando no quedó sólido reconstruido registrado.
 
@@ -50,13 +80,14 @@ def reconstruction_failure_reason(reconstruction: Dict[str, Any]) -> str:
     """
     if not isinstance(reconstruction, dict) or not reconstruction:
         return "sin información de reconstrucción"
+    sufijo = _reconstruction_diag_suffix(reconstruction)
     for key in ("registration_error", "brep_error", "error_message"):
         msg = reconstruction.get(key)
         if msg:
-            return str(msg)
+            return f"{msg}{sufijo}"
     stage = reconstruction.get("stage", "?")
     status = reconstruction.get("status", "?")
-    return f"etapa alcanzada: {stage} ({status})"
+    return f"etapa alcanzada: {stage} ({status}){sufijo}"
 
 
 class PipelineController:

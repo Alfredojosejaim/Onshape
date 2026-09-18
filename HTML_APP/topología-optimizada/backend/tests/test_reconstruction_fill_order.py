@@ -16,6 +16,7 @@ from core.cad_reconstruction import (
     ReconstructionStage,
     ReconstructionStatus,
     SurfaceExtractor,
+    _boundary_edges,
     _boundary_loops,
     fill_holes,
     smooth_surface_mesh,
@@ -116,6 +117,96 @@ def test_max_hole_edges_skips_big_loops_and_reports():
     # Malla intacta: mismos 10 triángulos, sin vértices agregados.
     assert np.asarray(stage.data["triangles"]).shape[0] == t.shape[0]
     assert np.asarray(stage.data["vertices"]).shape[0] == v.shape[0]
+
+
+class _SoloMallaCerradaFitter:
+    """Fitter que RECHAZA mallas abiertas (como hace OCC con la cáscara)."""
+
+    def fit(self, vertices, triangles):
+        abiertas = sum(
+            1 for n in _boundary_edges(np.asarray(triangles, dtype=int)).values()
+            if n == 1)
+        if abiertas:
+            return ReconstructionResult(
+                stage=ReconstructionStage.BREP_SOLID,
+                status=ReconstructionStatus.FAILED,
+                error_message="Reconstructed solid is not valid (isosuperficie "
+                              "abierta/degenerada)",
+            )
+        return ReconstructionResult(
+            stage=ReconstructionStage.BREP_SOLID,
+            status=ReconstructionStatus.COMPLETED,
+            data={"vertices": np.asarray(vertices),
+                  "triangles": np.asarray(triangles)},
+            metadata={},
+        )
+
+
+def _dummy_inputs(box: float = 0.0):
+    """Malla de dominio sintética. box=0 -> degenerada (histórico de los tests).
+
+    `box > 0` genera un cubo de tets de lado `box` con origen en (-box, -box,
+    -box), para poder situar la superficie de prueba dentro o SOBRE la frontera
+    del dominio (DOMAIN-CUT).
+    """
+    if box <= 0:
+        nodes = np.zeros((4, 3))
+        elements = np.zeros((1, 4), dtype=int)
+        return nodes, elements, np.ones(1)
+    lo = -float(box)
+    hi = float(box)
+    nodes = np.array([[lo, lo, lo], [hi, lo, lo], [lo, hi, lo], [lo, lo, hi]])
+    elements = np.array([[0, 1, 2, 3]], dtype=int)
+    return nodes, elements, np.ones(1)
+
+
+def test_loop_sobre_la_frontera_del_dominio_se_tapa_siempre():
+    """DOMAIN-CUT: un corte contra la caja de diseño no es un agujero de diseño.
+
+    Regresión medida: con el material tocando el borde del dominio la cáscara
+    quedaba ABIERTA (el tope de agujeros no tapaba el corte) y OCC no podía
+    formar sólido: la app registraba `num_solids = 0`. El corte se tapa aunque
+    supere `max_hole_edges`; los agujeros interiores siguen sujetos al tope
+    (lo cubre `test_max_hole_edges_skips_big_loops_and_reports`).
+    """
+    v, t = _open_box()          # bbox 0..1, loop = tapa superior (z=1)
+    # Dominio 0..1: la tapa coincide con la frontera del dominio.
+    pipe = ReconstructionPipeline(
+        surface_extractor=_HoledBoxExtractor(v, t),
+        brep_fitter=_PassthroughFitter(),
+        max_hole_edges=3,       # tope muy chico: el corte se tapa igual
+    )
+    out = pipe.run(*_dummy_inputs(box=1.0))
+    assert out.status == ReconstructionStatus.COMPLETED, out.error_message
+    stage = pipe.get_stage_result(ReconstructionStage.SMOOTHED_MESH)
+    assert stage.metadata["holes_filled"] == 1
+    assert stage.metadata["open_loops_after"] == 0
+
+
+def test_forced_close_when_user_cap_leaves_the_shell_open():
+    """CIERRE-FORZADO: antes un loop abierto => ningún sólido registrable.
+
+    Medido en la app del usuario: con "Agujeros grandes: Conservar (auto)" la
+    cascara quedaba abierta y OCC no formaba sólido ("Reconstructed solid is not
+    valid (isosuperficie abierta/degenerada)"), así que no se registraba NADA.
+    Un loop abierto no es un agujero de diseño (los reales son túneles =
+    superficies cerradas): para el ajuste B-Rep se cierra una copia y se reporta
+    en `brep_forced_close_loops`, sin cambiar la metadata del tapado.
+    """
+    v, t = _open_box()
+    pipe = ReconstructionPipeline(
+        surface_extractor=_HoledBoxExtractor(v, t),
+        brep_fitter=_SoloMallaCerradaFitter(),
+        max_hole_edges=3,          # deja el loop abierto
+    )
+    out = pipe.run(*_dummy_inputs())
+    assert out.status == ReconstructionStatus.COMPLETED, out.error_message
+    stage = pipe.get_stage_result(ReconstructionStage.SMOOTHED_MESH)
+    # El tope del usuario sigue reportado tal cual (no se falsea el tapado).
+    assert stage.metadata["open_loops_after"] == 1
+    brep = pipe.get_stage_result(ReconstructionStage.BREP_SOLID)
+    assert brep.status == ReconstructionStatus.COMPLETED
+    assert brep.metadata["brep_forced_close_loops"] == 1
 
 
 def test_filler_metadata_direct_and_invalid_cap():

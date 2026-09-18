@@ -315,6 +315,69 @@ class GenerativeDesignEngine:
                 for fi in face_indices:
                     self._face_index_to_groups.setdefault(int(fi), []).append(grp_name)
 
+    def _fallback_face_mask(self, nodes: np.ndarray,
+                            face_indices: List[int]) -> Optional[np.ndarray]:
+        """FALLBACK-BOUND (reversible): mascara de nodos dentro del bbox de las
+        caras CAD pedidas, o None si no se puede acotar.
+
+        Cuando una cara no mapea, el fallback historico aplicaba la condicion a
+        TODOS los nodos del plano extremo del dominio (p. ej. la cara superior
+        completa de la caja de diseno). Eso cambia el problema fisico -- una
+        carga puntual pasa a ser presion uniforme sobre media caja -- y ademas
+        destruye el `void_skin` de esa pared: el guard de BC quita del skin todo
+        elemento que toque un nodo de carga/fijacion, asi que con el fallback
+        plano se cancelan casi todos (medido: 7500 de 8640 elementos de skin; la
+        capa de pared queda con 46.7% de material). El optimizador entonces no
+        vacia el borde: rellena y el solido se pega a la caja.
+
+        Acotar al bbox de la cara seleccionada (mas un margen de malla) deja el
+        fallback en la zona real. Sin caras o sin shape CAD se devuelve None y
+        se mantiene el comportamiento historico.
+        Para volver atrás: devolver None siempre.
+        """
+        if self.model_shape is None or not face_indices:
+            return None
+        try:
+            lo = np.array([np.inf, np.inf, np.inf])
+            hi = np.array([-np.inf, -np.inf, -np.inf])
+            faces = self.model_shape.Faces()
+            for fi in face_indices:
+                bb = self._face_bbox(faces[int(fi)])
+                if bb is None:
+                    continue
+                lo = np.minimum(lo, bb[0])
+                hi = np.maximum(hi, bb[1])
+            if not (np.all(np.isfinite(lo)) and np.all(np.isfinite(hi))):
+                return None
+            margen = max(2.0 * float(self._mean_edge_length()), 1e-9)
+            pts = np.asarray(nodes, dtype=float)
+            return np.all((pts >= lo - margen) & (pts <= hi + margen), axis=1)
+        except Exception:  # noqa: BLE001 - sin acotar = comportamiento historico
+            return None
+
+    @staticmethod
+    def _face_bbox(face):
+        """(lo, hi) del bbox de una cara CAD, o None.
+
+        `model_shape` es una shape de **CadQuery** (no un TopoDS crudo): sus
+        caras exponen `BoundingBox()`. Si llegara una cara OCC cruda, se usa
+        BRepBndLib (OCP no tiene `Face.Bnd()`). Para volver atrás: quitar.
+        """
+        bb = getattr(face, "BoundingBox", None)
+        if callable(bb):
+            b = bb()
+            return (np.array([b.xmin, b.ymin, b.zmin]),
+                    np.array([b.xmax, b.ymax, b.zmax]))
+        from OCP.BRepBndLib import BRepBndLib
+        from OCP.Bnd import Bnd_Box
+        box = Bnd_Box()
+        BRepBndLib.Add_s(getattr(face, "wrapped", face), box)
+        if box.IsVoid():
+            return None
+        c0, c1 = box.CornerMin(), box.CornerMax()
+        return (np.array([c0.X(), c0.Y(), c0.Z()]),
+                np.array([c1.X(), c1.Y(), c1.Z()]))
+
     def _node_indices_for_load(self, load: LoadCondition) -> List[int]:
         """Map the load's selected faces to mesh node indices."""
         if self.mesh_nodes is None:
@@ -483,8 +546,17 @@ class GenerativeDesignEngine:
         axis = int(np.argmax(np.abs(vec)))
         coord = nodes[:, axis].max() if vec[axis] > 0 else nodes[:, axis].min()
         tol = 1e-3 * float(np.ptp(nodes[:, axis]))
-        return [i for i in range(nodes.shape[0])
-                if abs(float(nodes[i, axis]) - coord) <= tol]
+        bound = self._fallback_face_mask(
+            nodes, [int(e.face_index) for e in load.faces.entities
+                    if getattr(e, "face_index", None) is not None])
+        out = []
+        for i in range(nodes.shape[0]):
+            if abs(float(nodes[i, axis]) - coord) > tol:
+                continue
+            if bound is not None and not bool(bound[i]):
+                continue
+            out.append(i)
+        return out
 
     def _resolved_support_nodes(self, cond: ElasticityCondition) -> List[int]:
         """Nodos donde la fijación se aplica REALMENTE (mismo fallback base-Z)."""
@@ -498,9 +570,11 @@ class GenerativeDesignEngine:
         if not target:
             axis = 2
             coord = float(self.mesh_nodes[:, axis].min())
+            tol = 1e-6 * max(1.0, np.ptp(self.mesh_nodes[:, axis]))
+            bound = self._fallback_face_mask(self.mesh_nodes, face_indices)
             target = [i for i in range(self.mesh_nodes.shape[0])
-                      if abs(float(self.mesh_nodes[i, axis]) - coord)
-                      <= 1e-6 * max(1.0, np.ptp(self.mesh_nodes[:, axis]))]
+                      if abs(float(self.mesh_nodes[i, axis]) - coord) <= tol
+                      and (bound is None or bool(bound[i]))]
         return target
 
     def _load_node_indices(self, conditions: Dict) -> List[int]:
@@ -870,8 +944,12 @@ class GenerativeDesignEngine:
             axis = int(np.argmax(np.abs(vec)))
             coord = nodes[:, axis].max() if vec[axis] > 0 else nodes[:, axis].min()
             tol = 1e-3 * float(np.ptp(nodes[:, axis]))
+            bound = self._fallback_face_mask(
+                nodes, [int(e.face_index) for e in load.faces.entities
+                        if getattr(e, "face_index", None) is not None])
             idx = [i for i in range(nodes.shape[0])
-                   if abs(float(nodes[i, axis]) - coord) <= tol]
+                   if abs(float(nodes[i, axis]) - coord) <= tol
+                   and (bound is None or bool(bound[i]))]
         single = np.zeros(nodes.shape[0] * 3)
         face_tris = self._face_triangles_for_load(load, node_indices=idx)
         if is_pressure_unit(getattr(load, "unit", "N")):

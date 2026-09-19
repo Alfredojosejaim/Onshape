@@ -209,7 +209,7 @@ export const Header: React.FC<HeaderProps> = ({
               className="h-full w-full object-contain"
               src="https://lh3.googleusercontent.com/aida/AEtjO1VJ8LqcXt8gfogoOHQrbB29AG0yRLPEKm8yKE0aXB2EzRn1eNb63XD6QkfBEFz4wrabdCPMeYE7saiolhRQe4-sDO6IrqY1eOtyXaeO_CjcFzTaZ6Gplc4pDb5vTBdRd12E9oeAVs1DXC_yOTkPPPV0AQne2pvUN7mgEwpSD3hQZYhdYTLqijVbHnwh6hCh03hj7EZ4IFLY0se8W1a5km373ZX8WFP7Dju74btpnaHMOn6Z694T8Q5jLb4"
               onError={(e) => {
-                (e.currentTarget as HTMLElement).style.display = 'none';
+                e.currentTarget.style.display = 'none';
               }}
             />
             {/* Hexagonal Topology Cellular SVG Fallback Icon */}
@@ -285,7 +285,7 @@ export const Header: React.FC<HeaderProps> = ({
               className="w-full h-full object-cover absolute inset-0"
               src="https://lh3.googleusercontent.com/aida/AEtjO1UXiZU0R2kEsx-SdP1ot9-6do1uPU2K-fDH_CI3UEDOX91_9hDhaPkQRM3uS7lXPMyxIHB28cLeY0C23cfMnQTylfiJrS-v0pMHbMlH1KbsZ2ndwe8VNf1OXIW61hfLbTju4RnlRdavfgp--qkZUYgaTCqyDSfdp2igU44--firpDOXb5ppIIpdNB-sZxrqgBIRA9PLMQGIhnYbyzYt7oLROR4F-Ve38yD6FSZpLKSpN7M84k1HFn57XSE"
               onError={(e) => {
-                (e.currentTarget as HTMLElement).style.display = 'none';
+                e.currentTarget.style.display = 'none';
               }}
             />
           </div>

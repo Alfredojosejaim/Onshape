@@ -69,8 +69,10 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
   boundaryConditions,
   onToggleCondition,
   onEditCondition,
-  isModelVisible,
-  onToggleModelVisibility,
+  // UI-CLEAN2: sin nodo archivo no hay picker local; se conservan en props
+  // para seleccion futura y compatibilidad con App.
+  isModelVisible: _isModelVisible,
+  onToggleModelVisibility: _onToggleModelVisibility,
   onOpenImport,
   meshElementSize,
   onChangeMeshSize,
@@ -146,6 +148,7 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
               const mSolids = solidsByFile[m.filename];
               const mHasMesh = meshByFile[m.filename] ?? false;
               const rows = [];
+
               if (mSolids !== undefined && mSolids.length > 0) {
                 for (const s of mSolids) {
                   const key = bodyKey(m.filename, s.solid_id);
@@ -182,6 +185,7 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
                   </div>
                 );
               }
+
               if (mHasMesh) {
                 const key = bodyKey(m.filename, 'mesh_tet4');
                 rows.push(
@@ -206,6 +210,7 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
                   </div>
                 );
               }
+
               return rows;
             })
           )}

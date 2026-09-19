@@ -32,11 +32,24 @@ export type MeshToolAction =
   | 'reducir'
   | 'remallar';
 
+// Valor JSON del backend (pywebview serializa todo a JSON). Contrato concreto
+// para registros de respuesta en vez de Record<string, unknown>.
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+// Objeto JSON (contrato nombrado para registros de respuesta del backend).
+export type JsonRecord = Record<string, JsonValue>;
+
 // Resultado publicado por las herramientas de malla (solo lectura en UI).
 export interface MeshOpResult {
-  report: Record<string, unknown> | null;
+  report: JsonRecord | null;
   op: string | null;
-  stats: Record<string, unknown> | null;
+  stats: JsonRecord | null;
   error: string | null;
 }
 
@@ -90,6 +103,10 @@ export interface BoundaryCondition {
 
 export interface SimpParameters {
   volfrac: number; // 0.10 to 0.80
+  // VOLFRAC-MODE (reversible): sobre que volumen se aplica volfrac.
+  // 'active_domain' = subdominio optimizable (excluye preservadas/keep-out,
+  // historico); 'total_volume' = volumen total de la malla/pieza.
+  volfracMode: 'active_domain' | 'total_volume';
   penalization: number; // p = 3.0
   filterRadius: number; // r_min in mm
   tolerance: number; // Δρ (1e-3)

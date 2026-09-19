@@ -14,6 +14,9 @@
 //                         que espera condition_from_dict en el backend).
 // Para volver atras: borrar este archivo + su uso en CadViewport/App/realdata.
 
+import type { JsonRecord } from '../types';
+import { isFiniteNumber, isNumber } from './guards';
+
 export interface FaceMeta {
   face_index: number;
   id: string;
@@ -33,10 +36,12 @@ export interface FaceRange {
 // core/boundary.py::_FACE_ID_UNIFIED_RE
 const FACE_ID_RE = /^(?:face[_:\-\s]?)?(\d+)$/i;
 
-/** "face_3" | "face:3" | "face3" | "3" -> 3; null si no es identificable. */
-export function parseFaceId(faceId: unknown): number | null {
+/** "face_3" | "face:3" | "face3" | "3" -> 3; null si no es identificable.
+ *  Acepta el dominio JSON (los ids llegan como texto o número del backend). */
+export function parseFaceId(faceId: string | number | null | undefined): number | null {
   if (faceId === null || faceId === undefined) return null;
   const m = FACE_ID_RE.exec(String(faceId).trim());
+
   return m ? parseInt(m[1], 10) : null;
 }
 
@@ -46,9 +51,11 @@ export function parseFaceId(faceId: unknown): number | null {
  *  Fuera de rango -> null (como celda sin cara: se conserva la seleccion). */
 export function triangleToFace(triIndex: number, ranges: FaceRange[]): number | null {
   if (!Number.isInteger(triIndex) || triIndex < 0) return null;
+
   for (const r of ranges) {
     if (triIndex >= r.start && triIndex < r.start + r.count) return r.face_index;
   }
+
   return null;
 }
 
@@ -64,17 +71,24 @@ export function faceEntityRef(
   faceIndex: number,
   modelId?: string | null,
   meta?: FaceMeta | null,
-): Record<string, unknown> {
-  const d: Record<string, unknown> = {
+): JsonRecord {
+  const d: JsonRecord = {
     entity_type: 'face',
     face_index: faceIndex,
   };
+
   if (modelId) d.model_id = modelId;
+
   if (meta?.center) d.coordinates = [...meta.center];
-  const metadata: Record<string, unknown> = {};
+  const metadata: JsonRecord = {};
+
   if (meta?.normal) metadata.normal = [...meta.normal];
-  if (typeof meta?.area === 'number') metadata.area = meta.area;
+  const area = meta?.area;
+
+  if (isNumber(area)) metadata.area = area;
+
   if (Object.keys(metadata).length > 0) d.metadata = metadata;
+
   return d;
 }
 
@@ -84,8 +98,9 @@ export function selectionSet(
   faceIndices: number[],
   modelId?: string | null,
   metas?: FaceMeta[] | null,
-): Record<string, unknown> {
+): JsonRecord {
   const byIndex = new Map((metas ?? []).map((m) => [m.face_index, m]));
+
   return {
     name,
     entities: faceIndices.map((f) => faceEntityRef(f, modelId, byIndex.get(f) ?? null)),
@@ -123,17 +138,21 @@ export function buildConditionJson(
   loadAngleDeg?: number | null,
   loadSense?: 1 | -1 | null,
   loadDirection?: [number, number, number] | null,
-): Record<string, unknown> {
+): JsonRecord {
   if (tool === 'carga') {
-    const metadata: Record<string, unknown> = {};
+    const metadata: JsonRecord = {};
     const gid = (loadCaseId ?? '').trim();
+
     if (gid) metadata.load_case_id = gid;
-    if (typeof loadWeight === 'number' && Number.isFinite(loadWeight) && loadWeight > 0) {
+
+    if (isFiniteNumber(loadWeight) && loadWeight > 0) {
       metadata.load_weight = loadWeight;
     }
-    const ang = typeof loadAngleDeg === 'number' && Number.isFinite(loadAngleDeg) ? loadAngleDeg : 0;
+
+    const ang = isFiniteNumber(loadAngleDeg) ? loadAngleDeg : 0;
     const se = loadSense === -1 ? 'negative' : loadSense === 1 ? 'positive' : 'indeterminate';
     const orientation = loadMode === 'paralelo' ? 'parallel' : ang !== 0 ? 'angle' : 'perpendicular';
+
     return {
       type: 'load',
       name,
@@ -142,13 +161,14 @@ export function buildConditionJson(
       reference_plane_normal: referenceNormal ?? [0.0, 0.0, 1.0],
       angle_deg: ang !== 0 ? ang : null,
       sense: se,
-      magnitude: typeof magnitude === 'number' ? magnitude : null,
-      indeterminate: typeof magnitude !== 'number',
+      magnitude: isNumber(magnitude) ? magnitude : null,
+      indeterminate: !isNumber(magnitude),
       unit: 'N',
       direction: loadDirection ?? null,
       metadata,
     };
   }
+
   if (tool === 'fijacion') {
     return {
       type: 'elasticity',
@@ -158,6 +178,7 @@ export function buildConditionJson(
       metadata: {},
     };
   }
+
   if (tool === 'keepout') {
     return {
       type: 'obstruction',
@@ -168,6 +189,7 @@ export function buildConditionJson(
       metadata: {},
     };
   }
+
   return {
     type: 'protected_region',
     name,
@@ -176,19 +198,23 @@ export function buildConditionJson(
     metadata: {},
   };
 }
+
 /** Etiqueta corta para el arbol: SOLO el numero de caras ("3 caras").
  *  La lista de que caras estan seleccionadas (face_0, face_2...) se muestra
  *  unicamente al abrir la herramienta en el menu (ToolParamsPanel). */
 export function facesLabel(faceIndices: number[]): string {
   if (faceIndices.length === 0) return 'sin caras';
+
   return `${faceIndices.length} cara${faceIndices.length > 1 ? 's' : ''}`;
 }
+
 /** Los rangos cubren todo el teselado (sin diezmar)? Solo entonces el
  *  picking triangulo->cara es fiable: el backend diezma arrays grandes
  *  (_clean) y los rangos quedarian desalineados. */
 export function rangesCover(ranges: FaceRange[], numTriangles: number): boolean {
   if (ranges.length === 0 || numTriangles < 1) return false;
   const total = ranges.reduce((acc, r) => acc + Math.max(0, r.count), 0);
+
   return total === numTriangles;
 }
 
@@ -206,14 +232,19 @@ export function solidTriangles(
   numTriangles: number,
 ): number[] | null {
   if (!faceIndices || faceIndices.length === 0) return null;
+
   if (!rangesCover(ranges, numTriangles)) return null;
   const byFace = new Map(ranges.map((r) => [r.face_index, r]));
   const tris: number[] = [];
+
   for (const f of [...faceIndices].sort((a, b) => a - b)) {
     const r = byFace.get(f);
+
     if (!r) return null; // cara sin rango: no separar (evita agujeros)
+
     for (let t = r.start; t < r.start + r.count; t += 1) tris.push(t);
   }
+
   return tris.length > 0 ? tris : null;
 }
 // FACES-END

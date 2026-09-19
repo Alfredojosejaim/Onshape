@@ -1,6 +1,8 @@
 // Tabla de perfiles de navegación — espejo de core/navigation.py (NavigationManager).
 // No inventar mapeos: cualquier cambio debe reflejar el original Python.
 
+import { isString } from './guards';
+
 export type NavProfileName = 'autocad' | 'onshape' | 'fusion360' | 'blender';
 
 export type NavAction = 'orbit' | 'pan' | 'zoom' | 'select' | 'fit' | 'rotate' | 'menu' | 'none';
@@ -36,6 +38,9 @@ export const NAV_PROFILES: Record<NavProfileName, NavProfileDef> = {
     dblclickFit: true,
   },
   // OnshapeProfile: LEFT select, MIDDLE pan, RIGHT-drag orbit, wheel zoom, f=fit.
+  // Nombre exigido por el backend (core/navigation.py) y la propia marca del
+  // producto; renombrarlo rompería el contrato con getNavProfiles/setNavProfile.
+  // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names
   onshape: {
     name: 'onshape',
     displayName: 'Onshape',
@@ -73,19 +78,22 @@ export const NAV_PROFILES: Record<NavProfileName, NavProfileDef> = {
 export const NAV_PROFILE_NAMES: NavProfileName[] = ['autocad', 'onshape', 'fusion360', 'blender'];
 
 export const NAV_STORAGE_KEY = 'topoopt.nav';
+
 export const DEFAULT_NAV_PROFILE: NavProfileName = 'autocad';
 
 export function isNavProfileName(v: unknown): v is NavProfileName {
-  return typeof v === 'string' && (NAV_PROFILE_NAMES as string[]).includes(v);
+  return isString(v) && NAV_PROFILE_NAMES.some((n) => n === v);
 }
 
 export function readStoredNavProfile(): NavProfileName {
   try {
     const raw = localStorage.getItem(NAV_STORAGE_KEY);
+
     if (isNavProfileName(raw)) return raw;
   } catch {
     /* sin localStorage */
   }
+
   return DEFAULT_NAV_PROFILE;
 }
 

@@ -12,10 +12,12 @@ type Log = { label: string; text: string };
 function useRunner() {
   const [jobId, setJobId] = useState<string | null>(null);
   const [log, setLog] = useState<Log[]>([]);
+
   const poll = useJobPoll(jobId, (result) => {
     setLog((p) => [...p, { label: 'resultado', text: JSON.stringify(result)?.slice(0, 2000) ?? '' }]);
     setJobId(null);
   });
+
   useEffect(() => {
     if (poll.error && jobId) {
       setLog((p) => [...p, { label: 'error', text: poll.error ?? '' }]);
@@ -23,6 +25,7 @@ function useRunner() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [poll.error]);
+
   return { jobId, setJobId, log, setLog, busy: poll.loading };
 }
 
@@ -36,7 +39,7 @@ export const V2Panel: React.FC = () => {
   useEffect(() => {
     if (!backend.hasBridge()) return;
     void backend.getLicense().then((x) => {
-      if (x.ok) setLicense(`${(x as { state: string }).state}`);
+      if (x.ok) setLicense(`${x.state}`);
       // P-B (reversible): fail-loud en la insignia. Para volver atrás:
       // .catch(() => undefined).
     }).catch(() => {
@@ -48,10 +51,13 @@ export const V2Panel: React.FC = () => {
   const run = async (label: string, fn: () => Promise<{ ok: boolean; jobId?: string; error?: unknown }>) => {
     if (!backend.hasBridge()) {
       r.setLog((p) => [...p, { label, text: 'sin bridge: solo funciona con el backend real' }]);
+
       return;
     }
+
     try {
       const res = await fn();
+
       if (res.ok && res.jobId) {
         r.setJobId(res.jobId);
         r.setLog((p) => [...p, { label, text: `job ${res.jobId} en curso…` }]);

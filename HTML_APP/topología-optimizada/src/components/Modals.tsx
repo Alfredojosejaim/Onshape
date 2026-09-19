@@ -53,6 +53,7 @@ export const Modals: React.FC<ModalsProps> = ({
   useEffect(() => {
     setCondName(editingCondition?.name ?? '');
     const v = editingCondition?.value;
+
     if (v && v.length === 3) {
       setLoadX(String(v[0]));
       setLoadY(String(v[1]));
@@ -63,6 +64,7 @@ export const Modals: React.FC<ModalsProps> = ({
 
   const handleFileDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
+
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       onCustomFileUpload(e.dataTransfer.files[0]);
       onCloseImport();
@@ -83,12 +85,14 @@ export const Modals: React.FC<ModalsProps> = ({
       const element = document.createElement('a');
       // UI-CLEAN (reversible): nombre generico sin modelo.
       const baseName = (currentModel?.filename ?? 'modelo').replace('.step', '');
+
       const file = new Blob(
         [
           `# TOPOLOGÍA OPTIMIZADA CAE EXPORT\n# Pieza: ${currentModel?.filename ?? 'sin modelo'}\n# Material: ${selectedMaterial.name}\n# Iteración: ${optimizationState.currentIteration}\n# Masa Optimizada: ${optimizationState.currentMassKg.toFixed(3)} kg\n`,
         ],
         { type: 'text/plain' }
       );
+
       element.href = URL.createObjectURL(file);
       element.download = `${baseName}_optimizado.${format.toLowerCase()}`;
       document.body.appendChild(element);
@@ -448,20 +452,24 @@ export const Modals: React.FC<ModalsProps> = ({
                   const fy = parseFloat(loadY) || 0;
                   const fz = parseFloat(loadZ) || 0;
                   const mag = Math.sqrt(fx * fx + fy * fy + fz * fz);
-                  onSaveCondition({
-                    ...editingCondition,
-                    // TREE-RENAME: el nombre del arbol se edita aqui.
-                    name: condName.trim() || editingCondition.name,
-                    // Solo carga toca el vector: antes se sobrescribia
-                    // details (caras) tambien en otros tipos al renombrar.
-                    ...(editingCondition.type === 'carga'
-                      ? {
-                          value: [fx, fy, fz] as [number, number, number],
-                          magnitude: mag,
-                          details: `[${fx}, ${fy}, ${fz}] N`,
-                        }
-                      : {}),
-                  });
+                  // TREE-RENAME: el nombre del arbol se edita aqui.
+                  const name = condName.trim() || editingCondition.name;
+
+                  // Solo carga toca el vector: antes se sobrescribia
+                  // details (caras) tambien en otros tipos al renombrar.
+                  if (editingCondition.type === 'carga') {
+                    const vec: [number, number, number] = [fx, fy, fz];
+                    onSaveCondition({
+                      ...editingCondition,
+                      name,
+                      value: vec,
+                      magnitude: mag,
+                      details: `[${fx}, ${fy}, ${fz}] N`,
+                    });
+                  } else {
+                    onSaveCondition({ ...editingCondition, name });
+                  }
+
                   onCloseEditCondition();
                 }}
                 className="px-3 py-1 rounded bg-primary-container hover:bg-secondary text-on-primary font-semibold text-[11px]"

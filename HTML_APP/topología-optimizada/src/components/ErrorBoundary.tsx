@@ -3,6 +3,7 @@
 // el root de React y la ventana queda en negro silencioso (fondo #10131c).
 // Este boundary lo convierte en un mensaje visible con reintento.
 import * as React from 'react';
+import { isString } from '../lib/guards';
 
 interface Props {
   label: string;
@@ -26,10 +27,11 @@ export class ErrorBoundary extends React.Component<Props, State> {
 
   render(): React.ReactNode {
     if (this.state.error) {
-      const stack = typeof this.state.error.stack === 'string' ? this.state.error.stack : '';
+      const stack = isString(this.state.error.stack) ? this.state.error.stack : '';
       // STACK-SHOW: primera linea del stack (suele traer el componente y la
       // posicion minificada) para diagnosticar sin DevTools en pywebview.
       const stackHead = stack.split('\n').slice(0, 4).join('\n');
+
       return (
         <div className="flex-1 flex flex-col items-center justify-center gap-3 rounded-lg bg-surface-container-lowest min-h-[300px] p-6 text-center">
           <span className="material-symbols-outlined text-[36px] text-fea-stress-critical">error</span>
@@ -54,6 +56,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
         </div>
       );
     }
+
     return this.props.children;
   }
 }

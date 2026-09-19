@@ -22,14 +22,18 @@ export const SafetyCard: React.FC = () => {
   const refresh = async () => {
     if (!backend.hasBridge()) {
       setNotice('sin bridge: solo funciona con el backend real');
+
       return;
     }
+
     setBusy(true);
     setNotice(null);
+
     try {
       const r = await backend.getSafetySummary({ threshold: parseFloat(threshold) || 1.5 });
-      if (r.ok && (r as { summary?: Summary }).summary) {
-        setSummary((r as { summary: Summary }).summary);
+
+      if (r.ok && r.summary) {
+        setSummary(r.summary);
       } else {
         setNotice(`sin dato: ${JSON.stringify(r).slice(0, 160)}`);
       }

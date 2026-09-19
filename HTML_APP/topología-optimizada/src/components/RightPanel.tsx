@@ -15,6 +15,9 @@ import { MeshResultsPanel } from './MeshResultsPanel';
 import { AdvancedOptPanel } from './AdvancedOptPanel';
 // ADV-OPT-END
 
+// OPT-TYPE (reversible): opciones del grupo estructural/generativa.
+const OPT_TYPES: OptimizationType[] = ['estructural', 'generativa'];
+
 interface RightPanelProps {
   activeTab: ActiveTab;
   materials: Material[];
@@ -22,7 +25,7 @@ interface RightPanelProps {
   onSelectMaterial: (m: Material) => void;
   simpParams: SimpParameters;
   onChangeSimpParams: (params: SimpParameters) => void;
-  // OPT-TYPE (reversible): estructural (SIMP) vs generativa (escenario A).
+    // OPT-TYPE (reversible): estructural (SIMP) vs generativa (escenario A).
   optType: OptimizationType;
   onChangeOptType: (t: OptimizationType) => void;
   optimizationState: OptimizationState;
@@ -97,6 +100,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({
               value={selectedMaterial.id}
               onChange={(e) => {
                 const found = materials.find((m) => m.id === e.target.value);
+
                 if (found) onSelectMaterial(found);
               }}
               className="w-full bg-surface-elevated border border-border-subtle/60 rounded px-2.5 py-1.5 font-medium text-[12px] text-text-primary appearance-none cursor-pointer focus:ring-1 focus:ring-secondary focus:outline-none pr-8 transition-colors"
@@ -159,7 +163,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({
           <div className="flex flex-col gap-2 text-[11px]">
             {/* OPT-TYPE (reversible): estructural vs generativa. */}
             <div className="flex items-center gap-1 min-w-0" role="group" aria-label="Tipo de optimización">
-              {(['estructural', 'generativa'] as OptimizationType[]).map((t) => (
+              {OPT_TYPES.map((t) => (
                 <button
                   key={t}
                   type="button"
@@ -207,6 +211,32 @@ export const RightPanel: React.FC<RightPanelProps> = ({
                 <span>Volumen retenido objetivo</span>
                 <span>0.80 (Ligero)</span>
               </div>
+              {/* VOLFRAC-MODE (reversible): el % se aplica al dominio activo
+                  (historico) o al volumen total de la pieza. Para volver
+                  atras: quitar este label + campo en types/App. */}
+              <label
+                className="flex items-center justify-between font-mono text-[10px] pt-0.5"
+                title="Dominio activo: el % se aplica solo al volumen optimizable (excluye preservadas/keep-out). Volumen total: el % es del volumen total de la pieza."
+              >
+                <span className="text-text-secondary flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[13px] text-secondary">stacked_bar_chart</span>
+                  Volumen sobre
+                </span>
+                <select
+                  value={simpParams.volfracMode}
+                  disabled={optimizationState.isRunning}
+                  onChange={(e) =>
+                    onChangeSimpParams({
+                      ...simpParams,
+                      volfracMode: e.target.value === 'total_volume' ? 'total_volume' : 'active_domain',
+                    })
+                  }
+                  className="bg-surface-container-lowest border border-border-subtle/40 rounded px-1 py-0.5 text-text-primary"
+                >
+                  <option value="total_volume">Volumen total (pieza)</option>
+                  <option value="active_domain">Dominio activo</option>
+                </select>
+              </label>
             </div>
 
             {/* Grid 2x2 Parameters */}
@@ -224,10 +254,25 @@ export const RightPanel: React.FC<RightPanelProps> = ({
               <div className="flex flex-col gap-0.5 bg-surface-elevated/40 p-2 rounded border border-border-subtle/30">
                 <div className="flex items-center justify-between">
                   <span className="text-text-muted font-mono text-[10px]">Radio Filtro (r_min)</span>
-                  <span className="text-text-primary font-bold font-mono text-[11px]">{simpParams.filterRadius.toFixed(2)} mm</span>
+                  <span className="flex items-center gap-0.5">
+                    <input
+                      type="number"
+                      min={0.1}
+                      max={50}
+                      step={0.1}
+                      value={simpParams.filterRadius}
+                      disabled={optimizationState.isRunning}
+                      onChange={(e) => {
+                        const v = parseFloat(e.target.value);
+                        onChangeSimpParams({ ...simpParams, filterRadius: Number.isFinite(v) && v > 0 ? v : 1.5 });
+                      }}
+                      className="w-16 bg-surface-container-lowest border border-border-subtle/40 rounded px-1 py-0.5 text-text-primary text-[11px] text-right"
+                    />
+                    <span className="text-text-primary font-mono text-[10px]">mm</span>
+                  </span>
                 </div>
-                <div className="text-[9px] font-mono text-text-secondary truncate" title="Filtro de densidades anti-checkerboard">
-                  Anti-checkerboard
+                <div className="text-[9px] font-mono text-text-secondary truncate" title="Filtro de densidades anti-checkerboard. En generativa (Envelope) el motor puede elevarlo al minimo 1.5 voxel.">
+                  Anti-checkerboard  editable
                 </div>
               </div>
             </div>
@@ -243,7 +288,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({
                 <select
                   value={simpParams.designSpace}
                   disabled={optimizationState.isRunning}
-                  onChange={(e) => onChangeSimpParams({ ...simpParams, designSpace: e.target.value as SimpParameters['designSpace'] })}
+                  onChange={(e) => onChangeSimpParams({ ...simpParams, designSpace: e.target.value === 'envelope' ? 'envelope' : 'part' })}
                   className="bg-surface-container-lowest border border-border-subtle/40 rounded px-1 py-0.5 text-text-primary"
                 >
                   <option value="part">Pieza</option>
@@ -278,7 +323,10 @@ export const RightPanel: React.FC<RightPanelProps> = ({
                 <select
                   value={simpParams.extrusionAxis}
                   disabled={optimizationState.isRunning}
-                  onChange={(e) => onChangeSimpParams({ ...simpParams, extrusionAxis: e.target.value as SimpParameters['extrusionAxis'] })}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    onChangeSimpParams({ ...simpParams, extrusionAxis: v === 'x' || v === 'y' || v === 'z' ? v : 'off' });
+                  }}
                   className="bg-surface-container-lowest border border-border-subtle/40 rounded px-1 py-0.5 text-text-primary"
                 >
                   <option value="off">Off</option>
@@ -292,7 +340,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({
                 <select
                   value={simpParams.brepStyle}
                   disabled={optimizationState.isRunning}
-                  onChange={(e) => onChangeSimpParams({ ...simpParams, brepStyle: e.target.value as SimpParameters['brepStyle'] })}
+                  onChange={(e) => onChangeSimpParams({ ...simpParams, brepStyle: e.target.value === 'bspline' ? 'bspline' : 'faceted' })}
                   className="bg-surface-container-lowest border border-border-subtle/40 rounded px-1 py-0.5 text-text-primary"
                 >
                   <option value="faceted">Facetada</option>
@@ -324,7 +372,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({
                 <select
                   value={simpParams.holeCap}
                   disabled={optimizationState.isRunning}
-                  onChange={(e) => onChangeSimpParams({ ...simpParams, holeCap: e.target.value as SimpParameters['holeCap'] })}
+                  onChange={(e) => onChangeSimpParams({ ...simpParams, holeCap: e.target.value === 'auto' ? 'auto' : 'all' })}
                   className="bg-surface-container-lowest border border-border-subtle/40 rounded px-1 py-0.5 text-text-primary"
                 >
                   <option value="all">Tapar todo</option>

@@ -16,8 +16,16 @@ interface Props {
 
 const numCls =
   'w-20 bg-surface-container-lowest border border-border-subtle/40 rounded px-1 py-0.5 text-text-primary text-right';
+
 const selCls =
   'bg-surface-container-lowest border border-border-subtle/40 rounded px-1 py-0.5 text-text-primary';
+
+// Filas de simetría con claves literales (evita `as` en claves computadas).
+const SYM_ROWS = [
+  { ax: 'X', onKey: 'symX', valKey: 'symXVal' },
+  { ax: 'Y', onKey: 'symY', valKey: 'symYVal' },
+  { ax: 'Z', onKey: 'symZ', valKey: 'symZVal' },
+] as const;
 
 function Row({ label, title, children }: { label: string; title?: string; children: React.ReactNode }) {
   return (
@@ -30,11 +38,13 @@ function Row({ label, title, children }: { label: string; title?: string; childr
 
 export const AdvancedOptPanel: React.FC<Props> = ({ simpParams: sp, onChangeSimpParams: set, disabled }) => {
   const [open, setOpen] = useState(false);
+
   const setNum = (key: 'evolutionaryRate' | 'lsCfl' | 'overhangAngleDeg' | 'overhangPenalty' | 'thermalAlpha' | 'thermalRefTemp' | 'minThickness',
     v: string, fallback: number) => {
     const n = parseFloat(v);
     set({ ...sp, [key]: Number.isFinite(n) ? n : fallback });
   };
+
   return (
     <div className="flex flex-col gap-1 bg-surface-elevated/20 p-2 rounded border border-border-subtle/30 font-mono text-[10px]">
       <button
@@ -55,7 +65,10 @@ export const AdvancedOptPanel: React.FC<Props> = ({ simpParams: sp, onChangeSimp
             <select
               value={sp.optimizer}
               disabled={disabled}
-              onChange={(e) => set({ ...sp, optimizer: e.target.value as SimpParameters['optimizer'] })}
+              onChange={(e) => {
+                const v = e.target.value;
+                set({ ...sp, optimizer: v === 'mma' || v === 'gcmma' || v === 'eso' || v === 'level_set' ? v : 'oc' });
+              }}
               className={selCls}
             >
               <option value="oc">OC (SIMP)</option>
@@ -71,7 +84,7 @@ export const AdvancedOptPanel: React.FC<Props> = ({ simpParams: sp, onChangeSimp
                 <select
                   value={sp.esoCriterion}
                   disabled={disabled}
-                  onChange={(e) => set({ ...sp, esoCriterion: e.target.value as SimpParameters['esoCriterion'] })}
+                  onChange={(e) => set({ ...sp, esoCriterion: e.target.value === 'stress' ? 'stress' : 'compliance' })}
                   className={selCls}
                 >
                   <option value="compliance">Compliance</option>
@@ -112,25 +125,24 @@ export const AdvancedOptPanel: React.FC<Props> = ({ simpParams: sp, onChangeSimp
             </>
           )}
           <div className="text-text-muted font-medium pt-1">Simetría (planos, mm)</div>
-          {(['X', 'Y', 'Z'] as const).map((ax) => {
-            const on = sp[`sym${ax}` as 'symX' | 'symY' | 'symZ'];
-            const val = sp[`sym${ax}Val` as 'symXVal' | 'symYVal' | 'symZVal'];
-            const key = `sym${ax}Val` as 'symXVal' | 'symYVal' | 'symZVal';
-            const onKey = `sym${ax}` as 'symX' | 'symY' | 'symZ';
+          {SYM_ROWS.map((row) => {
+            const on = sp[row.onKey];
+            const val = sp[row.valKey];
+
             return (
-              <Row key={ax} label={`Plano ${ax}`} title="Refleja densidades respecto al plano (valor = coordenada)">
+              <Row key={row.ax} label={`Plano ${row.ax}`} title="Refleja densidades respecto al plano (valor = coordenada)">
                 <input
                   type="checkbox"
                   checked={on}
                   disabled={disabled}
-                  onChange={(e) => set({ ...sp, [onKey]: e.target.checked })}
+                  onChange={(e) => set({ ...sp, [row.onKey]: e.target.checked })}
                   className="accent-secondary"
                 />
                 <input
                   type="number" step={0.5}
                   value={val}
                   disabled={disabled || !on}
-                  onChange={(e) => set({ ...sp, [key]: parseFloat(e.target.value) || 0 })}
+                  onChange={(e) => set({ ...sp, [row.valKey]: parseFloat(e.target.value) || 0 })}
                   className={numCls}
                 />
               </Row>
@@ -194,7 +206,7 @@ export const AdvancedOptPanel: React.FC<Props> = ({ simpParams: sp, onChangeSimp
             <select
               value={sp.objective}
               disabled={disabled}
-              onChange={(e) => set({ ...sp, objective: e.target.value as SimpParameters['objective'] })}
+              onChange={(e) => set({ ...sp, objective: e.target.value === 'min_volume' ? 'min_volume' : 'min_compliance' })}
               className={selCls}
             >
               <option value="min_compliance">Mín. compliance</option>

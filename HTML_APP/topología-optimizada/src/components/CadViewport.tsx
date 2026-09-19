@@ -5,6 +5,7 @@ import { ActiveTab, ActiveTool, BoundaryCondition, Material, OptimizationState, 
 import { dollyCamera, fitCamera, orbitCamera, panCamera, viewCamera } from '../lib/camera3d';
 import {
   NAV_PROFILES,
+  NAV_PROFILE_NAMES,
   isNavProfileName,
   readStoredNavProfile,
   type NavAction,
@@ -18,6 +19,7 @@ import type { RealSurface } from '../lib/realdata';
 // rangos face_triangles (viewport_3d.resolve_pick_entity + scene), toggle
 // como software_viewport y resaltado naranja como highlight.py.
 import { rangesCover, solidTriangles, triangleToFace } from '../lib/faces';
+import { isFiniteNumber } from '../lib/guards';
 // MULTI-VIEW-START (reversible: quitar import + props surfaces/bodies/
 // activeFilename/hiddenBodies/meshByFile + efecto multi-cuerpo).
 // Todos los cuerpos importados en un solo viewport, con ver/ocultar por
@@ -26,6 +28,13 @@ import type { ViewBody } from '../types';
 // MULTI-VIEW-END
 // FACES-END
 // NAV-VIEW-END
+
+// PLANES-VIS: filas del selector de planos (clave literal, sin `as`).
+const PLANE_ROWS = [
+  ['xy', 'XY', '#ef4444'],
+  ['xz', 'XZ', '#10b981'],
+  ['yz', 'YZ', '#7bd0ff'],
+] as const;
 
 interface CadViewportProps {
   activeTab: ActiveTab;
@@ -57,15 +66,17 @@ interface CadViewportProps {
 }
 
 export const CadViewport: React.FC<CadViewportProps> = ({
-  activeTab,
-  activeTool,
+  // Props conservadas por compatibilidad con App (futura deformación /
+  // overlay por estado); el viewport no las consume hoy.
+  activeTab: _activeTab,
+  activeTool: _activeTool,
   selectedMaterial,
-  optimizationState,
+  optimizationState: _optimizationState,
   boundaryConditions,
   showMesh,
   showSection,
   isModelVisible,
-  deformationScale,
+  deformationScale: _deformationScale,
   onUpdateCoords,
   resetViewTrigger,
   selectedViewTrigger,
@@ -91,6 +102,7 @@ export const CadViewport: React.FC<CadViewportProps> = ({
   // P-C (reversible): refs del triad sin asignar ni leer; eliminados para
   // noUnusedLocals. Para volver atrás: restaurar las tres líneas.
   const clipPlaneRef = useRef<THREE.Plane | null>(null);
+
   // PLANES-VIS (reversible): refs a los 4 planos en el 0 absoluto para
   // ver/ocultar uno por uno o todos. Para volver atras: borrar ref + estado
   // + efecto + panel.
@@ -99,6 +111,7 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     xz: THREE.GridHelper | null;
     yz: THREE.GridHelper | null;
   }>({ xy: null, xz: null, yz: null });
+
   // MULTI-VIEW (reversible): mallas por cuerpo (raycast solo en el activo).
   // userData: {key, filename, triMap: nº triangulo global por triangulo local}.
   const bodyMeshesRef = useRef<THREE.Mesh[]>([]);
@@ -138,11 +151,11 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     void backend
       .getNavProfiles()
       .then((r) => {
-        const cur = (r as { current?: unknown }).current;
-        if (r.ok && isNavProfileName(cur)) {
-          setNavProfile(cur);
+        if (r.ok && isNavProfileName(r.current)) {
+          setNavProfile(r.current);
+
           try {
-            localStorage.setItem('topoopt.nav', cur);
+            localStorage.setItem('topoopt.nav', r.current);
           } catch {
             /* sin localStorage */
           }
@@ -158,11 +171,13 @@ export const CadViewport: React.FC<CadViewportProps> = ({
 
   const changeNavProfile = (name: NavProfileName) => {
     setNavProfile(name);
+
     try {
       localStorage.setItem('topoopt.nav', name);
     } catch {
       /* sin localStorage */
     }
+
     // P-B (reversible): la escritura del perfil ya no es invisible.
     // Para volver atrás: .catch(() => undefined).
     if (backend.hasBridge()) {
@@ -180,30 +195,38 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     const box = new THREE.Box3();
     const v = new THREE.Vector3();
     let found = false;
-    for (const [filename, surf] of Object.entries(surfaces) as [string, RealSurface][]) {
+
+    for (const [filename, surf] of Object.entries(surfaces)) {
       const anyVisible = bodies.some(
         (b) => b.filename === filename && !hiddenBodies[b.key],
       );
+
       if (!anyVisible || surf.positions.length < 9) continue;
+
       for (let i = 0; i + 2 < surf.positions.length; i += 3) {
         // BLACKSCREEN-GUARD: ignora coordenadas no finitas (NaN/Infinity del
         // backend) para no contaminar el bounding box y ennegrecer la escena.
         const x = surf.positions[i];
         const y = surf.positions[i + 2];
         const z = -surf.positions[i + 1];
+
         if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
         // ORIENT (reversible): misma rotacion Z-up->Y-up que el render.
         v.set(x, y, z);
         box.expandByPoint(v);
       }
+
       found = true;
     }
+
     if (found && !box.isEmpty()) {
       const sphere = box.getBoundingSphere(new THREE.Sphere());
+
       if (!Number.isFinite(sphere.center.x) || !Number.isFinite(sphere.center.y) ||
           !Number.isFinite(sphere.center.z) || !Number.isFinite(sphere.radius)) {
         return;
       }
+
       fitCamera(cameraRef.current, targetRef.current, sphere.center, Math.max(sphere.radius, 1e-6));
     } else {
       targetRef.current.set(0, 0, 0);
@@ -263,14 +286,17 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     // BLACKSCREEN-FIX: si la creacion del contexto WebGL falla (drivers,
     // WebView2 sin GPU), antes el efecto lanzaba y el canvas quedaba negro.
     let renderer: THREE.WebGLRenderer;
+
     try {
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[viewport] WebGL no disponible:', msg);
       setWebglError(msg);
+
       return;
     }
+
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
@@ -288,23 +314,35 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     const planeXY = new THREE.GridHelper(120, 12, 0xef4444, 0x272a33);
     planeXY.rotation.x = Math.PI / 2;
     planeXY.position.set(0, 0, 0);
-    (planeXY.material as THREE.Material).opacity = 0.15;
-    (planeXY.material as THREE.Material).transparent = true;
+
+    if (!Array.isArray(planeXY.material)) {
+      planeXY.material.opacity = 0.15;
+      planeXY.material.transparent = true;
+    }
+
     scene.add(planeXY);
     planesRef.current.xy = planeXY;
 
     const planeXZ = new THREE.GridHelper(120, 12, 0x10b981, 0x272a33);
     planeXZ.position.set(0, 0, 0);
-    (planeXZ.material as THREE.Material).opacity = 0.15;
-    (planeXZ.material as THREE.Material).transparent = true;
+
+    if (!Array.isArray(planeXZ.material)) {
+      planeXZ.material.opacity = 0.15;
+      planeXZ.material.transparent = true;
+    }
+
     scene.add(planeXZ);
     planesRef.current.xz = planeXZ;
 
     const planeYZ = new THREE.GridHelper(120, 12, 0x7bd0ff, 0x272a33);
     planeYZ.rotation.z = Math.PI / 2;
     planeYZ.position.set(0, 0, 0);
-    (planeYZ.material as THREE.Material).opacity = 0.15;
-    (planeYZ.material as THREE.Material).transparent = true;
+
+    if (!Array.isArray(planeYZ.material)) {
+      planeYZ.material.opacity = 0.15;
+      planeYZ.material.transparent = true;
+    }
+
     scene.add(planeYZ);
     planesRef.current.yz = planeYZ;
 
@@ -337,18 +375,22 @@ export const CadViewport: React.FC<CadViewportProps> = ({
 
     // Animation Loop
     let animationFrameId: number;
+
     const animate = () => {
       animationFrameId = requestAnimationFrame(animate);
+
       if (rendererRef.current && sceneRef.current && cameraRef.current) {
         rendererRef.current.render(sceneRef.current, cameraRef.current);
       }
     };
+
     animate();
 
     // Resize Handler with ResizeObserver
     const resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
         const { width: newWidth, height: newHeight } = entry.contentRect;
+
         if (newWidth > 0 && newHeight > 0 && cameraRef.current && rendererRef.current) {
           cameraRef.current.aspect = newWidth / newHeight;
           cameraRef.current.updateProjectionMatrix();
@@ -356,14 +398,17 @@ export const CadViewport: React.FC<CadViewportProps> = ({
         }
       }
     });
+
     resizeObserver.observe(container);
 
     return () => {
       cancelAnimationFrame(animationFrameId);
       resizeObserver.disconnect();
+
       if (renderer.domElement && container.contains(renderer.domElement)) {
         container.removeChild(renderer.domElement);
       }
+
       renderer.dispose();
     };
   }, []);
@@ -371,16 +416,21 @@ export const CadViewport: React.FC<CadViewportProps> = ({
   // PLANES-VIS (reversible): aplica la visibilidad a los 3 planos del 0.
   useEffect(() => {
     const p = planesRef.current;
+
     if (p.xy) p.xy.visible = visiblePlanes.xy;
+
     if (p.xz) p.xz.visible = visiblePlanes.xz;
+
     if (p.yz) p.yz.visible = visiblePlanes.yz;
   }, [visiblePlanes]);
 
   const togglePlane = (key: keyof typeof visiblePlanes) =>
     setVisiblePlanes((p) => ({ ...p, [key]: !p[key] }));
+
   const toggleAllPlanes = () =>
     setVisiblePlanes((p) => {
       const anyVisible = p.xy || p.xz || p.yz;
+
       return { ...p, xy: !anyVisible, xz: !anyVisible, yz: !anyVisible };
     });
 
@@ -393,11 +443,12 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     const modelGroup = modelGroupRef.current;
 
     const disposeObj = (obj: THREE.Object3D) => {
-      const mesh = obj as THREE.Mesh;
-      if (mesh.geometry) (mesh.geometry as THREE.BufferGeometry).dispose();
-      const mat = (mesh as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+      if (!(obj instanceof THREE.Mesh)) return;
+      obj.geometry.dispose();
+      const mat = obj.material;
+
       if (Array.isArray(mat)) mat.forEach((mm) => mm.dispose());
-      else if (mat) mat.dispose();
+      else mat.dispose();
     };
 
     if (!isModelVisible) {
@@ -407,8 +458,10 @@ export const CadViewport: React.FC<CadViewportProps> = ({
         modelGroup.remove(obj);
         disposeObj(obj);
       }
+
       bodyMeshesRef.current = [];
       highlightRef.current = null;
+
       return;
     }
 
@@ -418,10 +471,13 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     if (bodies.length > 0) {
       const anyRenderable = bodies.some((b) => {
         const s = surfaces[b.filename];
+
         return !!s && s.positions.length >= 9 && s.indices.length >= 3;
       });
+
       if (!anyRenderable) {
         console.warn('[viewport] superficie no renderizable, se conserva la escena anterior');
+
         return;
       }
     }
@@ -433,6 +489,7 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     // bien; ante cualquier error se conserva la escena anterior.
     const next = new THREE.Group();
     const nextMeshes: THREE.Mesh[] = [];
+
     try {
 
     const baseColor = new THREE.Color(selectedMaterial.color);
@@ -440,36 +497,47 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     // vean como "uno solo" aunque compartan material. Para volver atras:
     // usar siempre baseColor / baseColor*0.75.
     const perFileIdx = new Map<string, number>();
+
     const bodyColor = (body: { filename: string }) => {
       const n = perFileIdx.get(body.filename) ?? 0;
       perFileIdx.set(body.filename, n + 1);
       const c = baseColor.clone();
+
       if (n > 0) c.offsetHSL((n * 0.09) % 1, 0, n % 2 === 0 ? 0.12 : -0.12);
+
       // Activo a pleno color, resto atenuado (comportamiento anterior).
       return body.filename === activeFilename ? c : c.multiplyScalar(0.75);
     };
+
     for (const body of bodies) {
       const surf = surfaces[body.filename];
+
       if (!surf || surf.positions.length < 9) continue;
       // BLACKSCREEN-GUARD: valida la superficie antes de crear geometria
       // (indices fuera de rango o NaN => se omite ESE cuerpo, no toda la escena).
       const nv = Math.floor(surf.positions.length / 3);
       let valid = true;
+
       for (let i = 0; i + 2 < surf.positions.length; i += 3) {
         if (!Number.isFinite(surf.positions[i]) || !Number.isFinite(surf.positions[i + 1]) ||
             !Number.isFinite(surf.positions[i + 2])) { valid = false; break; }
       }
+
       if (valid) {
         for (let i = 0; i < surf.indices.length; i += 1) {
           const idx = surf.indices[i];
+
           if (!Number.isInteger(idx) || idx < 0 || idx >= nv) { valid = false; break; }
         }
       }
+
       if (!valid) {
         console.warn(`[viewport] cuerpo omitido por geometria invalida: ${body.key}`);
         continue;
       }
+
       const tris = solidTriangles(body.faceIndices, surf.ranges, surf.numTriangles);
+
       if (!tris && bodies.filter((o) => o.filename === body.filename).length > 1) {
         console.warn(
           `[viewport] split por cuerpo no disponible para ${body.key} ` +
@@ -477,11 +545,13 @@ export const CadViewport: React.FC<CadViewportProps> = ({
           `Solidos backend: ${bodies.filter((o) => o.filename === body.filename).length}`,
         );
       }
+
       // triMap: triangulo global por triangulo local (identidad si va entero).
       // Los vertices salen de surf.indices (el teselado no es identidad).
       const useTris = tris ?? Array.from({ length: surf.numTriangles }, (_, k) => k);
       const triMap: number[] = useTris;
       const subIndex: number[] = [];
+
       for (const t of useTris) subIndex.push(surf.indices[t * 3], surf.indices[t * 3 + 1], surf.indices[t * 3 + 2]);
       const positions = new Float32Array(surf.positions);
       const geo = new THREE.BufferGeometry();
@@ -498,9 +568,11 @@ export const CadViewport: React.FC<CadViewportProps> = ({
         roughness: 0.4,
         side: THREE.DoubleSide,
       });
+
       if (showSection && clipPlaneRef.current) {
         mat.clippingPlanes = [clipPlaneRef.current];
       }
+
       const mesh = new THREE.Mesh(geo, mat);
       mesh.visible = !hiddenBodies[body.key];
       mesh.userData = { key: body.key, filename: body.filename, triMap };
@@ -509,13 +581,16 @@ export const CadViewport: React.FC<CadViewportProps> = ({
 
       // Fila MALLA del arbol: wireframe del archivo (solo con malla real).
       const meshKey = `${body.filename}::mesh_tet4`;
+
       if (showMesh && meshByFile[body.filename] && !hiddenBodies[meshKey]) {
         const wireGeo = new THREE.WireframeGeometry(geo);
+
         const wireMat = new THREE.LineBasicMaterial({
           color: 0x7bd0ff,
           transparent: true,
           opacity: 0.35,
         });
+
         const wire = new THREE.LineSegments(wireGeo, wireMat);
         wire.visible = mesh.visible;
         next.add(wire);
@@ -524,6 +599,7 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     } catch (err) {
       console.error('[viewport] fallo construyendo cuerpos, se conserva la escena anterior', err);
       next.traverse((o) => disposeObj(o));
+
       return;
     }
 
@@ -534,10 +610,13 @@ export const CadViewport: React.FC<CadViewportProps> = ({
       modelGroup.remove(obj);
       disposeObj(obj);
     }
+
     highlightRef.current = null;
+
     while (next.children.length > 0) {
       modelGroup.add(next.children[0]);
     }
+
     bodyMeshesRef.current = nextMeshes;
 
     // FIT-ONCE (ver STABILITY-FIX arriba): reencuadrar solo si el conjunto
@@ -546,6 +625,7 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     // tocar la camara: antes el fit incondicional devolvia el zoom y
     // hacia parpadear la seleccion (el efecto corria hasta por mousemove).
     const fitSig = `${activeFilename ?? ''}::${bodies.map((b) => b.key).join('|')}`;
+
     if (fitSig !== fitKeysRef.current) {
       fitKeysRef.current = fitSig;
       fitToAll();
@@ -558,27 +638,34 @@ export const CadViewport: React.FC<CadViewportProps> = ({
   useEffect(() => {
     const group = modelGroupRef.current;
     const activeSurf = activeFilename ? surfaces[activeFilename] : undefined;
+
     if (!group || !activeSurf) return;
+
     if (highlightRef.current) {
       group.remove(highlightRef.current);
       highlightRef.current.geometry.dispose();
       highlightRef.current = null;
     }
+
     if (selectedFaces.length === 0 || !rangesCover(activeSurf.ranges, activeSurf.numTriangles)) return;
     const wanted = new Set(selectedFaces);
     const sub: number[] = [];
+
     for (const r of activeSurf.ranges) {
       if (!wanted.has(r.face_index)) continue;
+
       for (let t = r.start; t < r.start + r.count; t += 1) {
         sub.push(activeSurf.indices[t * 3], activeSurf.indices[t * 3 + 1], activeSurf.indices[t * 3 + 2]);
       }
     }
+
     if (sub.length === 0) return;
     const positions = new Float32Array(activeSurf.positions);
     const hgeo = new THREE.BufferGeometry();
     hgeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     hgeo.setIndex(sub);
     hgeo.rotateX(-Math.PI / 2);
+
     const hmat = new THREE.MeshBasicMaterial({
       color: 0xffa500, // naranja del highlight del desktop
       transparent: true,
@@ -588,10 +675,12 @@ export const CadViewport: React.FC<CadViewportProps> = ({
       polygonOffset: true,
       polygonOffsetFactor: -2,
     });
+
     const overlay = new THREE.Mesh(hgeo, hmat);
     overlay.raycast = () => undefined; // el overlay no intercepta picks
     group.add(overlay);
     highlightRef.current = overlay;
+
     return () => {
       if (highlightRef.current) {
         group.remove(highlightRef.current);
@@ -609,36 +698,50 @@ export const CadViewport: React.FC<CadViewportProps> = ({
   const densityOverlayRef = useRef<THREE.Mesh | null>(null);
   useEffect(() => {
     const group = modelGroupRef.current;
+
     if (densityOverlayRef.current) {
       if (group) group.remove(densityOverlayRef.current);
       densityOverlayRef.current.geometry.dispose();
-      (densityOverlayRef.current.material as THREE.Material).dispose();
+      const overlayMat = densityOverlayRef.current.material;
+
+      if (Array.isArray(overlayMat)) overlayMat.forEach((m) => m.dispose());
+      else overlayMat.dispose();
+
       densityOverlayRef.current = null;
     }
+
     if (!group || !showDensity || !densityField) return;
     const { positions, indices, values } = densityField;
     const nv = Math.floor(positions.length / 3);
+
     if (nv < 1 || values.length !== nv || indices.length < 3) {
       console.warn('[viewport] campo de densidades inconsistente, se omite el overlay');
+
       return;
     }
+
     for (const i of indices) {
       if (!Number.isInteger(i) || i < 0 || i >= nv) {
         console.warn('[viewport] campo de densidades con índices fuera de rango, se omite');
+
         return;
       }
     }
+
     const span = densityField.max - densityField.min > 1e-12
       ? densityField.max - densityField.min : 1;
+
     const cVoid = new THREE.Color(0x1e3a8a);
     const cSolid = new THREE.Color(0xf97316);
     const colors = new Float32Array(nv * 3);
     const tmp = new THREE.Color();
+
     for (let i = 0; i < nv; i += 1) {
       const t = Math.min(1, Math.max(0, (values[i] - densityField.min) / span));
       tmp.copy(cVoid).lerp(cSolid, t);
       colors[i * 3] = tmp.r; colors[i * 3 + 1] = tmp.g; colors[i * 3 + 2] = tmp.b;
     }
+
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
@@ -646,6 +749,7 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     // ORIENT: misma conversión CAD Z-up -> three Y-up que las mallas.
     geo.rotateX(-Math.PI / 2);
     geo.computeVertexNormals();
+
     const mat = new THREE.MeshStandardMaterial({
       vertexColors: true,
       metalness: 0.2,
@@ -654,19 +758,26 @@ export const CadViewport: React.FC<CadViewportProps> = ({
       polygonOffset: true,
       polygonOffsetFactor: -2,
     });
+
     if (showSection && clipPlaneRef.current) {
       mat.clippingPlanes = [clipPlaneRef.current];
     }
+
     const mesh = new THREE.Mesh(geo, mat);
     mesh.visible = isModelVisible;
     mesh.raycast = () => undefined; // el overlay no intercepta picks
     group.add(mesh);
     densityOverlayRef.current = mesh;
+
     return () => {
       if (densityOverlayRef.current) {
         group.remove(densityOverlayRef.current);
         densityOverlayRef.current.geometry.dispose();
-        (densityOverlayRef.current.material as THREE.Material).dispose();
+        const overlayMat = densityOverlayRef.current.material;
+
+        if (Array.isArray(overlayMat)) overlayMat.forEach((m) => m.dispose());
+        else overlayMat.dispose();
+
         densityOverlayRef.current = null;
       }
     };
@@ -683,35 +794,54 @@ export const CadViewport: React.FC<CadViewportProps> = ({
   useEffect(() => {
     const scene = sceneRef.current;
     const activeSurf = activeFilename ? surfaces[activeFilename] : undefined;
+
     if (arrowsRef.current && scene) {
       scene.remove(arrowsRef.current);
       arrowsRef.current.traverse((o) => {
-        const m = o as THREE.Mesh;
-        if (m.geometry) m.geometry.dispose();
-        const mat = (m as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+        if (!(o instanceof THREE.Mesh)) return;
+        o.geometry.dispose();
+        const mat = o.material;
+
         if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
-        else if (mat) mat.dispose();
+        else mat.dispose();
       });
       arrowsRef.current = null;
     }
+
     if (!scene || !activeSurf) return;
+
     if (!rangesCover(activeSurf.ranges, activeSurf.numTriangles)) return;
+
     const loads = boundaryConditions.filter(
       (c) => c.type === 'carga' && (c.faceIndices?.length ?? 0) > 0 && c.value &&
         Number.isFinite(c.value[0] + c.value[1] + c.value[2]) &&
         Math.hypot(c.value[0], c.value[1], c.value[2]) > 0,
     );
+
     if (loads.length === 0) return;
     // Longitud de flecha ~12% de la diagonal del modelo (coords CAD).
     const pos = activeSurf.positions;
     let mnx = Infinity, mny = Infinity, mnz = Infinity;
     let mxx = -Infinity, mxy = -Infinity, mxz = -Infinity;
+
     for (let i = 0; i + 2 < pos.length; i += 3) {
       const x = pos[i], y = pos[i + 1], z = pos[i + 2];
+
       if (!Number.isFinite(x + y + z)) continue;
-      if (x < mnx) mnx = x; if (y < mny) mny = y; if (z < mnz) mnz = z;
-      if (x > mxx) mxx = x; if (y > mxy) mxy = y; if (z > mxz) mxz = z;
+
+      if (x < mnx) mnx = x;
+
+ if (y < mny) mny = y;
+
+ if (z < mnz) mnz = z;
+
+      if (x > mxx) mxx = x;
+
+ if (y > mxy) mxy = y;
+
+ if (z > mxz) mxz = z;
     }
+
     if (!Number.isFinite(mnx + mxx)) return;
     const diag = Math.hypot(mxx - mnx, mxy - mny, mxz - mnz) || 1;
     // Flecha grande y separada: cuerpo ~20% de la diagonal + hueco ~8%
@@ -722,26 +852,35 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     // ORIENT: misma conversion CAD Z-up -> three Y-up que las mallas.
     sub.rotateX(-Math.PI / 2);
     const rangeByFace = new Map<number, { start: number; count: number }>();
+
     for (const r of activeSurf.ranges) rangeByFace.set(r.face_index, r);
+
     for (const cond of loads) {
-      const v = cond.value as [number, number, number];
+      const v = cond.value;
+
+      if (!v) continue;
       const m = Math.hypot(v[0], v[1], v[2]);
       const dir = new THREE.Vector3(v[0] / m, v[1] / m, v[2] / m);
       const faces = (cond.faceIndices ?? []).filter((f) => rangeByFace.has(f));
       // Tope anti-saturacion: submuestreo uniforme si hay muchas caras.
       const stride = Math.max(1, Math.ceil(faces.length / 24));
+
       for (let k = 0; k < faces.length; k += stride) {
         const r = rangeByFace.get(faces[k]);
+
         if (!r) continue;
         let cx = 0, cy = 0, cz = 0, n = 0;
+
         for (let t = r.start; t < r.start + r.count; t += 1) {
           for (let j = 0; j < 3; j += 1) {
             const vi = activeSurf.indices[t * 3 + j] * 3;
             const x = pos[vi], y = pos[vi + 1], z = pos[vi + 2];
+
             if (!Number.isFinite(x + y + z)) continue;
             cx += x; cy += y; cz += z; n += 1;
           }
         }
+
         if (n === 0) continue;
         const centroid = new THREE.Vector3(cx / n, cy / n, cz / n);
         // Punta separada de la cara (gap) y origen mas atras: la flecha
@@ -754,15 +893,16 @@ export const CadViewport: React.FC<CadViewportProps> = ({
         sub.add(arrow);
       }
     }
+
     if (sub.children.length === 0) return;
     scene.add(sub);
     arrowsRef.current = sub;
+
     return () => {
       if (arrowsRef.current && scene) {
         scene.remove(arrowsRef.current);
         arrowsRef.current.traverse((o) => {
-          const m = o as THREE.Mesh;
-          if (m.geometry) m.geometry.dispose();
+          if (o instanceof THREE.Mesh) o.geometry.dispose();
         });
         arrowsRef.current = null;
       }
@@ -782,32 +922,43 @@ export const CadViewport: React.FC<CadViewportProps> = ({
   // FACES + MULTI-VIEW (reversible): pick en los cuerpos VISIBLES del modelo
   // ACTIVO (raycast -> triangulo local -> global via triMap -> cara B-Rep).
   const downPosRef = useRef<{ x: number; y: number; button: number } | null>(null);
+
   const pickFace = useCallback(
     (clientX: number, clientY: number) => {
       const container = containerRef.current;
       const camera = cameraRef.current;
       const activeSurf = activeFilename ? surfaces[activeFilename] : undefined;
+
       if (!container || !camera || !activeSurf) return;
+
       if (!rangesCover(activeSurf.ranges, activeSurf.numTriangles)) return;
+
       const targets = bodyMeshesRef.current.filter(
         (m) => m.visible && m.userData.filename === activeFilename,
       );
+
       if (targets.length === 0) return;
       const rect = container.getBoundingClientRect();
+
       const ndc = new THREE.Vector2(
         ((clientX - rect.left) / rect.width) * 2 - 1,
         -(((clientY - rect.top) / rect.height) * 2 - 1),
       );
+
       const ray = new THREE.Raycaster();
       ray.setFromCamera(ndc, camera);
       const hits = ray.intersectObjects(targets, false);
+
       if (hits.length === 0) return; // vacio: conserva la seleccion
       const hit = hits[0];
-      const triMap = (hit.object.userData.triMap ?? []) as number[];
+      const rawMap = hit.object.userData.triMap;
+      const triMap: number[] = Array.isArray(rawMap) ? rawMap.filter(isFiniteNumber) : [];
       const localTri = hit.faceIndex;
+
       // P-C (strict): faceIndex puede ser null; == null cubre null+undefined.
       if (localTri == null || localTri >= triMap.length) return;
       const face = triangleToFace(triMap[localTri], activeSurf.ranges);
+
       if (face === null) return; // hueco sin cara: conserva la seleccion
       onToggleFace(face);
     },
@@ -816,12 +967,17 @@ export const CadViewport: React.FC<CadViewportProps> = ({
 
   const resolveDragAction = (button: number, shift: boolean): NavAction => {
     const p = NAV_PROFILES[navProfile];
+
     if (button === 0) return 'none'; // select en los 4 perfiles: sin arrastre
+
     if (button === 1) return shift ? p.shiftMiddle : p.middle; // orbit|pan
+
     if (button === 2) {
       if (p.right === 'orbit' || p.right === 'pan') return p.right;
+
       return 'none'; // menu: sin arrastre 3D
     }
+
     return 'none';
   };
 
@@ -837,6 +993,7 @@ export const CadViewport: React.FC<CadViewportProps> = ({
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = containerRef.current?.getBoundingClientRect();
+
     if (rect) {
       // Calculate normalized mouse coords in millimeters scale
       const relX = ((e.clientX - rect.left) / rect.width) * 160 - 80;
@@ -853,6 +1010,7 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     const dy = e.clientY - dragState.current.lastY;
     dragState.current.lastX = e.clientX;
     dragState.current.lastY = e.clientY;
+
     if (dx === 0 && dy === 0) return;
 
     if (dragActionRef.current === 'orbit') {
@@ -868,6 +1026,7 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     // de entidad y rangos completos; clic en vacio/hueco conserva la seleccion.
     const down = downPosRef.current;
     downPosRef.current = null;
+
     if (
       down &&
       down.button === 0 &&
@@ -876,6 +1035,7 @@ export const CadViewport: React.FC<CadViewportProps> = ({
     ) {
       pickFace(e.clientX, e.clientY);
     }
+
     // FACES-END
     dragState.current.dragging = false;
     dragActionRef.current = 'none';
@@ -896,6 +1056,7 @@ export const CadViewport: React.FC<CadViewportProps> = ({
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const k = e.key.toLowerCase();
+
     if (NAV_PROFILES[navProfile].fitKeys.includes(k)) fitToAll();
   };
   // NAV-VIEW-END
@@ -1025,13 +1186,14 @@ export const CadViewport: React.FC<CadViewportProps> = ({
               value={navProfile}
               onChange={(e) => {
                 const v = e.target.value;
+
                 if (isNavProfileName(v)) changeNavProfile(v);
               }}
               onClick={(e) => e.stopPropagation()}
               onMouseDown={(e) => e.stopPropagation()}
               className="bg-transparent hover:text-secondary cursor-pointer text-[9px] font-mono outline-none [&>option]:bg-surface-elevated"
             >
-              {(Object.keys(NAV_PROFILES) as NavProfileName[]).map((n) => (
+              {NAV_PROFILE_NAMES.map((n) => (
                 <option key={n} value={n} title={NAV_PROFILES[n].displayName}>
                   {NAV_PROFILES[n].displayName.slice(0, 2).toUpperCase()}
                 </option>
@@ -1046,13 +1208,7 @@ export const CadViewport: React.FC<CadViewportProps> = ({
             "Camera Tool Floating Stack" desde git. */}
         <div className="flex flex-col items-stretch gap-0.5 bg-surface-elevated/90 backdrop-blur-md p-1.5 rounded-lg shadow-md border border-border-subtle/50">
           <span className="px-1 text-center text-[9px] font-mono font-semibold text-text-muted">PLANOS</span>
-          {(
-            [
-              ['xy', 'XY', '#ef4444'],
-              ['xz', 'XZ', '#10b981'],
-              ['yz', 'YZ', '#7bd0ff'],
-            ] as ['xy' | 'xz' | 'yz', string, string][]
-          ).map(([key, label, color]) => (
+          {PLANE_ROWS.map(([key, label, color]) => (
             <button
               key={key}
               onClick={() => togglePlane(key)}
@@ -1123,8 +1279,13 @@ export const CadViewport: React.FC<CadViewportProps> = ({
         {facePickEnabled && activeFilename && surfaces[activeFilename] && (
           <span className="px-2 py-1 rounded-lg bg-surface-elevated/85 backdrop-blur-md border border-border-subtle/40 font-mono text-[10px] text-text-secondary">
             {(() => {
-              const surf = surfaces[activeFilename as string];
+              const key = activeFilename;
+              const surf = key ? surfaces[key] : undefined;
+
+              if (!surf) return 'Caras no disponibles';
+
               if (!rangesCover(surf.ranges, surf.numTriangles)) return 'Caras no disponibles (teselado diezmado)';
+
               return selectedFaces.length > 0
                 ? `Caras: ${[...selectedFaces].sort((a, b) => a - b).map((f) => `face_${f}`).join(', ')}`
                 : `Clic en una cara (${surf.faces.length} disponibles)`;

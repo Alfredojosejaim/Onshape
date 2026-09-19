@@ -3,20 +3,27 @@
 // inventados). Para volver atrás: borrar este archivo + su uso en RightPanel.
 import React, { useState } from 'react';
 import { backend } from '../lib/bridge';
+import type { JsonRecord, JsonValue } from '../types';
+import { isNumber } from '../lib/guards';
 
-type Row = Record<string, unknown>;
+type Row = JsonRecord;
 
 const META_KEYS = new Set(['study_id', 'name', 'study_type', 'status']);
 
-function fmt(v: unknown): string {
+function fmt(v: JsonValue | undefined): string {
   if (v === null || v === undefined) return '—';
-  if (typeof v === 'number') {
+
+  if (isNumber(v)) {
     if (!Number.isFinite(v)) return '—';
     const a = Math.abs(v);
+
     if (a !== 0 && (a >= 1e6 || a < 1e-3)) return v.toExponential(2);
+
     return String(Math.round(v * 1000) / 1000);
   }
+
   const s = String(v);
+
   return s.length > 24 ? `${s.slice(0, 24)}…` : s;
 }
 
@@ -29,16 +36,24 @@ export const CompareTable: React.FC = () => {
   const refresh = async () => {
     if (!backend.hasBridge()) {
       setNotice('sin bridge: solo funciona con el backend real');
+
       return;
     }
+
     setBusy(true);
     setNotice(null);
+
     try {
       const r = await backend.compareStudies();
+
       if (r.ok) {
-        setRows(((r as { rows?: Row[] }).rows ?? []) as Row[]);
+        // El mock sin bridge no trae filas: la guarda evita pintar indefinido.
+        const incoming = r.rows ?? [];
+
+        setRows(incoming);
         setLoaded(true);
-        if (!((r as { rows?: Row[] }).rows ?? []).length) {
+
+        if (!incoming.length) {
           setNotice('sin estudios con resultado todavía');
         }
       } else {
@@ -52,6 +67,7 @@ export const CompareTable: React.FC = () => {
   };
 
   const metricKeys: string[] = [];
+
   for (const row of rows) {
     for (const k of Object.keys(row)) {
       if (!META_KEYS.has(k) && !metricKeys.includes(k)) metricKeys.push(k);

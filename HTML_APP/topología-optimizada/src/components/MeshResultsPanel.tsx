@@ -5,6 +5,8 @@
 // 'malla' en RightPanel.tsx.
 import React from 'react';
 import { MeshOpResult } from '../types';
+import type { JsonValue } from '../types';
+import { isFiniteNumber } from '../lib/guards';
 
 interface MeshResultsPanelProps {
   isMeshModel: boolean;
@@ -12,10 +14,11 @@ interface MeshResultsPanelProps {
   result: MeshOpResult;
 }
 
-function num(v: unknown): string {
-  if (typeof v === 'number' && Number.isFinite(v)) {
+function num(v: JsonValue | undefined): string {
+  if (isFiniteNumber(v)) {
     return v >= 100 ? Math.round(v).toString() : v.toFixed(3);
   }
+
   return '—';
 }
 

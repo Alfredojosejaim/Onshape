@@ -9,38 +9,43 @@ import {
   Material,
   OptimizationState,
 } from '../types';
+import type { JsonRecord, JsonValue } from '../types';
+import { isBoolean, isFiniteNumber, isRecord, isString } from './guards';
 import type { FaceMeta, FaceRange } from './faces';
 
 const PALETTE = ['#89ceff', '#94a3b8', '#cbd5e1', '#f59e0b', '#7bd0ff'];
 
-function num(v: unknown): number | undefined {
-  const n = typeof v === 'string' ? parseFloat(v) : (v as number);
-  return typeof n === 'number' && Number.isFinite(n) ? n : undefined;
-}
+/** Registro vacío para payloads que no son objeto (misma rama "sin dato"). */
+const EMPTY_RECORD: JsonRecord = {};
 
-export interface ApiMaterial {
-  name: string;
-  young_modulus: number; // Pa
-  poisson_ratio: number;
-  density: number; // kg/m3
-  yield_strength: number; // Pa
-  source?: string;
+function num(v: JsonValue | null | undefined): number | undefined {
+  if (isString(v)) {
+    const n = parseFloat(v);
+
+    return Number.isFinite(n) ? n : undefined;
+  }
+
+  return isFiniteNumber(v) ? v : undefined;
 }
 
 /** Materiales reales del core (Pa, kg/m3) -> UI (GPa, g/cm3, MPa). */
 export function mapMaterials(apiMats: unknown[]): Material[] {
   const out: Material[] = [];
+
   (apiMats ?? []).forEach((m, i) => {
-    const r = m as ApiMaterial;
+    const r = isRecord(m) ? m : null;
+    const name = r && isString(r.name) ? r.name : undefined;
+    const source = r && isString(r.source) ? r.source : undefined;
     const E = num(r?.young_modulus);
     const nu = num(r?.poisson_ratio);
     const rho = num(r?.density);
     const sy = num(r?.yield_strength);
-    if (!r?.name || E === undefined || nu === undefined || rho === undefined || sy === undefined) return;
+
+    if (!name || E === undefined || nu === undefined || rho === undefined || sy === undefined) return;
     out.push({
-      id: r.name.toLowerCase().replace(/[^a-z0-9]+/g, '_'),
-      name: r.name,
-      category: r.source ?? 'Core Topologia_Optimizada',
+      id: name.toLowerCase().replace(/[^a-z0-9]+/g, '_'),
+      name,
+      category: source ?? 'Core Topologia_Optimizada',
       youngModulus: E / 1e9,
       poissonRatio: nu,
       yieldStrength: sy / 1e6,
@@ -48,9 +53,10 @@ export function mapMaterials(apiMats: unknown[]): Material[] {
       // El core no expone resistencia a traccion: se deja ausente ("—" en UI).
       tensileStrength: undefined,
       color: PALETTE[i % PALETTE.length],
-      description: r.source ?? 'Material del core',
+      description: source ?? 'Material del core',
     });
   });
+
   return out;
 }
 
@@ -73,21 +79,46 @@ export interface ApiSnapshot {
 
 /** Snapshot real -> preset de modelo para el arbol (sin inventar cifras). */
 export function mapSnapshotToModel(
-  snap: ApiSnapshot,
+  snap: ApiSnapshot | null,
   filename: string,
   displayName: string,
 ): CadModelPreset {
+  const faces = Math.round(num(snap?.num_faces) ?? 0);
+
   return {
     id: `real_${filename}`,
     filename,
     displayName,
-    faces: Math.round(num(snap?.num_faces) ?? 0),
+    faces,
     edges: 0, // la teselacion no expone aristas B-Rep
     // SOLIDS (reversible): conteo real de cuerpos en vez del 1 fijo.
     solids: Math.round(num(snap?.num_solids) ?? (snap?.model_name ? 1 : 0)),
     volumeCm3: num(snap?.volume_cm3) ?? 0,
     elementsTet4: Math.round(num(snap?.num_elements) ?? 0),
     nodes: Math.round(num(snap?.num_nodes) ?? 0),
+  };
+}
+
+/** Snapshot JSON del backend -> ApiSnapshot tipado (null si no es objeto). */
+export function toApiSnapshot(v: JsonValue | null): ApiSnapshot | null {
+  const r = isRecord(v) ? v : null;
+
+  if (!r) return null;
+
+  return {
+    model_name: isString(r.model_name) ? r.model_name : null,
+    has_mesh: isBoolean(r.has_mesh) ? r.has_mesh : undefined,
+    has_result: isBoolean(r.has_result) ? r.has_result : undefined,
+    material: isString(r.material) ? r.material : null,
+    num_faces: num(r.num_faces),
+    num_triangles: num(r.num_triangles),
+    num_vertices: num(r.num_vertices),
+    num_nodes: num(r.num_nodes),
+    num_elements: num(r.num_elements),
+    num_solids: num(r.num_solids),
+    volume_cm3: num(r.volume_cm3),
+    is_mesh: isBoolean(r.is_mesh) ? r.is_mesh : undefined,
+    mesh_format: isString(r.mesh_format) ? r.mesh_format : null,
   };
 }
 
@@ -102,29 +133,36 @@ export interface FeaOutcome {
 
 /** Clasifica un payload FEA sin inventar cifras: distingue estudio en curso,
  *  resultado completo, payload incompleto y error explícito. */
-export function mapFeaOutcome(res: unknown, yieldMpa: number): FeaOutcome {
-  const r = (res ?? {}) as Record<string, unknown>;
-  if (typeof r.error === 'string' && r.error) {
+export function mapFeaOutcome(res: JsonValue | null, yieldMpa: number): FeaOutcome {
+  const r = isRecord(res) ? res : EMPTY_RECORD;
+
+  if (isString(r.error) && r.error) {
     return { status: 'error', data: null, detail: r.error };
   }
+
   if (r.state === 'running' || r.state === 'pending' || r.state === 'queued') {
     return { status: 'pending', data: null };
   }
+
   const mapped = mapFeaResult(res, yieldMpa);
+
   if (!mapped) {
     return { status: 'invalid', data: null, detail: 'métricas FEA mínimas ausentes' };
   }
+
   return { status: 'completed', data: mapped };
 }
 
-export function mapFeaResult(res: unknown, yieldMpa: number): FeaResults | null {
-  const r = (res ?? {}) as Record<string, unknown>;
-  const nodal = Array.isArray(r.nodal_von_mises) ? (r.nodal_von_mises as number[]) : [];
+export function mapFeaResult(res: JsonValue | null, yieldMpa: number): FeaResults | null {
+  const r = isRecord(res) ? res : EMPTY_RECORD;
+  const nodal = Array.isArray(r.nodal_von_mises) ? r.nodal_von_mises.filter(isFiniteNumber) : [];
   const maxVmPa = nodal.length ? Math.max(...nodal.filter((v) => Number.isFinite(v))) : num(r.max_von_mises);
   const maxDisp = num(r.max_displacement);
   const strain = num(r.total_strain_energy);
+
   if (maxVmPa === undefined || maxDisp === undefined || strain === undefined) return null;
   const maxVmMpa = maxVmPa / 1e6;
+
   return {
     maxVonMisesMpa: maxVmMpa,
     minSafetyFactor: maxVmMpa > 0 ? yieldMpa / maxVmMpa : 0,
@@ -145,34 +183,41 @@ export interface SimpOutcome {
 /** Clasifica un payload SIMP: pending (job en curso), error, invalid
  *  (terminó sin métricas utilizables) o completed. No cambia mapSimpResult. */
 export function mapSimpOutcome(
-  res: unknown,
+  res: JsonValue | null,
   prev: OptimizationState,
   initialMassKg: number,
 ): SimpOutcome {
-  const r = (res ?? {}) as Record<string, unknown>;
-  if (typeof r.error === 'string' && r.error) {
+  const r = isRecord(res) ? res : EMPTY_RECORD;
+
+  if (isString(r.error) && r.error) {
     return { status: 'error', data: null, detail: r.error };
   }
+
   if (r.state === 'running' || r.state === 'pending' || r.state === 'queued') {
     return { status: 'pending', data: null };
   }
+
   const mapped = mapSimpResult(res, prev, initialMassKg);
+
   if (!mapped) {
     return { status: 'invalid', data: null, detail: 'métricas SIMP mínimas ausentes' };
   }
+
   return { status: 'completed', data: mapped };
 }
 
 export function mapSimpResult(
-  res: unknown,
+  res: JsonValue | null,
   prev: OptimizationState,
   initialMassKg: number,
 ): OptimizationState | null {
-  const r = (res ?? {}) as Record<string, unknown>;
-  const compHist = Array.isArray(r.compliance_history) ? (r.compliance_history as number[]) : [];
+  const r = isRecord(res) ? res : EMPTY_RECORD;
+  const compHist = Array.isArray(r.compliance_history) ? r.compliance_history.filter(isFiniteNumber) : [];
+
   const volHist = Array.isArray(r.volume_fraction_history)
-    ? (r.volume_fraction_history as number[])
+    ? r.volume_fraction_history.filter(isFiniteNumber)
     : [];
+
   const iters = num(r.iterations) ?? compHist.length;
   // PHYS-VOL (auditoría punto 5): con regiones preservadas/obstrucciones el
   // volumen ocupado real es physical_volume_fraction (rho-ponderado sobre
@@ -182,10 +227,12 @@ export function mapSimpResult(
   const physVol = num(r.physical_volume_fraction);
   const finalVol = physVol ?? targetVol;
   const finalComp = num(r.final_compliance) ?? compHist[compHist.length - 1];
+
   if (finalVol === undefined || finalComp === undefined || !iters) return null;
   const total = Math.max(1, Math.round(iters));
   const vols = volHist.length ? volHist : [1, finalVol];
   const comps = compHist.length ? compHist : [finalComp];
+
   return {
     ...prev,
     isRunning: false,
@@ -203,13 +250,17 @@ export function mapSimpResult(
 }
 
 /** Vector de carga de la UI [Fx,Fy,Fz] -> direccion + magnitud para setBoundaries. */
-export function mapLoadToBoundaries(bcs: BoundaryCondition[]): {
+export interface LoadBoundaries {
   load_dir: [number, number, number];
   magnitude: number;
-} {
+}
+
+/** Vector de carga de la UI [Fx,Fy,Fz] -> direccion + magnitud para setBoundaries. */
+export function mapLoadToBoundaries(bcs: BoundaryCondition[]): LoadBoundaries {
   const load = bcs.find((c) => c.type === 'carga' && c.active);
   const v = load?.value ?? [0, 0, 1000];
   const mag = Math.hypot(v[0], v[1], v[2]) || 1000;
+
   return { load_dir: [v[0] / mag, v[1] / mag, v[2] / mag], magnitude: mag };
 }
 
@@ -221,24 +272,27 @@ export function prettyName(filename: string): string {
 // Para volver atras: borrar hasta SOLIDS-END + su uso en App/LeftPanel.
 import type { SolidInfo } from '../types';
 
-export function mapSolids(apiSolids: unknown): SolidInfo[] {
+export function mapSolids(apiSolids: JsonValue | null): SolidInfo[] {
   const out: SolidInfo[] = [];
+
   (Array.isArray(apiSolids) ? apiSolids : []).forEach((s) => {
-    const r = (s ?? {}) as Record<string, unknown>;
-    if (typeof r.solid_id !== 'string') return;
+    const r = isRecord(s) ? s : null;
+
+    if (!r || !isString(r.solid_id)) return;
     out.push({
       solid_id: r.solid_id,
-      index: typeof r.index === 'number' ? Math.round(r.index) : out.length,
-      name: typeof r.name === 'string' ? r.name : r.solid_id,
+      index: isFiniteNumber(r.index) ? Math.round(r.index) : out.length,
+      name: isString(r.name) ? r.name : r.solid_id,
       volume: num(r.volume) ?? null,
       faces_count: Math.round(num(r.faces_count) ?? 0),
-      center: Array.isArray(r.center) ? (r.center as [number, number, number]) : null,
+      center: vec3(r.center),
       // MULTI-VIEW (reversible): caras globales del solido para el split.
       face_indices: Array.isArray(r.face_indices)
-        ? (r.face_indices as unknown[]).map((x) => Math.round(num(x) ?? -1)).filter((x) => x >= 0)
+        ? r.face_indices.map((x) => Math.round(num(x) ?? -1)).filter((x) => x >= 0)
         : null,
     });
   });
+
   return out;
 }
 // SOLIDS-END
@@ -262,44 +316,49 @@ export interface RealSurface {
 
 // DENSITY-VIEW (reversible): exportado para decodificar el campo de
 // getSurfaceMesh (mismo formato __ndarray__ que el teselado).
-export function decodeCleanArray(v: unknown): number[] {
-  if (Array.isArray(v)) return (v as unknown[]).filter((x) => typeof x === 'number' && Number.isFinite(x)) as number[];
-  if (v && typeof v === 'object') {
-    const o = v as { __ndarray__?: boolean; data?: unknown };
-    if (o.__ndarray__ && Array.isArray(o.data)) {
-      return (o.data as unknown[]).filter((x) => typeof x === 'number' && Number.isFinite(x)) as number[];
-    }
+export function decodeCleanArray(v: JsonValue | null): number[] {
+  if (Array.isArray(v)) return v.filter(isFiniteNumber);
+
+  if (isRecord(v) && v.__ndarray__ === true && Array.isArray(v.data)) {
+    return v.data.filter(isFiniteNumber);
   }
+
   return [];
 }
 
-export function mapMeshPreview(mesh: unknown): RealSurface | null {
-  const m = (mesh ?? {}) as Record<string, unknown>;
-  const positions = decodeCleanArray(m.vertices ?? m.positions);
-  const rawIdx = decodeCleanArray(m.indices);
+export function mapMeshPreview(mesh: JsonValue | null): RealSurface | null {
+  const m = isRecord(mesh) ? mesh : null;
+  const positions = decodeCleanArray(m?.vertices ?? m?.positions ?? null);
+  const rawIdx = decodeCleanArray(m?.indices ?? null);
   const indices = rawIdx.map((x) => Math.round(x));
   const numVertices = Math.floor(positions.length / 3);
   const numTriangles = Math.floor(indices.length / 3);
+
   if (numVertices < 1 || numTriangles < 1) return null;
+
   if (positions.length < numVertices * 3 || indices.length < numTriangles * 3) return null;
+
   // BLACKSCREEN-GUARD: el backend serializa con NaN/Infinity permitidos y el
   // diezmado puede dejar indices fuera de rango. Ambas cosas producen
   // normales NaN o geometria corrupta y la escena se ve negra.
   for (let i = 0; i < numVertices * 3; i += 1) {
     if (!Number.isFinite(positions[i])) return null;
   }
+
   for (let i = 0; i < numTriangles * 3; i += 1) {
     const idx = indices[i];
+
     if (!Number.isInteger(idx) || idx < 0 || idx >= numVertices) return null;
   }
+
   return {
     positions: positions.slice(0, numVertices * 3),
     indices: indices.slice(0, numTriangles * 3),
     numVertices,
     numTriangles,
     // FACES (reversible): caras B-Rep + rangos para picking (ver faces.ts).
-    faces: decodeFaces(m.faces),
-    ranges: decodeRanges(m.face_triangles),
+    faces: decodeFaces(m?.faces ?? null),
+    ranges: decodeRanges(m?.face_triangles ?? null),
   };
 }
 
@@ -308,14 +367,19 @@ export function isRenderableSurface(surf: RealSurface | null | undefined): surf 
   if (!surf || !Array.isArray(surf.positions) || !Array.isArray(surf.indices)) return false;
   const nv = Math.floor(surf.positions.length / 3);
   const nt = Math.floor(surf.indices.length / 3);
+
   if (nv < 1 || nt < 1 || nv !== surf.numVertices || nt !== surf.numTriangles) return false;
+
   for (let i = 0; i < nv * 3; i += 1) {
     if (!Number.isFinite(surf.positions[i])) return false;
   }
+
   for (let i = 0; i < nt * 3; i += 1) {
     const idx = surf.indices[i];
+
     if (!Number.isInteger(idx) || idx < 0 || idx >= nv) return false;
   }
+
   return true;
 }
 
@@ -328,10 +392,12 @@ export function placeholderSurface(): RealSurface {
   const hx = 50;
   const hy = 30;
   const hz = 20;
+
   const positions = [
     -hx, -hy, -hz, hx, -hy, -hz, hx, hy, -hz, -hx, hy, -hz,
     -hx, -hy, hz, hx, -hy, hz, hx, hy, hz, -hx, hy, hz,
   ];
+
   const indices = [
     0, 1, 2, 0, 2, 3,
     4, 6, 5, 4, 7, 6,
@@ -340,8 +406,10 @@ export function placeholderSurface(): RealSurface {
     0, 3, 7, 0, 7, 4,
     1, 5, 6, 1, 6, 2,
   ];
+
   const numFaces = indices.length / 6; // 2 triangulos por cara de la caja
   const faces: FaceMeta[] = [];
+
   for (let f = 0; f < numFaces; f += 1) {
     faces.push({
       face_index: f,
@@ -351,7 +419,9 @@ export function placeholderSurface(): RealSurface {
       normal: null,
     });
   }
+
   const ranges = faces.map((f) => ({ face_index: f.face_index, start: f.face_index * 2, count: 2 }));
+
   return {
     positions,
     indices,
@@ -365,48 +435,56 @@ export function placeholderSurface(): RealSurface {
 
 // FACES-START (reversible): decodifica faces/face_triangles del teselado.
 // El backend los envia via _clean (listas de dicts con tipos JSON).
-function numOrNull(v: unknown): number | null {
+function numOrNull(v: JsonValue | null | undefined): number | null {
   const n = num(v);
+
   return n === undefined ? null : n;
 }
 
-function vec3(v: unknown): [number, number, number] | null {
+function vec3(v: JsonValue | null | undefined): [number, number, number] | null {
   if (!Array.isArray(v) || v.length < 3) return null;
   const x = num(v[0]);
   const y = num(v[1]);
   const z = num(v[2]);
+
   return x === undefined || y === undefined || z === undefined ? null : [x, y, z];
 }
 
-function decodeFaces(v: unknown): FaceMeta[] {
+function decodeFaces(v: JsonValue | null): FaceMeta[] {
   if (!Array.isArray(v)) return [];
   const out: FaceMeta[] = [];
+
   for (const f of v) {
-    const r = (f ?? {}) as Record<string, unknown>;
-    const idx = num(r.face_index);
+    const r = isRecord(f) ? f : null;
+    const idx = num(r?.face_index);
+
     if (idx === undefined) continue;
     out.push({
       face_index: Math.round(idx),
-      id: typeof r.id === 'string' ? r.id : `face_${Math.round(idx)}`,
-      area: numOrNull(r.area),
-      center: vec3(r.center),
-      normal: vec3(r.normal),
+      id: r && isString(r.id) ? r.id : `face_${Math.round(idx)}`,
+      area: numOrNull(r?.area),
+      center: vec3(r?.center),
+      normal: vec3(r?.normal),
     });
   }
+
   return out;
 }
 
-function decodeRanges(v: unknown): FaceRange[] {
+function decodeRanges(v: JsonValue | null): FaceRange[] {
   if (!Array.isArray(v)) return [];
   const out: FaceRange[] = [];
+
   for (const r0 of v) {
-    const r = (r0 ?? {}) as Record<string, unknown>;
-    const fi = num(r.face_index);
-    const start = num(r.start);
-    const count = num(r.count);
+    const r = isRecord(r0) ? r0 : null;
+    const fi = num(r?.face_index);
+    const start = num(r?.start);
+    const count = num(r?.count);
+
     if (fi === undefined || start === undefined || count === undefined) continue;
     out.push({ face_index: Math.round(fi), start: Math.round(start), count: Math.round(count) });
   }
+
   return out;
 }
 // FACES-END

@@ -23,12 +23,14 @@ import { LeftPanel } from './components/LeftPanel';
 import { RightPanel } from './components/RightPanel';
 // EXT-RAIL (reversible: borrar import + uso para volver atras).
 import { ExtensionsRail } from './components/ExtensionsRail';
+
 // CHUNK-SPLIT (reversible): el viewport arrastra three.js (~600KB);
 // con lazy() va a un chunk async separado en vez del bundle inicial.
 // Para volver atras: restaurar `import { CadViewport } from './components/CadViewport';`
 const CadViewport = React.lazy(() =>
   import('./components/CadViewport').then((m) => ({ default: m.CadViewport }))
 );
+
 import { Footer } from './components/Footer';
 import { Modals } from './components/Modals';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -47,8 +49,11 @@ import {
   mapSimpResult,
   mapSnapshotToModel,
   prettyName,
+  toApiSnapshot,
   type ApiSnapshot,
 } from './lib/realdata';
+import { isJsonValue, isNumber, isRecord, isString } from './lib/guards';
+import type { JsonRecord, JsonValue } from './types';
 // FACES-START (reversible: quitar import + estado faceSelByFile + handleToggleFace
 // + prop al viewport). Copia del flujo del desktop: viewport -> CadEntityRef/
 // SelectionSet -> condicion reutilizable (core/conditions.py) via createCondition.
@@ -79,47 +84,63 @@ const POLL_STALL_TEXT =
 // request histórico (OC sin restricciones). El backend valida y rechaza
 // explícito (el aviso llega por el notice existente). Para volver atrás:
 // quitar función + spread en runOptimization.
-function buildAdvancedOptParams(sp: SimpParameters): Record<string, unknown> {
-  const out: Record<string, unknown> = { optimizer: sp.optimizer };
+function buildAdvancedOptParams(sp: SimpParameters): JsonRecord {
+  const out: JsonRecord = { optimizer: sp.optimizer };
+
   if (sp.optimizer === 'eso') {
     out.eso_criterion = sp.esoCriterion;
     out.evolutionary_rate = sp.evolutionaryRate;
   }
+
   if (sp.optimizer === 'level_set') {
     out.ls_cfl = sp.lsCfl;
     out.ls_hole_period = Math.max(1, Math.round(sp.lsHolePeriod));
   }
+
   const sym: [string, number][] = [];
+
   if (sp.symX && Number.isFinite(sp.symXVal)) sym.push(['x', sp.symXVal]);
+
   if (sp.symY && Number.isFinite(sp.symYVal)) sym.push(['y', sp.symYVal]);
+
   if (sp.symZ && Number.isFinite(sp.symZVal)) sym.push(['z', sp.symZVal]);
+
   if (sym.length > 0) out.symmetry_planes = sym;
+
   if (Number.isFinite(sp.minThickness) && sp.minThickness > 0) {
     out.min_thickness = sp.minThickness;
   }
+
   if (sp.overhangEnabled) {
     out.overhang_constraint = true;
     out.build_direction = [...sp.overhangBuildDir];
     out.overhang_angle_deg = sp.overhangAngleDeg;
     out.overhang_penalty = sp.overhangPenalty;
   }
+
   out.objective = sp.objective;
+
   if (sp.objective === 'min_volume' && sp.complianceLimit !== null) {
     out.compliance_limit = sp.complianceLimit;
   }
+
   if (sp.thermalEnabled) {
     const temps = sp.thermalTemperatures
       .split(',')
       .map((s) => parseFloat(s.trim()))
       .filter((n) => Number.isFinite(n));
+
     if (temps.length > 0) out.thermal_temperatures = temps;
+
     if (Number.isFinite(sp.thermalAlpha) && sp.thermalAlpha > 0) {
       out.thermal_alpha = sp.thermalAlpha;
     }
+
     if (Number.isFinite(sp.thermalRefTemp)) {
       out.thermal_reference_temperature = sp.thermalRefTemp;
     }
   }
+
   return out;
 }
 
@@ -160,6 +181,7 @@ export default function App() {
   // destino por herramienta (la que recibe los picks y edita el panel).
   // Para volver atras: cubeta unica por (archivo,herramienta) + faces_<tool>.
   const [faceSelByFile, setFaceSelByFile] = useState<Record<string, Record<string, number[]>>>({});
+
   const [targetCondByTool, setTargetCondByTool] = useState<
     Partial<Record<FaceCondTool | 'keepout', string>>
   >({});
@@ -169,20 +191,29 @@ export default function App() {
     : tool === 'fijacion' ? 'Fijación en caras'
     : tool === 'preservada' ? 'Región preservada' : 'Zona keep-out';
 
+  // Claves de herramienta con condición destino (sin `as` en el barrido).
+  const TOOL_KEYS: FaceCondTool[] = ['carga', 'fijacion', 'preservada', 'keepout'];
+
   // Condicion destino de la herramienta activa: la elegida (panel/arbol) si
   // sigue existiendo, si no la legada faces_<tool> o la primera de su tipo.
   const activeTargetId = useMemo(() => {
     if (!currentModel) return null;
+
     if (activeTool !== 'carga' && activeTool !== 'fijacion' && activeTool !== 'preservada' && activeTool !== 'keepout') {
       return 'faces_seleccionar';
     }
+
     const t = targetCondByTool[activeTool];
+
     if (t && boundaryConditions.some((c) => c.id === t)) return t;
+
     const legacy =
       boundaryConditions.find((c) => c.id === `faces_${activeTool}`) ??
       boundaryConditions.find((c) => c.type === activeTool);
+
     return legacy?.id ?? null;
   }, [currentModel, activeTool, boundaryConditions, targetCondByTool]);
+
   // STABILITY-FIX: identidad estable para no redisparar el overlay de caras.
   const selectedFaces = useMemo(
     () => (currentModel && activeTargetId ? faceSelByFile[currentModel.filename]?.[activeTargetId] ?? [] : []),
@@ -191,22 +222,27 @@ export default function App() {
 
   const handleToggleFace = (faceIndex: number) => {
     const file = stateRef.current.currentModel?.filename;
+
     if (!file) return;
     // La condicion destino es duena de su cubeta: picar con otra
     // herramienta/condicion no toca (ni suma a) la seleccion anterior.
     const tool = stateRef.current.activeTool;
+
     if (tool !== 'carga' && tool !== 'fijacion' && tool !== 'preservada' && tool !== 'keepout' && tool !== 'seleccionar') return;
     const condKey = tool === 'seleccionar' ? 'faces_seleccionar' : (activeTargetId ?? `faces_${tool}`);
     const prevSel = faceSelByFile[file]?.[condKey] ?? [];
     const next = toggleFace(prevSel, faceIndex);
     setFaceSelByFile((p) => ({ ...p, [file]: { ...p[file], [condKey]: next } }));
+
     // Con 'seleccionar' solo resalta.
     if (tool === 'seleccionar') return;
+
     if (!activeTargetId) setTargetCondByTool((p) => ({ ...p, [tool]: condKey }));
     const list = stateRef.current.boundaryConditions;
     const prevCond = list.find((c) => c.id === condKey);
     setBoundaryConditions((prev) => {
       const i = prev.findIndex((c) => c.id === condKey);
+
       const base: BoundaryCondition = prev[i] ?? {
         id: condKey,
         name: toolBaseName(tool),
@@ -215,6 +251,7 @@ export default function App() {
         faces: 0,
         active: true,
       };
+
       const updated: BoundaryCondition = {
         ...base,
         details: facesLabel(next),
@@ -222,22 +259,28 @@ export default function App() {
         faceIndices: next,
         active: next.length > 0,
       };
+
       if (i >= 0) {
         const copy = [...prev];
         copy[i] = updated;
+
         return copy;
       }
+
       return [...prev, updated];
     });
+
     // Condicion reutilizable en el backend (mismo id = sobrescribe, no duplica).
     // keepout viaja como obstruction con caras (void en el core).
     if (backend.hasBridge() && next.length > 0) {
       const cur = stateRef.current.currentModel;
+
       const mag = tool === 'carga'
         ? (prevCond?.magnitude ?? list.find((c) => c.type === 'carga')?.magnitude ?? null)
         : null;
+
       const condJson = buildConditionJson(
-        tool as FaceCondTool,
+        tool,
         prevCond?.name ?? toolBaseName(tool),
         next,
         cur?.filename ?? null,
@@ -247,7 +290,8 @@ export default function App() {
         prevCond?.loadCaseId ?? null,
         prevCond?.loadWeight ?? null,
       );
-      (condJson as Record<string, unknown>).id = condKey;
+
+      condJson.id = condKey;
       // P-B (reversible): fail-loud — el estado local ya se actualizó arriba;
       // si el backend rechaza, la UI debe decirlo en vez de mostrar una carga
       // que el core no tiene. Para volver atrás: .catch(() => undefined).
@@ -266,11 +310,14 @@ export default function App() {
     const same = prev.filter((c) => c.type === tool);
     let n = same.length + 1;
     let id = n <= 1 ? `faces_${tool}` : `faces_${tool}_${n}`;
+
     while (prev.some((c) => c.id === id)) {
       n += 1;
       id = `faces_${tool}_${n}`;
     }
+
     const src = prev.find((c) => c.id === targetCondByTool[tool]) ?? same[0];
+
     const cond: BoundaryCondition = {
       id,
       name: n <= 1 ? toolBaseName(tool) : `${toolBaseName(tool)} ${n}`,
@@ -279,10 +326,17 @@ export default function App() {
       faces: 0,
       faceIndices: [],
       active: false,
-      ...(tool === 'carga'
-        ? { value: src?.value, magnitude: src?.magnitude, loadNormal: src?.loadNormal, loadCaseId: src?.loadCaseId, loadWeight: src?.loadWeight }
-        : {}),
     };
+
+    // Solo carga hereda vector/magnitud/normal de la origen.
+    if (tool === 'carga') {
+      cond.value = src?.value;
+      cond.magnitude = src?.magnitude;
+      cond.loadNormal = src?.loadNormal;
+      cond.loadCaseId = src?.loadCaseId;
+      cond.loadWeight = src?.loadWeight;
+    }
+
     setBoundaryConditions((p) => (p.some((c) => c.id === cond.id) ? p : [...p, cond]));
     setTargetCondByTool((p) => ({ ...p, [tool]: id }));
   };
@@ -292,16 +346,20 @@ export default function App() {
   // carga). Las caras ya se sincronizan al picar (handleToggleFace).
   const pushFaceCondition = (cond: BoundaryCondition) => {
     if (!backend.hasBridge()) return;
+
     if (cond.type !== 'carga' && cond.type !== 'fijacion' && cond.type !== 'preservada' && cond.type !== 'keepout') return;
     const cur = stateRef.current.currentModel;
     // LOAD-DIR2 (reversible): vector unitario final (sentido aplicado).
     let dirVec: [number, number, number] | null = null;
+
     if (cond.type === 'carga' && cond.value) {
       const m = Math.hypot(cond.value[0], cond.value[1], cond.value[2]);
+
       if (m > 0) dirVec = [cond.value[0] / m, cond.value[1] / m, cond.value[2] / m];
     }
+
     const condJson = buildConditionJson(
-      cond.type as FaceCondTool,
+      cond.type,
       cond.name,
       cond.faceIndices ?? [],
       cur?.filename ?? null,
@@ -316,7 +374,9 @@ export default function App() {
       cond.loadSense ?? null,
       dirVec,
     );
-    (condJson as Record<string, unknown>).id = cond.id;
+
+    condJson.id = cond.id;
+
     // P-B (reversible): sin catch silencioso — el rechazo lo detecta
     // syncConditionsForRun (aborta la corrida con aviso) en vez de correr
     // sin esa condición. Para volver atrás: .catch(() => undefined).
@@ -335,43 +395,59 @@ export default function App() {
   const syncConditionsForRun = async (): Promise<string[]> => {
     if (!backend.hasBridge()) return [];
     const faceCount = surface?.faces?.length ?? 0;
+
     const actives = stateRef.current.boundaryConditions.filter(
       (c) => (c.type === 'carga' || c.type === 'fijacion' || c.type === 'preservada' || c.type === 'keepout') &&
         (c.faceIndices?.length ?? 0) > 0,
     );
+
     const stale: string[] = [];
+
     const valid = actives.filter((c) => {
       const idx = c.faceIndices ?? [];
+
       if (faceCount > 0 && idx.some((f) => f < 0 || f >= faceCount)) {
         stale.push(c.name);
+
         return false;
       }
+
       return true;
     });
+
     if (stale.length > 0) {
       setOptNotice({
         text: `Herramientas de otra geometría ignoradas: ${stale.join(', ')}. Re-aplicá las caras sobre el modelo actual para usarlas.`,
       });
     }
+
     const ids: string[] = [];
     // P-B (reversible): una condición rechazada por el backend aborta la
     // corrida (la maneja el catch del llamador con aviso) en vez de correr
     // sin ella en silencio. Para volver atrás: no lanzar y solo filtrar.
     const rejected: string[] = [];
+
     for (const c of valid) {
-      const r = (await pushFaceCondition(c)) as unknown as { ok?: boolean; id?: string };
+      const r = await pushFaceCondition(c);
+
       if (r && r.ok !== false) ids.push(c.id);
       else rejected.push(c.name);
     }
+
     if (rejected.length > 0) {
       throw new Error(`backend rechazó condiciones: ${rejected.join(', ')}`);
     }
+
     return ids;
   };
 
   // SIMP Topology Optimization Parameters
   const [simpParams, setSimpParams] = useState<SimpParameters>({
     volfrac: 0.35,
+    // VOLFRAC-MODE: por defecto el % es del volumen TOTAL de la pieza (lo que
+    // el usuario espera: "marco 35% y queda el 35% de volumen"). Cambiable a
+    // 'active_domain' (subdominio optimizable) desde el panel.
+    volfracMode: 'total_volume',
     penalization: 3.0,
     filterRadius: 2.5,
     tolerance: 0.001,
@@ -411,8 +487,10 @@ export default function App() {
     thermalTemperatures: '300, 400',
     thermalRefTemp: 293,
   });
+
   // OPT-TYPE (reversible): estructural (SIMP) vs generativa (escenario A).
   const [optType, setOptType] = useState<OptimizationType>('estructural');
+
   // OPT-NOTICE (reversible): aviso visible de pre-vuelo/errores de
   // optimización (antes fallaba en silencio: sin malla quedaba en
   // "Pausar" sin correr nada). actionLabel/onAction lo hacen accionable
@@ -427,6 +505,7 @@ export default function App() {
   // resetOptimizationState): compliance 0 + historiales vacios para que el
   // panel muestre "sin resultados" en vez de 148.5 ficticio.
   const initialMass = ((currentModel?.volumeCm3 ?? 0) * selectedMaterial.density) / 1000;
+
   const [optimizationState, setOptimizationState] = useState<OptimizationState>({
     isRunning: false,
     isPaused: false,
@@ -463,6 +542,7 @@ export default function App() {
 
   // Camera preset triggers
   const [resetViewTrigger, setResetViewTrigger] = useState(0);
+
   const [selectedViewTrigger, setSelectedViewTrigger] = useState<{
     view: 'iso' | 'top' | 'front' | 'right';
     count: number;
@@ -498,23 +578,24 @@ export default function App() {
   // activo al re-importar. `surface` deriva del modelo actual.
   const [surfaceByFile, setSurfaceByFile] = useState<Record<string, RealSurface>>({});
   const surface = currentModel ? surfaceByFile[currentModel.filename] ?? null : null;
+
   const fetchSurface = async (filename?: string) => {
     if (!backend.hasBridge()) {
       return;
     }
+
     try {
-      const r = (await backend.getMeshPreview()) as {
-        ok: boolean;
-        mesh?: unknown;
-      };
-      const mapped = r.ok && r.mesh ? mapMeshPreview(r.mesh) : null;
+      const r = await backend.getMeshPreview();
+      const mapped = r.ok ? mapMeshPreview(isJsonValue(r.mesh) ? r.mesh : null) : null;
       const key = filename ?? stateRef.current.currentModel?.filename;
+
       // MULTI-VIEW (reversible): cache por archivo, todos al viewport.
       if (key && mapped) setSurfaceByFile((prev) => ({ ...prev, [key]: mapped }));
     } catch {
       /* se conserva el cache anterior */
     }
   };
+
   // NAV-VIEW-END
   // MULTI-VIEW-START (reversible): ver/ocultar por cuerpo del arbol.
   // Clave bodyKey(filename, solid_id); ausente = visible. Para volver atras:
@@ -533,9 +614,11 @@ export default function App() {
   const [meshByFile, setMeshByFile] = useState<Record<string, boolean>>({});
   // MULTI-END
   const [hiddenBodies, setHiddenBodies] = useState<Record<string, boolean>>({});
+
   const handleToggleBodyVisibility = (key: string) => {
     setHiddenBodies((prev) => ({ ...prev, [key]: !prev[key] }));
   };
+
   // Cuerpos del viewport unico: un ViewBody por solido con superficie en
   // cache (sin superficie no hay geometria que mostrar).
   // STABILITY-FIX (reversible): useMemo para identidad estable. Antes se
@@ -546,6 +629,7 @@ export default function App() {
   const viewBodies: ViewBody[] = useMemo(() => models.flatMap((m) => {
     if (!surfaceByFile[m.filename]) return [];
     const solids = solidsByFile[m.filename];
+
     if (solids && solids.length > 0) {
       return solids.map((s) => ({
         key: bodyKey(m.filename, s.solid_id),
@@ -554,6 +638,7 @@ export default function App() {
         faceIndices: s.face_indices ?? null,
       }));
     }
+
     return [{
       key: bodyKey(m.filename, 'solid_0'),
       filename: m.filename,
@@ -561,21 +646,27 @@ export default function App() {
       faceIndices: null,
     }];
   }), [models, surfaceByFile, solidsByFile]);
+
   // MULTI-VIEW-END
   // (TDZ-FIX: estados solids/solidsByFile/meshByFile movidos arriba de
   // viewBodies; ver comentario en MULTI-VIEW-START.)
   const fetchSolids = async (filename?: string) => {
     if (!backend.hasBridge()) {
       setSolids([]);
+
       return;
     }
+
     try {
-      const r = (await backend.getSolids()) as { ok: boolean; solids?: unknown[] };
-      const list = r.ok && Array.isArray(r.solids) ? mapSolids(r.solids) : [];
+      const r = await backend.getSolids();
+      // El mock sin bridge no trae solids: la guarda evita romper el arbol.
+      const list = r.ok && Array.isArray(r.solids) ? mapSolids(r.solids.filter(isJsonValue)) : [];
       setSolids(list);
       // MULTI (reversible): cache por archivo para el arbol acumulativo.
       const key = filename ?? stateRef.current.currentModel?.filename;
+
       if (key) setSolidsByFile((prev) => ({ ...prev, [key]: list }));
+
       if (list.length > 0) {
         setCurrentModel((prev) =>
           prev ? { ...prev, solids: list.length } : prev
@@ -585,6 +676,7 @@ export default function App() {
       setSolids([]);
     }
   };
+
   // SOLIDS-END
   // UI-CLEAN2-START (reversible): malla volumetrica real presente.
   // P-C: el valor no se lee (solo setHasMesh); elisión para noUnusedLocals.
@@ -612,15 +704,19 @@ export default function App() {
     // MULTI (reversible): malla por archivo para el arbol acumulativo.
     setMeshByFile((prev) => ({ ...prev, [filename]: !!snap.has_mesh }));
     const mapped = mapSnapshotToModel(snap, filename, displayName);
+
     // MULTI-KEY (reversible): conservar la clave de librería del backend.
     if (key) mapped.key = key;
     setModels((prev) => {
       const i = prev.findIndex((m) => m.filename === filename);
+
       if (i >= 0) {
         const next = [...prev];
         next[i] = { ...mapped, key: key ?? prev[i].key };
+
         return next;
       }
+
       return [mapped, ...prev];
     });
     setCurrentModel(mapped);
@@ -633,8 +729,10 @@ export default function App() {
     (async () => {
       try {
         const mats = await backend.getMaterials();
+
         if (mats.ok && Array.isArray(mats.materials) && mats.materials.length > 0) {
           const real = mapMaterials(mats.materials);
+
           if (real.length > 0) {
             setMaterials(real);
             setSelectedMaterial(real[0]);
@@ -648,8 +746,10 @@ export default function App() {
       } catch {
         /* fallback local */
       }
+
       try {
         const fx = await backend.listFixtures();
+
         if (fx.ok && Array.isArray(fx.fixtures) && fx.fixtures.length > 0) {
           const skeletons: CadModelPreset[] = fx.fixtures.map((f) => ({
             id: `real_${f.filename}`,
@@ -662,6 +762,7 @@ export default function App() {
             elementsTet4: 0,
             nodes: 0,
           }));
+
           // STARTUP-NOIMPORT (reversible): antes se auto-importaba el primer
           // fixture (cono.step) en cada arranque, pisando el modelo que el
           // usuario tuviera cargado y haciendo que los estudios corrieran
@@ -687,17 +788,21 @@ export default function App() {
   // FEA real al entrar a la pestana de analisis (usa el control existente).
   const handleTabChange = (tab: ActiveTab) => {
     setActiveTab(tab);
+
     // MALLA-TOOLS (reversible): al entrar a Malla, herramienta de malla por
     // defecto (si la activa no es de malla).
     if (tab === 'malla' && !activeTool.startsWith('malla-') && activeTool !== 'malla') {
       setActiveTool('malla-diagnosticar');
     }
+
     if (tab !== 'analizis' || !backend.hasBridge() || feaJobId) return;
+
     if (!snapRef.current?.has_mesh) return;
     void (async () => {
       try {
         await pushBoundaries();
         const r = await backend.runFea({ backend: 'local' });
+
         if (r.ok && r.jobId) setFeaJobId(r.jobId);
       } catch {
         /* se conservan los ultimos resultados */
@@ -709,7 +814,9 @@ export default function App() {
     // JOB-NULL-FEA (reversible): resultado FEA discriminado
     // pending/completed/invalid/error; nunca cifras inventadas.
     const outcome = mapFeaOutcome(result, stateRef.current.selectedMaterial.yieldStrength);
+
     if (outcome.status === 'pending') return;
+
     if (outcome.status === 'error') {
       setOptNotice({ text: `El análisis FEA falló: ${outcome.detail ?? 'error del backend'}.` });
     } else if (outcome.status !== 'completed' || !outcome.data) {
@@ -717,12 +824,15 @@ export default function App() {
     } else {
       setFeaResults(outcome.data);
     }
+
     setFeaJobId(null);
     void backend.getSnapshot().then((s) => {
-      const snap = (s as unknown as { snapshot?: ApiSnapshot }).snapshot;
-      if (s.ok && snap) {
+      const snap = s.ok ? toApiSnapshot(isJsonValue(s.snapshot) ? s.snapshot : null) : null;
+
+      if (snap) {
         snapRef.current = snap;
         const cur = stateRef.current.currentModel;
+
         // UI-CLEAN (reversible): guard sin modelo.
         if (cur) setCurrentModel({ ...cur, elementsTet4: Math.round(snap.num_elements ?? cur.elementsTet4) });
       }
@@ -737,36 +847,48 @@ export default function App() {
     // UNSUPPORTED-SURFACE (reversible): condiciones degradadas/no mapeadas
     // que el backend marcó (fallbacks bbox/base-Z). Se muestran en vez de
     // quedar solo en el log. Para volver atrás: borrar helper + usos.
-    const unsOf = (res: unknown): string[] => {
-      const u = (res as { _unsupported_conditions?: unknown })._unsupported_conditions;
+    const unsOf = (res: JsonValue | null): string[] => {
+      const r = isRecord(res) ? res : null;
+      const u = r?.['_unsupported_conditions'];
+
       return Array.isArray(u) ? u.map(String) : [];
     };
-    const unsText = (res: unknown): string | null => {
+
+    const unsText = (res: JsonValue | null): string | null => {
       const list = unsOf(res);
+
       return list.length ? `Condiciones degradadas: ${list.join(', ')}.` : null;
     };
+
     // MAP-REPORT (reversible): detalle por condición (caras pedidas vs
     // nodos/elementos mapeados) para diagnosticar un resultado "al revés".
     // Solo se muestra lo degradado (fallback o 0 mapeados con caras).
-    const mapText = (res: unknown): string | null => {
-      const m = (res as { _condition_mapping?: unknown })._condition_mapping;
+    const mapText = (res: JsonValue | null): string | null => {
+      const r = isRecord(res) ? res : null;
+      const m = r?.['_condition_mapping'];
+
       if (!Array.isArray(m)) return null;
-      const bad = (m as Record<string, unknown>[])
-        .filter((e) => e && (e.fallback === true ||
-          (Array.isArray(e.faces) && (e.faces as unknown[]).length > 0 &&
-            ((e.mapped_nodes as number) ?? 1) === 0 &&
-            ((e.mapped_elements as number) ?? 1) === 0)))
+
+      const bad = m.filter(isRecord)
+        .filter((e) => e.fallback === true ||
+          (Array.isArray(e.faces) && e.faces.length > 0 &&
+            (isNumber(e.mapped_nodes) ? e.mapped_nodes : 1) === 0 &&
+            (isNumber(e.mapped_elements) ? e.mapped_elements : 1) === 0))
         .map((e) => {
-          const nm = typeof e.name === 'string' ? e.name : '?';
-          const fc = Array.isArray(e.faces) ? (e.faces as unknown[]).length : 0;
-          const nn = typeof e.mapped_nodes === 'number' ? e.mapped_nodes : null;
-          const ne = typeof e.mapped_elements === 'number' ? e.mapped_elements : null;
+          const nm = isString(e.name) ? e.name : '?';
+          const fc = Array.isArray(e.faces) ? e.faces.length : 0;
+          const nn = isNumber(e.mapped_nodes) ? e.mapped_nodes : null;
+          const ne = isNumber(e.mapped_elements) ? e.mapped_elements : null;
+
           const got = nn !== null && ne !== null ? `${nn} nodos/${ne} elems`
             : nn !== null ? `${nn} nodos` : `${ne ?? 0} elems`;
+
           return `${nm} (caras ${fc} → ${got})`;
         });
+
       return bad.length ? `Mapeo: ${bad.join('; ')}. La zona afectada NO es la seleccionada.` : null;
     };
+
     setOptimizationState((prev) => {
       const st = stateRef.current;
       // UI-CLEAN (reversible): guard sin modelo.
@@ -774,9 +896,11 @@ export default function App() {
       // JOB-NULL (reversible): resultado discriminado pending/completed/
       // invalid/error en el límite bridge/UI (nunca cifras inventadas).
       const outcome = mapSimpOutcome(result, prev, parseFloat(baseMass.toFixed(2)));
+
       if (outcome.status === 'pending') {
         return { ...prev, isRunning: true };
       }
+
       if (outcome.status === 'error') {
         setOptNotice({ text: `El cálculo falló: ${outcome.detail ?? 'error del backend'}.` });
       } else if (outcome.status !== 'completed' || !outcome.data) {
@@ -785,49 +909,57 @@ export default function App() {
         // Resultado real recibido: ya no es fallback mock.
         setIsMockFallback(false);
       }
+
       const mapped = outcome.data ?? mapSimpResult(result, prev, parseFloat(baseMass.toFixed(2)));
+
       if (!mapped) {
         setOptNotice({ text: 'El cálculo terminó pero sin resultados utilizables (revisa malla y condiciones).' });
       }
+
       return mapped ?? { ...prev, isRunning: false };
     });
     // DENSITY-VIEW (reversible): tras un SIMP estructural, traer el campo
     // nodal de densidades para colorear la malla (solo visual). El camino
     // generativo registra geometría propia (GEN-SHOW); aquí no se toca.
     const genPending = genJobRef.current;
+
     if (!genPending && backend.hasBridge()) {
       void (async () => {
         try {
           const r = await backend.getSurfaceMesh({ field: 'density' });
-          const vals = (r as unknown as { values?: unknown }).values;
-          const pos = (r as unknown as { positions?: unknown }).positions;
-          const idx = (r as unknown as { indices?: unknown }).indices;
+          const vals = isJsonValue(r.values) ? r.values : null;
+          const pos = isJsonValue(r.positions) ? r.positions : null;
+          const idx = isJsonValue(r.indices) ? r.indices : null;
           // Los arrays viajan como listas planas o {__ndarray__: true, data}
           // (ver decodeCleanArray): Array.isArray solo no alcanza.
           const values = decodeCleanArray(vals);
           const positions = decodeCleanArray(pos);
           const rawIdx = decodeCleanArray(idx);
+
           if (r.ok && values.length > 0) {
             const indices = rawIdx.map((x) => Math.round(x));
-            const dmin = (r as unknown as { min?: unknown }).min;
-            const dmax = (r as unknown as { max?: unknown }).max;
+
             if (values.length > 0 && positions.length >= 9 && indices.length >= 3) {
               setDensityField({
                 positions, indices, values,
-                min: typeof dmin === 'number' ? dmin : Math.min(...values),
-                max: typeof dmax === 'number' ? dmax : Math.max(...values),
+                min: isNumber(r.min) ? r.min : Math.min(...values),
+                max: isNumber(r.max) ? r.max : Math.max(...values),
               });
               setShowDensity(true);
               const uns = unsText(result);
               const parts0: string[] = [];
+
               if (uns) parts0.push(uns);
               const mp0 = mapText(result);
+
               if (mp0) parts0.push(mp0);
+
               if (parts0.length) setOptNotice({ text: `${parts0.join(' ')} Se muestra el campo igual, pero revisa compliance/volumen.` });
             }
           } else {
             const parts = ['SIMP calculado, pero sin campo de densidades para visualizar.'];
             const uns = unsText(result);
+
             if (uns) parts.push(uns);
             setOptNotice({ text: parts.join(' ') });
           }
@@ -836,22 +968,21 @@ export default function App() {
         }
       })();
     }
+
     // GEN-SHOW (reversible): tras un job generativo, registrar la
     // reconstrucción como modelo activo para que la pieza cambie en el
     // viewport (antes el resultado quedaba solo en números).
     const gj = genJobRef.current;
     genJobRef.current = null;
     setSimpJobId(null);
+
     if (gj) {
       void (async () => {
         try {
-          const rr = (await backend.registerReconstruction(gj)) as unknown as {
-            ok: boolean; registered?: { model_id?: string; model_name?: string };
-            key?: string | null;
-            entry?: { key?: string; filename?: string; displayName?: string } | null;
-            snapshot?: ApiSnapshot; error?: string; reason?: unknown;
-          };
+          const rr = await backend.registerReconstruction(gj);
+
           const reg = rr.ok ? rr.registered : undefined;
+
           if (reg && (reg.model_id || reg.model_name) && rr.snapshot) {
             // LIBRARY-FIRST: usar la entrada de libreria (key) para que la
             // pieza generada se pueda borrar y deshacer (Ctrl+Z) como cualquier
@@ -863,16 +994,21 @@ export default function App() {
             void fetchSolids(fn);
             const parts = [`Diseño generativo listo: "${nm}" cargada como modelo activo.`];
             const uns = unsText(result);
+
             if (uns) parts.push(uns);
             const mp = mapText(result);
+
             if (mp) parts.push(mp);
             setOptNotice({ text: parts.join(' ') });
           } else {
             const parts = ['Generativa calculada, pero sin geometría registrable.'];
-            const reason = typeof rr.reason === 'string' && rr.reason ? rr.reason
-              : (typeof (rr as { error?: unknown }).error === 'string' ? String((rr as { error?: unknown }).error) : null);
+
+            const reason = isString(rr.reason) && rr.reason ? rr.reason
+              : (isString(rr.error) ? rr.error : null);
+
             if (reason) parts.push(`Motivo: ${reason}.`);
             const uns = unsText(result);
+
             if (uns) parts.push(uns);
             parts.push('(mira compliance/volumen).');
             setOptNotice({ text: parts.join(' ') });
@@ -902,6 +1038,7 @@ export default function App() {
   // un mensaje de resultado—. Para volver atrás: quitar este efecto.
   useEffect(() => {
     if (!simpJobId) return;
+
     if (simpPoll.stalled && !simpPoll.error) {
       const s = simpPoll.stalledSec;
       const hace = s >= 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s} s`;
@@ -931,12 +1068,14 @@ export default function App() {
   // Sin backend, solo estado local (simulacion intacta).
   const handleSelectMaterial = (m: Material) => {
     setSelectedMaterial(m);
+
     if (backend.hasBridge()) void backend.setMaterial(m.name).catch(() => {
       // P-B (reversible): fail-loud al cambiar material. Para volver atrás:
       // .catch(() => undefined).
       setOptNotice({ text: 'No se pudo aplicar el material en el backend.' });
     });
   };
+
   useEffect(() => {
     // UI-CLEAN (reversible): guard sin modelo.
     const newMass = ((currentModel?.volumeCm3 ?? 0) * selectedMaterial.density) / 1000;
@@ -954,6 +1093,7 @@ export default function App() {
     setOptNotice(null);
     // DENSITY-VIEW (reversible): la corrida nueva invalida el campo anterior.
     setDensityField(null);
+
     // Sin bridge: simulacion local de siempre.
     if (!backend.hasBridge()) {
       setOptimizationState((prev) => ({
@@ -961,16 +1101,19 @@ export default function App() {
         isRunning: true,
         isPaused: false,
       }));
+
       return;
     }
+
     void (async () => {
       // OPT-REFRESH (reversible): re-leer el snapshot por si la malla se
       // generó fuera de este flujo (evita falsos "sin malla" por caché).
       if (!snapRef.current?.has_mesh) {
         try {
           const s = await backend.getSnapshot();
-          const snap = (s as unknown as { snapshot?: ApiSnapshot }).snapshot;
-          if (s.ok && snap) {
+          const snap = s.ok ? toApiSnapshot(isJsonValue(s.snapshot) ? s.snapshot : null) : null;
+
+          if (snap) {
             snapRef.current = snap;
             setHasMesh(!!snap.has_mesh);
           }
@@ -978,28 +1121,35 @@ export default function App() {
           /* se intenta generar abajo */
         }
       }
+
       // OPT-AUTO (reversible): sin malla se genera sola (mismo flujo que
       // Remallar) y se sigue sin pedir clics. Solo fallos reales avisan.
       if (!snapRef.current?.has_mesh) {
         setIsRemeshing(true);
+
         try {
           const r = await backend.generateMesh({ target_element_size: meshElementSize });
-          const snap = (r as unknown as { snapshot?: ApiSnapshot }).snapshot;
-          if (r.ok && snap) {
+          // generateMesh ya tipa el snapshot; el mock sin bridge no lo trae.
+          const snap = r.ok ? r.snapshot ?? null : null;
+
+          if (snap) {
             const cur = stateRef.current.currentModel;
+
             if (cur) applySnapshotToModel(snap, cur.filename, cur.displayName);
             else {
               // Sin modelo en el estado (flujo fixture): igual refrescar.
               snapRef.current = snap;
               setHasMesh(!!snap.has_mesh);
             }
+
             setHasMesh(!!snap.has_mesh);
             setFeaJobId(null);
             // MESH-FALLBACK (reversible): si la malla salió del mesher
             // provisional (voxel, NO conforme al CAD), las condiciones por
             // cara pueden degradarse (nodos fuera de la cara). Avisar explícito
             // en vez de que la fijación "desaparezca" en silencio.
-            const mr = (r as unknown as { result?: { fallback?: boolean; mesher?: string; fallback_reason?: string } }).result;
+            const mr = r.ok ? r.result : undefined;
+
             if (mr?.fallback) {
               setOptNotice({
                 text: `Malla generada con ${mr.mesher ?? 'mesher provisional'} (no conforme al CAD). `
@@ -1008,24 +1158,29 @@ export default function App() {
             }
           } else {
             setOptNotice({
-              text: typeof (r as { error?: unknown }).error === 'string'
-                ? `No se pudo generar la malla automáticamente: ${String((r as { error?: unknown }).error)}`
+              text: isString(r.error) && r.error
+                ? `No se pudo generar la malla automáticamente: ${r.error}`
                 : 'No se pudo generar la malla automáticamente.',
             });
+
             return;
           }
         } catch {
           setOptNotice({ text: 'No se pudo generar la malla automáticamente (backend).' });
+
           return;
         } finally {
           setIsRemeshing(false);
           setShowMesh(true);
         }
+
         if (!snapRef.current?.has_mesh) {
           setOptNotice({ text: 'La malla no quedó registrada: el modelo puede ser solo superficie (la volumétrica Tet4 requiere sólido STEP).' });
+
           return;
         }
       }
+
       // REOPT-FIX (reversible): si quedó un jobId viejo sin polling activo
       // se libera y se sigue; solo se bloquea con corrida realmente en
       // curso (antes cualquier resto silencioso impedía re-optimizar).
@@ -1033,25 +1188,34 @@ export default function App() {
       if (simpJobId) {
         if (simpPoll.loading) {
           setOptNotice({ text: 'Ya hay una optimización en curso: esperá a que termine.' });
+
           return;
         }
+
         setSimpJobId(null);
       }
+
       const bcs = stateRef.current.boundaryConditions;
+
       if (!bcs.some((c) => c.type === 'carga' && c.active)) {
       setOptNotice({ text: 'Sin carga activa: abre Carga en la barra, pica caras y Acepta.' });
+
       return;
     }
+
     if (!bcs.some((c) => c.type === 'fijacion' && c.active)) {
       setOptNotice({ text: 'Sin fijación activa: abre Fijación en la barra, pica caras y Acepta.' });
+
       return;
     }
+
     setOptimizationState((prev) => ({
       ...prev,
       isRunning: true,
       isPaused: false,
       totalIterations: stateRef.current.simpParams.maxIterations,
     }));
+
     // ENVELOPE-HINT (reversible): el design space 'envelope' malla ~60k tets
     // y la primera iteración tarda; avisar en vez de parecer colgado.
     if (stateRef.current.optType === 'generativa'
@@ -1060,22 +1224,28 @@ export default function App() {
         text: 'Envelope: generando el dominio de diseño (puede tardar antes de la primera iteración)…',
       });
     }
+
       // COND-SYNC (reversible): condiciones reales al backend (la
       // generativa las necesita por id; la estructural las usa si existen
       // y si no cae al legacy de setBoundaries).
       let condIds: string[] = [];
+
       try {
         condIds = await syncConditionsForRun();
       } catch {
         setOptimizationState((prev) => ({ ...prev, isRunning: false }));
         setOptNotice({ text: 'No se pudieron sincronizar las condiciones con el backend.' });
+
         return;
       }
+
       const st = stateRef.current;
+
       try {
         // P-B: pushBoundaries dentro del try — si setBoundaries falla, se
         // aborta con aviso en vez de correr con condiciones legacy ausentes.
         await pushBoundaries();
+
         // OPT-TYPE (reversible): generativa = escenario A (pieza existente)
         // con los mismos parámetros SIMP; el job se sondea igual.
         const r = st.optType === 'generativa'
@@ -1098,6 +1268,7 @@ export default function App() {
               // las sesiones de sep-2026 pero llegaban defaults: 0.5/None).
               threshold: st.simpParams.reconThreshold,
               max_hole_edges: st.simpParams.holeCap === 'auto' ? 'auto' : null,
+              volfrac_mode: st.simpParams.volfracMode,
             })
           : await backend.runOptimization({
               condition_ids: condIds.length > 0 ? condIds : undefined,
@@ -1114,6 +1285,7 @@ export default function App() {
               // ignora estas claves). Para volver atrás: quitar el spread.
               ...buildAdvancedOptParams(st.simpParams),
             });
+
         if (r.ok && r.jobId) {
           setSimpJobId(r.jobId);
           // GEN-SHOW (reversible): marcar jobs generativos para registrar
@@ -1122,8 +1294,8 @@ export default function App() {
         } else {
           setOptimizationState((prev) => ({ ...prev, isRunning: false }));
           setOptNotice({
-            text: typeof (r as { error?: unknown }).error === 'string'
-              ? String((r as { error?: unknown }).error)
+            text: isString(r.error) && r.error
+              ? r.error
               : 'El backend rechazó la optimización (revisa malla y condiciones).',
           });
         }
@@ -1145,6 +1317,7 @@ export default function App() {
   const resetOptimization = () => {
     setFeaJobId(null);
     setSimpJobId(null);
+
     if (!backend.hasBridge()) {
       if (timerRef.current) clearInterval(timerRef.current);
       setIsMockFallback(false);
@@ -1163,8 +1336,10 @@ export default function App() {
         complianceHistory: [],
         volumeHistory: [1.0],
       });
+
       return;
     }
+
     resetOptimizationState();
   };
 
@@ -1184,6 +1359,7 @@ export default function App() {
         setOptimizationState((prev) => {
           if (prev.currentIteration >= prev.totalIterations) {
             if (timerRef.current) clearInterval(timerRef.current);
+
             return { ...prev, isRunning: false, isPaused: false };
           }
 
@@ -1200,6 +1376,7 @@ export default function App() {
           const base = prev.complianceHistory.length > 0
             ? prev.complianceHistory[0]
             : (prev.currentCompliance > 0 ? prev.currentCompliance : MOCK_BASE_COMPLIANCE);
+
           const target = base * MOCK_TARGET_RATIO;
           const newCompliance = base - (base - target) * Math.pow(ratio, 0.65) + (Math.random() - 0.5) * 0.4;
           const delta = Math.abs(0.015 * (1 - ratio));
@@ -1233,22 +1410,28 @@ export default function App() {
         setIsRemeshing(false);
         setShowMesh(true);
       }, 700);
+
       return;
     }
+
     setIsRemeshing(true);
     void (async () => {
       try {
         const r = await backend.generateMesh({ target_element_size: meshElementSize });
-        const snap = (r as unknown as { snapshot?: ApiSnapshot }).snapshot;
-        if (r.ok && snap) {
+        const snap = r.ok ? r.snapshot ?? null : null;
+
+        if (snap) {
           const cur = stateRef.current.currentModel;
+
           // UI-CLEAN (reversible): guard sin modelo.
           if (cur) applySnapshotToModel(snap, cur.filename, cur.displayName);
           setFeaJobId(null);
           // DENSITY-VIEW (reversible): la malla cambió, el campo es obsoleto.
           setDensityField(null);
+
           // UI-CLEAN2 (reversible): remallado real genera la fila Malla.
           if (r.ok) setHasMesh(true);
+
           // MESH-ERR (reversible): si el snapshot sigue sin malla, avisar
           // (p. ej. modelo de superficie sin sólido para volumétrica).
           if (!snap.has_mesh) {
@@ -1258,8 +1441,8 @@ export default function App() {
           // MESH-ERR (reversible): antes este fallo era silencioso y el
           // usuario solo veía "sin malla" al optimizar.
           setOptNotice({
-            text: typeof (r as { error?: unknown }).error === 'string'
-              ? `No se pudo generar la malla: ${String((r as { error?: unknown }).error)}`
+            text: isString(r.error) && r.error
+              ? `No se pudo generar la malla: ${r.error}`
               : 'No se pudo generar la malla (error del backend).',
           });
         }
@@ -1278,11 +1461,14 @@ export default function App() {
   const handleSelectModelReal = (m: CadModelPreset) => {
     if (!backend.hasBridge()) {
       setCurrentModel(m);
+
       return;
     }
+
     setCurrentModel(m);
     // MULTI: restaura cache inmediata mientras re-importa el STEP.
     const cached = solidsByFile[m.filename];
+
     if (cached) setSolids(cached);
     setHasMesh(meshByFile[m.filename] ?? false);
     void (async () => {
@@ -1294,8 +1480,10 @@ export default function App() {
         const imp = m.key
           ? await backend.switchModel(m.key)
           : await backend.importStep(m.filename);
-        const snap = (imp as unknown as { snapshot?: ApiSnapshot }).snapshot;
-        if (imp.ok && snap) {
+
+        const snap = imp.ok ? imp.snapshot ?? null : null;
+
+        if (snap) {
           applySnapshotToModel(snap, m.filename, m.displayName, m.key);
           setFeaJobId(null);
           setSimpJobId(null);
@@ -1362,6 +1550,7 @@ export default function App() {
     ) {
       createFaceCondition(t);
     }
+
     setActiveTool(t);
   };
 
@@ -1376,6 +1565,7 @@ export default function App() {
   // muestra sus parametros en el panel. Cierra el modal si estaba abierto.
   const activateToolCondition = (bc: BoundaryCondition) => {
     const t = bc.type;
+
     if (t === 'carga' || t === 'fijacion' || t === 'preservada' || t === 'keepout') {
       setEditingCondition(null);
       // MULTI-COND: la fila picada pasa a ser la destino de su herramienta.
@@ -1393,25 +1583,36 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (showImport || showExport || showHelp || editingCondition) return;
+
       if (e.key !== 'Enter' && e.key !== 'Escape') return;
-      const tag = (e.target as HTMLElement | null)?.tagName;
+      const tag = e.target instanceof HTMLElement ? e.target.tagName : undefined;
+
       if (tag === 'BUTTON' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
       if (e.key === 'Enter') {
         if (activeTool === 'seleccionar') return;
         e.preventDefault();
         setActiveTool('seleccionar');
+
         return;
       }
+
       e.preventDefault();
+
       if (activeTool !== 'seleccionar') {
         setActiveTool('seleccionar');
+
         return;
       }
+
       const file = stateRef.current.currentModel?.filename;
+
       if (!file) return;
       setFaceSelByFile((p) => ({ ...p, [file]: { ...p[file], faces_seleccionar: [] } }));
     };
+
     window.addEventListener('keydown', onKey);
+
     return () => window.removeEventListener('keydown', onKey);
   }, [activeTool, showImport, showExport, showHelp, editingCondition]);
   // TOOL-LIFECYCLE-END
@@ -1420,14 +1621,18 @@ export default function App() {
   // refresca superficie + solidos + snapshot (volumen/area cambian).
   const refreshMeshView = () => {
     const m = currentModel;
+
     if (!m || !backend.hasBridge()) return;
     void (async () => {
       try {
-        const s = (await backend.getSnapshot()) as { ok: boolean; snapshot?: ApiSnapshot };
-        if (s.ok && s.snapshot) applySnapshotToModel(s.snapshot, m.filename, m.displayName);
+        const s = await backend.getSnapshot();
+        const snap = s.ok ? toApiSnapshot(isJsonValue(s.snapshot) ? s.snapshot : null) : null;
+
+        if (snap) applySnapshotToModel(snap, m.filename, m.displayName);
       } catch {
         /* se conserva la vista anterior */
       }
+
       void fetchSurface(m.filename);
       void fetchSolids(m.filename);
     })();
@@ -1439,6 +1644,7 @@ export default function App() {
   const [meshResult, setMeshResult] = useState<MeshOpResult>({
     report: null, op: null, stats: null, error: null,
   });
+
   const [meshBusy, setMeshBusy] = useState<string | null>(null);
 
   const handleMeshTool = (action: MeshToolAction, params: Record<string, number>) => {
@@ -1448,29 +1654,27 @@ export default function App() {
     void (async () => {
       try {
         if (action === 'diagnosticar') {
-          const r = (await backend.meshQualityReport(params)) as {
-            ok: boolean; report?: Record<string, unknown>; error?: unknown;
-          };
-          if (!r.ok) setMeshResult((prev) => ({ ...prev, error: String(r.error ?? 'falló') }));
+          const r = await backend.meshQualityReport(params);
+
+          if (!r.ok) setMeshResult((prev) => ({ ...prev, error: r.error ?? 'falló' }));
           else setMeshResult({ report: r.report ?? null, op: 'diagnosticar', stats: null, error: null });
+
           return;
         }
-        const calls: Record<Exclude<MeshToolAction, 'diagnosticar'>, () => Promise<unknown>> = {
-          reparar: () => backend.repairMesh(params),
-          suavizar: () => backend.smoothMesh(params),
-          reducir: () => backend.decimateMesh(params),
-          remallar: () => backend.remeshMesh(params),
-        };
-        const r = (await calls[action]()) as {
-          ok: boolean; stats?: Record<string, unknown>; error?: unknown;
-        };
+
+        const r = action === 'reparar' ? await backend.repairMesh(params)
+          : action === 'suavizar' ? await backend.smoothMesh(params)
+          : action === 'reducir' ? await backend.decimateMesh(params)
+          : await backend.remeshMesh(params);
+
         if (!r.ok) {
-          setMeshResult((prev) => ({ ...prev, op: action, error: String(r.error ?? 'falló') }));
+          setMeshResult((prev) => ({ ...prev, op: action, error: r.error ?? 'falló' }));
+
           return;
         }
-        const q = (await backend.meshQualityReport({})) as {
-          ok: boolean; report?: Record<string, unknown>;
-        };
+
+        const q = await backend.meshQualityReport({});
+
         setMeshResult({
           report: q.ok ? (q.report ?? null) : null,
           op: action, stats: r.stats ?? null, error: null,
@@ -1493,6 +1697,7 @@ export default function App() {
   // (beginUpload/uploadChunk) para no cargar cientos de MB en un base64.
   const CHUNKED_THRESHOLD = 8 * 1024 * 1024;
   const UPLOAD_SLICE = 4 * 1024 * 1024;
+
   const blobToBase64 = (blob: Blob): Promise<string> =>
     new Promise((resolve, reject) => {
       const r = new FileReader();
@@ -1500,14 +1705,17 @@ export default function App() {
         const s = String(r.result ?? '');
         resolve(s.includes(',') ? s.split(',')[1] : s);
       };
+
       r.onerror = () => reject(r.error);
       r.readAsDataURL(blob);
     });
+
   const applyImportResult = (
     imp: { ok: boolean; snapshot?: ApiSnapshot; key?: string },
     filename: string,
   ) => {
     const snap = imp.snapshot;
+
     if (imp.ok && snap) {
       // MULTI-KEY (reversible): guardar la clave de librería del backend.
       applySnapshotToModel(snap, filename, prettyName(filename), imp.key);
@@ -1518,48 +1726,60 @@ export default function App() {
       void fetchSolids(filename);
     }
   };
+
   const uploadFileChunked = async (file: File) => {
-    const beg = (await backend.beginUpload(file.name)) as {
-      ok: boolean; upload_id?: string; error?: unknown;
-    };
-    if (!beg.ok || !beg.upload_id) throw new Error(String(beg.error ?? 'beginUpload falló'));
+    const beg = await backend.beginUpload(file.name);
+
+    if (!beg.ok || !beg.upload_id) throw new Error(beg.error ?? 'beginUpload falló');
     const total = file.size;
     let offset = 0;
-    let last: { ok: boolean; snapshot?: ApiSnapshot; key?: string } = { ok: false };
+    let last: Awaited<ReturnType<typeof backend.uploadChunk>> = { ok: false };
+
     while (offset < total) {
       const end = Math.min(offset + UPLOAD_SLICE, total);
       const base64 = await blobToBase64(file.slice(offset, end));
-      const r = (await backend.uploadChunk({
+
+      const r = await backend.uploadChunk({
         upload_id: beg.upload_id,
         base64,
         last: end >= total,
-      })) as { ok: boolean; snapshot?: ApiSnapshot; key?: string; received?: number; error?: unknown };
-      if (!r.ok) throw new Error(String(r.error ?? 'uploadChunk falló'));
+      });
+
+      if (!r.ok) throw new Error(r.error ?? 'uploadChunk falló');
+
       if (end >= total) last = r;
       offset = end;
     }
+
     return last;
   };
+
   const handleCustomFileUpload = (file: File) => {
     if (backend.hasBridge()) {
       void (async () => {
         try {
           if (file.size > CHUNKED_THRESHOLD) {
             applyImportResult(await uploadFileChunked(file), file.name);
+
             return;
           }
+
           const base64 = await blobToBase64(file);
-          const imp = (await backend.importStepBytes({
+
+          const imp = await backend.importStepBytes({
             filename: file.name,
             base64,
-          })) as { ok: boolean; snapshot?: ApiSnapshot; key?: string; error?: unknown };
+          });
+
           applyImportResult(imp, file.name);
         } catch {
           /* se conserva el modelo anterior */
         }
       })();
+
       return;
     }
+
     const newPreset: CadModelPreset = {
       id: `custom_${Date.now()}`,
       filename: file.name,
@@ -1571,6 +1791,7 @@ export default function App() {
       elementsTet4: 195400,
       nodes: 41200,
     };
+
     setModels((prev) => [newPreset, ...prev]);
     setCurrentModel(newPreset);
     // NAV-VIEW (reversible): sin teselado real para subidas locales: caja
@@ -1590,17 +1811,19 @@ export default function App() {
   // condiciones) y refrescar la UI con lo que responde (librería +
   // snapshot + condiciones). Para volver atrás: handlers locales.
   type UndoRedoResult = {
-    ok: boolean; label?: string; error?: unknown;
+    ok: boolean; label?: string; error?: string;
     library?: { key: string; filename: string; displayName: string; active: boolean }[];
     activeKey?: string | null; snapshot?: ApiSnapshot;
     conditions?: { id: string; name: string; type: string }[];
   };
+
   const refreshFromUndoRedo = (r: UndoRedoResult) => {
     const lib = r.library ?? [];
     setModels((prev) => {
       const keys = new Set(lib.map((l) => l.key));
       const kept = prev.filter((m) => !m.key || keys.has(m.key));
       const have = new Set(kept.map((m) => m.key));
+
       const missing = lib
         .filter((l) => !have.has(l.key))
         .map((l) => ({
@@ -1608,6 +1831,7 @@ export default function App() {
           faces: 0, edges: 0, solids: 0, volumeCm3: 0, elementsTet4: 0, nodes: 0,
           key: l.key,
         }));
+
       return [...kept, ...missing];
     });
     const ids = new Set((r.conditions ?? []).map((c) => c.id));
@@ -1618,8 +1842,10 @@ export default function App() {
           ids.has(c.id),
       ),
     );
+
     if (r.activeKey) {
       const entry = lib.find((l) => l.key === r.activeKey);
+
       if (entry && r.snapshot) {
         applySnapshotToModel(r.snapshot, entry.filename, entry.displayName, entry.key);
         void fetchSurface(entry.filename);
@@ -1630,6 +1856,7 @@ export default function App() {
       snapRef.current = null;
       setHasMesh(false);
     }
+
     setSimpJobId(null);
     setFeaJobId(null);
     setDensityField(null);
@@ -1638,24 +1865,30 @@ export default function App() {
       text: r.ok ? `Listo: ${r.label ?? 'operación revertida'}.` : String(r.error ?? 'Sin cambios.'),
     });
   };
+
   const handleUndoBackend = async () => {
     if (!backend.hasBridge()) {
       setOptNotice({ text: 'Sin backend no hay historial que deshacer.' });
+
       return;
     }
+
     try {
-      refreshFromUndoRedo((await backend.undo()) as unknown as UndoRedoResult);
+      refreshFromUndoRedo(await backend.undo());
     } catch {
       setOptNotice({ text: 'No se pudo deshacer.' });
     }
   };
+
   const handleRedoBackend = async () => {
     if (!backend.hasBridge()) {
       setOptNotice({ text: 'Sin backend no hay historial que rehacer.' });
+
       return;
     }
+
     try {
-      refreshFromUndoRedo((await backend.redo()) as unknown as UndoRedoResult);
+      refreshFromUndoRedo(await backend.redo());
     } catch {
       setOptNotice({ text: 'No se pudo rehacer.' });
     }
@@ -1680,40 +1913,50 @@ export default function App() {
     setBoundaryConditions((prev) => prev.filter((c) => c.id !== id));
     setFaceSelByFile((prev) => {
       const next: Record<string, Record<string, number[]>> = {};
+
       for (const f of Object.keys(prev)) {
         const bucket = { ...prev[f] };
         delete bucket[id];
         next[f] = bucket;
       }
+
       return next;
     });
     setTargetCondByTool((prev) => {
       const next = { ...prev };
-      for (const k of Object.keys(next) as (keyof typeof next)[]) {
+
+      for (const k of TOOL_KEYS) {
         if (next[k] === id) delete next[k];
       }
+
       return next;
     });
     setEditingCondition((prev) => (prev?.id === id ? null : prev));
     setSelectedCondId((prev) => (prev === id ? null : prev));
   };
+
   // TREE-SELECT: clic marca, re-clic desmarca (toggle como las caras del
   // viewport y los cuerpos). El borrado es con Supr sobre la fila marcada.
   const handleSelectCondition = (id: string) =>
     setSelectedCondId((prev) => (prev === id ? null : id));
+
   // TREE-BODY-SELECT: clic marca, re-clic desmarca (toggle como las
   // caras del viewport). Al marcar también activa su modelo; al desmarcar
   // el modelo queda como está.
   const handleSelectBody = (key: string, m: CadModelPreset) => {
     if (selectedBodyKey === key) {
       setSelectedBodyKey(null);
+
       return;
     }
+
     setSelectedBodyKey(key);
     handleSelectModelReal(m);
   };
+
   const handleDeleteSelected = async () => {
     const tool = stateRef.current.activeTool;
+
     // TREE-SELECT-DELETE: la fila marcada con clic simple tiene prioridad.
     const condId =
       selectedCondId ??
@@ -1721,44 +1964,54 @@ export default function App() {
       (tool === 'carga' || tool === 'fijacion' || tool === 'preservada' || tool === 'keepout'
         ? activeTargetId
         : null);
+
     const isCond =
       !!condId &&
       condId !== 'faces_seleccionar' &&
       boundaryConditions.some((c) => c.id === condId);
+
     if (isCond && condId) {
       // DELETE-TOLERANT: si el backend no conoce el id (herramienta solo
       // local, o backend reiniciado/modelo cerrado), se elimina igual en
       // local: el objetivo es quitar la herramienta, y el backend no tiene
       // nada que guardar. Solo se aborta ante un error real distinto.
       if (backend.hasBridge()) {
-        const r = (await backend.deleteCondition(condId)) as unknown as { ok?: boolean; error?: unknown };
-        const err = String(r.error ?? 'backend');
+        const r = await backend.deleteCondition(condId);
+        const err = r.error ?? 'backend';
+
         if (!r.ok && !/desconocida|unknown/i.test(err)) {
           setOptNotice({ text: `No se pudo eliminar la herramienta: ${err}.` });
+
           return;
         }
       }
+
       removeLocalCondition(condId);
       setActiveTool('seleccionar');
       setOptNotice({ text: 'Herramienta eliminada (Ctrl+Z para deshacer).' });
+
       return;
     }
+
     if (!backend.hasBridge()) return;
     const m = stateRef.current.currentModel;
+
     if (m?.key) {
-      const r = (await backend.removeModel(m.key)) as unknown as {
-        ok?: boolean; error?: unknown; library?: { key: string; filename: string; displayName: string; active: boolean }[];
-        activeKey?: string | null; snapshot?: ApiSnapshot;
-      };
+      const r = await backend.removeModel(m.key);
+
       if (!r.ok) {
-        setOptNotice({ text: `No se pudo eliminar la pieza: ${String(r.error ?? 'backend')}.` });
+        setOptNotice({ text: `No se pudo eliminar la pieza: ${r.error ?? 'backend'}.` });
+
         return;
       }
+
       const lib = r.library ?? [];
       setModels((prev) => prev.filter((x) => x.key !== m.key));
+
       if (r.activeKey) {
         const entry = lib.find((l) => l.key === r.activeKey);
         const existing = models.find((x) => x.key === r.activeKey);
+
         if (entry && existing && r.snapshot) {
           applySnapshotToModel(r.snapshot, entry.filename, entry.displayName, entry.key);
           void fetchSurface(entry.filename);
@@ -1766,6 +2019,7 @@ export default function App() {
         }
       } else {
         const rest = models.filter((x) => x.key !== m.key && x.key);
+
         if (rest.length > 0) handleSelectModelReal(rest[0]);
         else {
           setCurrentModel(null);
@@ -1773,43 +2027,57 @@ export default function App() {
           setHasMesh(false);
         }
       }
+
       setSimpJobId(null);
       setFeaJobId(null);
       setDensityField(null);
       setOptNotice({ text: `Pieza "${m.displayName}" eliminada (Ctrl+Z para deshacer).` });
+
       return;
     }
+
     setOptNotice({ text: 'Nada que eliminar: seleccioná una herramienta o una pieza.' });
   };
+
   // DELETE-REF (reversible): el listener de Supr usa siempre el handler actual
   // (sin closure obsoleta de selectedCondId/boundaryConditions).
   const deleteSelectedRef = useRef(handleDeleteSelected);
   deleteSelectedRef.current = handleDeleteSelected;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const el = e.target as HTMLElement | null;
+      const el = e.target instanceof HTMLElement ? e.target : null;
       const tag = el?.tagName;
+
       const typing =
         tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (el?.isContentEditable ?? false);
+
       const mod = e.ctrlKey || e.metaKey;
+
       if (mod && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
         if (typing || showImport || showExport || showHelp) return;
         e.preventDefault();
         void handleUndoBackend();
+
         return;
       }
+
       if ((mod && (e.key === 'y' || e.key === 'Y')) || (mod && e.shiftKey && (e.key === 'z' || e.key === 'Z'))) {
         if (typing || showImport || showExport || showHelp) return;
         e.preventDefault();
         void handleRedoBackend();
+
         return;
       }
+
       if (e.key !== 'Delete' || mod || e.altKey) return;
+
       if (typing || showImport || showExport || showHelp || editingCondition) return;
       e.preventDefault();
       void deleteSelectedRef.current();
     };
+
     window.addEventListener('keydown', onKey);
+
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showImport, showExport, showHelp, editingCondition]);
@@ -1881,6 +2149,7 @@ export default function App() {
             targetCondId={activeTargetId}
             onNewCondition={() => {
               const t = activeTool;
+
               if (t === 'carga' || t === 'fijacion' || t === 'preservada' || t === 'keepout') {
                 createFaceCondition(t);
               }

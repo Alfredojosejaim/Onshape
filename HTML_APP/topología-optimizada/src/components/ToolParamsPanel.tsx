@@ -52,7 +52,9 @@ const TOOL_META: Record<ActiveTool, { name: string; icon: string; cls: string }>
 
 function facesText(cond: BoundaryCondition | null): string {
   const idx = cond?.faceIndices ?? [];
+
   if (idx.length === 0) return 'sin caras asignadas';
+
   return [...idx].sort((a, b) => a - b).map((f) => `face_${f}`).join(', ');
 }
 
@@ -62,7 +64,9 @@ export const ToolParamsPanel: React.FC<ToolParamsPanelProps> = ({
   onSaveCondition,
   onConfirmTool,
   targetCondId,
-  onNewCondition,
+  // MULTI-COND: la creación vive en App; la prop se conserva por
+  // compatibilidad con el llamador pero este panel ya no la usa.
+  onNewCondition: _onNewCondition,
   onPushCondition,
   currentModel,
   meshElementSize,
@@ -73,13 +77,16 @@ export const ToolParamsPanel: React.FC<ToolParamsPanelProps> = ({
   meshBusy,
 }) => {
   const meta = TOOL_META[activeTool];
+
   const isFaceTool =
     activeTool === 'carga' || activeTool === 'fijacion' ||
     activeTool === 'preservada' || activeTool === 'keepout';
+
   // MULTI-COND: condiciones del mismo tipo + destino (selector del panel).
   const toolConds = isFaceTool
     ? boundaryConditions.filter((c) => c.type === activeTool)
     : [];
+
   const cond = isFaceTool
     ? (targetCondId ? toolConds.find((c) => c.id === targetCondId) ?? null : null) ??
       toolConds[0] ?? null
@@ -285,6 +292,7 @@ function MeshApply({ label, busy, onClick }: { label: string; busy: boolean; onC
 function MeshSmoothParams({ busy, onApply }: { busy: boolean; onApply: (p: Record<string, number>) => void }) {
   const [iters, setIters] = useState(3);
   const [alpha, setAlpha] = useState(0.5);
+
   return (
     <div className="flex flex-col gap-2 p-1 text-[11px]">
       <div className="flex items-center justify-between font-mono text-[11px]">
@@ -307,6 +315,7 @@ function MeshSmoothParams({ busy, onApply }: { busy: boolean; onApply: (p: Recor
 
 function MeshDecimateParams({ busy, onApply }: { busy: boolean; onApply: (p: Record<string, number>) => void }) {
   const [frac, setFrac] = useState(0.5);
+
   return (
     <div className="flex flex-col gap-2 p-1 text-[11px]">
       <div className="flex items-center justify-between font-mono text-[11px]">
@@ -324,6 +333,7 @@ function MeshDecimateParams({ busy, onApply }: { busy: boolean; onApply: (p: Rec
 
 function MeshRemeshParams({ busy, onApply }: { busy: boolean; onApply: (p: Record<string, number>) => void }) {
   const [len, setLen] = useState(1.0);
+
   return (
     <div className="flex flex-col gap-2 p-1 text-[11px]">
       <div className="flex items-center justify-between font-mono text-[11px]">
@@ -347,12 +357,19 @@ function MeshRemeshParams({ busy, onApply }: { busy: boolean; onApply: (p: Recor
 // (+/-). La flecha muestra la proyeccion en el plano y al pincharla invierte
 // el sentido. Para volver atras: restaurar el select Direccion (git).
 type LoadMode = 'perpendicular' | 'paralelo';
+
 type LoadPlane = 'xy' | 'xz' | 'yz';
+
+const LOAD_MODES: LoadMode[] = ['perpendicular', 'paralelo'];
+
+const LOAD_PLANES: LoadPlane[] = ['xy', 'xz', 'yz'];
+
 const PLANE_NORMAL: Record<LoadPlane, [number, number, number]> = {
   xy: [0, 0, 1],
   xz: [0, 1, 0],
   yz: [1, 0, 0],
 };
+
 const PLANE_AXES: Record<LoadPlane, [[number, number, number], [number, number, number]]> = {
   xy: [[1, 0, 0], [0, 1, 0]],
   xz: [[1, 0, 0], [0, 0, 1]],
@@ -368,12 +385,15 @@ function loadDirVector(mode: LoadMode, plane: LoadPlane, angleDeg: number, sense
   const n = PLANE_NORMAL[plane];
   const [a1, a2] = PLANE_AXES[plane];
   const base = mode === 'paralelo' ? [a1, a2] : [n, a1];
+
   const v: [number, number, number] = [
     c * base[0][0] + s * base[1][0],
     c * base[0][1] + s * base[1][1],
     c * base[0][2] + s * base[1][2],
   ];
+
   const m = Math.hypot(v[0], v[1], v[2]) || 1;
+
   return [v[0] / m, v[1] / m, v[2] / m];
 }
 
@@ -383,6 +403,7 @@ function loadArrowDeg(mode: LoadMode, plane: LoadPlane, angleDeg: number, sense:
   const [a1, a2] = PLANE_AXES[plane];
   const sx = d[0] * a1[0] + d[1] * a1[1] + d[2] * a1[2];
   const syUp = d[0] * a2[0] + d[1] * a2[1] + d[2] * a2[2];
+
   return (Math.atan2(-syUp, sx) * 180) / Math.PI;
 }
 
@@ -412,9 +433,13 @@ function CargaEditor({
     if (cond?.magnitude && Number.isFinite(cond.magnitude) && cond.magnitude > 0) {
       setMag(String(Math.round(cond.magnitude)));
     }
+
     if (cond?.loadMode) setMode(cond.loadMode);
+
     if (cond?.loadPlane) setPlane(cond.loadPlane);
+
     if (cond?.loadAngleDeg !== undefined) setAngle(String(cond.loadAngleDeg));
+
     if (cond?.loadSense) setSense(cond.loadSense);
     setCaseId(cond?.loadCaseId ?? '');
     setWeight(String(cond?.loadWeight ?? 1));
@@ -427,6 +452,7 @@ function CargaEditor({
     caseOverride?: string, weightOverride?: string,
   ): BoundaryCondition | null => {
     const magRaw = parseFloat(magStr);
+
     if (live && (!Number.isFinite(magRaw) || magRaw <= 0)) return null;
     const magN = (Number.isFinite(magRaw) && magRaw > 0 ? magRaw : 0) * (u === 'kN' ? 1000 : 1);
     const angRaw = parseFloat(angStr);
@@ -440,6 +466,7 @@ function CargaEditor({
     const w = Number.isFinite(wRaw) && wRaw > 0 ? wRaw : 1;
     const sym = m === 'perpendicular' ? '⊥' : '∥';
     const details = `[${vx.toFixed(0)}, ${vy.toFixed(0)}, ${vz.toFixed(0)}] N · ${sym}${pl.toUpperCase()} ${ang}° · ${se === 1 ? '+' : '−'}${gid ? ` · caso ${gid} ×${w}` : ''}`;
+
     const updated: BoundaryCondition = cond
       ? { ...cond, value: [vx, vy, vz], magnitude: magN, details, loadNormal: PLANE_NORMAL[pl], loadMode: m, loadPlane: pl, loadAngleDeg: ang, loadSense: se, loadCaseId: gid || undefined, loadWeight: w }
       : {
@@ -460,8 +487,10 @@ function CargaEditor({
           faceIndices: [],
           active: false,
         };
+
     onSaveCondition(updated);
     onPushCondition(updated);
+
     return updated;
   };
 
@@ -472,11 +501,15 @@ function CargaEditor({
 
   const numCls =
     'min-w-0 flex-1 bg-surface-elevated border border-border-subtle rounded px-2 py-1 text-text-primary font-mono text-[11px] outline-none focus:border-secondary/60';
+
   const segOn =
     'flex-1 min-w-0 truncate px-1.5 py-1 rounded text-[10px] font-semibold bg-secondary/15 text-secondary ring-1 ring-secondary/30 transition-colors';
+
   const segOff =
     'flex-1 min-w-0 truncate px-1.5 py-1 rounded text-[10px] text-text-secondary hover:bg-surface-elevated hover:text-text-primary transition-colors';
+
   const arrowDeg = loadArrowDeg(mode, plane, parseFloat(angle) || 0, sense);
+
   return (
     <div className="flex flex-col gap-2 font-mono text-[11px] min-w-0">
       {/* Valor + unidades */}
@@ -501,7 +534,7 @@ function CargaEditor({
           aria-label="Unidades de la carga"
           value={unit}
           onChange={(e) => {
-            const u = e.target.value as 'N' | 'kN';
+            const u = e.target.value === 'kN' ? 'kN' : 'N';
             setUnit(u);
             saveAll(mag, u, mode, plane, angle, sense, false);
           }}
@@ -513,7 +546,7 @@ function CargaEditor({
       </div>
       {/* Modo: perpendicular / paralelo */}
       <div className="flex items-center gap-1 min-w-0" role="group" aria-label="Modo de dirección">
-        {(['perpendicular', 'paralelo'] as LoadMode[]).map((m) => (
+        {LOAD_MODES.map((m) => (
           <button
             key={m}
             type="button"
@@ -531,7 +564,7 @@ function CargaEditor({
       {/* Plano + angulo + flecha de sentido */}
       <div className="flex items-center gap-1 min-w-0">
         <div className="flex items-center gap-1 flex-1 min-w-0" role="group" aria-label="Plano">
-          {(['xy', 'xz', 'yz'] as LoadPlane[]).map((pl) => (
+          {LOAD_PLANES.map((pl) => (
             <button
               key={pl}
               type="button"
@@ -564,7 +597,7 @@ function CargaEditor({
         <button
           type="button"
           onClick={() => {
-            const ns = (sense === 1 ? -1 : 1) as 1 | -1;
+            const ns = sense === 1 ? -1 : 1;
             setSense(ns);
             saveAll(mag, unit, mode, plane, angle, ns, false);
           }}

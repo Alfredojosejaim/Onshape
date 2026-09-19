@@ -7,6 +7,7 @@
 // marcado UI-CLEAN-OPROW en LeftPanel.tsx.
 import React, { useState } from 'react';
 import { BoundaryCondition, SolidInfo } from '../types';
+import { isFiniteNumber } from '../lib/guards';
 
 interface OperationRowProps {
   bc: BoundaryCondition;
@@ -29,7 +30,9 @@ interface OperationRowProps {
 
 export const OperationRow: React.FC<OperationRowProps> = ({
   bc,
-  onToggleCondition,
+  // TREE-CLEAN: el tilde de fijacion se quito; la prop se conserva en la
+  // interfaz por compatibilidad con LeftPanel pero ya no se usa aqui.
+  onToggleCondition: _onToggleCondition,
   onEditCondition,
   onActivateTool,
   onRenameCondition,
@@ -42,17 +45,22 @@ export const OperationRow: React.FC<OperationRowProps> = ({
   const isKeepout = bc.type === 'keepout';
 
   let bgClass = 'bg-surface-container-high/40 hover:bg-surface-elevated';
+
   if (isSafe) bgClass = 'bg-fea-stress-optimal/10 hover:bg-fea-stress-optimal/15';
+
   if (isKeepout) bgClass = 'bg-fea-stress-critical/10 hover:bg-fea-stress-critical/15';
 
   // TREE-RENAME-INLINE: edicion in situ del nombre.
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState('');
+
   const commitRename = () => {
     if (renaming && onRenameCondition) {
       const name = draft.trim() || bc.name;
+
       if (name !== bc.name) onRenameCondition(bc, name);
     }
+
     setRenaming(false);
   };
 
@@ -111,6 +119,7 @@ export const OperationRow: React.FC<OperationRowProps> = ({
                 // Enter confirma sin cerrar la herramienta (no burbujea al
                 // atajo global); Escape cancela.
                 e.stopPropagation();
+
                 if (e.key === 'Enter') commitRename();
                 else if (e.key === 'Escape') setRenaming(false);
               }}
@@ -124,6 +133,7 @@ export const OperationRow: React.FC<OperationRowProps> = ({
               className="text-text-primary font-medium text-[11px] truncate"
               onDoubleClick={(e) => {
                 e.stopPropagation();
+
                 if (onRenameCondition) {
                   setDraft(bc.name);
                   setRenaming(true);
@@ -201,10 +211,10 @@ export const SolidOpRow: React.FC<SolidOpRowProps> = ({
   visibilityTitle = 'Mostrar / ocultar cuerpo',
   selected = false,
 }) => {
-  const volCm3 =
-    typeof solid.volume === 'number' && Number.isFinite(solid.volume)
-      ? (solid.volume / 1000).toFixed(1)
-      : '—';
+  const volCm3 = isFiniteNumber(solid.volume)
+    ? (solid.volume / 1000).toFixed(1)
+    : '—';
+
   return (
     <div className={`flex items-center justify-between px-2 py-1.5 rounded cursor-pointer transition-colors border ${selected ? 'border-secondary/70 ring-1 ring-secondary/40' : 'border-border-subtle/20'} bg-surface-container-high/40 hover:bg-surface-elevated ${visible ? '' : 'opacity-50'}`}>
       <div className="flex items-center gap-2">

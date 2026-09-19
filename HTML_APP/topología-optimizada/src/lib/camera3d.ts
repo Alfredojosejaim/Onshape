@@ -12,7 +12,9 @@
 import * as THREE from 'three';
 
 export const ORBIT_SENSITIVITY = 0.008;
+
 export const PAN_SENSITIVITY = 0.002;
+
 export const DOLLY_SENSITIVITY = 0.8;
 
 function basis(camera: THREE.PerspectiveCamera, target: THREE.Vector3) {
@@ -20,14 +22,18 @@ function basis(camera: THREE.PerspectiveCamera, target: THREE.Vector3) {
   const dist = Math.max(forward.length(), 1e-12);
   forward.divideScalar(dist);
   let right = new THREE.Vector3().crossVectors(forward, camera.up);
+
   if (right.length() < 1e-9) {
     right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0));
+
     if (right.length() < 1e-9) {
       right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(1, 0, 0));
     }
   }
+
   right.normalize();
   const up = new THREE.Vector3().crossVectors(right, forward).normalize();
+
   return { forward, right, up, dist };
 }
 
@@ -42,9 +48,11 @@ export function orbitCamera(
   // P-C: dist no se usa en la órbita; fuera del destructure.
   const { forward, right, up } = basis(camera, target);
   const drag = right.clone().multiplyScalar(-dx).add(up.clone().multiplyScalar(dy));
+
   if (drag.length() < 1e-12) return;
   drag.normalize();
   const axis = new THREE.Vector3().crossVectors(drag, forward);
+
   if (axis.length() < 1e-12) return;
   axis.normalize();
   const mag = Math.sqrt(dx * dx + dy * dy) * sensitivity;
@@ -96,6 +104,7 @@ export function viewCamera(
   view: StdView,
 ): void {
   const dist = Math.max(camera.position.distanceTo(target), 1e-6);
+
   const dirs: Record<StdView, THREE.Vector3> = {
     iso: new THREE.Vector3(1, 1, 1).normalize(),
     top: new THREE.Vector3(0, 1, 0),
@@ -105,9 +114,12 @@ export function viewCamera(
     right: new THREE.Vector3(1, 0, 0),
     left: new THREE.Vector3(-1, 0, 0),
   };
+
   camera.position.copy(target).addScaledVector(dirs[view], dist);
   camera.up.set(0, view === 'top' || view === 'bottom' ? 0 : 1, 0);
+
   if (view === 'top') camera.up.set(0, 0, -1);
+
   if (view === 'bottom') camera.up.set(0, 0, 1);
   camera.lookAt(target);
 }
@@ -123,9 +135,11 @@ export function fitCamera(
   // NaN) dejaban la matriz de proyeccion en NaN y TODA la escena en negro,
   // incluida la rejilla. En ese caso no se toca la camara.
   if (!Number.isFinite(center.x) || !Number.isFinite(center.y) || !Number.isFinite(center.z)) return;
+
   if (!Number.isFinite(radius) || radius <= 0) return;
   const dist = Math.max(radius * 1.2, 1e-6);
   const dir = camera.position.clone().sub(target);
+
   if (dir.length() < 1e-9) dir.set(1, 1, 1);
   dir.normalize();
   target.copy(center);

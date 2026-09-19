@@ -41,7 +41,7 @@ from core.conditions import (
     ProtectedRegion,
 )
 from core.generative import GenerativeDesignStudy
-from core.materials import Material, STANDARD_MATERIALS
+from core.materials import Material, STANDARD_MATERIALS, young_modulus_mm
 from core.topopt import SIMPSolver
 
 logger = logging.getLogger(__name__)
@@ -1007,6 +1007,41 @@ class GenerativeDesignEngine:
         weights = [group_weight[g] for g in order]
         return cases, weights, sorted(set(unsupported))
 
+    @staticmethod
+    def _load_on_fixed_fraction(force, fixed_dofs) -> float:
+        """Fraccion del modulo de fuerza que cae sobre DOFs fijos (0..1)."""
+        if force is None or fixed_dofs is None:
+            return 0.0
+        f = np.abs(np.asarray(force, dtype=float).ravel())
+        total = float(f.sum())
+        if total <= 0.0:
+            return 0.0
+        fd = np.asarray(fixed_dofs, dtype=np.int64).ravel()
+        if fd.size == 0:
+            return 0.0
+        fd = fd[(fd >= 0) & (fd < f.size)]
+        return float(f[fd].sum()) / total if fd.size else 0.0
+
+    def _check_load_on_fixed(self, force, fixed_dofs, unsupported=None) -> None:
+        """BC-SHORTCUT: la carga aplicada sobre nodos fijos no hace trabajo.
+
+        Si TODO el resultante cae sobre DOFs fijos la compliance es ~0 y el
+        optimizador solo minimiza volumen -> colapsa a vacio y la
+        isosuperficie sale degenerada (regresion real: carga -Z sobre la base
+        fija, documentada en tests/test_generativa_flujo.py). Falla explicito
+        en vez de devolver un diseno vacio. Un solape PARCIAL (una cara que
+        toca el apoyo) es legitimo: solo se marca como degradado.
+        """
+        frac = self._load_on_fixed_fraction(force, fixed_dofs)
+        if frac > 0.999:
+            raise ValueError(
+                "La carga esta aplicada sobre nodos fijos (misma zona que el "
+                "apoyo): no puede hacer trabajo (compliance ~0) y el "
+                "optimizador colapsaria a vacio. Separa las caras/nodos de "
+                "carga y de apoyo, o cambia la direccion de la carga.")
+        if frac >= 0.9 and unsupported is not None:
+            unsupported.append("load_on_fixed_dofs")
+
     def _map_conditions_to_problem(self, conditions, raise_on_unmapped_face=True):
         """Translate reusable conditions into a quasi-static FE problem.
 
@@ -1130,6 +1165,9 @@ class GenerativeDesignEngine:
         if obstructions and void.size == 0:
             unsupported.append("obstruction")
 
+        # BC-SHORTCUT: carga sobre los mismos nodos que el apoyo -> colapso.
+        self._check_load_on_fixed(forces, fixed_dofs, unsupported)
+
         return forces, fixed_dofs, preserved, void, sorted(set(unsupported))
 
     def _condition_mapping_report(self, conditions) -> List[Dict[str, Any]]:
@@ -1248,6 +1286,11 @@ class GenerativeDesignEngine:
             # Sin casos (p.ej. todo unsupported en modo permisivo): vector nulo
             # único para no romper el contrato del solver.
             cases, weights = [forces], [1.0]
+        # BC-SHORTCUT: repite la comprobacion tras el merge legacy (las cargas
+        # legacy no pasan por _map_conditions_to_problem).
+        _force_sum = (np.sum([np.abs(np.asarray(c, dtype=float)) for c in cases], axis=0)
+                      if cases else np.asarray(forces, dtype=float))
+        self._check_load_on_fixed(_force_sum, fixed_dofs, unsupported)
         # Fase 6d: acoplamiento térmico one-way (misma actuación simultánea:
         # el vector térmico se suma a cada caso mecánico).
         if kwargs.get("thermal_temperatures") is not None:
@@ -1264,7 +1307,7 @@ class GenerativeDesignEngine:
                 _fth = thermal_load_vector(
                     np.asarray(nodes, dtype=float),
                     np.asarray(elements, dtype=int),
-                    self.material.young_modulus, self.material.poisson_ratio,
+                    young_modulus_mm(self.material.young_modulus), self.material.poisson_ratio,
                     float(_alpha),
                     np.asarray(kwargs.get("thermal_temperatures"), dtype=float),
                     reference_temperature=float(
@@ -1276,11 +1319,12 @@ class GenerativeDesignEngine:
         solver = SIMPSolver(
             nodes=nodes,
             elements=elements,
-            young_modulus=self.material.young_modulus,
+            young_modulus=young_modulus_mm(self.material.young_modulus),
             poisson_ratio=self.material.poisson_ratio,
             volfrac=kwargs.get("volume_fraction", 0.3),
             penalization=kwargs.get("penalization", 3.0),
             filter_radius=kwargs.get("filter_radius", 1.5),
+            volfrac_mode=kwargs.get("volfrac_mode", "active_domain"),
         )
         solver.set_loads(cases, weights)
         if fixed_dofs:
@@ -1436,6 +1480,7 @@ def run_generative_design(
     design_space_padding: Optional[float] = None,
     max_hole_edges: Optional[Union[int, str]] = None,
     threshold: float = 0.5,
+    volfrac_mode: str = "active_domain",
 ) -> Dict[str, Any]:
     """High-level entry: run the generative design pipeline (A or B).
 
@@ -1514,6 +1559,9 @@ def run_generative_design(
         heaviside_eta=heaviside_eta,
         heaviside_continuation=heaviside_continuation,
         extrusion_axis=extrusion_axis,
+        # VOLFRAC-MODE: "active_domain" (historico) o "total_volume"
+        # (fraccion del volumen total de la malla, incluye preservados).
+        volfrac_mode=volfrac_mode,
     )
 
     if study.scenario == "A":

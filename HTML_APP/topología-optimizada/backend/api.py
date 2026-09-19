@@ -33,6 +33,8 @@ if _HERE not in sys.path:
 # hermano stdlib puro (no arrastra VTK/OCC/Kratos). Para volver atrás: quitar
 # este import y `Api._publish_jobs`.
 import job_status  # noqa: E402  (depende del sys.path de arriba)
+# UNITS-MM: los solvers de malla trabajan en mm; el material esta en SI.
+from core.materials import young_modulus_mm, density_mm  # noqa: E402
 
 
 def _uploads_dir() -> str:
@@ -1096,7 +1098,11 @@ class Api:
                                # dejar la pieza fragmentada (fallo BREP).
                                threshold=(p.get("threshold")
                                           if p.get("threshold") is not None
-                                          else 0.5))
+                                          else 0.5),
+                               # VOLFRAC-MODE: "total_volume" = el volfrac
+                               # es fraccion del volumen TOTAL (lo que el
+                               # usuario espera: "que quede el 35% de la pieza").
+                               volfrac_mode=str(p.get("volfrac_mode", "active_domain")).lower())
             holder_g["jid"] = jid
             return {"ok": True, "jobId": jid}
         except Exception as exc:  # noqa: BLE001
@@ -1281,7 +1287,7 @@ class Api:
         from core.fea import solve_fea
         result = solve_fea(
             nodes=nodes, elements=elements,
-            young_modulus=mat.young_modulus,
+            young_modulus=young_modulus_mm(mat.young_modulus),
             poisson_ratio=mat.poisson_ratio,
             forces_dofs=[(int(i), float(v)) for i, v in enumerate(force) if v != 0.0],
             fixed_dofs=fixed.tolist(),
@@ -1537,11 +1543,12 @@ class Api:
             fea_solver = KratosSimpFEA(
                 np.asarray(nodes, dtype=float),
                 np.asarray(elements, dtype=int),
-                mat.young_modulus, mat.poisson_ratio, mat.density,
+                young_modulus_mm(mat.young_modulus), mat.poisson_ratio,
+                density_mm(mat.density),
                 penalization=float(simp_kwargs.get("penalization", 3.0)))
         solver = VendoredSIMP(
             nodes=nodes, elements=elements,
-            young_modulus=mat.young_modulus,
+            young_modulus=young_modulus_mm(mat.young_modulus),
             poisson_ratio=mat.poisson_ratio,
             volfrac=float(simp_kwargs.get("volume_fraction", 0.3)),
             penalization=float(simp_kwargs.get("penalization", 3.0)),
@@ -1564,7 +1571,7 @@ class Api:
                 _fth = thermal_load_vector(
                     np.asarray(nodes, dtype=float),
                     np.asarray(elements, dtype=int),
-                    mat.young_modulus, mat.poisson_ratio, float(_alpha),
+                    young_modulus_mm(mat.young_modulus), mat.poisson_ratio, float(_alpha),
                     np.asarray(simp_kwargs.get("thermal_temperatures"), dtype=float),
                     reference_temperature=float(
                         simp_kwargs.get("thermal_reference_temperature", 293.15)))

@@ -28,7 +28,7 @@ from typing import Any, Callable, Dict, Optional
 import numpy as np
 
 from services.cad_service import CADService
-from core.materials import STANDARD_MATERIALS
+from core.materials import STANDARD_MATERIALS, young_modulus_mm
 from core.document import Document
 from core.features import Feature, FeatureHistory, FeatureStatus, FeatureType
 from core.cad_entity import EntityType
@@ -437,7 +437,7 @@ class PipelineController:
             return thermal_load_vector(
                 np.asarray(nodes, dtype=float),
                 np.asarray(elements, dtype=int),
-                mat.young_modulus, mat.poisson_ratio,
+                young_modulus_mm(mat.young_modulus), mat.poisson_ratio,
                 float(a), np.asarray(temperatures, dtype=float),
                 reference_temperature=float(ref_T))
         except ThermalError as exc:
@@ -694,7 +694,7 @@ class PipelineController:
         result = solve_fea(
             nodes=nodes,
             elements=elements,
-            young_modulus=mat.young_modulus,
+            young_modulus=young_modulus_mm(mat.young_modulus),
             poisson_ratio=mat.poisson_ratio,
             forces_dofs=[(int(i), float(v)) for i, v in enumerate(force) if v != 0.0],
             fixed_dofs=fixed.tolist(),
@@ -962,7 +962,7 @@ class PipelineController:
         solver = SIMPSolver(
             nodes=nodes,
             elements=elements,
-            young_modulus=mat.young_modulus,
+            young_modulus=young_modulus_mm(mat.young_modulus),
             poisson_ratio=mat.poisson_ratio,
             volfrac=volume_fraction,
             penalization=penalization,

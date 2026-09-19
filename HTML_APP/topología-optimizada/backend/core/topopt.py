@@ -88,6 +88,7 @@ class SIMPSolver:
         element_densities0: Optional[np.ndarray] = None,
         rho_min: float = XC_MIN,
         linear_solver: str = "auto",
+        volfrac_mode: str = "active_domain",
     ):
         if not 0.0 < volfrac <= 1.0:
             raise TopOptError("volfrac must be in (0, 1]")
@@ -95,6 +96,16 @@ class SIMPSolver:
         self.elements = np.asarray(elements, dtype=int)
         self.num_elements = self.elements.shape[0]
         self.volfrac = float(volfrac)
+        # VOLFRAC-MODE (reversible): "active_domain" = fraccion del subdominio
+        # disenable (historico); "total_volume" = fraccion del volumen TOTAL de
+        # la malla (incluye preservados/void), que es lo que el usuario espera
+        # cuando dice "que quede el 35% de la pieza".
+        self.volfrac_mode = str(volfrac_mode).strip().lower()
+        if self.volfrac_mode not in ("active_domain", "total_volume"):
+            raise TopOptError(
+                f"volfrac_mode={volfrac_mode!r} no soportado "
+                f"(usar 'active_domain' o 'total_volume').")
+        self._x_from_user = element_densities0 is not None
         self.penalization = float(penalization)
         self.filter_radius = float(filter_radius)
         self.rho_min = float(rho_min)
@@ -277,6 +288,34 @@ class SIMPSolver:
     # ------------------------------------------------------------------ #
     # Design subdomains
     # ------------------------------------------------------------------ #
+    def _preserved_volume(self) -> float:
+        if self._preserved is None:
+            return 0.0
+        return float(self._volumes[self._preserved].sum())
+
+    def _void_volume(self) -> float:
+        if self._void is None:
+            return 0.0
+        return float(self._volumes[self._void].sum())
+
+    def _target_active_volume(self) -> float:
+        """VOLFRAC-MODE: volumen objetivo sobre el subdominio ACTIVO.
+
+        active_domain: volfrac * V_active (historico).
+        total_volume : resuelve volfrac sobre el volumen TOTAL de la malla,
+        descontando lo ya fijado (preservado=1 y void=rho_min), de modo que
+        (preservado + void*rho_min + activo)/V_total == volfrac.
+        """
+        if self.volfrac_mode == "total_volume":
+            return (self.volfrac * self._vol0
+                    - self._preserved_volume()
+                    - self.rho_min * self._void_volume())
+        return self.volfrac * self._vol0_free
+
+    def _volfrac_active(self) -> float:
+        """Fraccion objetivo sobre el subdominio activo (modo-aware)."""
+        return self._target_active_volume() / max(self._vol0_free, 1e-12)
+
     def _finalize_active(self) -> None:
         """Recompute the active (designable) mask and free volume after the
         protected/void element sets change."""
@@ -286,19 +325,33 @@ class SIMPSolver:
             np.zeros(self.num_elements, dtype=bool)
         self._active = ~(preserved | void)
         self._vol0_free = float(self._volumes[self._active].sum())
-        # Feasibility: with every active element at its lower bound rho_min the
-        # minimal achievable active volume is rho_min * V_active. If the user's
-        # volfrac demands less than that, the volume constraint is infeasible
-        # (OC bisection could never converge below it). Surface that loudly
-        # instead of silently returning an impossible optimum.
-        if self.volfrac * self._vol0_free < self.rho_min * self._vol0_free:
+        # Feasibility (mode-aware). With every active element at rho_min the
+        # minimal achievable active volume is rho_min * V_active; asking for
+        # less is impossible and the OC bisection could never converge. Surface
+        # it loudly instead of silently returning an impossible optimum.
+        target_active = self._target_active_volume()
+        vmin = self.rho_min * self._vol0_free
+        if target_active < vmin - 1e-12 * max(self._vol0, 1.0):
             raise TopOptError(
-                "Volume fraction infeasible: volfrac={} over the active "
-                "domain (V_active={:.4g}) requires less than the minimum "
-                "material (rho_min * V_active = {:.4g}). Lower rho_min, raise "
-                "volfrac, or shrink preserved/void regions."
-                .format(self.volfrac, self._vol0_free, self.rho_min * self._vol0_free)
+                "Volume fraction infeasible: mode={} volfrac={} needs active "
+                "volume {:.4g} but the minimum material over the active domain "
+                "is {:.4g}. Lower rho_min, raise volfrac, or shrink "
+                "preserved/void regions."
+                .format(self.volfrac_mode, self.volfrac, target_active, vmin)
             )
+        if target_active > self._vol0_free + 1e-12 * max(self._vol0, 1.0):
+            raise TopOptError(
+                "Volume fraction infeasible: mode={} volfrac={} needs active "
+                "volume {:.4g} > V_active={:.4g} (preserved/void already exceed "
+                "the requested total). Lower volfrac or shrink preserved/void."
+                .format(self.volfrac_mode, self.volfrac, target_active, self._vol0_free)
+            )
+        if self.volfrac_mode == "total_volume" and not self._x_from_user:
+            frac = float(np.clip(target_active / max(self._vol0_free, 1e-12),
+                                 self.rho_min, 1.0))
+            self.x[self._active] = frac
+            self.x[preserved] = 1.0
+            self.x[void] = self.rho_min
 
     def set_preserved_elements(self, indices) -> None:
         """Mark elements that must keep material (protected regions).
@@ -675,7 +728,7 @@ class SIMPSolver:
         xnew = np.copy(x)
         xmin = self.rho_min
         xmax = 1.0
-        target_vol = self.volfrac * self._vol0_free
+        target_vol = self._target_active_volume()
         # OC-BISECTION-FLOOR (reversible): el piso era ABSOLUTO (1e-12) y rompía
         # la invariancia de escala del OC. Con mallas rígidas (compliance ~1e-6)
         # las sensibilidades filtradas quedan ~1e-14, `mid` no podía bajar lo
@@ -804,7 +857,7 @@ class SIMPSolver:
         p0 = ux * ux * np.maximum(df0a, 0.0) + 1e-9
         q0 = lx * lx * np.maximum(-df0a, 0.0) + 1e-9
         # Restricción g(x) = V(x)/Vt - 1 ≤ 0, gradiente constante dva/Vt.
-        vt = max(float(self.volfrac * self._vol0_free), 1e-12)
+        vt = max(float(self._target_active_volume()), 1e-12)
         dg = dva / vt
         p1 = ux * ux * np.maximum(dg, 0.0)
         q1 = lx * lx * np.maximum(-dg, 0.0)
@@ -955,7 +1008,7 @@ class SIMPSolver:
         beta = np.minimum(upp - self._MMA_ALBEFA * (upp - xa), xa_max)
 
         # --- Restricción g(x) = V(x)/Vt − 1 ≤ 0 (lineal en x) ---
-        vt = max(float(self.volfrac * self._vol0_free), 1e-12)
+        vt = max(float(self._target_active_volume()), 1e-12)
         dg = dva / vt
         g0 = float(np.dot(xa, dva) / vt) - 1.0
 
@@ -1451,6 +1504,8 @@ class SIMPSolver:
                 np.dot(x_phys, self._volumes) / max(self._vol0, 1e-12)
             ),
             "target_volume_fraction": float(self.volfrac),
+            "volfrac_mode": self.volfrac_mode,
+            "target_active_volume_fraction": float(self._volfrac_active()),
             "final_compliance": float(compliance_final),
             "compliance_history": [h["compliance"] for h in history],
             "volume_fraction_history": [h["volume_fraction"] for h in history],
@@ -1546,7 +1601,7 @@ class SIMPSolver:
         if self._void is not None:
             x[self._void] = xmin
         x[preserved] = 1.0
-        target_vol = float(self.volfrac * self._vol0_free)
+        target_vol = float(self._target_active_volume())
         alpha_prev: Optional[np.ndarray] = None
         history: List[Dict[str, Any]] = []
         converged = False
@@ -1606,7 +1661,7 @@ class SIMPSolver:
             # estable en las últimas 10 iteraciones. Si no se pudo remover
             # nada (objetivo alcanzado o ninguna remoción cabe sin pasarse
             # del objetivo discreto), el diseño ya no puede progresar.
-            if vol_frac <= float(self.volfrac) + 1e-12 and len(history) >= 10:
+            if vol_frac <= self._volfrac_active() + 1e-12 and len(history) >= 10:
                 last = np.array([h["compliance"] for h in history[-10:]])
                 denom = max(float(np.sum(np.abs(last[5:]))), 1e-12)
                 if abs(float(np.sum(last[5:]) - np.sum(last[:5]))) / denom <= tolerance:
@@ -1651,7 +1706,7 @@ class SIMPSolver:
         nn = nodes.shape[0]
         h = float(np.mean(vols[active]) ** (1.0 / 3.0))
         h = max(h, 1e-12)
-        target_vol = float(self.volfrac * self._vol0_free)
+        target_vol = float(self._target_active_volume())
         xmin = self.rho_min
 
         # Operadores de gradiente por elemento + incidencia nodo->elementos.
@@ -1788,7 +1843,7 @@ class SIMPSolver:
                         "densities": xnew.copy(),
                     }
                 )
-            if vol_frac <= float(self.volfrac) + 1e-12 and len(history) >= 10:
+            if vol_frac <= self._volfrac_active() + 1e-12 and len(history) >= 10:
                 last = np.array([h["compliance"] for h in history[-10:]])
                 denom = max(float(np.sum(np.abs(last[5:]))), 1e-12)
                 if abs(float(np.sum(last[5:]) - np.sum(last[:5]))) / denom <= tolerance:

@@ -87,6 +87,30 @@ class Material:
         return d
 
 
+# --------------------------------------------------------------------------- #
+# Unidades del solver de malla (MM-N)
+# --------------------------------------------------------------------------- #
+# `core.fea` / `core.topopt` / `vendored.simp` trabajan con las coordenadas de
+# malla en MILIMETROS (los STEP/mallas del proyecto vienen en mm). Por eso el
+# modulo de Young debe ir en N/mm^2 y la densidad en tonne/mm^3; los materiales
+# se declaran en SI (Pa, kg/m^3). Antes se pasaban los Pa crudos al solver, que
+# quedaba 1e6 veces mas rigido: la compliance y las sensibilidades salian ~1e-6
+# de lo real (disparaba los pisos numericos del OC y el "Complimiento: 0.0 mJ").
+# Usar SIEMPRE estos helpers al construir un solver de malla desde un Material.
+PA_PER_N_PER_MM2 = 1.0e6        # 1 N/mm^2 = 1e6 Pa
+KG_M3_TO_TONNE_MM3 = 1.0e-12    # 1 kg/m^3 = 1e-12 tonne/mm^3
+
+
+def young_modulus_mm(young_pa: float) -> float:
+    """E en N/mm^2 (sistema mm-N) a partir de E en Pa (SI)."""
+    return float(young_pa) / PA_PER_N_PER_MM2
+
+
+def density_mm(density_kg_m3: float) -> float:
+    """Densidad en tonne/mm^3 (sistema mm-N) a partir de kg/m^3 (SI)."""
+    return float(density_kg_m3) * KG_M3_TO_TONNE_MM3
+
+
 # Standard Material Presets
 STANDARD_MATERIALS: Dict[str, Material] = {
     "steel": Material(

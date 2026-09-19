@@ -34,7 +34,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from core.cad_entity import CadEntityRef, SelectionSet
-from core.materials import Material, STANDARD_MATERIALS
+from core.materials import Material, STANDARD_MATERIALS, young_modulus_mm, density_mm
 
 
 class StudyType(str, Enum):
@@ -474,8 +474,8 @@ class ModalAnalysis(Study):
             )
         data = solve_modal(
             nodes, elements,
-            self.material.young_modulus, self.material.poisson_ratio,
-            self.material.density, fixed_dofs,
+            young_modulus_mm(self.material.young_modulus), self.material.poisson_ratio,
+            density_mm(self.material.density), fixed_dofs,
             mode_count=self.modal.mode_count,
             frequency_min=self.modal.frequency_min,
             frequency_max=self.modal.frequency_max,

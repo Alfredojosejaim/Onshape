@@ -33,6 +33,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 
+from core.materials import young_modulus_mm
 from core.topopt import TopOptError
 
 
@@ -506,7 +507,7 @@ def problem_to_solver_inputs(
     return {
         "problem_id": problem.id,
         "material": {
-            "young_modulus": float(mat.young_modulus),
+            "young_modulus": float(young_modulus_mm(mat.young_modulus)),  # N/mm^2 (solver mm)
             "poisson_ratio": float(mat.poisson_ratio),
             "penalization": float(mat.simp_penalty),
             "rho_min": float(mat.density_min),

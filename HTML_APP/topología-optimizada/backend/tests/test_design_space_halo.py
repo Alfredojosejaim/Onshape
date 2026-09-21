@@ -156,6 +156,45 @@ def test_envelope_runs_and_reports_design_space():
     assert eng._face_tolerance == pytest.approx(1.5 * meta["resolution"])
 
 
+def test_keepout_face_voids_full_hole_passage_in_envelope():
+    """KEEPOUT-PASSAGE: en envelope, el keep-out por cara de un agujero debe
+    vaciar el pasaje COMPLETO, no solo el forro (~0.75 voxel). Regresión del
+    reporte: los agujeros de tornillo/buje quedaban rellenos en generativa."""
+    import cadquery as cq
+    box = cq.Solid.makeBox(20.0, 20.0, 10.0)
+    cutter = cq.Solid.makeCylinder(
+        2.5, 14.0, cq.Vector(10.0, 10.0, -2.0), cq.Vector(0, 0, 1))
+    shape = box.cut(cutter)
+    wall = next(i for i, f in enumerate(shape.Faces())
+                if f.geomType() == "CYLINDER")
+    xs = np.linspace(0, 20, 6)
+    ys = np.linspace(0, 20, 6)
+    zs = np.linspace(0, 10, 4)
+    grid = np.array([[x, y, z] for x in xs for y in ys for z in zs])
+    env = generate_design_space_mesh(grid, resolution=2.0, padding=1.0)
+    mgr = ConditionManager()
+    eng = _engine(np.asarray(env.nodes), np.asarray(env.elements), mgr,
+                  model_shape=shape, surface_matches_mesh=False)
+    eng._env_resolution = float(env.target_node_sets["resolution"][0])
+    keep = condition_from_dict({
+        "type": "obstruction", "name": "K",
+        "faces": {"name": "f", "entities": [
+            {"entity_type": "face", "face_index": wall}], "mode": "multi"},
+        "offset_mm": None, "metadata": {},
+    })
+    void = eng._void_elements([keep])
+    void_set = set(int(i) for i in np.asarray(void).tolist())
+    bb = shape.Faces()[wall].BoundingBox()
+    centroids = eng._element_centroids()
+    passage = [i for i in range(centroids.shape[0])
+               if (bb.xmin <= centroids[i][0] <= bb.xmax
+                   and bb.ymin <= centroids[i][1] <= bb.ymax
+                   and bb.zmin <= centroids[i][2] <= bb.zmax)
+               and not eng._point_inside_shape(centroids[i])]
+    assert passage, "el agujero no contiene centroides del envelope"
+    assert set(passage) <= void_set
+
+
 def test_envelope_rejects_unknown_design_space():
     nodes, els, _ = _mesh(2)
     mgr = ConditionManager()

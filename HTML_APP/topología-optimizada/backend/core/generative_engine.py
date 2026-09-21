@@ -683,12 +683,13 @@ class GenerativeDesignEngine:
                 if e.entity_type == EntityType.FACE and e.face_index is not None
             ]
             if face_indices and self.model_shape is not None:
-                # ENV-BAND (reversible): envelope/bridge -> capa fina del lado
-                # LIBRE (cavidad/espacio libre junto a la cara) en vez de la
-                # losa simétrica gruesa. Para volver atrás: quitar esta rama.
+                # KEEPOUT-PASSAGE (reversible): envelope/bridge -> vaciar el
+                # PASAJE completo (no solo la banda fina del lado libre: con
+                # la banda el interior de un agujero de tornillo/buje quedaba
+                # diseñable y el optimizador lo rellenaba). Para volver atrás:
+                # usar _band_elements_for_faces(face_indices, "outside").
                 if not self._surface_matches_mesh:
-                    face_elems |= self._band_elements_for_faces(
-                        face_indices, "outside")
+                    face_elems |= self._keepout_elements_for_faces(face_indices)
                     continue
                 nodes = set(self._select_nodes_for_faces(face_indices))
                 if nodes:
@@ -869,6 +870,64 @@ class GenerativeDesignEngine:
                 got = self._band_once([int(fi)], side, 2.0 * band)
             out |= got
         self._band_cache[key] = tuple(sorted(out))
+        return out
+
+    def _keepout_elements_for_faces(self, face_indices: List[int]) -> set:
+        """Elementos a vaciar para caras keep-out en envelope/bridge.
+
+        Vacía todo elemento cuyo centroide cae FUERA del sólido CAD y dentro
+        del bbox de la cara expandido por el margen (~1.5 voxel): el pasaje
+        del agujero (tornillo/buje) o la holgura junto a la cara queda
+        completo en vacío, no solo el forro de ~0.75 voxel de la banda fina
+        (que dejaba el interior diseñable y el optimizador lo rellenaba).
+
+        Vaciar aire exterior adyacente es inocuo: esa zona no es pieza; el
+        margen acota la holgura para no comerse el dominio de crecimiento.
+        Con reintento a doble margen por cara si el nominal queda vacío
+        (rejilla desplazada respecto a la cara).
+        """
+        out: set = set()
+        if (self.mesh_elements is None or self.mesh_nodes is None
+                or self.model_shape is None or not face_indices):
+            return out
+        try:
+            res = float(getattr(self, "_env_resolution", 0.0) or 0.0)
+            margin = 1.5 * res if res > 0 else self._env_band()
+        except Exception:  # noqa: BLE001 - defensivo
+            margin = self._env_band()
+        margin = max(float(margin), 1e-9)
+        try:
+            faces = self.model_shape.Faces()
+        except Exception:  # noqa: BLE001 - defensivo
+            return out
+        centroids = self._element_centroids()
+        for fi in face_indices:
+            fi = int(fi)
+            if fi < 0 or fi >= len(faces):
+                continue
+            for _m in (margin, 2.0 * margin):
+                got: set = set()
+                try:
+                    bb = faces[fi].BoundingBox()
+                    lo = (bb.xmin - _m, bb.ymin - _m, bb.zmin - _m)
+                    hi = (bb.xmax + _m, bb.ymax + _m, bb.zmax + _m)
+                except Exception:  # noqa: BLE001 - sin bbox cae a la banda
+                    got = self._band_elements_for_faces([fi], "outside")
+                    out |= got
+                    break
+                for i in range(centroids.shape[0]):
+                    if i in out or i in got:
+                        continue
+                    c = centroids[i]
+                    if not (lo[0] <= c[0] <= hi[0]
+                            and lo[1] <= c[1] <= hi[1]
+                            and lo[2] <= c[2] <= hi[2]):
+                        continue
+                    if not self._point_inside_shape(c):
+                        got.add(i)
+                if got:
+                    out |= got
+                    break
         return out
 
     def _bc_face_indices(self, conditions) -> List[int]:

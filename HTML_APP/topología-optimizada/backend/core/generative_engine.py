@@ -1577,9 +1577,50 @@ def run_generative_design(
                 # 1.0 es el default de DesignSpace (demasiado fino para una
                 # pieza real): sólo se honra si el usuario lo subió.
                 res = float(ds_res) if ds_res and float(ds_res) > 1.0 else None
+            orig_elements = engine.mesh_elements
             env = generate_design_space_mesh(
                 model_nodes, resolution=res, padding=design_space_padding)
             eff_res = float(env.target_node_sets["resolution"][0])
+            # ENV-VOLREF (fix inflado): el volfrac que pide el usuario es
+            # fraccion del volumen de la PIEZA original ("reducir volumen"),
+            # no de la caja envelope (V_env >> V_part: p. ej. bracket dentro
+            # de su bbox; 0.35*V_env ~= 1.0*V_part y el resultado "se infla").
+            # Se reescala a fraccion equivalente sobre el envelope total para
+            # que el material objetivo sea volfrac_usuario * V_part.
+            try:
+                from core.fea import _tet_volume_and_B as _tvb
+                _mn = np.asarray(model_nodes, dtype=float)
+                _me = np.asarray(orig_elements, dtype=int)
+                _v_part = 0.0
+                for _con in _me:
+                    _vv, _ = _tvb(_mn[_con])
+                    _v_part += float(_vv)
+                _en2 = np.asarray(env.nodes, dtype=float)
+                _ee2 = np.asarray(env.elements, dtype=int)
+                _v_env = 0.0
+                for _con in _ee2:
+                    _vv, _ = _tvb(_en2[_con])
+                    _v_env += float(_vv)
+                _vf_user = float(solve_kwargs.get("volume_fraction", 0.3))
+                if _v_part > 0.0 and _v_env > 0.0:
+                    _vf_eff = _vf_user * _v_part / _v_env
+                    # Clamp defensivo: el solver falla fail-loud si el
+                    # objetivo es menor que rho_min*V_activo.
+                    _vf_eff = float(min(max(_vf_eff, 1e-3), 1.0))
+                    solve_kwargs["volume_fraction"] = _vf_eff
+                    solve_kwargs["volfrac_mode"] = "total_volume"
+                    logger.info(
+                        "ENV-VOLREF: volfrac usuario=%.3f V_part=%.3f "
+                        "V_env=%.3f -> volfrac_efectivo=%.4f "
+                        "(modo total_volume sobre envelope).",
+                        _vf_user, _v_part, _v_env, _vf_eff)
+                else:
+                    _vf_user, _v_part, _v_env = _vf_user, 0.0, 0.0
+                    _vf_eff = float(solve_kwargs.get("volume_fraction", 0.3))
+            except Exception:  # noqa: BLE001 - sin reescala = comportamiento historico
+                _vf_user = float(solve_kwargs.get("volume_fraction", 0.3))
+                _v_part, _v_env = 0.0, 0.0
+                _vf_eff = _vf_user
             engine.mesh_nodes = env.nodes
             engine.mesh_elements = env.elements
             # Los triángulos de superficie del modelo NO pertenecen a esta malla
@@ -1640,6 +1681,11 @@ def run_generative_design(
                 "filter_requested": req_filter,
                 "void_skin_elements": int(_skin.size),
                 "void_skin_bc_excluded": int(_bc_element_mask.sum()),
+                "volfrac_requested": float(_vf_user),
+                "volfrac_effective": float(solve_kwargs.get("volume_fraction", 0.3)),
+                "volfrac_reference": "part_volume",
+                "part_volume": float(_v_part),
+                "envelope_volume": float(_v_env),
             }
         elif design_space != "part":
             raise ValueError(
@@ -1659,7 +1705,31 @@ def run_generative_design(
              and study.scenario == "A" else
              int(np.asarray(engine.mesh_elements).shape[0])),
             threshold)
-        result = engine.solve_simp(conditions, **solve_kwargs)
+        try:
+            result = engine.solve_simp(conditions, **solve_kwargs)
+        except Exception as _exc:  # noqa: BLE001 - solo revierte el reescale
+            from core.topopt import TopOptError as _TopOptError
+            _rescaled = (env_meta is not None
+                         and env_meta.get("volfrac_reference") == "part_volume"
+                         and isinstance(_exc, _TopOptError)
+                         and "Volume fraction infeasible" in str(_exc))
+            if not _rescaled:
+                raise
+            # ENV-VOLREF-FALLBACK: el objetivo reescalado es infactible porque
+            # lo preservado (halo/skin-guard) ya supera volfrac*V_pieza (la
+            # conservación de BC manda, AGENTS.md §4). Se reintenta UNA vez con
+            # el comportamiento histórico (volfrac sobre el envelope) en vez de
+            # fallar el job; queda declarado en el meta para la UI.
+            logger.warning(
+                "ENV-VOLREF infactible (%s); reintentando con volfrac "
+                "histórico %.3f sobre el envelope.", _exc, float(_vf_user))
+            solve_kwargs["volume_fraction"] = float(_vf_user)
+            solve_kwargs["volfrac_mode"] = volfrac_mode
+            env_meta["volfrac_effective"] = float(_vf_user)
+            env_meta["volfrac_reference"] = "envelope_total_fallback"
+            env_meta["volfrac_rescale_reverted"] = True
+            env_meta["volfrac_revert_reason"] = str(_exc)[:300]
+            result = engine.solve_simp(conditions, **solve_kwargs)
         logger.info("GEN solve done")
         if env_meta is not None:
             result["_design_space"] = env_meta

@@ -284,7 +284,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({
                 Geometría limpia (bordes nítidos)
               </span>
               <label className="flex items-center justify-between pl-2">
-                <span className="text-text-secondary" title="Generativa: optimizar la pieza (solo vacía) o una caja de diseño (crece estructura orgánica)">Design space</span>
+                <span className="text-text-secondary" title="Generativa: optimizar la pieza (solo vacía) o una caja de diseño (crece estructura orgánica). En Envelope el % de volumen sigue siendo de la PIEZA: el motor lo reescala al envelope y muestra el efectivo en el aviso.">Design space</span>
                 <select
                   value={simpParams.designSpace}
                   disabled={optimizationState.isRunning}

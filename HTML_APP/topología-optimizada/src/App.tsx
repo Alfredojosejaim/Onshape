@@ -889,6 +889,30 @@ export default function App() {
       return bad.length ? `Mapeo: ${bad.join('; ')}. La zona afectada NO es la seleccionada.` : null;
     };
 
+    // ENV-VOLREF-UI (reversible): el backend reescala el volfrac en Envelope
+    // a fracción de la PIEZA (no de la caja). Se muestra junto al aviso para
+    // que el % efectivo no quede solo en el log. Para volver atrás: borrar
+    // helper + sus 3 usos.
+    const volRefText = (res: JsonValue | null): string | null => {
+      const r = isRecord(res) ? res : null;
+      const d = r?.['_design_space'];
+      if (!isRecord(d)) return null;
+      const req = isNumber(d.volfrac_requested) ? d.volfrac_requested : null;
+      const eff = isNumber(d.volfrac_effective) ? d.volfrac_effective : null;
+      const vp = isNumber(d.part_volume) ? d.part_volume : null;
+      const ve = isNumber(d.envelope_volume) ? d.envelope_volume : null;
+      if (req === null || eff === null) return null;
+      const vols = vp !== null && ve !== null
+        ? ` (V_pieza=${vp.toFixed(1)} V_envelope=${ve.toFixed(1)} mm³).`
+        : '.';
+      if (d.volfrac_rescale_reverted === true) {
+        return `Envelope: el ${(req * 100).toFixed(0)}% de la pieza no dejaba sitio `
+          + `para las zonas preservadas y se usó ${(eff * 100).toFixed(1)}% del envelope${vols}`;
+      }
+      return `Envelope: objetivo ${(req * 100).toFixed(0)}% de la pieza → `
+        + `${(eff * 100).toFixed(1)}% del envelope${vols}`;
+    };
+
     setOptimizationState((prev) => {
       const st = stateRef.current;
       // UI-CLEAN (reversible): guard sin modelo.
@@ -953,6 +977,9 @@ export default function App() {
               const mp0 = mapText(result);
 
               if (mp0) parts0.push(mp0);
+              const vr0 = volRefText(result);
+
+              if (vr0) parts0.push(vr0);
 
               if (parts0.length) setOptNotice({ text: `${parts0.join(' ')} Se muestra el campo igual, pero revisa compliance/volumen.` });
             }
@@ -999,6 +1026,9 @@ export default function App() {
             const mp = mapText(result);
 
             if (mp) parts.push(mp);
+            const vr = volRefText(result);
+
+            if (vr) parts.push(vr);
             setOptNotice({ text: parts.join(' ') });
           } else {
             const parts = ['Generativa calculada, pero sin geometría registrable.'];

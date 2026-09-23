@@ -2,11 +2,14 @@
 
 **Objetivo:** App desktop de optimización topológica y diseño generativo (motor Python + GUI HTML/JS/CSS, backend FEM/CAE propio).
 
-**Última actualización:** 2026-09-18
+**Última actualización:** 2026-09-23
 
 ## Qué se hizo
 - Estructura del cerebro agéntico instalada en `cerebro_agentico/` (copia byte-idéntica del origen en `Downloads/cerebro_agentico`), verificada por hash SHA256.
 - Repo local verificado al día con `origin/master` en commit `875d200`.
+- Cerebro verificado funcionalmente (6/6 capas, roundtrip inbox OK, `verdad/` intacta) — 2026-09-23.
+- Obsidian 1.13.7 instalado y `cerebro_agentico/` abierto como vault (UI por usuario ignorada en `.gitignore`).
+- Vault portable GitHub: plugins verificados + `templates.json` + guía `wiki/obsidian-en-cualquier-pc.md`.
 
 ## Qué falta
 - Registrar en `verdad/` solo lo que el usuario confirme explícitamente (nada aún).

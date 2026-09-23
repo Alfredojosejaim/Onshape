@@ -9,3 +9,6 @@ coverage/
 backend/uploads/
 # JOB-STATUS: snapshot de jobs publicado en runtime (backend/job_status.py).
 backend/job_status_*.json
+# Obsidian: estado de UI por usuario del vault (cerebro_agentico/ es el vault).
+cerebro_agentico/.obsidian/workspace*
+cerebro_agentico/.obsidian/hotkeys.json

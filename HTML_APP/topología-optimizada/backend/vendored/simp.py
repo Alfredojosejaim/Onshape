@@ -47,6 +47,9 @@ class SIMPSolver:
     ):
         if not 0.0 < volfrac <= 1.0:
             raise TopOptError("volfrac must be in (0, 1]")
+        # Estado de init primero: la bandera debe existir antes de cualquier
+        # manejo de self.x (la usa _finalize_active vía set_preserved/void).
+        self._x_from_user = element_densities0 is not None
         self.nodes = np.asarray(nodes, dtype=float)
         self.elements = np.asarray(elements, dtype=int)
         self.num_elements = self.elements.shape[0]
@@ -59,7 +62,6 @@ class SIMPSolver:
             raise TopOptError(
                 f"volfrac_mode={volfrac_mode!r} no soportado "
                 f"(usar 'active_domain' o 'total_volume').")
-        self._x_from_user = element_densities0 is not None
         self.penalization = float(penalization)
         self.filter_radius = float(filter_radius)
         self.rho_min = float(rho_min)

@@ -1546,17 +1546,6 @@ class Api:
                 young_modulus_mm(mat.young_modulus), mat.poisson_ratio,
                 density_mm(mat.density),
                 penalization=float(simp_kwargs.get("penalization", 3.0)))
-        _vfm = str(simp_kwargs.get("volfrac_mode", "active_domain") or
-                   "active_domain").strip().lower()
-        solver = VendoredSIMP(
-            nodes=nodes, elements=elements,
-            young_modulus=young_modulus_mm(mat.young_modulus),
-            poisson_ratio=mat.poisson_ratio,
-            volfrac=float(simp_kwargs.get("volume_fraction", 0.3)),
-            penalization=float(simp_kwargs.get("penalization", 3.0)),
-            filter_radius=float(simp_kwargs.get("filter_radius", 1.5)),
-            fea_solver=fea_solver,
-            volfrac_mode=_vfm)
         # MULTICARGA: casos separados (Kratos reconstruye su RHS por caso).
         cases, weights = c._load_case_vectors(
             np.asarray(nodes), int(np.asarray(nodes).shape[0] * 3))
@@ -1582,24 +1571,37 @@ class Api:
                 raise RuntimeError(f"Carga térmica inválida: {exc}")
             force = np.asarray(force, dtype=float) + _fth
             cases = [np.asarray(cc, dtype=float) + _fth for cc in cases]
-        if len(cases) > 1:
-            solver.set_loads(cases, weights)
-        else:
-            solver.set_load(force)
-        solver.set_fixed_dofs(fixed)
-        if halo_radius is not None and (c._load_nodes or c._bot_nodes):
-            solver.protect_elements_near_nodes(
-                list(set(c._load_nodes + c._bot_nodes)),
-                radius=float(halo_radius) if halo_radius > 0 else None)
         try:
             if simp_kwargs.get("symmetry_planes") is not None:
                 from desktop.pipeline.controller import PipelineError
                 raise PipelineError(
                     "symmetry_planes no soportado en el path vendored "
                     "(congelado, Fase 4.5b): usar el motor local (core).")
-            # PATH-VENDORED-VOLFRACEMODE (2026-09-23): el solver vendored
-            # espeja volfrac_mode del núcleo (active_domain/total_volume);
-            # el modo viaja en el constructor, sin rechazo.
+            # CONTRATO PATH-VENDORED (2026-09-23, explícito): el path vendored
+            # acepta volfrac_mode active_domain|total_volume (espejo del núcleo
+            # en VendoredSIMP); symmetry_planes/gcmma se rechazan arriba. Toda
+            # normalización y construcción van dentro del try para que cualquier
+            # parámetro inválido surja como PipelineError, no crudo.
+            _vfm = str(simp_kwargs.get("volfrac_mode", "active_domain") or
+                       "active_domain").strip().lower()
+            solver = VendoredSIMP(
+                nodes=nodes, elements=elements,
+                young_modulus=young_modulus_mm(mat.young_modulus),
+                poisson_ratio=mat.poisson_ratio,
+                volfrac=float(simp_kwargs.get("volume_fraction", 0.3)),
+                penalization=float(simp_kwargs.get("penalization", 3.0)),
+                filter_radius=float(simp_kwargs.get("filter_radius", 1.5)),
+                fea_solver=fea_solver,
+                volfrac_mode=_vfm)
+            if len(cases) > 1:
+                solver.set_loads(cases, weights)
+            else:
+                solver.set_load(force)
+            solver.set_fixed_dofs(fixed)
+            if halo_radius is not None and (c._load_nodes or c._bot_nodes):
+                solver.protect_elements_near_nodes(
+                    list(set(c._load_nodes + c._bot_nodes)),
+                    radius=float(halo_radius) if halo_radius > 0 else None)
             result = solver.optimize(
                 max_iterations=int(simp_kwargs.get("max_iterations", 30)),
                 tolerance=float(simp_kwargs.get("tolerance", 1e-3)),

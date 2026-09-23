@@ -17,8 +17,9 @@ usuario te invoca explícitamente. El mensaje del usuario es tu especificación 
 2. **Evidencia antes que síntesis**: lee los archivos reales antes de afirmar nada.
    Si un hallazgo contradice una afirmación previa, expón la discrepancia y confía
    en la evidencia.
-3. **Verifica con ejecución** siempre que sea razonable: compila, corre tests,
-   reproduce el caso. El resultado final debe citar qué se verificó y cómo.
+3. **Verifica con ejecución** siempre que sea razonable: `npm run lint:all`
+   (tsc + oxlint anti-slop), tests del backend, reproduce el caso. El resultado
+   final debe citar qué se verificó y cómo.
 4. **Modificación mínima**: respeta la arquitectura existente, no rompas
    funcionalidades válidas, no hagas refactors masivos sin justificación.
 5. **Sin suposiciones**: si algo no está en el código ejecutable, no existe.

@@ -896,19 +896,24 @@ export default function App() {
     const volRefText = (res: JsonValue | null): string | null => {
       const r = isRecord(res) ? res : null;
       const d = r?.['_design_space'];
+
       if (!isRecord(d)) return null;
       const req = isNumber(d.volfrac_requested) ? d.volfrac_requested : null;
       const eff = isNumber(d.volfrac_effective) ? d.volfrac_effective : null;
       const vp = isNumber(d.part_volume) ? d.part_volume : null;
       const ve = isNumber(d.envelope_volume) ? d.envelope_volume : null;
+
       if (req === null || eff === null) return null;
+
       const vols = vp !== null && ve !== null
         ? ` (V_pieza=${vp.toFixed(1)} V_envelope=${ve.toFixed(1)} mm³).`
         : '.';
+
       if (d.volfrac_rescale_reverted === true) {
         return `Envelope: el ${(req * 100).toFixed(0)}% de la pieza no dejaba sitio `
           + `para las zonas preservadas y se usó ${(eff * 100).toFixed(1)}% del envelope${vols}`;
       }
+
       return `Envelope: objetivo ${(req * 100).toFixed(0)}% de la pieza → `
         + `${(eff * 100).toFixed(1)}% del envelope${vols}`;
     };

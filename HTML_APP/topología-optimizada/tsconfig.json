@@ -24,5 +24,11 @@
     "noEmit": true,
     "strict": true,
     "noUnusedLocals": true
-  }
+  },
+  "exclude": [
+    "node_modules",
+    "dist",
+    "tools",
+    "oxlint.config.ts"
+  ]
 }

@@ -455,31 +455,40 @@ class KratosAdapter:
     
     def configure_material_from_core(self, model_part: Any, material: Any) -> None:
         """Configure material properties from Core's Material object to Kratos.
-        
+
         Args:
             model_part: Kratos ModelPart with elements
-            material: Material object from core.materials
+            material: Material object from core.materials (SI: Pa, kg/m^3)
         """
         try:
+            from core.materials import density_mm, young_modulus_mm
             logger.info(f"Configuring material: {material.name}")
-            
+
             # Create Kratos Properties object
             material_properties = Kratos.Properties(1)
-            
-            # Map Core material properties to Kratos properties
-            # Core uses SI units (Pa), Kratos expects consistent units
-            material_properties.SetValue(Kratos.YOUNG_MODULUS, float(material.young_modulus))
+
+            # FASE-3 (2026-09-23, reversible): UNITS-MM. La malla importada
+            # esta en mm (OCCT/Gmsh) y Kratos es unitariamente consistente:
+            # con nodos en mm, E debe ir en N/mm^2 y la densidad en
+            # tonne/mm^3. Pasar SI crudo inflaba la rigidez x1e6 (mismo bug
+            # que UNITS-MM en el motor local). Para volver atras: usar los
+            # atributos crudos del material.
+            _E = float(young_modulus_mm(material.young_modulus))
+            _RHO = float(density_mm(material.density))
+            material_properties.SetValue(Kratos.YOUNG_MODULUS, _E)
             material_properties.SetValue(Kratos.POISSON_RATIO, float(material.poisson_ratio))
-            material_properties.SetValue(Kratos.DENSITY, float(material.density))
-            
+            material_properties.SetValue(Kratos.DENSITY, _RHO)
+
             # Add constitutive law (required for structural elements)
             from KratosMultiphysics import StructuralMechanicsApplication as SMA
             constitutive_law = SMA.LinearElastic3DLaw()
             material_properties.SetValue(Kratos.CONSTITUTIVE_LAW, constitutive_law)
-            
+
             # Add yield strength as a custom property (not standard in Kratos but useful)
             try:
-                material_properties.SetValue(Kratos.YIELD_STRESS, float(material.yield_strength))
+                material_properties.SetValue(
+                    Kratos.YIELD_STRESS,
+                    float(young_modulus_mm(material.yield_strength)))
             except AttributeError:
                 # YIELD_STRESS might not be available in all Kratos versions
                 logger.warning("YIELD_STRESS not available in this Kratos version")
@@ -488,7 +497,8 @@ class KratosAdapter:
             for element in model_part.Elements:
                 element.Properties = material_properties
             
-            logger.info(f"Material configured: E={material.young_modulus:.2e} Pa, ν={material.poisson_ratio}")
+            logger.info(f"Material configured: E={_E:.2e} N/mm^2 (malla mm), "
+                          f"ρ={_RHO:.2e} tonne/mm^3, ν={material.poisson_ratio}")
             
         except Exception as e:
             logger.error(f"Failed to configure material from Core: {e}")
@@ -497,12 +507,16 @@ class KratosAdapter:
     def configure_material_manually(self, model_part: Any, young_modulus: float, 
                                     poisson_ratio: float, density: float = 7850.0) -> None:
         """Configure material properties manually.
-        
+
         Args:
             model_part: Kratos ModelPart with elements
             young_modulus: Young's modulus in Pa
             poisson_ratio: Poisson's ratio (dimensionless)
             density: Material density in kg/m³
+
+        NOTA (FASE-3): estos valores van CRUDOS a Kratos. Si la malla esta
+        en mm, convertir antes con young_modulus_mm/density_mm (como hace
+        configure_material_from_core); si no, la rigidez queda x1e6.
         """
         try:
             logger.info(f"Configuring material manually: E={young_modulus:.2e} Pa, ν={poisson_ratio}")

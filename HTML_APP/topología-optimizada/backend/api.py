@@ -1594,6 +1594,16 @@ class Api:
                 raise PipelineError(
                     "symmetry_planes no soportado en el path vendored "
                     "(congelado, Fase 4.5b): usar el motor local (core).")
+            # FASE-2 (2026-09-23): el path vendored solo conoce semántica
+            # active_domain. Un volfrac_mode=total_volume se ignoraría en
+            # silencio (divergencia vs UI generativa): rechazar explícito.
+            _vfm = str(simp_kwargs.get("volfrac_mode", "active_domain") or
+                       "active_domain").strip().lower()
+            if _vfm not in ("active_domain",):
+                from desktop.pipeline.controller import PipelineError
+                raise PipelineError(
+                    f"volfrac_mode={_vfm!r} no soportado en el path vendored "
+                    "(congelado): usar el motor local (core/runOptimization).")
             result = solver.optimize(
                 max_iterations=int(simp_kwargs.get("max_iterations", 30)),
                 tolerance=float(simp_kwargs.get("tolerance", 1e-3)),

@@ -79,6 +79,33 @@ def test_solver_trabaja_en_mm_no_en_pa():
     assert c_mm > 1.0
 
 
+def test_kratos_recibe_material_en_mm():
+    """FASE-3: configure_material_from_core convierte SI->mm (malla en mm).
+
+    Kratos es unitariamente consistente: con nodos en mm, E va en N/mm^2 y
+    rho en tonne/mm^3. Pasar SI crudo dejaba la rigidez x1e6 (mismo bug que
+    el motor local). Requiere Kratos instalado; si no, se salta.
+    """
+    Kratos = pytest.importorskip("KratosMultiphysics")
+    from KratosMultiphysics import StructuralMechanicsApplication as SMA
+    from core.kratos_adapter import KratosAdapter
+
+    steel = STANDARD_MATERIALS["steel"]
+    adapter = KratosAdapter()
+    mp = adapter.create_model_part("UnitsMM")
+    adapter.add_nodal_variables(mp)
+    for i, p in enumerate([(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)]):
+        mp.CreateNewNode(i + 1, *p)
+    # un Tet4 para que configure_material_from_core tenga donde colgar props
+    tmp = Kratos.Properties(999)
+    tmp.SetValue(Kratos.CONSTITUTIVE_LAW, SMA.LinearElastic3DLaw())
+    mp.CreateNewElement("SmallDisplacementElement3D4N", 1, [1, 2, 3, 4], tmp)
+    adapter.configure_material_from_core(mp, steel)
+    got = mp.Elements[1].Properties
+    assert got[Kratos.YOUNG_MODULUS] == pytest.approx(210e3)
+    assert got[Kratos.DENSITY] == pytest.approx(7.85e-9)
+
+
 def test_motor_generativo_convierte_el_material():
     """GenerativeDesignEngine pasa el E del material ya en N/mm^2 al solver."""
     from core.generative_engine import GenerativeDesignEngine

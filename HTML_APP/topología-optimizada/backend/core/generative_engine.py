@@ -1101,6 +1101,43 @@ class GenerativeDesignEngine:
         if frac >= 0.9 and unsupported is not None:
             unsupported.append("load_on_fixed_dofs")
 
+    @staticmethod
+    def _load_on_preserved_fraction(force, preserved_elements, elements) -> float:
+        """Fracción del módulo de fuerza sobre nodos de elementos preservados."""
+        if force is None or preserved_elements is None or elements is None:
+            return 0.0
+        f = np.abs(np.asarray(force, dtype=float).ravel())
+        total = float(f.sum())
+        if total <= 0.0:
+            return 0.0
+        pel = np.asarray(preserved_elements, dtype=np.int64).ravel()
+        els = np.asarray(elements, dtype=np.int64)
+        pel = pel[(pel >= 0) & (pel < els.shape[0])]
+        if pel.size == 0:
+            return 0.0
+        pnodes = set(np.unique(els[pel].ravel()).tolist())
+        ndof = f.size // 3
+        hit = sum(float(f[n * 3:n * 3 + 3].sum())
+                  for n in pnodes if 0 <= n < ndof)
+        return hit / total
+
+    def _check_load_on_preserved(self, force, preserved_elements,
+                                 unsupported=None) -> None:
+        """LOAD-ON-PRESERVED (FASE-4): carga dentro de región preservada.
+
+        Caso distinto de BC-SHORTCUT y SIN error duro a propósito: que la
+        carga caiga sobre material preservado es el caso NORMAL (el halo
+        auto-preserva alrededor de cargas/apoyos; un perno preservado con
+        carga es un setup legítimo). No hay colapso a vacío (u != 0), así
+        que un ValueError sería un falso positivo que bloquearía corridas
+        sanas. Solo se marca como degradada (>= 90 %) para que la UI lo
+        muestre en "Condiciones degradadas".
+        """
+        frac = self._load_on_preserved_fraction(
+            force, preserved_elements, self.mesh_elements)
+        if frac >= 0.9 and unsupported is not None:
+            unsupported.append("load_on_preserved_region")
+
     def _map_conditions_to_problem(self, conditions, raise_on_unmapped_face=True):
         """Translate reusable conditions into a quasi-static FE problem.
 
@@ -1226,6 +1263,9 @@ class GenerativeDesignEngine:
 
         # BC-SHORTCUT: carga sobre los mismos nodos que el apoyo -> colapso.
         self._check_load_on_fixed(forces, fixed_dofs, unsupported)
+        # FASE-4: carga dentro de región preservada -> solo degradada (ver
+        # _check_load_on_preserved: sin error duro a propósito).
+        self._check_load_on_preserved(forces, preserved, unsupported)
 
         return forces, fixed_dofs, preserved, void, sorted(set(unsupported))
 
@@ -1350,6 +1390,8 @@ class GenerativeDesignEngine:
         _force_sum = (np.sum([np.abs(np.asarray(c, dtype=float)) for c in cases], axis=0)
                       if cases else np.asarray(forces, dtype=float))
         self._check_load_on_fixed(_force_sum, fixed_dofs, unsupported)
+        # FASE-4: repite el chequeo preservado tras el merge legacy.
+        self._check_load_on_preserved(_force_sum, preserved, unsupported)
         # Fase 6d: acoplamiento térmico one-way (misma actuación simultánea:
         # el vector térmico se suma a cada caso mecánico).
         if kwargs.get("thermal_temperatures") is not None:

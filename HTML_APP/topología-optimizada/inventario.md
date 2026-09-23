@@ -48,16 +48,16 @@ Carga / Fijación / Elasticidad / Región protegida / Obstrucción
 |---|---|---|
 | Motor SIMP + OC (optimality criteria) | ✅ | `topopt.py: _oc_update()`, `optimize()` |
 | Objetivo: minimizar compliance | ✅ | `topo_problem.py: ObjectiveType.MINIMIZE_COMPLIANCE` |
-| Objetivo: minimizar volumen sujeto a compliance | ⚪ | Enum existe (`MINIMIZE_VOLUME_SUBJECT_TO_COMPLIANCE`), pero el solver **rechaza explícitamente** cualquier objetivo ≠ `MINIMIZE_COMPLIANCE` (línea 362-365 de `topo_problem.py`) |
-| **Optimizador ESO / Level-Set** | 🔲 | `optimization_studies.py: OptimizerType` declara `ESO` y `LEVEL_SET`, pero no existe implementación en `topopt.py` — es un enum sin motor detrás |
+| Objetivo: minimizar volumen sujeto a compliance | ✅ | `topopt.py: optimize(objective="min_volume", compliance_limit=)` (bisección externa, solo oc/mma/gcmma); `topo_problem.py` lo propaga (`objective/compliance_limit`, FASE-1 2026-09-23); UI en `AdvancedOptPanel.tsx` |
+| **Optimizador ESO / Level-Set** | ✅ | Implementados en `topopt.py` (ESO hard-kill + criterio stress, Level-Set Hamilton-Jacobi) y expuestos en `AdvancedOptPanel.tsx` (solo rama estructural/generativa core; el path vendored los rechaza explícito) |
 | **Múltiples casos de carga (multicarga ponderada)** | ✅ — *corrección al chat* | `topopt.py: set_loads()` implementa `c(ρ)=Σ wᵢ·uᵢᵀKuᵢ`; agrupación real por `load_case_id` en `controller.py: _load_case_vectors()`; llega hasta `api.py` y `generative_engine.py`. **Esto ya está operativo de punta a punta**, no es una prioridad futura como planteaba el chat — lo que falta confirmar es si el panel de condiciones ya permite asignar `load_case_id` desde la UI |
 | Fracción de volumen, iteraciones, penalización, radio de filtro, tolerancia | ✅ | `TopOptParameters` |
 | `volfrac_mode` (dominio activo vs. volumen total) | ⚪ (P3 de tu lista) | `topo_problem.py: VolfracMode` — modelo existe, semántica de infeasibility explícita pendiente según tus notas |
 | Regiones preservadas / vacías | ✅ | `topopt.py: set_preserved_elements()`, `set_void_elements()` |
 | Halo de protección alrededor de nodos de carga | ⚪ (bug P4) | `protect_elements_near_nodes()` — implementado pero con el bug conocido (usa `filter_radius` en vez de tamaño de elemento real) |
-| MMA / GCMMA (Kratos OptimizationApplication) | 🔲 | Instalado según tus notas, pero **no hay ninguna llamada a ese módulo** en `topopt.py` ni `kratos_adapter.py` — sigue siendo trabajo de integración pendiente |
-| Restricción de tensión máxima (von Mises) | 🔲 | No hay código; el propio repo lo documenta como extensión avanzada no soportada |
-| Manufacturing constraints (overhang, espesor mínimo, etc.) | 🔲 | No existe en el core |
+| MMA / GCMMA (propios, numpy) | ✅ | `topopt.py: _mma_update/_gcmma_update` (Svanberg; Kratos 10.4 no expone optimizador standalone); expuestos en UI; el path vendored rechaza gcmma explícito (`test_gcmma.py`) |
+| Restricción de tensión máxima (von Mises) | 🔶 | Sin restricción local implementada (el schema la rechaza explícito por decisión, FASE-1); ESO-criterio `stress` es ranking evolutivo, no restricción; `factor_of_safety` existe como postproceso (`cae_studies.py:504`, tarjeta `SafetyCard.tsx`) |
+| Manufacturing constraints (overhang, espesor mínimo, simetría) | ✅ | Penalización overhang activa + `overhang_report` (diagnóstico), espesor mínimo, planos de simetría — todo en `AdvancedOptPanel.tsx` + core |
 
 ### 1.3 Optimización generativa
 
@@ -104,8 +104,8 @@ Hallazgo importante que corrige al chat de ChatGPT: **tanto Térmico como Modal 
 | Mallado volumétrico Tet4 (Gmsh + OCCT) | ✅ | `meshing.py: GmshTet4Mesher` |
 | Mallador provisional (voxelización + Kuhn) | ✅ | `meshing.py: ProvisionalTet4Mesher` — usado como fallback/test, según tus notas causa el bug P2 (face_id no propagado) |
 | Mallado adaptativo | ✅ | `meshing.py: GmshTet4Mesher.generate_adaptive_mesh()` — refinamiento por campo escalar |
-| Hex8 | — | Confirmado removido, no queda clase en `meshing.py` (coincide con tus notas) |
-| Tet10 | 🔲 | No hay clase — roadmap-disabled, coincide con tus notas |
+| Hex8 | — | Soporte honesto en `fea.py:798` (`solve_fea_hex8`, sin dependencias nuevas) |
+| Tet10 | ✅ | `fea.py: solve_fea_tet10` por subdivisión en 8 Tet4 + interpolación (documentado, sin silencios) |
 | Correspondencia de caras OCCT↔Gmsh | ⚪ (bug P1) | `face_correspondence.py: FaceSignature` — existe el mecanismo de matching geométrico, es justamente el que hay que terminar de conectar en `GmshTet4Mesher._extract_all_surface_elements()` |
 | Mapeo de condiciones de contorno a caras de malla | ✅ | `boundary.py: BoundaryConditionMapper`, `MappedFace` |
 | Extracción de superficie (Marching Tetrahedra) | ✅ | `cad_reconstruction.py: MarchingTetrahedraExtractor` |
@@ -115,9 +115,9 @@ Hallazgo importante que corrige al chat de ChatGPT: **tanto Térmico como Modal 
 | Ajuste B-Rep (fitting real, OCCT) | ✅ | `cad_reconstruction.py: OCPBRepFitter` |
 | Ajuste B-Rep "dummy" (testing) | ✅ (por diseño) | `cad_reconstruction.py: DummyBRepFitter` |
 | Pipeline completo malla→B-Rep | ✅ | `cad_reconstruction.py: ReconstructionPipeline` |
-| Remallado (remesh) | 🔲 | No existe como herramienta independiente |
-| Decimación / reducción de malla | 🔲 | No existe |
-| Reparación avanzada (non-manifold, self-intersections, shells abiertos) | 🔲 | `MeshHoleFiller` cubre agujeros; el resto no está |
+| Remallado (remesh) | ✅ | `uniform_remesh` en `cad_reconstruction.py:906` (Fase 5a, opt-in) |
+| Decimación / reducción de malla | ✅ | Cubierta en el pipeline (Fase 5a + `brep_decimated_from` en metadata) |
+| Reparación avanzada (non-manifold, self-intersections, shells abiertos) | 🔶 | `MeshHoleFiller` + cierre forzado (`CIERRE-FORZADO`) + `DOMAIN-CUT` cubren agujeros/cortes; non-manifold/self-intersections genéricos siguen sin cobertura |
 
 ---
 
@@ -125,12 +125,13 @@ Hallazgo importante que corrige al chat de ChatGPT: **tanto Térmico como Modal 
 
 | Motor | Estado real | Nota |
 |---|---|---|
-| SIMP (OC) | ✅ Operativo | Único optimizador con motor real; ESO/Level-Set son enum sin implementación |
-| Multicarga ponderada | ✅ Operativo | Contradice al chat — no es un "futuro", ya corre de punta a punta |
-| MMA/GCMMA (Kratos) | 🔲 No conectado | Instalado en el entorno, cero llamadas desde el core |
-| FEA estructural (Tet4/Kratos) | ✅ Operativo | Con UI |
-| FEA térmico | 🔶 Backend listo, sin UI | — |
-| FEA modal | 🔶 Backend listo, sin UI | Corrige al chat: no es "pendiente", es "sin exponer" |
+| SIMP (OC) | ✅ Operativo | Piso de bisección relativo a máquina (`OC-BISECTION-FLOOR`); espejado en vendored (FASE-2) |
+| ESO / Level-Set | ✅ Operativos | Solo path core (vendored los rechaza explícito) |
+| Multicarga ponderada | ✅ Operativo | De punta a punta + `load_case_id` asignable en UI (`ToolParamsPanel.tsx`) |
+| MMA/GCMMA (propios) | ✅ Operativos | Implementación numpy propia (Kratos no expone optimizador standalone) |
+| FEA estructural (Tet4/Kratos) | ✅ Operativo | Con UI; Kratos con material en mm (FASE-3 2026-09-23) |
+| FEA térmico | 🔶 Backend listo, UI en panel V2 | `V2Panel.tsx` (oculto: `V2_ENABLED=false`); acoplado térmico one-way expuesto en panel Avanzado |
+| FEA modal | 🔶 Backend listo, UI en panel V2 | Igual que térmico; animación de modos como postproceso (`cae_studies.py`) |
 | Mallado Gmsh Tet4 + adaptativo | ✅ Operativo | — |
 | Selección geométrica (`NodeSelectionEngine`) | ✅ Operativo | 7 tipos de región + composición booleana |
 | Reconstrucción B-Rep | ✅ Operativo | Con fallback dummy para tests |
@@ -138,8 +139,10 @@ Hallazgo importante que corrige al chat de ChatGPT: **tanto Térmico como Modal 
 
 ---
 
-## 5. Lo que esto cambia respecto a la lista de prioridades del chat
+## 5. Actualización 2026-09-23 (FASE-5.1): lo que cambió desde la auditoría
 
-- **"Prioridad 2 — múltiples casos de carga"**: no es prioridad futura, ya está implementada y conectada. La prioridad real ahí sería *exponerla en la UI* (definir `load_case_id` desde el panel de condiciones), no construir el motor.
-- **"Prioridad 6 — modal real"**: no es "integrar el eigen-solver", el eigen-solver ya está. La prioridad real es construir el panel/ribbon para Térmico y Modal — ambos están al mismo nivel de madurez backend, cero nivel de UI.
-- El resto de las prioridades del chat (fabricación, MMA, reconstrucción, acoplamiento térmico-estructural, ESO/Level-Set) sí están confirmadas como no implementadas — ahí la lectura del chat es correcta.
+- **Multicarga**: `load_case_id` ya asignable desde la UI (`ToolParamsPanel.tsx`) — prioridad cerrada.
+- **Térmico/Modal**: backend listo + panel V2 funcional pero oculto (`V2_ENABLED=false`); falta decidir si se exponen en el flujo principal.
+- **Fabricación, MMA/GCMMA, ESO/Level-Set, Tet10, remesh, FoS, comparación**: todos implementados y (salvo V2) expuestos en UI — la lectura vieja del chat quedó obsoleta.
+- **Cierres 2026-09-23 (plan vigente `plan.md`)**: schema `topo_problem` acepta `TOTAL_VOLUME` + propaga objetivo (FASE-1); vendored espeja piso OC + rechaza `volfrac_mode` explícito (FASE-2); Kratos convierte material a mm (FASE-3); guard carga-en-preservada como degradada sin error duro (FASE-4).
+- **Pendiente real restante**: restricción local de tensión (von Mises), remallado adaptativo por campo fuera de Gmsh, exponer Térmico/Modal en UI principal, reparación non-manifold genérica.

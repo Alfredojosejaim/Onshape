@@ -16,9 +16,11 @@ Fase 1 de integración del esquema externo ``topopt_schema``:
 
 Correspondencias ya decididas en el proyecto (P3/P4):
 
-* ``VolfracMode.ACTIVE_DOMAIN`` == semántica actual del solver
+* ``VolfracMode.ACTIVE_DOMAIN`` == semántica histórica del solver
   (``V_active = V_total - V_preserved - V_void``, traceback.md PROBLEMA 3).
-  ``TOTAL_VOLUME`` se declara en el esquema pero el solver no lo soporta.
+  ``TOTAL_VOLUME`` == fracción del volumen TOTAL de la malla (lo que el
+  usuario espera al marcar un %); soportado por ``SIMPSolver``
+  (``volfrac_mode``, reversible VOL-PRESERVE) y aceptado por este adaptador.
 * ``halo_radius_source="mesh_element_size"`` == P4 ya resuelto: el halo se
   deriva del tamaño real de elemento de malla, nunca de ``filter_radius``.
   ``halo_radius=None`` significa "auto desde la malla" (camino preferido),
@@ -141,13 +143,14 @@ class ObstacleRegion:
 class VolfracMode(Enum):
     """Qué volumen es la base del 100% (decisión P3).
 
-    - ``ACTIVE_DOMAIN`` (único implementado por el SIMPSolver): el
-      ``target_fraction`` se mide sobre el volumen total de la malla.
-      Los elementos KEEP_IN/FROZEN_FACE (fijos a 1.0) cuentan dentro
-      del objetivo; si ellos solos ya lo exceden, el problema es
-      infactible y ``problem_to_solver_inputs`` lo rechaza explícitamente.
-    - ``TOTAL_VOLUME``: reservado (incluiría vacíos/fuera de dominio);
-      hoy se rechaza explícitamente, sin fallback silencioso.
+    - ``ACTIVE_DOMAIN`` (semántica histórica): el ``target_fraction`` se
+      aplica al subdominio activo (total menos KEEP_IN/FROZEN_FACE/KEEP_OUT).
+      Los elementos fijos a 1.0 se suman al objetivo; si ellos solos ya lo
+      exceden, el problema es infactible y ``problem_to_solver_inputs`` lo
+      rechaza explícitamente.
+    - ``TOTAL_VOLUME`` (default de la UI generativa): el ``target_fraction``
+      se mide sobre el volumen TOTAL de la malla, descontando lo preservado
+      (``SIMPSolver`` con ``volfrac_mode="total_volume"``).
     """
     TOTAL_VOLUME = "total_volume"
     ACTIVE_DOMAIN = "active_domain"
@@ -264,7 +267,7 @@ class TopologyOptimizationProblem:
 
 
 # ---------------------------------------------------------------------------
-# Adaptador Fase 1: problema -> entradas del SIMPSolver existente
+# Adaptador: problema -> entradas del SIMPSolver existente (+ optimize())
 # ---------------------------------------------------------------------------
 
 #: Firma del resolvedor selección -> índices de malla. Recibe un
@@ -347,7 +350,9 @@ def problem_to_solver_inputs(
     resuelven pero su *aplicación* sigue en el pipeline existente
     (ConditionManager); aquí solo se validan y se exponen sus nodos.
 
-    Levanta TopOptError ante lo no soportado en Fase 1 (sin silencios).
+    Levanta TopOptError ante lo no soportado (sin silencios). Lo que el
+    solver no implementa (stress/displacement constraints, BCs no-FIXED,
+    filtros no-density) se rechaza explícito por decisión, no por pendiente.
     """
     resolve = selection_resolver or default_face_resolver
 
@@ -356,20 +361,33 @@ def problem_to_solver_inputs(
         raise TopOptError("Problema inválido: " + " | ".join(errors))
 
     vc = problem.volume_constraint
-    if vc.mode != VolfracMode.ACTIVE_DOMAIN:
+    # FASE-1 (2026-09-23): ambos modos aceptados — el SIMPSolver soporta
+    # "active_domain" y "total_volume" (VOL-PRESERVE). Sin fallback: el modo
+    # viaja tal cual en la salida ("volfrac_mode").
+    if vc.mode not in (VolfracMode.ACTIVE_DOMAIN, VolfracMode.TOTAL_VOLUME):
         raise TopOptError(
-            f"VolfracMode.{vc.mode.name} no implementado por el SIMPSolver "
-            f"(solo ACTIVE_DOMAIN, decisión P3)."
+            f"VolfracMode.{vc.mode.name} desconocido "
+            f"(usar ACTIVE_DOMAIN o TOTAL_VOLUME)."
         )
     if problem.stress_constraints or problem.displacement_constraints:
         raise TopOptError(
             "stress/displacement constraints no soportadas por el "
-            "SIMPSolver OC (Fase 3)."
+            "SIMPSolver (decisión: sin motor de restricción local; "
+            "el criterio ESO-stress es ranking evolutivo, no restricción)."
         )
+    # FASE-1 (2026-09-23): el objetivo viaja a la salida ("objective" /
+    # "compliance_limit", kwargs de SIMPSolver.optimize). min_volume exige
+    # max_compliance > 0; el resto se rechaza explícito (el solver OC solo
+    # implementa estos dos).
     if problem.objective.type == ObjectiveType.MINIMIZE_VOLUME_SUBJECT_TO_COMPLIANCE:
         if problem.objective.max_compliance is None or float(problem.objective.max_compliance) <= 0:
             raise TopOptError("MINIMIZE_VOLUME requiere objective.max_compliance > 0.")
-    elif problem.objective.type != ObjectiveType.MINIMIZE_COMPLIANCE:
+        objective = "min_volume"
+        compliance_limit: Optional[float] = float(problem.objective.max_compliance)
+    elif problem.objective.type == ObjectiveType.MINIMIZE_COMPLIANCE:
+        objective = "min_compliance"
+        compliance_limit = None
+    else:  # pragma: no cover - enum exhaustivo, sin fallback silencioso
         raise TopOptError(
             f"Objective.{problem.objective.type.name} no soportado."
         )
@@ -404,7 +422,8 @@ def problem_to_solver_inputs(
         if bc.type != BCType.FIXED:
             raise TopOptError(
                 f"BCType.{bc.type.name} no soportado "
-                f"(solo FIXED: el pipeline actual solo fija DOFs)."
+                f"(decisión: solo FIXED — el pipeline FEA fija DOFs; "
+                f"PINNED/SLIDING/SYMMETRY exigen resolvedor por ejes)."
             )
 
     preserved: set = set()
@@ -513,7 +532,9 @@ def problem_to_solver_inputs(
             "rho_min": float(mat.density_min),
         },
         "volfrac": float(vc.target_fraction),
-        "volfrac_mode": vc.mode.value,  # siempre "active_domain" en Fase 1
+        "volfrac_mode": vc.mode.value,  # FASE-1: el modo pedido, sin traducir
+        "objective": objective,  # FASE-1: kwargs de SIMPSolver.optimize
+        "compliance_limit": compliance_limit,
         "filter_radius": float(problem.filter_settings.filter_radius),
         "heaviside_projection": bool(problem.filter_settings.use_heaviside_projection),
         "heaviside_beta": float(problem.filter_settings.heaviside_beta),

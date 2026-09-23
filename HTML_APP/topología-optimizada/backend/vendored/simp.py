@@ -302,6 +302,11 @@ class SIMPSolver:
         xmin = self.rho_min
         xmax = 1.0
         target_vol = self.volfrac * self._vol0_free
+        # FASE-2 (2026-09-23, reversible): piso relativo a la máquina, espejo
+        # de OC-BISECTION-FLOOR en core/topopt.py. El piso absoluto (1e-12)
+        # rompía la invariancia de escala del OC en mallas rígidas. Para
+        # volver atrás: restaurar el piso 1e-12.
+        _den_floor = float(np.finfo(np.float64).tiny)
         for _ in range(100):
             mid = 0.5 * (l1 + l2)
             xnew[active] = np.maximum(
@@ -311,7 +316,7 @@ class SIMPSolver:
                     np.maximum(
                         xmin,
                         x[active] * np.sqrt(
-                            np.abs(-dc[active]) / np.maximum(np.abs(mid * dv[active]), 1e-12)
+                            np.abs(-dc[active]) / np.maximum(np.abs(mid * dv[active]), _den_floor)
                         ),
                     ),
                 ),

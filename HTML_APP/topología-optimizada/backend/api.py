@@ -1546,6 +1546,8 @@ class Api:
                 young_modulus_mm(mat.young_modulus), mat.poisson_ratio,
                 density_mm(mat.density),
                 penalization=float(simp_kwargs.get("penalization", 3.0)))
+        _vfm = str(simp_kwargs.get("volfrac_mode", "active_domain") or
+                   "active_domain").strip().lower()
         solver = VendoredSIMP(
             nodes=nodes, elements=elements,
             young_modulus=young_modulus_mm(mat.young_modulus),
@@ -1553,7 +1555,8 @@ class Api:
             volfrac=float(simp_kwargs.get("volume_fraction", 0.3)),
             penalization=float(simp_kwargs.get("penalization", 3.0)),
             filter_radius=float(simp_kwargs.get("filter_radius", 1.5)),
-            fea_solver=fea_solver)
+            fea_solver=fea_solver,
+            volfrac_mode=_vfm)
         # MULTICARGA: casos separados (Kratos reconstruye su RHS por caso).
         cases, weights = c._load_case_vectors(
             np.asarray(nodes), int(np.asarray(nodes).shape[0] * 3))
@@ -1594,16 +1597,9 @@ class Api:
                 raise PipelineError(
                     "symmetry_planes no soportado en el path vendored "
                     "(congelado, Fase 4.5b): usar el motor local (core).")
-            # FASE-2 (2026-09-23): el path vendored solo conoce semántica
-            # active_domain. Un volfrac_mode=total_volume se ignoraría en
-            # silencio (divergencia vs UI generativa): rechazar explícito.
-            _vfm = str(simp_kwargs.get("volfrac_mode", "active_domain") or
-                       "active_domain").strip().lower()
-            if _vfm not in ("active_domain",):
-                from desktop.pipeline.controller import PipelineError
-                raise PipelineError(
-                    f"volfrac_mode={_vfm!r} no soportado en el path vendored "
-                    "(congelado): usar el motor local (core/runOptimization).")
+            # PATH-VENDORED-VOLFRACEMODE (2026-09-23): el solver vendored
+            # espeja volfrac_mode del núcleo (active_domain/total_volume);
+            # el modo viaja en el constructor, sin rechazo.
             result = solver.optimize(
                 max_iterations=int(simp_kwargs.get("max_iterations", 30)),
                 tolerance=float(simp_kwargs.get("tolerance", 1e-3)),

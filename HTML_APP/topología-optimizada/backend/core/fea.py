@@ -489,7 +489,9 @@ def solve_modal(
         nodes: (N,3) node coordinates.
         elements: (M,4) Tet4 connectivity.
         young_modulus, poisson_ratio: elastic constants.
-        density: mass density (kg/m^3), must be > 0.
+        density: mass density en unidades del sistema de malla (mm-N:
+            tonne/mm^3 — usar core.materials.density_mm; E en N/mm^2
+            vía young_modulus_mm), must be > 0.
         fixed_dofs: global DOF indices held at zero. Must be non-empty:
             without constraints the stiffness matrix is singular
             (rigid-body modes) and an :class:`FEAError` is raised explicitly.

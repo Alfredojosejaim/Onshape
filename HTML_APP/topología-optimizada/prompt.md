@@ -1,4 +1,4 @@
-vendored/simp.py no conoce volfrac_mode (solo ruta estructural).
-Conversión de densidad mm solo aplicada a cae_studies.solve_modal; falta revisar otros consumidores.
-topo_problem.py sigue rechazando VolfracMode.TOTAL_VOLUME.
-Guard BC no cubre "carga dentro de región preservada".
+HECHO 2026-09-23: vendored/simp.py espeja volfrac_mode (active_domain/total_volume, helpers + factibilidad mode-aware); api._simp_loop lo propaga sin rechazo.
+HECHO 2026-09-23: auditoría mm completa — solve_modal solo vía execute_on_mesh (convierte E+densidad), KratosSimpFEA recibe density_mm, configure_material_from_core convierte ambas; docstring fea.solve_modal aclara tonne/mm^3. solve_fea estático no usa densidad.
+HECHO previo: topo_problem.py acepta TOTAL_VOLUME y propaga volfrac_mode/objective (test_problem_adapter.py).
+HECHO previo: guard carga-en-preservada marca load_on_preserved_region como degradada ≥90% sin error duro — decisión física (test_bc_on_preserved.py).

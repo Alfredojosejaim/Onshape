@@ -43,6 +43,7 @@ class SIMPSolver:
         element_densities0: Optional[np.ndarray] = None,
         rho_min: float = XC_MIN,
         fea_solver: Any = None,
+        volfrac_mode: str = "active_domain",
     ):
         if not 0.0 < volfrac <= 1.0:
             raise TopOptError("volfrac must be in (0, 1]")
@@ -50,6 +51,15 @@ class SIMPSolver:
         self.elements = np.asarray(elements, dtype=int)
         self.num_elements = self.elements.shape[0]
         self.volfrac = float(volfrac)
+        # VOLFRAC-MODE (espejo de core/topopt.py): "active_domain" = fracción
+        # del subdominio diseñable (histórico); "total_volume" = fracción del
+        # volumen TOTAL de la malla descontando lo fijado.
+        self.volfrac_mode = str(volfrac_mode).strip().lower()
+        if self.volfrac_mode not in ("active_domain", "total_volume"):
+            raise TopOptError(
+                f"volfrac_mode={volfrac_mode!r} no soportado "
+                f"(usar 'active_domain' o 'total_volume').")
+        self._x_from_user = element_densities0 is not None
         self.penalization = float(penalization)
         self.filter_radius = float(filter_radius)
         self.rho_min = float(rho_min)
@@ -195,6 +205,24 @@ class SIMPSolver:
     def set_fixed_dofs(self, fixed_dofs: np.ndarray) -> None:
         self._fixed_dofs = np.sort(np.asarray(fixed_dofs, dtype=np.int64))
 
+    def _preserved_volume(self) -> float:
+        if self._preserved is None:
+            return 0.0
+        return float(self._volumes[self._preserved].sum())
+
+    def _void_volume(self) -> float:
+        if self._void is None:
+            return 0.0
+        return float(self._volumes[self._void].sum())
+
+    def _target_active_volume(self) -> float:
+        """Volumen objetivo sobre el subdominio activo (espejo core/topopt)."""
+        if self.volfrac_mode == "total_volume":
+            return (self.volfrac * self._vol0
+                    - self._preserved_volume()
+                    - self.rho_min * self._void_volume())
+        return self.volfrac * self._vol0_free
+
     def _finalize_active(self) -> None:
         preserved = self._preserved if self._preserved is not None else \
             np.zeros(self.num_elements, dtype=bool)
@@ -202,14 +230,29 @@ class SIMPSolver:
             np.zeros(self.num_elements, dtype=bool)
         self._active = ~(preserved | void)
         self._vol0_free = float(self._volumes[self._active].sum())
-        if self.volfrac * self._vol0_free < self.rho_min * self._vol0_free:
+        target_active = self._target_active_volume()
+        vmin = self.rho_min * self._vol0_free
+        if target_active < vmin - 1e-12 * max(self._vol0, 1.0):
             raise TopOptError(
-                "Volume fraction infeasible: volfrac={} over the active "
-                "domain (V_active={:.4g}) requires less than the minimum "
-                "material (rho_min * V_active = {:.4g}). Lower rho_min, raise "
-                "volfrac, or shrink preserved/void regions."
-                .format(self.volfrac, self._vol0_free, self.rho_min * self._vol0_free)
+                "Volume fraction infeasible: mode={} volfrac={} needs active "
+                "volume {:.4g} but the minimum material over the active domain "
+                "is {:.4g}. Lower rho_min, raise volfrac, or shrink "
+                "preserved/void regions."
+                .format(self.volfrac_mode, self.volfrac, target_active, vmin)
             )
+        if target_active > self._vol0_free + 1e-12 * max(self._vol0, 1.0):
+            raise TopOptError(
+                "Volume fraction infeasible: mode={} volfrac={} needs active "
+                "volume {:.4g} > V_active={:.4g} (preserved/void already exceed "
+                "the requested total). Lower volfrac or shrink preserved/void."
+                .format(self.volfrac_mode, self.volfrac, target_active, self._vol0_free)
+            )
+        if self.volfrac_mode == "total_volume" and not self._x_from_user:
+            frac = float(np.clip(target_active / max(self._vol0_free, 1e-12),
+                                 self.rho_min, 1.0))
+            self.x[self._active] = frac
+            self.x[preserved] = 1.0
+            self.x[void] = self.rho_min
 
     def set_preserved_elements(self, indices) -> None:
         mask = np.zeros(self.num_elements, dtype=bool)
@@ -301,7 +344,7 @@ class SIMPSolver:
         xnew = np.copy(x)
         xmin = self.rho_min
         xmax = 1.0
-        target_vol = self.volfrac * self._vol0_free
+        target_vol = self._target_active_volume()
         # FASE-2 (2026-09-23, reversible): piso relativo a la máquina, espejo
         # de OC-BISECTION-FLOOR en core/topopt.py. El piso absoluto (1e-12)
         # rompía la invariancia de escala del OC en mallas rígidas. Para
@@ -406,7 +449,7 @@ class SIMPSolver:
         lx = xa - low
         p0 = ux * ux * np.maximum(df0a, 0.0) + 1e-9
         q0 = lx * lx * np.maximum(-df0a, 0.0) + 1e-9
-        vt = max(float(self.volfrac * self._vol0_free), 1e-12)
+        vt = max(float(self._target_active_volume()), 1e-12)
         dg = dva / vt
         p1 = ux * ux * np.maximum(dg, 0.0)
         q1 = lx * lx * np.maximum(-dg, 0.0)
@@ -623,6 +666,7 @@ class SIMPSolver:
             # VENDORED-CHANGE: etiqueta segun el motor inyectado.
             "engine": getattr(self.fea, "engine_tag", "self-contained-simp-numpy"),
             "optimizer": optimizer,
+            "volfrac_mode": self.volfrac_mode,
         }
         self.x = x
         return result
@@ -678,7 +722,7 @@ class SIMPSolver:
         if self._void is not None:
             x[self._void] = xmin
         x[preserved] = 1.0
-        target_vol = float(self.volfrac * self._vol0_free)
+        target_vol = float(self._target_active_volume())
         alpha_prev: Optional[np.ndarray] = None
         history: List[Dict[str, Any]] = []
         converged = False

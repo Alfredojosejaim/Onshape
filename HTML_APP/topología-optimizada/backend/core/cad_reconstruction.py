@@ -2578,8 +2578,15 @@ class ReconstructionPipeline:
                     ft = np.asarray(hole_fill_data["triangles"])
                     if self._mesh_smoother is None:
                         self._mesh_smoother = MeshSmoother()
+                    # ORGANIC-SMOOTH (reversible): el default histórico
+                    # (iterations=3) dejaba el escalonado del voxel/marching
+                    # visible: la pieza salía facetada, nada orgánica/hueso.
+                    # Taubin necesita ~15-20 pasadas (λ|μ) y Laplaciano ~10
+                    # para borrar la alta frecuencia sin encoger. Para volver
+                    # atrás: quitar smooth_iters y volver al default (3).
+                    smooth_iters = 20 if self._smoothing_method == "taubin" else 10
                     smooth_result = self._mesh_smoother.smooth(
-                        fv, ft, method=self._smoothing_method)
+                        fv, ft, iterations=smooth_iters, method=self._smoothing_method)
                     if self._decimate_fraction is not None:
                         dec_result = MeshDecimator(self._decimate_fraction).decimate(
                             np.asarray(smooth_result.data["vertices"]),

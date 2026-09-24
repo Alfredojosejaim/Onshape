@@ -1045,6 +1045,17 @@ export default function App() {
             const uns = unsText(result);
 
             if (uns) parts.push(uns);
+            // GEN-FAIL-DIAG (reversible): en la rama de éxito ya se muestran
+            // mapeo y volfrac efectivo; aquí se ocultaban justo cuando más
+            // hacen falta (colapso a vacío: el % efectivo del envelope y las
+            // caras degradadas explican el 0.3% sobre el umbral). Para volver
+            // atrás: quitar mp/vr de esta rama.
+            const mp = mapText(result);
+
+            if (mp) parts.push(mp);
+            const vr = volRefText(result);
+
+            if (vr) parts.push(vr);
             parts.push('(mira compliance/volumen).');
             setOptNotice({ text: parts.join(' ') });
           }

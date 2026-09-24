@@ -2,7 +2,14 @@
 
 **Objetivo:** App desktop de optimización topológica y diseño generativo (motor Python + GUI HTML/JS/CSS, backend FEM/CAE propio).
 
-**Última actualización:** 2026-09-23
+**Última actualización:** 2026-09-24
+
+## Qué se hizo (2026-09-24, auditoría + Obsidian)
+- Obsidian 1.13.7 (re)instalado vía winget en esta PC (el binario faltaba pese al log del 2026-09-23); vault `cerebro_agentico/` registrado en `%APPDATA%/obsidian/obsidian.json`; `.obsidian/` intacto (graph/backlink/templates activos, `templates.json → proyectos/_plantilla`).
+- Auditoría: `tsc --noEmit` OK, `vite build` OK (3.17s), `pytest backend/tests` **141 passed** en 94s, sin regresiones. Hallazgo: `npm run lint:ox` falla porque `oxlint` no está en `node_modules` (instalación npm incompleta, preexistente).
+- Git: working tree con un borrado sin commitear (`Auditoria scope creep y plan v2.md`); rama al día con `origin/master` (HEAD `db3fe4e`).
+
+## Qué se hizo (2026-09-23, plan cierre-brechas-núcleo)
 
 ## Qué se hizo
 - Estructura del cerebro agéntico instalada en `cerebro_agentico/` (copia byte-idéntica del origen en `Downloads/cerebro_agentico`), verificada por hash SHA256.

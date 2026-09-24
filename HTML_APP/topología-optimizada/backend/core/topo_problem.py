@@ -353,8 +353,21 @@ def problem_to_solver_inputs(
     Levanta TopOptError ante lo no soportado (sin silencios). Lo que el
     solver no implementa (stress/displacement constraints, BCs no-FIXED,
     filtros no-density) se rechaza explícito por decisión, no por pendiente.
+
+    La salida incluye ``warnings`` (lista accionable para la UI): cuando la
+    malla trae ``metadata.face_correspondence != "deterministic"`` se añade
+    ``order_based_face_labels`` — las etiquetas ``face_<fi>`` solo valen
+    para la malla generadora (AGENTS §4).
     """
     resolve = selection_resolver or default_face_resolver
+    warnings: List[str] = []
+    _meta = (mesh.get("metadata", {}) or {}) if isinstance(mesh, dict) else {}
+    if _meta.get("face_correspondence") != "deterministic":
+        warnings.append(
+            "order_based_face_labels: face_correspondence=%r (no geométrica); "
+            "la identidad de caras solo vale para la malla generadora, "
+            "re-mallar puede remapear caras." % (_meta.get("face_correspondence"),)
+        )
 
     errors = problem.validate()
     if errors:
@@ -546,4 +559,5 @@ def problem_to_solver_inputs(
         "halos": halos,
         "loads": loads_out,
         "boundary_conditions": bcs_out,
+        "warnings": warnings,
     }

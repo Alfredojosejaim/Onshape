@@ -2,7 +2,9 @@
 
 **Objetivo:** App desktop de optimización topológica y diseño generativo (motor Python + GUI HTML/JS/CSS, backend FEM/CAE propio).
 
-**Última actualización:** 2026-09-23
+**Última actualización:** 2026-09-24
+
+## Qué se hizo (2026-09-24, auditoría thermo-nuclear dual + P0/P1)
 
 ## Qué se hizo
 - Estructura del cerebro agéntico instalada en `cerebro_agentico/` (copia byte-idéntica del origen en `Downloads/cerebro_agentico`), verificada por hash SHA256.
@@ -10,6 +12,12 @@
 - Cerebro verificado funcionalmente (6/6 capas, roundtrip inbox OK, `verdad/` intacta) — 2026-09-23.
 - Obsidian 1.13.7 instalado y `cerebro_agentico/` abierto como vault (UI por usuario ignorada en `.gitignore`).
 - Vault portable GitHub: plugins verificados + `templates.json` + guía `wiki/obsidian-en-cualquier-pc.md`.
+
+## Qué se hizo (2026-09-24, auditoría thermo-nuclear dual + P0/P1)
+- Doble auditoría (quality + review, solo lectura) ejecutada y sintetizada: 9 archivos >1k, fork vendored, fallback silencioso, P1 parcial, halo/volfrac ya cerrados.
+- P0 docs: `inventario.md` actualizado (halo ✅, volfrac ✅, FoS ✅ postproceso, CompareTable ✅, correspondencia parcial, vendored acepta oc/mma/eso/level_set solo rechaza gcmma); `cae_studies.py` Thermal/Modal docstrings corregidos (solver real vía execute_on_mesh).
+- P1: `problem_to_solver_inputs` devuelve `warnings[]` con `order_based_face_labels` (AGENTS §4); `configure_material_manually` rechaza SI sin convertir (guardia x1e6); GCMMA y degradadas verificados ya cubiertos (rechazo temprano en `api.runSimpLoop`, render en `App.tsx`/`main_window.py`).
+- Verificación: `tsc --noEmit` OK, `pytest backend/tests` **141 passed** sin regresiones.
 
 ## Qué se hizo (2026-09-23, plan cierre-brechas-núcleo)
 - `plan.md` = plan vigente (supersede roadmap Fase 0–6 completado); `Auditoria scope creep y plan v2.md` = stub con puntero.

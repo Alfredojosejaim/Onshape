@@ -52,9 +52,9 @@ Carga / Fijación / Elasticidad / Región protegida / Obstrucción
 | **Optimizador ESO / Level-Set** | ✅ | Implementados en `topopt.py` (ESO hard-kill + criterio stress, Level-Set Hamilton-Jacobi) y expuestos en `AdvancedOptPanel.tsx` (solo rama estructural/generativa core; el path vendored los rechaza explícito) |
 | **Múltiples casos de carga (multicarga ponderada)** | ✅ — *corrección al chat* | `topopt.py: set_loads()` implementa `c(ρ)=Σ wᵢ·uᵢᵀKuᵢ`; agrupación real por `load_case_id` en `controller.py: _load_case_vectors()`; llega hasta `api.py` y `generative_engine.py`. **Esto ya está operativo de punta a punta**, no es una prioridad futura como planteaba el chat — lo que falta confirmar es si el panel de condiciones ya permite asignar `load_case_id` desde la UI |
 | Fracción de volumen, iteraciones, penalización, radio de filtro, tolerancia | ✅ | `TopOptParameters` |
-| `volfrac_mode` (dominio activo vs. volumen total) | ⚪ (P3 de tu lista) | `topo_problem.py: VolfracMode` — modelo existe, semántica de infeasibility explícita pendiente según tus notas |
+| `volfrac_mode` (dominio activo vs. volumen total) | ✅ | `topo_problem.py: VolfracMode` + propagación `objective/compliance_limit` (FASE-1 2026-09-23); vendored acepta `active_domain\|total_volume` |
 | Regiones preservadas / vacías | ✅ | `topopt.py: set_preserved_elements()`, `set_void_elements()` |
-| Halo de protección alrededor de nodos de carga | ⚪ (bug P4) | `protect_elements_near_nodes()` — implementado pero con el bug conocido (usa `filter_radius` en vez de tamaño de elemento real) |
+| Halo de protección alrededor de nodos de carga | ✅ | `topopt.py:640-649` deriva `h_element` de volumen medio (independiente de `filter_radius`); corregido, ver docstring |
 | MMA / GCMMA (propios, numpy) | ✅ | `topopt.py: _mma_update/_gcmma_update` (Svanberg; Kratos 10.4 no expone optimizador standalone); expuestos en UI; el path vendored rechaza gcmma explícito (`test_gcmma.py`) |
 | Restricción de tensión máxima (von Mises) | 🔶 | Sin restricción local implementada (el schema la rechaza explícito por decisión, FASE-1); ESO-criterio `stress` es ranking evolutivo, no restricción; `factor_of_safety` existe como postproceso (`cae_studies.py:504`, tarjeta `SafetyCard.tsx`) |
 | Manufacturing constraints (overhang, espesor mínimo, simetría) | ✅ | Penalización overhang activa + `overhang_report` (diagnóstico), espesor mínimo, planos de simetría — todo en `AdvancedOptPanel.tsx` + core |
@@ -91,8 +91,8 @@ Hallazgo importante que corrige al chat de ChatGPT: **tanto Térmico como Modal 
 | Análisis térmico estacionario | 🔶 | `thermal.py: solve_thermal_study()` completo (temp impuesta, flujo, convección); `cae_studies.py: ThermalAnalysis.execute_on_mesh()` lo invoca; llamado desde `api.py:689` y `controller.py:1446` — **pero sin UI** |
 | Análisis modal (autovalores) | 🔶 — *corrección al chat* | `fea.py: solve_modal()` completo (ensambla K y M, `scipy.sparse.linalg.eigsh`, filtro de ventana de frecuencia); `ModalAnalysis.execute_on_mesh()` lo invoca; llamado desde `api.py:720` y `controller.py:1475`. **No es "arquitectura preparada sin solver" — el solver ya existe y corre.** Solo falta exponerlo |
 | Resultados: von Mises, tensión principal, deformación | 🔶 | Presentes en el pipeline de `StructuralAnalysis`, visualización en `desktop/ui_legacy/panels/results.py` — confirmar cobertura completa de mapas de tensión |
-| Factor de seguridad como herramienta de postproceso | 🔲 | No hay clase/función dedicada; sería cálculo derivado (σy / σ_von_Mises) no implementado aún |
-| Comparación de resultados (original vs. optimizado, o A vs B vs C) | 🔲 | No existe en el core |
+| Factor de seguridad como herramienta de postproceso | ✅ | `cae_studies.py:504 factor_of_safety` (σy/σ_vM por entidad) + tarjeta `SafetyCard.tsx` — postproceso, no restricción local |
+| Comparación de resultados (original vs. optimizado, o A vs B vs C) | ✅ | `CompareTable` en flujo principal (`RightPanel.tsx`) — verificar cobertura A/B/C |
 | `execute()` sin malla para Térmico/Modal | ⚪ (intencional) | Ambos lanzan `StudyNotImplementedError` a propósito cuando se invoca sin mesh — es el contrato "explícito, nunca fallback silencioso" que ya usás en el resto del proyecto |
 
 ---
@@ -102,11 +102,12 @@ Hallazgo importante que corrige al chat de ChatGPT: **tanto Térmico como Modal 
 | Herramienta | Estado | Evidencia |
 |---|---|---|
 | Mallado volumétrico Tet4 (Gmsh + OCCT) | ✅ | `meshing.py: GmshTet4Mesher` |
-| Mallador provisional (voxelización + Kuhn) | ✅ | `meshing.py: ProvisionalTet4Mesher` — usado como fallback/test, según tus notas causa el bug P2 (face_id no propagado) |
+| Mallador provisional (voxelización + Kuhn) | ✅ (fallback explícito) | `meshing.py: ProvisionalTet4Mesher` — fallback opt-in con metadata `face_correspondence=order-fallback`; face_id no propagado en este path (P2 conocido, warning a UI) |
 | Mallado adaptativo | ✅ | `meshing.py: GmshTet4Mesher.generate_adaptive_mesh()` — refinamiento por campo escalar |
 | Hex8 | — | Soporte honesto en `fea.py:798` (`solve_fea_hex8`, sin dependencias nuevas) |
 | Tet10 | ✅ | `fea.py: solve_fea_tet10` por subdivisión en 8 Tet4 + interpolación (documentado, sin silencios) |
-| Correspondencia de caras OCCT↔Gmsh | ⚪ (bug P1) | `face_correspondence.py: FaceSignature` — existe el mecanismo de matching geométrico, es justamente el que hay que terminar de conectar en `GmshTet4Mesher._extract_all_surface_elements()` |
+| Correspondencia de caras OCCT↔Gmsh | ✅ parcial | `face_correspondence.py: FaceSignature` conectado cuando hay `cq_shape` (`meshing.py:396-398,574-576`, metadata `deterministic`); path sin shape sigue en order-fallback con warning explícito + `warnings` en salida del problema |
+| Mapeo de condiciones de contorno a caras de malla | ✅ | `boundary.py: BoundaryConditionMapper`, `MappedFace` |
 | Mapeo de condiciones de contorno a caras de malla | ✅ | `boundary.py: BoundaryConditionMapper`, `MappedFace` |
 | Extracción de superficie (Marching Tetrahedra) | ✅ | `cad_reconstruction.py: MarchingTetrahedraExtractor` |
 | Extractor "dummy" (testing) | ✅ (por diseño) | `cad_reconstruction.py: DummySurfaceExtractor` — para tests sin dependencias pesadas |
@@ -126,7 +127,7 @@ Hallazgo importante que corrige al chat de ChatGPT: **tanto Térmico como Modal 
 | Motor | Estado real | Nota |
 |---|---|---|
 | SIMP (OC) | ✅ Operativo | Piso de bisección relativo a máquina (`OC-BISECTION-FLOOR`); espejado en vendored (FASE-2) |
-| ESO / Level-Set | ✅ Operativos | Solo path core (vendored los rechaza explícito) |
+| ESO / Level-Set | ✅ Operativos | Path core + vendored acepta `oc/mma/eso/level_set` (`vendored/simp.py:525`); solo `gcmma` se rechaza explícito en vendored (temprano en `api.runSimpLoop`) |
 | Multicarga ponderada | ✅ Operativo | De punta a punta + `load_case_id` asignable en UI (`ToolParamsPanel.tsx`) |
 | MMA/GCMMA (propios) | ✅ Operativos | Implementación numpy propia (Kratos no expone optimizador standalone) |
 | FEA estructural (Tet4/Kratos) | ✅ Operativo | Con UI; Kratos con material en mm (FASE-3 2026-09-23) |

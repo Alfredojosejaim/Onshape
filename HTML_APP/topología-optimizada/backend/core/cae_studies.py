@@ -317,7 +317,7 @@ class StructuralAnalysis(Study):
 
 
 # ====================================================================== #
-# Thermal Analysis (scaffold for future steady-state heat-transfer solver)
+# Thermal Analysis (steady-state heat-transfer solver in core.thermal)
 # ====================================================================== #
 
 class ThermalAnalysis(Study):
@@ -361,8 +361,9 @@ class ThermalAnalysis(Study):
             msg = self.validate_with_message() or "Configuración térmica inválida."
             self.status = StudyStatus.FAILED
             return StudyResult(success=False, status="validation_failed", error_message=msg)
-        # Mesh-less path: no mesh to solve on — clear, structured boundary.
-        raise StudyNotImplementedError("Steady-state thermal solver not yet integrated.")
+        # Mesh-less path: no mesh to solve on — explicit boundary.
+        # Use execute_on_mesh(nodes, elements) for the real steady-state solve.
+        raise StudyNotImplementedError("Steady-state thermal solve requires a mesh: use execute_on_mesh().")
 
     def execute_on_mesh(self, nodes, elements) -> StudyResult:
         """Run the real steady-state thermal solve on an explicit mesh.
@@ -394,23 +395,17 @@ class ThermalAnalysis(Study):
 
 
 # ====================================================================== #
-# Modal Analysis (scaffold for future eigen-solver)
+# Modal Analysis (eigen-solver in core.fea via execute_on_mesh)
 # ====================================================================== #
 
 class ModalAnalysis(Study):
     """Natural-frequency / mode-shape analysis.
 
-    Scaffolding contract for the future eigen-solver integration.
-    The data model (``modal``/``ModalParameters``) and validation are already
-    in place; the actual eigen-solve is delegated to the pipeline, which
-    currently reports ``not_implemented`` via :class:`StudyNotImplementedError`.
-
-    Future integration must:
-    - build the stiffness ``K`` and (consistent/lumped) mass ``M`` matrices
-      from ``material`` (E, nu, density),
-    - solve the generalized eigenproblem ``K*phi = w^2*M*phi``,
-    - return result.data["frequencies"] (Hz, descending by norm) and
-      result.data["mode_shapes"].
+    Real eigen-solve lives in ``core.fea.solve_modal`` and is reached via
+    ``execute_on_mesh(nodes, elements, fixed_dofs)`` (K/M assembly +
+    ``scipy.sparse.linalg.eigsh``). The mesh-less ``execute()`` path raises
+    :class:`StudyNotImplementedError` by contract — use ``execute_on_mesh``
+    or the controller's ``execute_study`` when a mesh exists.
     """
 
     study_type = StudyType.MODAL
@@ -490,11 +485,9 @@ class ModalAnalysis(Study):
             msg = self.validate_with_message() or "Configuración modal inválida."
             self.status = StudyStatus.FAILED
             return StudyResult(success=False, status="validation_failed", error_message=msg)
-        # The real eigen-solve needs a mesh + resolved fixed DOFs, which live
-        # in the pipeline layer: use ModalAnalysis.execute_on_mesh(...) or the
-        # controller's execute_study (which calls solve when a mesh exists).
-        # Without a mesh there is nothing to assemble K/M from.
-        raise StudyNotImplementedError("Modal (eigen) solver not yet integrated.")
+        # Mesh-less path: no mesh to assemble K/M from — explicit boundary.
+        # Use execute_on_mesh(nodes, elements, fixed_dofs) for the real solve.
+        raise StudyNotImplementedError("Modal eigen-solve requires a mesh: use execute_on_mesh().")
 
 
 # ====================================================================== #

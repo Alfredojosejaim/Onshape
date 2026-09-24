@@ -453,6 +453,19 @@ class KratosAdapter:
             logger.error(f"Failed to import mesh from MeshResult: {e}")
             raise
     
+    @staticmethod
+    def _apply_mm_properties(model_part: Any, young_modulus: float,
+                             poisson_ratio: float, density: float) -> None:
+        """Aplica E/ν/ρ (ya en N/mm² / tonne/mm³) al ModelPart (judo único)."""
+        material_properties = Kratos.Properties(1)
+        material_properties.SetValue(Kratos.YOUNG_MODULUS, float(young_modulus))
+        material_properties.SetValue(Kratos.POISSON_RATIO, float(poisson_ratio))
+        material_properties.SetValue(Kratos.DENSITY, float(density))
+        from KratosMultiphysics import StructuralMechanicsApplication as SMA
+        material_properties.SetValue(Kratos.CONSTITUTIVE_LAW, SMA.LinearElastic3DLaw())
+        for element in model_part.Elements:
+            element.Properties = material_properties
+
     def configure_material_from_core(self, model_part: Any, material: Any) -> None:
         """Configure material properties from Core's Material object to Kratos.
 
@@ -475,27 +488,19 @@ class KratosAdapter:
             # atributos crudos del material.
             _E = float(young_modulus_mm(material.young_modulus))
             _RHO = float(density_mm(material.density))
-            material_properties.SetValue(Kratos.YOUNG_MODULUS, _E)
-            material_properties.SetValue(Kratos.POISSON_RATIO, float(material.poisson_ratio))
-            material_properties.SetValue(Kratos.DENSITY, _RHO)
-
-            # Add constitutive law (required for structural elements)
-            from KratosMultiphysics import StructuralMechanicsApplication as SMA
-            constitutive_law = SMA.LinearElastic3DLaw()
-            material_properties.SetValue(Kratos.CONSTITUTIVE_LAW, constitutive_law)
+            self._apply_mm_properties(model_part, _E, float(material.poisson_ratio), _RHO)
 
             # Add yield strength as a custom property (not standard in Kratos but useful)
             try:
-                material_properties.SetValue(
-                    Kratos.YIELD_STRESS,
-                    float(young_modulus_mm(material.yield_strength)))
+                _yield = float(young_modulus_mm(material.yield_strength))
+                for element in model_part.Elements:
+                    try:
+                        element.Properties.SetValue(Kratos.YIELD_STRESS, _yield)
+                    except AttributeError:
+                        raise AttributeError("YIELD_STRESS missing")
             except AttributeError:
                 # YIELD_STRESS might not be available in all Kratos versions
                 logger.warning("YIELD_STRESS not available in this Kratos version")
-            
-            # Update all elements to use the new material properties
-            for element in model_part.Elements:
-                element.Properties = material_properties
             
             logger.info(f"Material configured: E={_E:.2e} N/mm^2 (malla mm), "
                           f"ρ={_RHO:.2e} tonne/mm^3, ν={material.poisson_ratio}")
@@ -504,40 +509,45 @@ class KratosAdapter:
             logger.error(f"Failed to configure material from Core: {e}")
             raise
     
-    def configure_material_manually(self, model_part: Any, young_modulus: float, 
-                                    poisson_ratio: float, density: float = 7850.0) -> None:
-        """Configure material properties manually.
+    def configure_material_manually(self, model_part: Any, young_modulus: "float | str",
+                                    poisson_ratio: "float | str", density: "float | str" = 7.85e-9) -> None:
+        """Configure material properties manually (malla en mm).
 
         Args:
             model_part: Kratos ModelPart with elements
-            young_modulus: Young's modulus in Pa
+            young_modulus: Young's modulus in N/mm² (= MPa, p.ej. acero 210000)
             poisson_ratio: Poisson's ratio (dimensionless)
-            density: Material density in kg/m³
+            density: Material density in tonne/mm³ (p.ej. acero 7.85e-9)
 
-        NOTA (FASE-3): estos valores van CRUDOS a Kratos. Si la malla esta
-        en mm, convertir antes con young_modulus_mm/density_mm (como hace
-        configure_material_from_core); si no, la rigidez queda x1e6.
+        NOTA (FASE-3): estos valores van CRUDOS a Kratos. La malla esta en
+        mm: pasar SI (Pa / kg/m³) infla la rigidez x1e6. Convertir antes con
+        young_modulus_mm/density_mm o usar configure_material_from_core.
+
+        Guardia anti-SI: E > 1e7 o ρ > 1e-3 con malla en mm es casi siempre
+        un olvido de conversión — se rechaza explícito.
         """
+        _E = float(young_modulus)
+        _RHO = float(density)
+        _NU = float(poisson_ratio)
+        # Umbrales intermedios: acero en mm ≈ 2.1e5 N/mm² / 7.85e-9
+        # tonne/mm³; en SI ≈ 2.1e11 Pa / 7850 kg/m³. 1e7/1e-3 deja ~47× y
+        # ~5 órdenes de margen respectivamente.
+        if _E > 1e7 or _RHO > 1e-3:
+            raise ValueError(
+                f"configure_material_manually recibió E={_E:.3g} N/mm² / "
+                f"ρ={_RHO:.3g} tonne/mm³: parecen unidades SI con malla en mm. "
+                "Convertir antes con young_modulus_mm/density_mm o usar "
+                "configure_material_from_core."
+            )
+        if _E <= 0 or _RHO <= 0:
+            raise ValueError(
+                f"configure_material_manually recibió E={_E:.3g} / ρ={_RHO:.3g}: "
+                "valores no positivos inválidos para Kratos."
+            )
         try:
-            logger.info(f"Configuring material manually: E={young_modulus:.2e} Pa, ν={poisson_ratio}")
-            
-            # Create Kratos Properties object
-            material_properties = Kratos.Properties(1)
-            
-            # Set material properties
-            material_properties.SetValue(Kratos.YOUNG_MODULUS, float(young_modulus))
-            material_properties.SetValue(Kratos.POISSON_RATIO, float(poisson_ratio))
-            material_properties.SetValue(Kratos.DENSITY, float(density))
-            
-            # Add constitutive law (required for structural elements)
-            from KratosMultiphysics import StructuralMechanicsApplication as SMA
-            constitutive_law = SMA.LinearElastic3DLaw()
-            material_properties.SetValue(Kratos.CONSTITUTIVE_LAW, constitutive_law)
-            
-            # Update all elements to use the new material properties
-            for element in model_part.Elements:
-                element.Properties = material_properties
-            
+            logger.info(f"Configuring material manually: E={_E:.2e} N/mm², "
+                        f"ρ={_RHO:.2e} tonne/mm³, ν={_NU}")
+            self._apply_mm_properties(model_part, _E, _NU, _RHO)
             logger.info("Manual material configuration completed")
             
         except Exception as e:
